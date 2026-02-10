@@ -22,6 +22,7 @@ export const sources = pgTable("sources", {
   type: text("type").notNull(), // 'rss' | 'website' | 'twitter' | 'youtube' | 'facebook' | 'instagram' | 'telegram'
   active: boolean("active").default(true),
   intervalMinutes: integer("interval_minutes").default(15),
+  maxArticlesPerFetch: integer("max_articles_per_fetch").default(10),
   retentionDays: integer("retention_days").default(30),
   lastFetchedAt: timestamp("last_fetched_at"),
   createdAt: timestamp("created_at").defaultNow(),
