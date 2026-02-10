@@ -43,6 +43,7 @@ export const articles = pgTable("articles", {
   sentimentLabel: text("sentiment_label"), // 'positive' | 'negative' | 'neutral'
   keywords: text("keywords").array(),
   category: text("category"), // 'political' | 'health' | 'tech' | 'sports' | 'business' | 'entertainment' | 'science' | 'urgent' | 'general'
+  imageUrl: text("image_url"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
