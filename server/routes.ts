@@ -151,7 +151,7 @@ export async function registerRoutes(
 
   // === SEED & START WORKER ===
   await seed();
-  startFeedWorker(10);
+  startFeedWorker(1);
 
   return httpServer;
 }
