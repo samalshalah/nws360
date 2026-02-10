@@ -20,6 +20,8 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - User authentication (email/password with passport-local)
 - Responsive design with dark mode support
 - Social media support: YouTube channels, Facebook pages, Instagram profiles, X/Twitter accounts
+- Multi-language UI (English, Arabic, French, Spanish, Turkish) with RTL support
+- AI-powered article translation to any supported language
 
 ## Database Schema
 - `users`: id, username, password, role (admin/client), createdAt
@@ -34,6 +36,7 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - Articles: GET /api/articles (with search, filters, pagination), GET /api/articles/:id
 - Keywords: GET /api/keywords, POST /api/keywords, DELETE /api/keywords/:id
 - Analytics: GET /api/analytics/stats
+- Translation: POST /api/articles/:id/translate (body: { targetLanguage })
 
 ## Feed Worker
 - Located in `server/feed-worker.ts`
@@ -51,6 +54,10 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - **Twitter/X**: Tries Nitter RSS instances, falls back to syndication.twitter.com scraping
 
 ## Recent Changes
+- 2026-02-10: Added multi-language UI support (English, Arabic, French, Spanish, Turkish) with i18next
+- 2026-02-10: Added RTL layout support for Arabic
+- 2026-02-10: Added AI-powered article translation via OpenAI
+- 2026-02-10: Added language selector in sidebar and login page
 - 2026-02-10: Added YouTube, Facebook, and Instagram source type support
 - 2026-02-10: Updated fetch interval to 1 minute
 - 2026-02-10: Added real RSS feed fetching with rss-parser

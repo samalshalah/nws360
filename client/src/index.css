@@ -117,3 +117,12 @@
 .dark .glass {
   @apply bg-black/70 backdrop-blur-lg border border-white/10 shadow-lg;
 }
+
+/* RTL support */
+[dir="rtl"] {
+  font-family: 'Inter', 'Noto Sans Arabic', 'Segoe UI', system-ui, sans-serif;
+}
+
+[dir="rtl"] .font-display {
+  font-family: 'Playfair Display', 'Noto Sans Arabic', serif;
+}

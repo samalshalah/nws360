@@ -12,19 +12,22 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Globe, Rss, Loader2, RefreshCw, Twitter, Youtube, Facebook, Instagram } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { useTranslation } from "react-i18next";
 
 export default function Admin() {
+  const { t } = useTranslation();
+
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-display font-bold text-foreground">Admin Settings</h1>
-        <p className="text-muted-foreground">Manage data sources and tracking preferences.</p>
+        <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-admin-title">{t("admin.title")}</h1>
+        <p className="text-muted-foreground">{t("admin.subtitle")}</p>
       </div>
 
       <Tabs defaultValue="sources" className="w-full">
         <TabsList className="grid w-full max-w-md grid-cols-2 mb-8">
-          <TabsTrigger value="sources" data-testid="tab-sources">Sources</TabsTrigger>
-          <TabsTrigger value="keywords" data-testid="tab-keywords">Keywords</TabsTrigger>
+          <TabsTrigger value="sources" data-testid="tab-sources">{t("admin.sources")}</TabsTrigger>
+          <TabsTrigger value="keywords" data-testid="tab-keywords">{t("admin.keywords")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sources">
@@ -40,6 +43,7 @@ export default function Admin() {
 }
 
 function SourcesManager() {
+  const { t } = useTranslation();
   const { data: sources, isLoading } = useSources();
   const { mutate: createSource, isPending: isCreating } = useCreateSource();
   const { mutate: deleteSource, isPending: isDeleting } = useDeleteSource();
@@ -64,12 +68,21 @@ function SourcesManager() {
     });
   };
 
+  const sourceTypes: Record<string, string> = {
+    rss: t("admin.rss"),
+    website: t("admin.website"),
+    twitter: t("admin.twitter"),
+    youtube: t("admin.youtube"),
+    facebook: t("admin.facebook"),
+    instagram: t("admin.instagram"),
+  };
+
   return (
     <Card className="border-border/50 shadow-md">
-      <CardHeader className="flex flex-row items-center justify-between">
+      <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap">
         <div>
-          <CardTitle>News Sources</CardTitle>
-          <CardDescription>Configure where NWS360 fetches articles from.</CardDescription>
+          <CardTitle>{t("admin.newsSources")}</CardTitle>
+          <CardDescription>{t("admin.sourcesDescription")}</CardDescription>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button 
@@ -80,57 +93,46 @@ function SourcesManager() {
             data-testid="button-fetch-all"
           >
             <RefreshCw className={`w-4 h-4 ${isFetchingAll ? "animate-spin" : ""}`} />
-            {isFetchingAll ? "Fetching..." : "Fetch All"}
+            {isFetchingAll ? t("admin.fetching") : t("admin.fetchAll")}
           </Button>
           <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2 shadow-lg shadow-primary/20" data-testid="button-add-source">
-                <Plus className="w-4 h-4" /> Add Source
+                <Plus className="w-4 h-4" /> {t("admin.addSource")}
               </Button>
             </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Add New Source</DialogTitle>
+              <DialogTitle>{t("admin.addNewSource")}</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4 pt-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Source Name</Label>
+                <Label htmlFor="name">{t("admin.sourceName")}</Label>
                 <Input 
                   id="name" 
                   value={formData.name}
                   onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder="e.g. TechCrunch"
+                  placeholder={t("admin.sourceNamePlaceholder")}
                   required
                   data-testid="input-source-name"
                 />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="url">
-                  {formData.type === 'twitter' ? 'X/Twitter Username or URL' : 
-                   formData.type === 'youtube' ? 'YouTube Channel URL or Handle' :
-                   formData.type === 'facebook' ? 'Facebook Page URL or Name' :
-                   formData.type === 'instagram' ? 'Instagram Username or URL' :
-                   formData.type === 'website' ? 'Website URL' : 'RSS Feed URL'}
+                  {t(`admin.urlLabels.${formData.type}` as any)}
                 </Label>
                 <Input 
                   id="url" 
                   value={formData.url}
                   onChange={e => setFormData(prev => ({ ...prev, url: e.target.value }))}
-                  placeholder={
-                    formData.type === 'twitter' ? '@username or https://x.com/username' :
-                    formData.type === 'youtube' ? '@channel or https://youtube.com/@channel' :
-                    formData.type === 'facebook' ? 'pagename or https://facebook.com/pagename' :
-                    formData.type === 'instagram' ? '@username or https://instagram.com/username' :
-                    formData.type === 'website' ? 'https://aljazeera.net' :
-                    'https://example.com/feed.xml'
-                  }
+                  placeholder={t(`admin.urlPlaceholders.${formData.type}` as any)}
                   required 
                   data-testid="input-source-url"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="type">Type</Label>
+                  <Label htmlFor="type">{t("admin.type")}</Label>
                   <Select 
                     value={formData.type} 
                     onValueChange={(val: any) => setFormData(prev => ({ ...prev, type: val }))}
@@ -139,17 +141,17 @@ function SourcesManager() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="rss">RSS Feed</SelectItem>
-                      <SelectItem value="website">Website</SelectItem>
-                      <SelectItem value="twitter">X / Twitter</SelectItem>
-                      <SelectItem value="youtube">YouTube</SelectItem>
-                      <SelectItem value="facebook">Facebook</SelectItem>
-                      <SelectItem value="instagram">Instagram</SelectItem>
+                      <SelectItem value="rss">{t("admin.rss")}</SelectItem>
+                      <SelectItem value="website">{t("admin.website")}</SelectItem>
+                      <SelectItem value="twitter">{t("admin.twitter")}</SelectItem>
+                      <SelectItem value="youtube">{t("admin.youtube")}</SelectItem>
+                      <SelectItem value="facebook">{t("admin.facebook")}</SelectItem>
+                      <SelectItem value="instagram">{t("admin.instagram")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="interval">Fetch Interval (mins)</Label>
+                  <Label htmlFor="interval">{t("admin.fetchInterval")}</Label>
                   <Input 
                     id="interval" 
                     type="number" 
@@ -162,7 +164,7 @@ function SourcesManager() {
                 </div>
               </div>
               <Button type="submit" className="w-full" disabled={isCreating} data-testid="button-submit-source">
-                {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add Source"}
+                {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : t("admin.addSource")}
               </Button>
             </form>
           </DialogContent>
@@ -173,11 +175,11 @@ function SourcesManager() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Last Fetched</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead>{t("admin.sourceName")}</TableHead>
+              <TableHead>{t("admin.type")}</TableHead>
+              <TableHead>{t("admin.status")}</TableHead>
+              <TableHead>{t("admin.lastFetched")}</TableHead>
+              <TableHead className="text-right rtl:text-left">{t("admin.actions")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -192,21 +194,21 @@ function SourcesManager() {
                     {source.type === 'youtube' && <Youtube className="w-3.5 h-3.5" />}
                     {source.type === 'facebook' && <Facebook className="w-3.5 h-3.5" />}
                     {source.type === 'instagram' && <Instagram className="w-3.5 h-3.5" />}
-                    <span className="uppercase">{source.type}</span>
+                    <span className="uppercase">{sourceTypes[source.type] || source.type}</span>
                   </div>
                 </TableCell>
                 <TableCell>
                   <Badge variant={source.active ? "default" : "secondary"}>
-                    {source.active ? "Active" : "Inactive"}
+                    {source.active ? t("common.active") : t("common.inactive")}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-muted-foreground text-sm">
                   {source.lastFetchedAt 
                     ? formatDistanceToNow(new Date(source.lastFetchedAt), { addSuffix: true })
-                    : "Never"}
+                    : t("common.never")}
                 </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-1">
+                <TableCell className="text-right rtl:text-left">
+                  <div className="flex items-center justify-end rtl:justify-start gap-1">
                     <Button 
                       variant="ghost" 
                       size="icon"
@@ -238,6 +240,7 @@ function SourcesManager() {
 }
 
 function KeywordsManager() {
+  const { t } = useTranslation();
   const { data: keywords, isLoading } = useKeywords();
   const { mutate: createKeyword, isPending: isCreating } = useCreateKeyword();
   const { mutate: deleteKeyword, isPending: isDeleting } = useDeleteKeyword();
@@ -253,19 +256,20 @@ function KeywordsManager() {
   return (
     <Card className="border-border/50 shadow-md">
       <CardHeader>
-        <CardTitle>Tracked Keywords</CardTitle>
-        <CardDescription>Add keywords to automatically tag and analyze content.</CardDescription>
+        <CardTitle>{t("admin.trackedKeywords")}</CardTitle>
+        <CardDescription>{t("admin.keywordsDescription")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <form onSubmit={handleSubmit} className="flex gap-4">
           <Input 
-            placeholder="Enter a keyword..." 
+            placeholder={t("admin.enterKeyword")}
             value={term}
             onChange={e => setTerm(e.target.value)}
             className="flex-1"
+            data-testid="input-keyword"
           />
-          <Button type="submit" disabled={isCreating || !term}>
-            {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Plus className="w-4 h-4 mr-2" /> Add Keyword</>}
+          <Button type="submit" disabled={isCreating || !term} data-testid="button-add-keyword">
+            {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Plus className="w-4 h-4 mr-2 rtl:mr-0 rtl:ml-2" /> {t("admin.addKeyword")}</>}
           </Button>
         </form>
 
@@ -280,13 +284,14 @@ function KeywordsManager() {
                 onClick={() => deleteKeyword(keyword.id)}
                 className="text-muted-foreground hover:text-destructive transition-colors"
                 disabled={isDeleting}
+                data-testid={`button-delete-keyword-${keyword.id}`}
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>
           ))}
           {keywords?.length === 0 && (
-            <p className="text-muted-foreground text-sm italic">No keywords added yet.</p>
+            <p className="text-muted-foreground text-sm italic">{t("admin.noKeywords")}</p>
           )}
         </div>
       </CardContent>

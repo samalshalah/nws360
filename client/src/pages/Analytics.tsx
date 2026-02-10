@@ -2,11 +2,13 @@ import { useAnalytics } from "@/hooks/use-analytics";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useTranslation } from "react-i18next";
 
-const COLORS = ['#22c55e', '#64748b', '#ef4444']; // Green, Slate, Red
+const COLORS = ['#22c55e', '#64748b', '#ef4444'];
 
 export default function Analytics() {
   const { data: analytics, isLoading } = useAnalytics();
+  const { t } = useTranslation();
 
   if (isLoading) {
     return (
@@ -17,25 +19,23 @@ export default function Analytics() {
     );
   }
 
-  // Transform sentiment data for PieChart
   const sentimentData = analytics?.sentimentDistribution.map(item => ({
-    name: item.name.charAt(0).toUpperCase() + item.name.slice(1),
+    name: item.name === "positive" ? t("feed.positive") : item.name === "negative" ? t("feed.negative") : t("feed.neutral"),
     value: item.value
   }));
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-display font-bold text-foreground">Analytics</h1>
-        <p className="text-muted-foreground">Deep dive into content trends and sentiment analysis.</p>
+        <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-analytics-title">{t("analytics.title")}</h1>
+        <p className="text-muted-foreground">{t("analytics.subtitle")}</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Sentiment Analysis */}
         <Card className="border-border/50 shadow-md">
           <CardHeader>
-            <CardTitle className="font-display">Sentiment Distribution</CardTitle>
-            <CardDescription>Breakdown of positive, neutral, and negative articles</CardDescription>
+            <CardTitle className="font-display">{t("analytics.sentimentDistribution")}</CardTitle>
+            <CardDescription>{t("analytics.sentimentDescription")}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-[300px] w-full">
@@ -64,11 +64,10 @@ export default function Analytics() {
           </CardContent>
         </Card>
 
-        {/* Trending Keywords */}
         <Card className="border-border/50 shadow-md">
           <CardHeader>
-            <CardTitle className="font-display">Trending Keywords</CardTitle>
-            <CardDescription>Most frequent terms across all articles</CardDescription>
+            <CardTitle className="font-display">{t("analytics.trendingKeywords")}</CardTitle>
+            <CardDescription>{t("analytics.trendingDescription")}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-[300px] w-full">

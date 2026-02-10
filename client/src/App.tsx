@@ -6,6 +6,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { useEffect } from "react";
+import { getDirection } from "@/i18n";
 
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
@@ -27,7 +30,6 @@ function ProtectedRoute({ component: Component, ...rest }: { component: any, pat
   }
 
   if (!user) {
-    // Redirect to login but keep the attempted URL if needed (omitted for simplicity)
     setTimeout(() => setLocation("/login"), 0);
     return null;
   }
@@ -49,7 +51,6 @@ function Router() {
     <Switch>
       <Route path="/login" component={Login} />
       
-      {/* Protected Routes */}
       <Route path="/">
         <ProtectedRoute component={Dashboard} />
       </Route>
@@ -69,6 +70,23 @@ function Router() {
 }
 
 function App() {
+  const { i18n } = useTranslation();
+
+  useEffect(() => {
+    const lang = i18n.language?.split("-")[0] || "en";
+    const dir = getDirection(lang);
+    document.documentElement.dir = dir;
+    document.documentElement.lang = lang;
+
+    const handleLanguageChanged = (lng: string) => {
+      const d = getDirection(lng);
+      document.documentElement.dir = d;
+      document.documentElement.lang = lng;
+    };
+    i18n.on("languageChanged", handleLanguageChanged);
+    return () => { i18n.off("languageChanged", handleLanguageChanged); };
+  }, [i18n]);
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>

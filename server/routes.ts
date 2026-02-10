@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import { startFeedWorker, fetchAllFeeds, fetchSourceFeed } from "./feed-worker";
+import { openai } from "./replit_integrations/image/client";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -141,6 +142,53 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     await storage.deleteKeyword(id);
     res.sendStatus(204);
+  });
+
+  // === ARTICLE TRANSLATION ===
+  app.post("/api/articles/:id/translate", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const id = parseInt(req.params.id);
+    const { targetLanguage } = req.body;
+    
+    if (!targetLanguage) {
+      return res.status(400).json({ message: "targetLanguage is required" });
+    }
+
+    const article = await storage.getArticle(id);
+    if (!article) return res.status(404).json({ message: "Article not found" });
+
+    try {
+      const langNames: Record<string, string> = {
+        en: "English", ar: "Arabic", fr: "French", es: "Spanish", tr: "Turkish"
+      };
+      const targetLangName = langNames[targetLanguage] || targetLanguage;
+      
+      const textToTranslate = `Title: ${article.title}\n\nContent: ${article.content?.substring(0, 3000) || ""}${article.summary ? `\n\nSummary: ${article.summary}` : ""}`;
+      
+      const completion = await openai.chat.completions.create({
+        model: "gpt-5-nano",
+        messages: [
+          {
+            role: "system",
+            content: `You are a professional news translator. Translate the following news article to ${targetLangName}. Return JSON with: "title" (translated title), "content" (translated content), "summary" (translated summary). Respond ONLY with valid JSON.`,
+          },
+          { role: "user", content: textToTranslate },
+        ],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 2000,
+      });
+
+      const result = JSON.parse(completion.choices[0].message.content || "{}");
+      res.json({
+        translatedTitle: result.title || article.title,
+        translatedContent: result.content || article.content,
+        translatedSummary: result.summary || article.summary,
+        targetLanguage,
+      });
+    } catch (e) {
+      console.error("Translation failed:", e);
+      res.status(500).json({ message: "Translation failed" });
+    }
   });
 
   // === ANALYTICS ===
