@@ -177,7 +177,8 @@ async function discoverRssFeed(url: string): Promise<string | null> {
   return null;
 }
 
-async function fetchRssArticles(source: { id: number; name: string; url: string }): Promise<number> {
+async function fetchRssArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
+  const limit = source.maxArticlesPerFetch || 10;
   let feedUrl = normalizeUrl(source.url);
 
   if (!feedUrl.match(/\.(xml|rss|atom)$/i) && !feedUrl.includes("/feed") && !feedUrl.includes("/rss")) {
@@ -192,7 +193,7 @@ async function fetchRssArticles(source: { id: number; name: string; url: string 
 
   console.log(`[Worker] Fetching RSS: ${feedUrl} for source: ${source.name}`);
   const feed = await parser.parseURL(feedUrl);
-  return await processItems(source, feed.items.slice(0, 20).map(item => ({
+  return await processItems(source, feed.items.slice(0, limit).map(item => ({
     title: stripHtml(item.title || "Untitled"),
     url: item.link || "",
     content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || ""),
@@ -201,7 +202,8 @@ async function fetchRssArticles(source: { id: number; name: string; url: string 
   })));
 }
 
-async function fetchWebsiteArticles(source: { id: number; name: string; url: string }): Promise<number> {
+async function fetchWebsiteArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
+  const limit = source.maxArticlesPerFetch || 10;
   const url = normalizeUrl(source.url);
   console.log(`[Worker] Scraping website: ${url} for source: ${source.name}`);
 
@@ -209,7 +211,7 @@ async function fetchWebsiteArticles(source: { id: number; name: string; url: str
   if (discovered) {
     console.log(`[Worker] Found RSS feed for ${source.name}: ${discovered}`);
     const feed = await parser.parseURL(discovered);
-    return await processItems(source, feed.items.slice(0, 20).map(item => ({
+    return await processItems(source, feed.items.slice(0, limit).map(item => ({
       title: stripHtml(item.title || "Untitled"),
       url: item.link || "",
       content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || ""),
@@ -220,45 +222,51 @@ async function fetchWebsiteArticles(source: { id: number; name: string; url: str
 
   const scraped = await scrapeWebsite(url);
   console.log(`[Worker] Scraped ${scraped.length} articles from ${source.name}`);
-  return await processItems(source, scraped);
+  return await processItems(source, scraped.slice(0, limit));
 }
 
-async function fetchTwitterArticles(source: { id: number; name: string; url: string }): Promise<number> {
+async function fetchTwitterArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
+  const limit = source.maxArticlesPerFetch || 10;
   console.log(`[Worker] Fetching Twitter/X: ${source.url} for source: ${source.name}`);
   const tweets = await fetchTwitterFeed(source.url);
   console.log(`[Worker] Got ${tweets.length} tweets from ${source.name}`);
-  return await processItems(source, tweets);
+  return await processItems(source, tweets.slice(0, limit));
 }
 
-async function fetchYouTubeArticles(source: { id: number; name: string; url: string }): Promise<number> {
+async function fetchYouTubeArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
+  const limit = source.maxArticlesPerFetch || 10;
   console.log(`[Worker] Fetching YouTube: ${source.url} for source: ${source.name}`);
   const videos = await fetchYouTubeFeed(source.url);
   console.log(`[Worker] Got ${videos.length} videos from ${source.name}`);
-  return await processItems(source, videos);
+  return await processItems(source, videos.slice(0, limit));
 }
 
-async function fetchFacebookArticles(source: { id: number; name: string; url: string }): Promise<number> {
+async function fetchFacebookArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
+  const limit = source.maxArticlesPerFetch || 10;
   console.log(`[Worker] Fetching Facebook: ${source.url} for source: ${source.name}`);
   const posts = await fetchFacebookFeed(source.url);
   console.log(`[Worker] Got ${posts.length} Facebook posts from ${source.name}`);
-  return await processItems(source, posts);
+  return await processItems(source, posts.slice(0, limit));
 }
 
-async function fetchInstagramArticles(source: { id: number; name: string; url: string }): Promise<number> {
+async function fetchInstagramArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
+  const limit = source.maxArticlesPerFetch || 10;
   console.log(`[Worker] Fetching Instagram: ${source.url} for source: ${source.name}`);
   const posts = await fetchInstagramFeed(source.url);
   console.log(`[Worker] Got ${posts.length} Instagram posts from ${source.name}`);
-  return await processItems(source, posts);
+  return await processItems(source, posts.slice(0, limit));
 }
 
-async function fetchTelegramArticles(source: { id: number; name: string; url: string }): Promise<number> {
+async function fetchTelegramArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
+  const limit = source.maxArticlesPerFetch || 10;
   console.log(`[Worker] Fetching Telegram: ${source.url} for source: ${source.name}`);
   const posts = await fetchTelegramFeed(source.url);
   console.log(`[Worker] Got ${posts.length} Telegram posts from ${source.name}`);
-  return await processItems(source, posts);
+  return await processItems(source, posts.slice(0, limit));
 }
 
-async function fetchGoogleNewsArticles(source: { id: number; name: string; url: string }): Promise<number> {
+async function fetchGoogleNewsArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
+  const limit = source.maxArticlesPerFetch || 10;
   const keyword = source.url.trim();
   const encodedKeyword = encodeURIComponent(keyword);
   const rssUrl = `https://news.google.com/rss/search?q=${encodedKeyword}&hl=en&gl=US&ceid=US:en`;
@@ -266,7 +274,7 @@ async function fetchGoogleNewsArticles(source: { id: number; name: string; url: 
 
   try {
     const feed = await parser.parseURL(rssUrl);
-    return await processItems(source, feed.items.slice(0, 20).map(item => ({
+    return await processItems(source, feed.items.slice(0, limit).map(item => ({
       title: stripHtml(item.title || "Untitled"),
       url: item.link || "",
       content: stripHtml(item.contentSnippet || item.content || item.summary || item.title || ""),

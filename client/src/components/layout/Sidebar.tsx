@@ -14,7 +14,7 @@ export function Sidebar() {
     { name: t("nav.newsFeed"), href: '/feed', icon: Newspaper },
     { name: t("nav.analytics"), href: '/analytics', icon: BarChart3 },
     { name: t("nav.dashboard"), href: '/', icon: LayoutDashboard },
-    { name: t("nav.admin"), href: '/admin', icon: Settings },
+    { name: t("nav.addSource"), href: '/admin', icon: Settings },
   ];
 
   return (

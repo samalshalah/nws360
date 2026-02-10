@@ -57,6 +57,9 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - **Telegram**: Scrapes public channel preview pages via t.me/s/channel
 
 ## Recent Changes
+- 2026-02-10: Redesigned Admin page to rss.app-style interface with source type grid, topic categories, search bar, and inline form with sliders
+- 2026-02-10: Added maxArticlesPerFetch setting per source (1-50 posts per fetch)
+- 2026-02-10: Renamed sidebar "Admin" to "Add Source"
 - 2026-02-10: Added Google News keyword-based source type (fetches news via Google News RSS search)
 - 2026-02-10: Added website search/discovery feature in Add Source dialog (searches for news websites and detects RSS feeds)
 - 2026-02-10: Added article images pulled from sources (RSS media:content, enclosures, YouTube thumbnails, Telegram photos, website images)
