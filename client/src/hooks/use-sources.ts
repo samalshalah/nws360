@@ -70,6 +70,50 @@ export function useUpdateSource() {
   });
 }
 
+export function useFetchSource() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/sources/${id}/fetch`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to fetch feed");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: [api.sources.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/analytics/stats"] });
+      toast({ title: "Feed fetched", description: `${data.newArticles} new article(s) found` });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Error", description: error.message });
+    },
+  });
+}
+
+export function useFetchAllSources() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/fetch-all", { method: "POST" });
+      if (!res.ok) throw new Error("Failed to fetch feeds");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: [api.sources.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/analytics/stats"] });
+      toast({ title: "All feeds fetched", description: `${data.totalNewArticles} new article(s) found` });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Error", description: error.message });
+    },
+  });
+}
+
 export function useDeleteSource() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

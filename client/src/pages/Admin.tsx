@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSources, useCreateSource, useDeleteSource } from "@/hooks/use-sources";
+import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources } from "@/hooks/use-sources";
 import { useKeywords, useCreateKeyword, useDeleteKeyword } from "@/hooks/use-keywords";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Globe, Rss, Loader2 } from "lucide-react";
+import { Plus, Trash2, Globe, Rss, Loader2, RefreshCw } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 export default function Admin() {
@@ -43,6 +43,8 @@ function SourcesManager() {
   const { data: sources, isLoading } = useSources();
   const { mutate: createSource, isPending: isCreating } = useCreateSource();
   const { mutate: deleteSource, isPending: isDeleting } = useDeleteSource();
+  const { mutate: fetchSource, isPending: isFetchingOne, variables: fetchingSourceId } = useFetchSource();
+  const { mutate: fetchAll, isPending: isFetchingAll } = useFetchAllSources();
   const [isOpen, setIsOpen] = useState(false);
   
   const [formData, setFormData] = useState({
@@ -69,12 +71,23 @@ function SourcesManager() {
           <CardTitle>News Sources</CardTitle>
           <CardDescription>Configure where NWS360 fetches articles from.</CardDescription>
         </div>
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger asChild>
-            <Button className="gap-2 shadow-lg shadow-primary/20">
-              <Plus className="w-4 h-4" /> Add Source
-            </Button>
-          </DialogTrigger>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button 
+            variant="outline" 
+            className="gap-2" 
+            onClick={() => fetchAll()} 
+            disabled={isFetchingAll}
+            data-testid="button-fetch-all"
+          >
+            <RefreshCw className={`w-4 h-4 ${isFetchingAll ? "animate-spin" : ""}`} />
+            {isFetchingAll ? "Fetching..." : "Fetch All"}
+          </Button>
+          <Dialog open={isOpen} onOpenChange={setIsOpen}>
+            <DialogTrigger asChild>
+              <Button className="gap-2 shadow-lg shadow-primary/20" data-testid="button-add-source">
+                <Plus className="w-4 h-4" /> Add Source
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Add New Source</DialogTitle>
@@ -133,7 +146,8 @@ function SourcesManager() {
               </Button>
             </form>
           </DialogContent>
-        </Dialog>
+          </Dialog>
+        </div>
       </CardHeader>
       <CardContent>
         <Table>
@@ -167,15 +181,27 @@ function SourcesManager() {
                     : "Never"}
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                    onClick={() => deleteSource(source.id)}
-                    disabled={isDeleting}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  <div className="flex items-center justify-end gap-1">
+                    <Button 
+                      variant="ghost" 
+                      size="icon"
+                      onClick={() => fetchSource(source.id)}
+                      disabled={isFetchingOne && fetchingSourceId === source.id}
+                      data-testid={`button-fetch-source-${source.id}`}
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isFetchingOne && fetchingSourceId === source.id ? "animate-spin" : ""}`} />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="text-destructive"
+                      onClick={() => deleteSource(source.id)}
+                      disabled={isDeleting}
+                      data-testid={`button-delete-source-${source.id}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
