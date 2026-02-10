@@ -77,6 +77,7 @@ export default {
     sourceTypes: {
       rss: "RSS",
       website: "Site web",
+      google_news: "Google Actualités",
       twitter: "X / Twitter",
       youtube: "YouTube",
       facebook: "Facebook",
@@ -120,6 +121,13 @@ export default {
     facebook: "Facebook",
     instagram: "Instagram",
     telegram: "Telegram",
+    googleNews: "Google Actualités",
+    searchWebsites: "Rechercher des sites web",
+    searchWebsitesPlaceholder: "Rechercher des sites d'actualités...",
+    searchingWebsites: "Recherche...",
+    orManualEntry: "ou entrer manuellement",
+    googleNewsNamePlaceholder: "ex. Actualités en technologie IA",
+    googleNewsHint: "Entrez des mots-clés à suivre. Google Actualités trouvera les articles pertinents de plusieurs sources.",
     urlLabels: {
       rss: "URL du flux RSS",
       website: "URL du site web",
@@ -128,6 +136,7 @@ export default {
       facebook: "URL ou nom de page Facebook",
       instagram: "Nom d'utilisateur ou URL Instagram",
       telegram: "URL ou nom d'utilisateur de chaîne Telegram",
+      google_news: "Mots-clés de recherche",
     },
     urlPlaceholders: {
       rss: "https://example.com/feed.xml",
@@ -137,6 +146,7 @@ export default {
       facebook: "pagename ou https://facebook.com/pagename",
       instagram: "@username ou https://instagram.com/username",
       telegram: "@channel ou https://t.me/channel",
+      google_news: "ex. intelligence artificielle, changement climatique",
     },
     trackedKeywords: "Mots-clés suivis",
     keywordsDescription: "Ajoutez des mots-clés pour taguer et analyser automatiquement le contenu.",

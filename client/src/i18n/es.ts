@@ -77,6 +77,7 @@ export default {
     sourceTypes: {
       rss: "RSS",
       website: "Sitio web",
+      google_news: "Google Noticias",
       twitter: "X / Twitter",
       youtube: "YouTube",
       facebook: "Facebook",
@@ -120,6 +121,13 @@ export default {
     facebook: "Facebook",
     instagram: "Instagram",
     telegram: "Telegram",
+    googleNews: "Google Noticias",
+    searchWebsites: "Buscar sitios web",
+    searchWebsitesPlaceholder: "Buscar sitios de noticias...",
+    searchingWebsites: "Buscando...",
+    orManualEntry: "o ingresar manualmente",
+    googleNewsNamePlaceholder: "ej. Noticias de Tecnología IA",
+    googleNewsHint: "Ingresa palabras clave para rastrear. Google Noticias encontrará artículos relevantes de múltiples fuentes.",
     urlLabels: {
       rss: "URL del feed RSS",
       website: "URL del sitio web",
@@ -128,6 +136,7 @@ export default {
       facebook: "URL o nombre de página de Facebook",
       instagram: "Usuario o URL de Instagram",
       telegram: "URL o nombre de usuario de canal de Telegram",
+      google_news: "Palabras clave de búsqueda",
     },
     urlPlaceholders: {
       rss: "https://example.com/feed.xml",
@@ -137,6 +146,7 @@ export default {
       facebook: "pagina o https://facebook.com/pagina",
       instagram: "@usuario o https://instagram.com/usuario",
       telegram: "@canal o https://t.me/canal",
+      google_news: "ej. inteligencia artificial, cambio climático",
     },
     trackedKeywords: "Palabras clave rastreadas",
     keywordsDescription: "Agrega palabras clave para etiquetar y analizar contenido automáticamente.",

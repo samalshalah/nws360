@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources } from "@/hooks/use-sources";
 import { useKeywords, useCreateKeyword, useDeleteKeyword } from "@/hooks/use-keywords";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Globe, Rss, Loader2, RefreshCw, Twitter, Youtube, Facebook, Instagram, Send } from "lucide-react";
+import { Plus, Trash2, Globe, Rss, Loader2, RefreshCw, Twitter, Youtube, Facebook, Instagram, Send, Search, Newspaper, Check } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
 
@@ -42,6 +42,13 @@ export default function Admin() {
   );
 }
 
+interface WebsiteSearchResult {
+  name: string;
+  url: string;
+  feedUrl: string | null;
+  hasFeed: boolean;
+}
+
 function SourcesManager() {
   const { t } = useTranslation();
   const { data: sources, isLoading } = useSources();
@@ -54,17 +61,56 @@ function SourcesManager() {
   const [formData, setFormData] = useState({
     name: "",
     url: "",
-    type: "rss" as string,
+    type: "website" as string,
     intervalMinutes: 15,
     retentionDays: 30
   });
+
+  const [websiteSearch, setWebsiteSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<WebsiteSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+
+  const searchWebsites = useCallback(async (query: string) => {
+    if (query.length < 2) {
+      setSearchResults([]);
+      setShowSearchResults(false);
+      return;
+    }
+    setIsSearching(true);
+    setShowSearchResults(true);
+    try {
+      const res = await fetch(`/api/search-websites?q=${encodeURIComponent(query)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(data.results || []);
+      }
+    } catch {
+      setSearchResults([]);
+    }
+    setIsSearching(false);
+  }, []);
+
+  const selectSearchResult = (result: WebsiteSearchResult) => {
+    setFormData(prev => ({
+      ...prev,
+      name: result.name,
+      url: result.feedUrl || result.url,
+      type: result.hasFeed ? "rss" : "website",
+    }));
+    setShowSearchResults(false);
+    setWebsiteSearch("");
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     createSource(formData, {
       onSuccess: () => {
         setIsOpen(false);
-        setFormData({ name: "", url: "", type: "rss" as string, intervalMinutes: 15, retentionDays: 30 });
+        setFormData({ name: "", url: "", type: "website" as string, intervalMinutes: 15, retentionDays: 30 });
+        setWebsiteSearch("");
+        setSearchResults([]);
+        setShowSearchResults(false);
       }
     });
   };
@@ -77,7 +123,10 @@ function SourcesManager() {
     facebook: t("admin.facebook"),
     instagram: t("admin.instagram"),
     telegram: t("admin.telegram"),
+    google_news: t("admin.googleNews"),
   };
+
+  const isGoogleNews = formData.type === "google_news";
 
   return (
     <Card className="border-border/50 shadow-md">
@@ -97,41 +146,100 @@ function SourcesManager() {
             <RefreshCw className={`w-4 h-4 ${isFetchingAll ? "animate-spin" : ""}`} />
             {isFetchingAll ? t("admin.fetching") : t("admin.fetchAll")}
           </Button>
-          <Dialog open={isOpen} onOpenChange={setIsOpen}>
+          <Dialog open={isOpen} onOpenChange={(open) => {
+            setIsOpen(open);
+            if (!open) {
+              setWebsiteSearch("");
+              setSearchResults([]);
+              setShowSearchResults(false);
+            }
+          }}>
             <DialogTrigger asChild>
               <Button className="gap-2 shadow-lg shadow-primary/20" data-testid="button-add-source">
                 <Plus className="w-4 h-4" /> {t("admin.addSource")}
               </Button>
             </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>{t("admin.addNewSource")}</DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">{t("admin.sourceName")}</Label>
-                <Input 
-                  id="name" 
-                  value={formData.name}
-                  onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder={t("admin.sourceNamePlaceholder")}
-                  required
-                  data-testid="input-source-name"
+
+            <div className="space-y-3 pt-2">
+              <Label>{t("admin.searchWebsites")}</Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  value={websiteSearch}
+                  onChange={e => setWebsiteSearch(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      searchWebsites(websiteSearch);
+                    }
+                  }}
+                  placeholder={t("admin.searchWebsitesPlaceholder")}
+                  className="pl-10"
+                  data-testid="input-search-websites"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="url">
-                  {t(`admin.urlLabels.${formData.type}` as any)}
-                </Label>
-                <Input 
-                  id="url" 
-                  value={formData.url}
-                  onChange={e => setFormData(prev => ({ ...prev, url: e.target.value }))}
-                  placeholder={t(`admin.urlPlaceholders.${formData.type}` as any)}
-                  required 
-                  data-testid="input-source-url"
-                />
-              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => searchWebsites(websiteSearch)}
+                disabled={isSearching || websiteSearch.length < 2}
+                data-testid="button-search-websites"
+              >
+                {isSearching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                {t("common.search")}
+              </Button>
+
+              {showSearchResults && (
+                <div className="border border-border rounded-md max-h-48 overflow-y-auto">
+                  {isSearching ? (
+                    <div className="flex items-center justify-center p-4 text-sm text-muted-foreground gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      {t("admin.searchingWebsites")}
+                    </div>
+                  ) : searchResults.length === 0 ? (
+                    <div className="p-4 text-sm text-muted-foreground text-center">
+                      {t("common.noResults")}
+                    </div>
+                  ) : (
+                    searchResults.map((result, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => selectSearchResult(result)}
+                        className="w-full flex items-center gap-3 px-3 py-2 text-left text-sm hover-elevate transition-colors border-b border-border/50 last:border-b-0"
+                        data-testid={`search-result-${idx}`}
+                      >
+                        <Globe className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{result.name}</div>
+                          <div className="text-xs text-muted-foreground truncate">{result.url}</div>
+                        </div>
+                        {result.hasFeed && (
+                          <Badge variant="secondary" className="shrink-0">
+                            <Rss className="w-3 h-3 mr-1" />
+                            RSS
+                          </Badge>
+                        )}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="relative flex items-center gap-3 py-1">
+              <div className="flex-1 border-t border-border/50" />
+              <span className="text-xs text-muted-foreground">{t("admin.orManualEntry")}</span>
+              <div className="flex-1 border-t border-border/50" />
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="type">{t("admin.type")}</Label>
                 <Select 
@@ -142,15 +250,43 @@ function SourcesManager() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="rss">{t("admin.rss")}</SelectItem>
                     <SelectItem value="website">{t("admin.website")}</SelectItem>
-                    <SelectItem value="twitter">{t("admin.twitter")}</SelectItem>
+                    <SelectItem value="rss">{t("admin.rss")}</SelectItem>
+                    <SelectItem value="google_news">{t("admin.googleNews")}</SelectItem>
                     <SelectItem value="youtube">{t("admin.youtube")}</SelectItem>
+                    <SelectItem value="twitter">{t("admin.twitter")}</SelectItem>
                     <SelectItem value="facebook">{t("admin.facebook")}</SelectItem>
                     <SelectItem value="instagram">{t("admin.instagram")}</SelectItem>
                     <SelectItem value="telegram">{t("admin.telegram")}</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="name">{t("admin.sourceName")}</Label>
+                <Input 
+                  id="name" 
+                  value={formData.name}
+                  onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder={isGoogleNews ? t("admin.googleNewsNamePlaceholder") : t("admin.sourceNamePlaceholder")}
+                  required
+                  data-testid="input-source-name"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="url">
+                  {isGoogleNews ? t("admin.urlLabels.google_news") : t(`admin.urlLabels.${formData.type}` as any)}
+                </Label>
+                <Input 
+                  id="url" 
+                  value={formData.url}
+                  onChange={e => setFormData(prev => ({ ...prev, url: e.target.value }))}
+                  placeholder={isGoogleNews ? t("admin.urlPlaceholders.google_news") : t(`admin.urlPlaceholders.${formData.type}` as any)}
+                  required 
+                  data-testid="input-source-url"
+                />
+                {isGoogleNews && (
+                  <p className="text-xs text-muted-foreground">{t("admin.googleNewsHint")}</p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -212,6 +348,7 @@ function SourcesManager() {
                     {source.type === 'facebook' && <Facebook className="w-3.5 h-3.5" />}
                     {source.type === 'instagram' && <Instagram className="w-3.5 h-3.5" />}
                     {source.type === 'telegram' && <Send className="w-3.5 h-3.5" />}
+                    {source.type === 'google_news' && <Newspaper className="w-3.5 h-3.5" />}
                     <span className="uppercase">{sourceTypes[source.type] || source.type}</span>
                   </div>
                 </TableCell>

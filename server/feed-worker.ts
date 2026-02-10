@@ -131,6 +131,10 @@ function normalizeUrl(url: string): string {
   return normalized;
 }
 
+export async function discoverRssFeedPublic(url: string): Promise<string | null> {
+  return discoverRssFeed(url);
+}
+
 async function discoverRssFeed(url: string): Promise<string | null> {
   const normalized = normalizeUrl(url);
   
@@ -254,6 +258,27 @@ async function fetchTelegramArticles(source: { id: number; name: string; url: st
   return await processItems(source, posts);
 }
 
+async function fetchGoogleNewsArticles(source: { id: number; name: string; url: string }): Promise<number> {
+  const keyword = source.url.trim();
+  const encodedKeyword = encodeURIComponent(keyword);
+  const rssUrl = `https://news.google.com/rss/search?q=${encodedKeyword}&hl=en&gl=US&ceid=US:en`;
+  console.log(`[Worker] Fetching Google News for keyword "${keyword}": ${rssUrl}`);
+
+  try {
+    const feed = await parser.parseURL(rssUrl);
+    return await processItems(source, feed.items.slice(0, 20).map(item => ({
+      title: stripHtml(item.title || "Untitled"),
+      url: item.link || "",
+      content: stripHtml(item.contentSnippet || item.content || item.summary || item.title || ""),
+      publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+      image: extractImageFromRssItem(item),
+    })));
+  } catch (e) {
+    console.error(`[Worker] Google News fetch failed for "${keyword}":`, e);
+    return 0;
+  }
+}
+
 async function processItems(
   source: { id: number; name: string },
   items: { title: string; url: string; content: string; publishedAt: Date; image?: string }[]
@@ -326,6 +351,9 @@ export async function fetchSourceFeed(sourceId: number): Promise<number> {
       break;
     case "telegram":
       newArticles = await fetchTelegramArticles(source);
+      break;
+    case "google_news":
+      newArticles = await fetchGoogleNewsArticles(source);
       break;
     default:
       newArticles = await fetchRssArticles(source);

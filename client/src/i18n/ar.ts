@@ -77,6 +77,7 @@ export default {
     sourceTypes: {
       rss: "RSS",
       website: "موقع إلكتروني",
+      google_news: "أخبار جوجل",
       twitter: "إكس / تويتر",
       youtube: "يوتيوب",
       facebook: "فيسبوك",
@@ -120,6 +121,13 @@ export default {
     facebook: "فيسبوك",
     instagram: "إنستغرام",
     telegram: "تيليغرام",
+    googleNews: "أخبار جوجل",
+    searchWebsites: "البحث عن المواقع الإلكترونية",
+    searchWebsitesPlaceholder: "البحث عن مواقع الأخبار...",
+    searchingWebsites: "جاري البحث...",
+    orManualEntry: "أو أدخل يدويًا",
+    googleNewsNamePlaceholder: "مثال: أخبار تكنولوجيا الذكاء الاصطناعي",
+    googleNewsHint: "أدخل الكلمات المفتاحية للتتبع. ستجد أخبار جوجل المقالات ذات الصلة من مصادر متعددة.",
     urlLabels: {
       rss: "رابط خلاصة RSS",
       website: "رابط الموقع الإلكتروني",
@@ -128,6 +136,7 @@ export default {
       facebook: "رابط صفحة فيسبوك أو الاسم",
       instagram: "اسم مستخدم أو رابط إنستغرام",
       telegram: "رابط قناة تيليغرام أو اسم المستخدم",
+      google_news: "كلمات البحث",
     },
     urlPlaceholders: {
       rss: "https://example.com/feed.xml",
@@ -137,6 +146,7 @@ export default {
       facebook: "pagename أو https://facebook.com/pagename",
       instagram: "@username أو https://instagram.com/username",
       telegram: "@channel أو https://t.me/channel",
+      google_news: "مثال: الذكاء الاصطناعي، تغير المناخ",
     },
     trackedKeywords: "الكلمات المفتاحية المتتبّعة",
     keywordsDescription: "أضف كلمات مفتاحية لتصنيف المحتوى وتحليله تلقائياً.",

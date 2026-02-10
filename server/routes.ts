@@ -65,6 +65,64 @@ export async function registerRoutes(
     res.sendStatus(204);
   });
 
+  // === WEBSITE SEARCH / DISCOVERY ===
+  app.get("/api/search-websites", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const query = (req.query.q as string || "").trim();
+    if (!query || query.length < 2) {
+      return res.json({ results: [] });
+    }
+
+    const results: { name: string; url: string; feedUrl: string | null; hasFeed: boolean }[] = [];
+
+    try {
+      const googleNewsRss = `https://news.google.com/rss/search?q=${encodeURIComponent(query + " site news")}&hl=en&gl=US&ceid=US:en`;
+      const feed = await new (await import("rss-parser")).default({
+        timeout: 10000,
+        headers: { "User-Agent": "NWS360/1.0 (RSS Reader)" },
+      }).parseURL(googleNewsRss);
+
+      const seenDomains = new Set<string>();
+
+      for (const item of feed.items.slice(0, 15)) {
+        if (!item.link) continue;
+        try {
+          const parsed = new URL(item.link);
+          const domain = parsed.hostname.replace(/^www\./, "");
+          if (seenDomains.has(domain)) continue;
+          if (domain.includes("google.com")) continue;
+          seenDomains.add(domain);
+
+          const siteUrl = `${parsed.protocol}//${parsed.hostname}`;
+          const siteName = domain.split(".")[0].charAt(0).toUpperCase() + domain.split(".")[0].slice(1);
+
+          results.push({
+            name: siteName,
+            url: siteUrl,
+            feedUrl: null,
+            hasFeed: false,
+          });
+        } catch {}
+      }
+
+      const discoveryPromises = results.slice(0, 5).map(async (result) => {
+        try {
+          const { discoverRssFeedPublic } = await import("./feed-worker");
+          const feedUrl = await discoverRssFeedPublic(result.url);
+          if (feedUrl) {
+            result.feedUrl = feedUrl;
+            result.hasFeed = true;
+          }
+        } catch {}
+      });
+      await Promise.all(discoveryPromises);
+    } catch (e) {
+      console.error("[Search] Website search failed:", e);
+    }
+
+    res.json({ results: results.slice(0, 10) });
+  });
+
   // === MANUAL FETCH ===
   app.post("/api/sources/:id/fetch", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);

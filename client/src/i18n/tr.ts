@@ -77,6 +77,7 @@ export default {
     sourceTypes: {
       rss: "RSS",
       website: "Web Sitesi",
+      google_news: "Google Haberler",
       twitter: "X / Twitter",
       youtube: "YouTube",
       facebook: "Facebook",
@@ -120,6 +121,13 @@ export default {
     facebook: "Facebook",
     instagram: "Instagram",
     telegram: "Telegram",
+    googleNews: "Google Haberler",
+    searchWebsites: "Web sitelerini ara",
+    searchWebsitesPlaceholder: "Haber web sitelerini ara...",
+    searchingWebsites: "Aranıyor...",
+    orManualEntry: "veya el ile gir",
+    googleNewsNamePlaceholder: "ör. Yapay Zeka Teknoloji Haberleri",
+    googleNewsHint: "İzlemek için anahtar kelimeler girin. Google Haberler, birden fazla kaynaktan ilgili makaleleri bulacaktır.",
     urlLabels: {
       rss: "RSS Besleme URL'si",
       website: "Web Sitesi URL'si",
@@ -128,6 +136,7 @@ export default {
       facebook: "Facebook Sayfa URL'si veya Adı",
       instagram: "Instagram Kullanıcı Adı veya URL",
       telegram: "Telegram Kanal URL'si veya Kullanıcı Adı",
+      google_news: "Arama Anahtar Kelimeleri",
     },
     urlPlaceholders: {
       rss: "https://example.com/feed.xml",
@@ -137,6 +146,7 @@ export default {
       facebook: "sayfa veya https://facebook.com/sayfa",
       instagram: "@kullanici veya https://instagram.com/kullanici",
       telegram: "@kanal veya https://t.me/kanal",
+      google_news: "ör. yapay zeka, iklim değişikliği",
     },
     trackedKeywords: "İzlenen Anahtar Kelimeler",
     keywordsDescription: "İçeriği otomatik olarak etiketlemek ve analiz etmek için anahtar kelimeler ekleyin.",

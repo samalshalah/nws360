@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "react-i18next";
 
 const CATEGORIES = ["political", "health", "tech", "sports", "business", "entertainment", "science", "urgent", "general"] as const;
-const SOURCE_TYPES = ["rss", "website", "twitter", "youtube", "facebook", "instagram", "telegram"] as const;
+const SOURCE_TYPES = ["rss", "website", "google_news", "twitter", "youtube", "facebook", "instagram", "telegram"] as const;
 
 export default function Feed() {
   const { t, i18n } = useTranslation();

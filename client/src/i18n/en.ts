@@ -77,6 +77,7 @@ export default {
     sourceTypes: {
       rss: "RSS",
       website: "Website",
+      google_news: "Google News",
       twitter: "X / Twitter",
       youtube: "YouTube",
       facebook: "Facebook",
@@ -120,6 +121,13 @@ export default {
     facebook: "Facebook",
     instagram: "Instagram",
     telegram: "Telegram",
+    googleNews: "Google News",
+    searchWebsites: "Search for websites",
+    searchWebsitesPlaceholder: "Search for news websites...",
+    searchingWebsites: "Searching...",
+    orManualEntry: "or enter manually",
+    googleNewsNamePlaceholder: "e.g. AI Technology News",
+    googleNewsHint: "Enter keywords to track. Google News will find relevant articles from multiple sources.",
     urlLabels: {
       rss: "RSS Feed URL",
       website: "Website URL",
@@ -128,6 +136,7 @@ export default {
       facebook: "Facebook Page URL or Name",
       instagram: "Instagram Username or URL",
       telegram: "Telegram Channel URL or Username",
+      google_news: "Search Keywords",
     },
     urlPlaceholders: {
       rss: "https://example.com/feed.xml",
@@ -137,6 +146,7 @@ export default {
       facebook: "pagename or https://facebook.com/pagename",
       instagram: "@username or https://instagram.com/username",
       telegram: "@channel or https://t.me/channel",
+      google_news: "e.g. artificial intelligence, climate change",
     },
     trackedKeywords: "Tracked Keywords",
     keywordsDescription: "Add keywords to automatically tag and analyze content.",
