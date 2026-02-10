@@ -12,6 +12,7 @@ const parser = new RssParser({
   customFields: {
     item: [
       ["media:content", "mediaContent"],
+      ["media:thumbnail", "mediaThumbnail"],
       ["content:encoded", "contentEncoded"],
     ],
   },
@@ -79,6 +80,47 @@ async function analyzeWithAI(title: string, content: string): Promise<{
       category: "general",
     };
   }
+}
+
+function extractImageFromRssItem(item: any): string | undefined {
+  if (item.mediaContent) {
+    if (Array.isArray(item.mediaContent)) {
+      for (const mc of item.mediaContent) {
+        const url = mc.$ ? mc.$.url : mc.url;
+        if (url) return url;
+      }
+    } else {
+      const url = item.mediaContent.$ ? item.mediaContent.$.url : item.mediaContent.url;
+      if (url) return url;
+    }
+  }
+
+  if (item.mediaThumbnail) {
+    if (Array.isArray(item.mediaThumbnail)) {
+      for (const mt of item.mediaThumbnail) {
+        const url = mt.$ ? mt.$.url : mt.url;
+        if (url) return url;
+      }
+    } else {
+      const url = item.mediaThumbnail.$ ? item.mediaThumbnail.$.url : item.mediaThumbnail.url;
+      if (url) return url;
+    }
+  }
+
+  if (item.enclosure) {
+    const enc = item.enclosure;
+    if (enc.url && (!enc.type || enc.type.startsWith("image"))) {
+      return enc.url;
+    }
+  }
+
+  const encoded = item.contentEncoded || item.content || "";
+  if (typeof encoded === "string") {
+    const imgMatch = encoded.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (imgMatch && imgMatch[1]) return imgMatch[1];
+  }
+
+  return undefined;
 }
 
 function normalizeUrl(url: string): string {
@@ -151,6 +193,7 @@ async function fetchRssArticles(source: { id: number; name: string; url: string 
     url: item.link || "",
     content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || ""),
     publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+    image: extractImageFromRssItem(item),
   })));
 }
 
@@ -167,6 +210,7 @@ async function fetchWebsiteArticles(source: { id: number; name: string; url: str
       url: item.link || "",
       content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || ""),
       publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+      image: extractImageFromRssItem(item),
     })));
   }
 
@@ -212,7 +256,7 @@ async function fetchTelegramArticles(source: { id: number; name: string; url: st
 
 async function processItems(
   source: { id: number; name: string },
-  items: { title: string; url: string; content: string; publishedAt: Date }[]
+  items: { title: string; url: string; content: string; publishedAt: Date; image?: string }[]
 ): Promise<number> {
   let newArticles = 0;
 
@@ -241,6 +285,7 @@ async function processItems(
       sentimentScore: analysis.sentimentScore,
       keywords: analysis.keywords,
       category: analysis.category,
+      imageUrl: item.image || null,
     };
 
     try {

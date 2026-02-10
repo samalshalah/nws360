@@ -102,12 +102,22 @@ export async function scrapeWebsite(url: string): Promise<ScrapedArticle[]> {
         }
       }
 
+      let image: string | undefined;
+      const imgEl = $el.find("img[src]").first();
+      if (imgEl.length) {
+        const src = imgEl.attr("src") || "";
+        if (src && !src.includes("data:") && !src.includes("pixel") && !src.includes("spacer")) {
+          image = resolveUrl(baseUrl, src);
+        }
+      }
+
       seenUrls.add(fullUrl);
       articles.push({
         title,
         url: fullUrl,
         content: content || title,
         publishedAt,
+        image,
       });
     });
 
@@ -217,6 +227,7 @@ export async function fetchYouTubeFeed(input: string): Promise<ScrapedArticle[]>
       const videoId = $entry.find("yt\\:videoId, videoId").text().trim();
       const published = $entry.find("published").text().trim();
       const description = $entry.find("media\\:description, description").text().trim();
+      const thumbnail = $entry.find("media\\:thumbnail, thumbnail").attr("url");
 
       if (!title) return;
 
@@ -225,6 +236,7 @@ export async function fetchYouTubeFeed(input: string): Promise<ScrapedArticle[]>
         url: videoId ? `https://www.youtube.com/watch?v=${videoId}` : "",
         content: description || title,
         publishedAt: published ? new Date(published) : new Date(),
+        image: thumbnail || (videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : undefined),
       });
     });
 
@@ -277,11 +289,20 @@ export async function fetchFacebookFeed(input: string): Promise<ScrapedArticle[]
 
         if (!title && !description) return;
 
+        let image: string | undefined;
+        const enclosure = $item.find("enclosure[type^='image']").first();
+        if (enclosure.length) image = enclosure.attr("url");
+        if (!image) {
+          const imgMatch = description.match(/<img[^>]+src=["']([^"']+)["']/i);
+          if (imgMatch) image = imgMatch[1];
+        }
+
         articles.push({
           title: title || description.substring(0, 150),
           url: link || `https://www.facebook.com/${pageName}`,
           content: description || title,
           publishedAt: pubDate ? new Date(pubDate) : new Date(),
+          image,
         });
       });
 
@@ -327,11 +348,19 @@ export async function fetchFacebookFeed(input: string): Promise<ScrapedArticle[]
         ? (link.startsWith("http") ? link : `https://mbasic.facebook.com${link}`)
         : `https://www.facebook.com/${pageName}`;
 
+      let image: string | undefined;
+      const imgEl = $post.find("img[src]").first();
+      if (imgEl.length) {
+        const src = imgEl.attr("src") || "";
+        if (src.startsWith("http") && !src.includes("emoji")) image = src;
+      }
+
       articles.push({
         title: text.substring(0, 200),
         url: postUrl.replace("mbasic.facebook.com", "www.facebook.com"),
         content: text,
         publishedAt: new Date(),
+        image,
       });
     });
 
@@ -384,11 +413,20 @@ export async function fetchInstagramFeed(input: string): Promise<ScrapedArticle[
 
         if (!title && !description) return;
 
+        let image: string | undefined;
+        const enclosure = $item.find("enclosure[type^='image']").first();
+        if (enclosure.length) image = enclosure.attr("url");
+        if (!image) {
+          const imgMatch = description.match(/<img[^>]+src=["']([^"']+)["']/i);
+          if (imgMatch) image = imgMatch[1];
+        }
+
         articles.push({
           title: title || description.substring(0, 150),
           url: link || `https://www.instagram.com/${username}`,
           content: description || title,
           publishedAt: pubDate ? new Date(pubDate) : new Date(),
+          image,
         });
       });
 
@@ -505,11 +543,16 @@ export async function fetchTwitterFeed(username: string): Promise<ScrapedArticle
 
         const tweetUrl = link.replace(instance, "https://x.com");
 
+        let image: string | undefined;
+        const imgMatch = description.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (imgMatch) image = imgMatch[1];
+
         articles.push({
           title: title || description.substring(0, 100),
           url: tweetUrl,
           content: description || title,
           publishedAt: pubDate ? new Date(pubDate) : new Date(),
+          image,
         });
       });
 
@@ -559,11 +602,19 @@ async function scrapeTwitterProfile(handle: string): Promise<ScrapedArticle[]> {
 
       if (!text) return;
 
+      let image: string | undefined;
+      const imgEl = $tweet.find("img[src]").first();
+      if (imgEl.length) {
+        const src = imgEl.attr("src") || "";
+        if (src.startsWith("http") && !src.includes("emoji") && !src.includes("profile")) image = src;
+      }
+
       articles.push({
         title: text.substring(0, 200),
         url: tweetId ? `https://x.com/${handle}/status/${tweetId}` : `https://x.com/${handle}`,
         content: text,
         publishedAt: datetime ? new Date(datetime) : new Date(),
+        image,
       });
     });
 
@@ -610,11 +661,24 @@ export async function fetchTelegramFeed(input: string): Promise<ScrapedArticle[]
 
       if (!text || text.length < 10) return;
 
+      let image: string | undefined;
+      const photoEl = $msg.find(".tgme_widget_message_photo_wrap");
+      if (photoEl.length) {
+        const style = photoEl.attr("style") || "";
+        const bgMatch = style.match(/background-image:\s*url\('([^']+)'\)/);
+        if (bgMatch) image = bgMatch[1];
+      }
+      if (!image) {
+        const imgEl = $msg.find("img[src]").first();
+        if (imgEl.length) image = imgEl.attr("src");
+      }
+
       articles.push({
         title: text.substring(0, 200),
         url: msgUrl,
         content: text,
         publishedAt: datetime ? new Date(datetime) : new Date(),
+        image,
       });
     });
 

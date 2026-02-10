@@ -144,6 +144,7 @@ export class DatabaseStorage implements IStorage {
       sentimentLabel: articles.sentimentLabel,
       keywords: articles.keywords,
       category: articles.category,
+      imageUrl: articles.imageUrl,
       createdAt: articles.createdAt,
       source: sources
     })
