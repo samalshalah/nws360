@@ -33,6 +33,9 @@ export interface IStorage {
   createKeyword(keyword: InsertKeyword): Promise<Keyword>;
   deleteKeyword(id: number): Promise<void>;
   
+  // Sources - update last fetched
+  updateSourceLastFetched(id: number): Promise<void>;
+
   // Analytics
   getStats(): Promise<{
     totalArticles: number;
@@ -80,7 +83,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteSource(id: number): Promise<void> {
+    await db.delete(articles).where(eq(articles.sourceId, id));
     await db.delete(sources).where(eq(sources.id, id));
+  }
+
+  async updateSourceLastFetched(id: number): Promise<void> {
+    await db.update(sources).set({ lastFetchedAt: new Date() }).where(eq(sources.id, id));
   }
 
   // Articles
@@ -168,22 +176,40 @@ export class DatabaseStorage implements IStorage {
   async getStats() {
     const [totalArticles] = await db.select({ count: sql<number>`count(*)` }).from(articles);
     const [sourcesCount] = await db.select({ count: sql<number>`count(*)` }).from(sources);
-    
-    // Simple mock aggregation for sentiment (drizzle aggregation can be verbose)
-    const sentimentDistribution = [
-      { name: 'Positive', value: 35 },
-      { name: 'Neutral', value: 45 },
-      { name: 'Negative', value: 20 },
-    ];
 
-    // Mock trending keywords (in real app, would aggregate array column)
-    const trendingKeywords = [
-      { text: 'Technology', value: 80 },
-      { text: 'AI', value: 65 },
-      { text: 'Market', value: 45 },
-      { text: 'Crypto', value: 30 },
-      { text: 'Climate', value: 25 },
-    ];
+    // Real sentiment distribution from DB
+    const sentimentRows = await db.execute(sql`
+      SELECT 
+        COALESCE(sentiment_label, 'neutral') as label,
+        COUNT(*)::int as count
+      FROM articles
+      GROUP BY sentiment_label
+    `);
+    const sentimentDistribution = (sentimentRows.rows as any[]).map((r: any) => ({
+      name: String(r.label).charAt(0).toUpperCase() + String(r.label).slice(1),
+      value: Number(r.count),
+    }));
+    if (sentimentDistribution.length === 0) {
+      sentimentDistribution.push(
+        { name: 'Positive', value: 0 },
+        { name: 'Neutral', value: 0 },
+        { name: 'Negative', value: 0 },
+      );
+    }
+
+    // Real trending keywords from DB (unnest the keywords array column)
+    const keywordRows = await db.execute(sql`
+      SELECT kw as keyword, COUNT(*)::int as count
+      FROM articles, unnest(keywords) as kw
+      WHERE keywords IS NOT NULL
+      GROUP BY kw
+      ORDER BY count DESC
+      LIMIT 10
+    `);
+    const trendingKeywords = (keywordRows.rows as any[]).map((r: any) => ({
+      text: String(r.keyword),
+      value: Number(r.count),
+    }));
 
     return {
       totalArticles: Number(totalArticles?.count || 0),
