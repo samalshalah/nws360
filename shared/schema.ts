@@ -19,7 +19,7 @@ export const sources = pgTable("sources", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   url: text("url").notNull(),
-  type: text("type").notNull(), // 'rss' | 'website' | 'twitter'
+  type: text("type").notNull(), // 'rss' | 'website' | 'twitter' | 'youtube' | 'facebook' | 'instagram'
   active: boolean("active").default(true),
   intervalMinutes: integer("interval_minutes").default(15),
   lastFetchedAt: timestamp("last_fetched_at"),

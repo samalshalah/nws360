@@ -147,6 +147,314 @@ export async function scrapeWebsite(url: string): Promise<ScrapedArticle[]> {
   return articles.slice(0, 20);
 }
 
+export async function fetchYouTubeFeed(input: string): Promise<ScrapedArticle[]> {
+  let channelId = "";
+  let handle = "";
+  const trimmed = input.trim();
+
+  const channelIdMatch = trimmed.match(/(?:youtube\.com\/channel\/)([A-Za-z0-9_-]+)/);
+  const handleMatch = trimmed.match(/(?:youtube\.com\/@?)([A-Za-z0-9_-]+)/);
+  const directChannelId = trimmed.match(/^UC[A-Za-z0-9_-]{22}$/);
+
+  if (channelIdMatch) {
+    channelId = channelIdMatch[1];
+  } else if (directChannelId) {
+    channelId = trimmed;
+  } else if (handleMatch) {
+    handle = handleMatch[1];
+  } else {
+    handle = trimmed.replace(/^@/, "");
+  }
+
+  if (!channelId && handle) {
+    try {
+      const response = await fetch(`https://www.youtube.com/@${handle}`, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+      const html = await response.text();
+      const idMatch = html.match(/"channelId":"(UC[A-Za-z0-9_-]+)"/);
+      if (idMatch) {
+        channelId = idMatch[1];
+      } else {
+        const metaMatch = html.match(/channel_id=([A-Za-z0-9_-]+)/);
+        if (metaMatch) channelId = metaMatch[1];
+      }
+    } catch (e) {
+      console.error(`[YouTube] Failed to resolve handle @${handle}:`, e);
+    }
+  }
+
+  if (!channelId) {
+    console.log(`[YouTube] Could not resolve channel ID for: ${input}`);
+    return [];
+  }
+
+  const rssUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
+  console.log(`[YouTube] Fetching RSS: ${rssUrl}`);
+
+  try {
+    const response = await fetch(rssUrl, {
+      headers: { "User-Agent": "NWS360/1.0 (RSS Reader)" },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!response.ok) {
+      console.log(`[YouTube] RSS feed returned ${response.status}`);
+      return [];
+    }
+
+    const xml = await response.text();
+    const $ = cheerio.load(xml, { xmlMode: true });
+    const articles: ScrapedArticle[] = [];
+
+    $("entry").each((_, el) => {
+      if (articles.length >= 20) return false;
+      const $entry = $(el);
+      const title = $entry.find("title").text().trim();
+      const videoId = $entry.find("yt\\:videoId, videoId").text().trim();
+      const published = $entry.find("published").text().trim();
+      const description = $entry.find("media\\:description, description").text().trim();
+
+      if (!title) return;
+
+      articles.push({
+        title,
+        url: videoId ? `https://www.youtube.com/watch?v=${videoId}` : "",
+        content: description || title,
+        publishedAt: published ? new Date(published) : new Date(),
+      });
+    });
+
+    console.log(`[YouTube] Got ${articles.length} videos`);
+    return articles;
+  } catch (e) {
+    console.error(`[YouTube] Failed to fetch RSS:`, e);
+    return [];
+  }
+}
+
+export async function fetchFacebookFeed(input: string): Promise<ScrapedArticle[]> {
+  let pageName = input.trim();
+  const fbMatch = pageName.match(/(?:facebook\.com|fb\.com)\/(?:pages\/[^/]+\/|profile\.php\?id=)?([A-Za-z0-9._-]+)/);
+  if (fbMatch) {
+    pageName = fbMatch[1];
+  }
+  pageName = pageName.replace(/^@/, "").replace(/\/$/, "");
+
+  console.log(`[Facebook] Fetching page: ${pageName}`);
+
+  const rssBridges = [
+    `https://rsshub.app/facebook/page/${pageName}`,
+    `https://feedbridge.notifier.in/facebook/${pageName}`,
+  ];
+
+  for (const bridgeUrl of rssBridges) {
+    try {
+      console.log(`[Facebook] Trying RSS bridge: ${bridgeUrl}`);
+      const response = await fetch(bridgeUrl, {
+        headers: { "User-Agent": "NWS360/1.0 (RSS Reader)" },
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!response.ok) continue;
+
+      const xml = await response.text();
+      if (!xml.includes("<item>") && !xml.includes("<entry>")) continue;
+
+      const $ = cheerio.load(xml, { xmlMode: true });
+      const articles: ScrapedArticle[] = [];
+
+      $("item, entry").each((_, el) => {
+        if (articles.length >= 20) return false;
+        const $item = $(el);
+        const title = $item.find("title").text().trim();
+        const link = $item.find("link").text().trim() || $item.find("link").attr("href") || "";
+        const description = $item.find("description, content").text().trim();
+        const pubDate = $item.find("pubDate, published, updated").text().trim();
+
+        if (!title && !description) return;
+
+        articles.push({
+          title: title || description.substring(0, 150),
+          url: link || `https://www.facebook.com/${pageName}`,
+          content: description || title,
+          publishedAt: pubDate ? new Date(pubDate) : new Date(),
+        });
+      });
+
+      if (articles.length > 0) {
+        console.log(`[Facebook] Got ${articles.length} posts from RSS bridge`);
+        return articles;
+      }
+    } catch (e) {
+      console.log(`[Facebook] Bridge failed: ${e instanceof Error ? e.message : String(e)}`);
+      continue;
+    }
+  }
+
+  console.log(`[Facebook] RSS bridges failed, trying mbasic scraping for ${pageName}`);
+  try {
+    const response = await fetch(`https://mbasic.facebook.com/${pageName}`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if (!response.ok) {
+      console.log(`[Facebook] mbasic returned ${response.status}`);
+      return [];
+    }
+
+    const html = await response.text();
+    const $ = cheerio.load(html);
+    const articles: ScrapedArticle[] = [];
+
+    $("div[data-ft], div.bx, div.by, article, div[role='article']").each((_, el) => {
+      if (articles.length >= 20) return false;
+      const $post = $(el);
+      const text = $post.find("p, div.d2, div.dj").first().text().trim();
+      const link = $post.find("a[href*='/story.php'], a[href*='/permalink']").first().attr("href");
+
+      if (!text || text.length < 10) return;
+
+      const postUrl = link
+        ? (link.startsWith("http") ? link : `https://mbasic.facebook.com${link}`)
+        : `https://www.facebook.com/${pageName}`;
+
+      articles.push({
+        title: text.substring(0, 200),
+        url: postUrl.replace("mbasic.facebook.com", "www.facebook.com"),
+        content: text,
+        publishedAt: new Date(),
+      });
+    });
+
+    console.log(`[Facebook] Scraped ${articles.length} posts from mbasic`);
+    return articles;
+  } catch (e) {
+    console.error(`[Facebook] Scraping failed:`, e);
+    return [];
+  }
+}
+
+export async function fetchInstagramFeed(input: string): Promise<ScrapedArticle[]> {
+  let username = input.trim();
+  const igMatch = username.match(/(?:instagram\.com)\/([A-Za-z0-9._]+)/);
+  if (igMatch) {
+    username = igMatch[1];
+  }
+  username = username.replace(/^@/, "").replace(/\/$/, "");
+
+  console.log(`[Instagram] Fetching profile: ${username}`);
+
+  const rssBridges = [
+    `https://rsshub.app/instagram/user/${username}`,
+    `https://rss.app/feeds/v1.1/instagram-${username}.xml`,
+  ];
+
+  for (const bridgeUrl of rssBridges) {
+    try {
+      console.log(`[Instagram] Trying RSS bridge: ${bridgeUrl}`);
+      const response = await fetch(bridgeUrl, {
+        headers: { "User-Agent": "NWS360/1.0 (RSS Reader)" },
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!response.ok) continue;
+
+      const xml = await response.text();
+      if (!xml.includes("<item>") && !xml.includes("<entry>")) continue;
+
+      const $ = cheerio.load(xml, { xmlMode: true });
+      const articles: ScrapedArticle[] = [];
+
+      $("item, entry").each((_, el) => {
+        if (articles.length >= 20) return false;
+        const $item = $(el);
+        const title = $item.find("title").text().trim();
+        const link = $item.find("link").text().trim() || $item.find("link").attr("href") || "";
+        const description = $item.find("description, content, summary").text().trim();
+        const pubDate = $item.find("pubDate, published, updated").text().trim();
+
+        if (!title && !description) return;
+
+        articles.push({
+          title: title || description.substring(0, 150),
+          url: link || `https://www.instagram.com/${username}`,
+          content: description || title,
+          publishedAt: pubDate ? new Date(pubDate) : new Date(),
+        });
+      });
+
+      if (articles.length > 0) {
+        console.log(`[Instagram] Got ${articles.length} posts from RSS bridge`);
+        return articles;
+      }
+    } catch (e) {
+      console.log(`[Instagram] Bridge failed: ${e instanceof Error ? e.message : String(e)}`);
+      continue;
+    }
+  }
+
+  console.log(`[Instagram] Trying profile page scraping for ${username}`);
+  try {
+    const response = await fetch(`https://www.instagram.com/${username}/`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!response.ok) return [];
+
+    const html = await response.text();
+    const articles: ScrapedArticle[] = [];
+
+    const jsonMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
+    if (jsonMatch) {
+      try {
+        const jsonData = JSON.parse(jsonMatch[1]);
+        if (jsonData.description) {
+          articles.push({
+            title: `${username}'s latest post`,
+            url: `https://www.instagram.com/${username}/`,
+            content: jsonData.description,
+            publishedAt: new Date(),
+          });
+        }
+      } catch {}
+    }
+
+    const postLinks = html.match(/\/p\/([A-Za-z0-9_-]+)\//g);
+    if (postLinks) {
+      const uniqueLinks = Array.from(new Set(postLinks)).slice(0, 20);
+      for (const postPath of uniqueLinks) {
+        const postUrl = `https://www.instagram.com${postPath}`;
+        if (articles.some(a => a.url === postUrl)) continue;
+        articles.push({
+          title: `Post by @${username}`,
+          url: postUrl,
+          content: `Instagram post by @${username}`,
+          publishedAt: new Date(),
+        });
+      }
+    }
+
+    console.log(`[Instagram] Scraped ${articles.length} posts`);
+    return articles;
+  } catch (e) {
+    console.error(`[Instagram] Scraping failed:`, e);
+    return [];
+  }
+}
+
 const NITTER_INSTANCES = [
   "https://nitter.privacydev.net",
   "https://nitter.poast.org",

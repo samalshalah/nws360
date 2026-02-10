@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Globe, Rss, Loader2, RefreshCw, Twitter } from "lucide-react";
+import { Plus, Trash2, Globe, Rss, Loader2, RefreshCw, Twitter, Youtube, Facebook, Instagram } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 export default function Admin() {
@@ -50,7 +50,7 @@ function SourcesManager() {
   const [formData, setFormData] = useState({
     name: "",
     url: "",
-    type: "rss" as const,
+    type: "rss" as string,
     intervalMinutes: 15
   });
 
@@ -59,7 +59,7 @@ function SourcesManager() {
     createSource(formData, {
       onSuccess: () => {
         setIsOpen(false);
-        setFormData({ name: "", url: "", type: "rss", intervalMinutes: 15 });
+        setFormData({ name: "", url: "", type: "rss" as string, intervalMinutes: 15 });
       }
     });
   };
@@ -107,6 +107,9 @@ function SourcesManager() {
               <div className="space-y-2">
                 <Label htmlFor="url">
                   {formData.type === 'twitter' ? 'X/Twitter Username or URL' : 
+                   formData.type === 'youtube' ? 'YouTube Channel URL or Handle' :
+                   formData.type === 'facebook' ? 'Facebook Page URL or Name' :
+                   formData.type === 'instagram' ? 'Instagram Username or URL' :
                    formData.type === 'website' ? 'Website URL' : 'RSS Feed URL'}
                 </Label>
                 <Input 
@@ -115,6 +118,9 @@ function SourcesManager() {
                   onChange={e => setFormData(prev => ({ ...prev, url: e.target.value }))}
                   placeholder={
                     formData.type === 'twitter' ? '@username or https://x.com/username' :
+                    formData.type === 'youtube' ? '@channel or https://youtube.com/@channel' :
+                    formData.type === 'facebook' ? 'pagename or https://facebook.com/pagename' :
+                    formData.type === 'instagram' ? '@username or https://instagram.com/username' :
                     formData.type === 'website' ? 'https://aljazeera.net' :
                     'https://example.com/feed.xml'
                   }
@@ -136,6 +142,9 @@ function SourcesManager() {
                       <SelectItem value="rss">RSS Feed</SelectItem>
                       <SelectItem value="website">Website</SelectItem>
                       <SelectItem value="twitter">X / Twitter</SelectItem>
+                      <SelectItem value="youtube">YouTube</SelectItem>
+                      <SelectItem value="facebook">Facebook</SelectItem>
+                      <SelectItem value="instagram">Instagram</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -180,6 +189,9 @@ function SourcesManager() {
                     {source.type === 'rss' && <Rss className="w-3.5 h-3.5" />}
                     {source.type === 'website' && <Globe className="w-3.5 h-3.5" />}
                     {source.type === 'twitter' && <Twitter className="w-3.5 h-3.5" />}
+                    {source.type === 'youtube' && <Youtube className="w-3.5 h-3.5" />}
+                    {source.type === 'facebook' && <Facebook className="w-3.5 h-3.5" />}
+                    {source.type === 'instagram' && <Instagram className="w-3.5 h-3.5" />}
                     <span className="uppercase">{source.type}</span>
                   </div>
                 </TableCell>

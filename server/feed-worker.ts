@@ -1,7 +1,7 @@
 import RssParser from "rss-parser";
 import { storage } from "./storage";
 import { openai } from "./replit_integrations/image/client";
-import { scrapeWebsite, fetchTwitterFeed } from "./web-scraper";
+import { scrapeWebsite, fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed } from "./web-scraper";
 
 const parser = new RssParser({
   timeout: 15000,
@@ -176,6 +176,27 @@ async function fetchTwitterArticles(source: { id: number; name: string; url: str
   return await processItems(source, tweets);
 }
 
+async function fetchYouTubeArticles(source: { id: number; name: string; url: string }): Promise<number> {
+  console.log(`[Worker] Fetching YouTube: ${source.url} for source: ${source.name}`);
+  const videos = await fetchYouTubeFeed(source.url);
+  console.log(`[Worker] Got ${videos.length} videos from ${source.name}`);
+  return await processItems(source, videos);
+}
+
+async function fetchFacebookArticles(source: { id: number; name: string; url: string }): Promise<number> {
+  console.log(`[Worker] Fetching Facebook: ${source.url} for source: ${source.name}`);
+  const posts = await fetchFacebookFeed(source.url);
+  console.log(`[Worker] Got ${posts.length} Facebook posts from ${source.name}`);
+  return await processItems(source, posts);
+}
+
+async function fetchInstagramArticles(source: { id: number; name: string; url: string }): Promise<number> {
+  console.log(`[Worker] Fetching Instagram: ${source.url} for source: ${source.name}`);
+  const posts = await fetchInstagramFeed(source.url);
+  console.log(`[Worker] Got ${posts.length} Instagram posts from ${source.name}`);
+  return await processItems(source, posts);
+}
+
 async function processItems(
   source: { id: number; name: string },
   items: { title: string; url: string; content: string; publishedAt: Date }[]
@@ -234,6 +255,15 @@ export async function fetchSourceFeed(sourceId: number): Promise<number> {
       break;
     case "twitter":
       newArticles = await fetchTwitterArticles(source);
+      break;
+    case "youtube":
+      newArticles = await fetchYouTubeArticles(source);
+      break;
+    case "facebook":
+      newArticles = await fetchFacebookArticles(source);
+      break;
+    case "instagram":
+      newArticles = await fetchInstagramArticles(source);
       break;
     default:
       newArticles = await fetchRssArticles(source);

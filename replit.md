@@ -13,12 +13,13 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 ## Key Features
 - Real RSS feed fetching from any website (auto-discovers RSS feeds)
 - AI-powered sentiment analysis and keyword extraction on articles
-- Background worker that auto-fetches news every 10 minutes
+- Background worker that auto-fetches news every 1 minute
 - Manual fetch trigger per source or all sources
 - Dashboard with analytics (sentiment distribution, trending keywords)
 - Admin panel for managing sources and keywords
 - User authentication (email/password with passport-local)
 - Responsive design with dark mode support
+- Social media support: YouTube channels, Facebook pages, Instagram profiles, X/Twitter accounts
 
 ## Database Schema
 - `users`: id, username, password, role (admin/client), createdAt
@@ -40,9 +41,18 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - Auto-discovers RSS feed URLs from website URLs
 - Runs AI analysis (sentiment + keywords) on each new article
 - Deduplicates by article URL
-- Runs every 10 minutes automatically, with initial fetch on startup
+- Runs every 1 minute automatically, with initial fetch on startup
+- Supports source types: rss, website, twitter, youtube, facebook, instagram
+
+## Social Media Fetchers (server/web-scraper.ts)
+- **YouTube**: Extracts channel ID from handle/URL, fetches via YouTube RSS feeds
+- **Facebook**: Tries RSS bridge services (rsshub.app), falls back to mbasic.facebook.com scraping
+- **Instagram**: Tries RSS bridge services, falls back to profile page scraping for post links
+- **Twitter/X**: Tries Nitter RSS instances, falls back to syndication.twitter.com scraping
 
 ## Recent Changes
+- 2026-02-10: Added YouTube, Facebook, and Instagram source type support
+- 2026-02-10: Updated fetch interval to 1 minute
 - 2026-02-10: Added real RSS feed fetching with rss-parser
 - 2026-02-10: Replaced mock data with live feeds from TechCrunch, The Verge, BBC, Reuters, Al Jazeera
 - 2026-02-10: Added manual fetch endpoints (per source and all sources)
