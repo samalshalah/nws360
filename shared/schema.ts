@@ -19,7 +19,7 @@ export const sources = pgTable("sources", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   url: text("url").notNull(),
-  type: text("type").notNull(), // 'rss' | 'website' | 'twitter' | 'youtube' | 'facebook' | 'instagram'
+  type: text("type").notNull(), // 'rss' | 'website' | 'twitter' | 'youtube' | 'facebook' | 'instagram' | 'telegram'
   active: boolean("active").default(true),
   intervalMinutes: integer("interval_minutes").default(15),
   lastFetchedAt: timestamp("last_fetched_at"),
@@ -40,7 +40,8 @@ export const articles = pgTable("articles", {
   language: text("language").default("en"),
   sentimentScore: integer("sentiment_score"), // -100 to 100
   sentimentLabel: text("sentiment_label"), // 'positive' | 'negative' | 'neutral'
-  keywords: text("keywords").array(), // Extracted keywords
+  keywords: text("keywords").array(),
+  category: text("category"), // 'political' | 'health' | 'tech' | 'sports' | 'business' | 'entertainment' | 'science' | 'urgent' | 'general'
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -93,6 +94,9 @@ export interface ArticleQueryParams {
   search?: string;
   sourceId?: number;
   sentiment?: string;
+  category?: string;
+  sourceType?: string;
+  lang?: string;
   startDate?: string;
   endDate?: string;
   page?: number;

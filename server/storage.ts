@@ -104,6 +104,12 @@ export class DatabaseStorage implements IStorage {
     if (params?.sentiment) {
       conditions.push(eq(articles.sentimentLabel, params.sentiment));
     }
+    if (params?.category) {
+      conditions.push(eq(articles.category, params.category));
+    }
+    if (params?.sourceType) {
+      conditions.push(eq(sources.type, params.sourceType));
+    }
     if (params?.startDate) {
       conditions.push(gte(articles.publishedAt, new Date(params.startDate)));
     }
@@ -115,7 +121,11 @@ export class DatabaseStorage implements IStorage {
     const limit = params?.limit || 20;
     const offset = ((params?.page || 1) - 1) * limit;
 
-    const [countResult] = await db.select({ count: sql<number>`count(*)` }).from(articles).where(whereClause);
+    const countQuery = db.select({ count: sql<number>`count(*)` }).from(articles);
+    if (params?.sourceType) {
+      countQuery.leftJoin(sources, eq(articles.sourceId, sources.id));
+    }
+    const [countResult] = await countQuery.where(whereClause);
     const total = Number(countResult?.count || 0);
 
     const items = await db.select({
@@ -130,6 +140,7 @@ export class DatabaseStorage implements IStorage {
       sentimentScore: articles.sentimentScore,
       sentimentLabel: articles.sentimentLabel,
       keywords: articles.keywords,
+      category: articles.category,
       createdAt: articles.createdAt,
       source: sources
     })

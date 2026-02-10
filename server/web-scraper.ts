@@ -572,3 +572,54 @@ async function scrapeTwitterProfile(handle: string): Promise<ScrapedArticle[]> {
     return [];
   }
 }
+
+export async function fetchTelegramFeed(input: string): Promise<ScrapedArticle[]> {
+  let channel = input.trim();
+  
+  const telegramMatch = channel.match(/(?:t\.me|telegram\.me)\/(?:s\/)?([^\/\?]+)/i);
+  if (telegramMatch) {
+    channel = telegramMatch[1];
+  }
+  channel = channel.replace(/^@/, "");
+  
+  if (!channel) return [];
+
+  try {
+    const url = `https://t.me/s/${channel}`;
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!response.ok) return [];
+
+    const html = await response.text();
+    const $ = cheerio.load(html);
+    const articles: ScrapedArticle[] = [];
+
+    $(".tgme_widget_message_wrap").each((_, el) => {
+      const $msg = $(el);
+      const text = $msg.find(".tgme_widget_message_text").text().trim();
+      const timeEl = $msg.find("time");
+      const datetime = timeEl.attr("datetime");
+      const linkEl = $msg.find(".tgme_widget_message_date");
+      const msgUrl = linkEl.attr("href") || `https://t.me/${channel}`;
+
+      if (!text || text.length < 10) return;
+
+      articles.push({
+        title: text.substring(0, 200),
+        url: msgUrl,
+        content: text,
+        publishedAt: datetime ? new Date(datetime) : new Date(),
+      });
+    });
+
+    return articles.slice(0, 20);
+  } catch {
+    return [];
+  }
+}

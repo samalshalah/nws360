@@ -19,14 +19,16 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - Admin panel for managing sources and keywords
 - User authentication (email/password with passport-local)
 - Responsive design with dark mode support
-- Social media support: YouTube channels, Facebook pages, Instagram profiles, X/Twitter accounts
+- Social media support: YouTube channels, Facebook pages, Instagram profiles, X/Twitter accounts, Telegram channels
 - Multi-language UI (English, Arabic, French, Spanish, Turkish) with RTL support
-- AI-powered article translation to any supported language
+- Auto-translation of all articles based on selected UI language
+- Article categorization (political, health, tech, sports, business, entertainment, science, urgent, general)
+- Filtering by channel, source type, sentiment, and category
 
 ## Database Schema
 - `users`: id, username, password, role (admin/client), createdAt
 - `sources`: id, name, url, type, active, intervalMinutes, lastFetchedAt, createdAt
-- `articles`: id, title, content, summary, url, sourceId, publishedAt, language, sentimentScore, sentimentLabel, keywords[], createdAt
+- `articles`: id, title, content, summary, url, sourceId, publishedAt, language, sentimentScore, sentimentLabel, keywords[], category, createdAt
 - `keywords`: id, term, createdAt
 
 ## API Routes
@@ -36,7 +38,7 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - Articles: GET /api/articles (with search, filters, pagination), GET /api/articles/:id
 - Keywords: GET /api/keywords, POST /api/keywords, DELETE /api/keywords/:id
 - Analytics: GET /api/analytics/stats
-- Translation: POST /api/articles/:id/translate (body: { targetLanguage })
+- Translation: Auto-translates articles based on `lang` query param in GET /api/articles
 
 ## Feed Worker
 - Located in `server/feed-worker.ts`
@@ -45,18 +47,22 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - Runs AI analysis (sentiment + keywords) on each new article
 - Deduplicates by article URL
 - Runs every 1 minute automatically, with initial fetch on startup
-- Supports source types: rss, website, twitter, youtube, facebook, instagram
+- Supports source types: rss, website, twitter, youtube, facebook, instagram, telegram
 
 ## Social Media Fetchers (server/web-scraper.ts)
 - **YouTube**: Extracts channel ID from handle/URL, fetches via YouTube RSS feeds
 - **Facebook**: Tries RSS bridge services (rsshub.app), falls back to mbasic.facebook.com scraping
 - **Instagram**: Tries RSS bridge services, falls back to profile page scraping for post links
 - **Twitter/X**: Tries Nitter RSS instances, falls back to syndication.twitter.com scraping
+- **Telegram**: Scrapes public channel preview pages via t.me/s/channel
 
 ## Recent Changes
+- 2026-02-10: Added article categorization (political, health, tech, sports, business, entertainment, science, urgent, general)
+- 2026-02-10: Added auto-translation of all articles based on selected UI language
+- 2026-02-10: Added filtering by channel, source type, sentiment, and category
+- 2026-02-10: Added Telegram channel support
 - 2026-02-10: Added multi-language UI support (English, Arabic, French, Spanish, Turkish) with i18next
 - 2026-02-10: Added RTL layout support for Arabic
-- 2026-02-10: Added AI-powered article translation via OpenAI
 - 2026-02-10: Added language selector in sidebar and login page
 - 2026-02-10: Added YouTube, Facebook, and Instagram source type support
 - 2026-02-10: Updated fetch interval to 1 minute

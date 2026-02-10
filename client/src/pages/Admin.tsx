@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Globe, Rss, Loader2, RefreshCw, Twitter, Youtube, Facebook, Instagram } from "lucide-react";
+import { Plus, Trash2, Globe, Rss, Loader2, RefreshCw, Twitter, Youtube, Facebook, Instagram, Send } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
 
@@ -75,6 +75,7 @@ function SourcesManager() {
     youtube: t("admin.youtube"),
     facebook: t("admin.facebook"),
     instagram: t("admin.instagram"),
+    telegram: t("admin.telegram"),
   };
 
   return (
@@ -147,6 +148,7 @@ function SourcesManager() {
                       <SelectItem value="youtube">{t("admin.youtube")}</SelectItem>
                       <SelectItem value="facebook">{t("admin.facebook")}</SelectItem>
                       <SelectItem value="instagram">{t("admin.instagram")}</SelectItem>
+                      <SelectItem value="telegram">{t("admin.telegram")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -194,6 +196,7 @@ function SourcesManager() {
                     {source.type === 'youtube' && <Youtube className="w-3.5 h-3.5" />}
                     {source.type === 'facebook' && <Facebook className="w-3.5 h-3.5" />}
                     {source.type === 'instagram' && <Instagram className="w-3.5 h-3.5" />}
+                    {source.type === 'telegram' && <Send className="w-3.5 h-3.5" />}
                     <span className="uppercase">{sourceTypes[source.type] || source.type}</span>
                   </div>
                 </TableCell>

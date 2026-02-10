@@ -95,6 +95,9 @@ export async function registerRoutes(
         search: req.query.search as string,
         sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
         sentiment: req.query.sentiment as string,
+        category: req.query.category as string,
+        sourceType: req.query.sourceType as string,
+        lang: req.query.lang as string,
         startDate: req.query.startDate as string,
         endDate: req.query.endDate as string,
         page: req.query.page ? parseInt(req.query.page as string) : 1,
@@ -102,6 +105,43 @@ export async function registerRoutes(
       };
 
       const result = await storage.getArticles(params);
+      
+      const targetLang = params.lang?.split("-")[0];
+      if (targetLang && targetLang !== "en") {
+        const langNames: Record<string, string> = {
+          en: "English", ar: "Arabic", fr: "French", es: "Spanish", tr: "Turkish"
+        };
+        const targetLangName = langNames[targetLang] || targetLang;
+        
+        const batchSize = 5;
+        for (let i = 0; i < result.items.length; i += batchSize) {
+          const batch = result.items.slice(i, i + batchSize);
+          const translationPromises = batch.map(async (article) => {
+            try {
+              const textToTranslate = `Title: ${article.title}\nSummary: ${article.summary || article.content.substring(0, 500)}`;
+              const completion = await openai.chat.completions.create({
+                model: "gpt-5-nano",
+                messages: [
+                  {
+                    role: "system",
+                    content: `Translate the following news article title and summary to ${targetLangName}. Return JSON with: "title" (translated title), "summary" (translated summary). Respond ONLY with valid JSON.`,
+                  },
+                  { role: "user", content: textToTranslate },
+                ],
+                response_format: { type: "json_object" },
+                max_completion_tokens: 1000,
+              });
+              const translated = JSON.parse(completion.choices[0].message.content || "{}");
+              article.title = translated.title || article.title;
+              article.summary = translated.summary || article.summary;
+            } catch (e) {
+              console.error(`Translation failed for article ${article.id}:`, e);
+            }
+          });
+          await Promise.all(translationPromises);
+        }
+      }
+      
       res.json({
         items: result.items,
         total: result.total,

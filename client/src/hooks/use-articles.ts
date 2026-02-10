@@ -1,19 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, buildUrl, type ArticleQueryParams } from "@shared/routes";
+import { api, buildUrl } from "@shared/routes";
+import type { ArticleQueryParams } from "@shared/schema";
 
 export function useArticles(params?: ArticleQueryParams) {
-  // Create a stable query key based on params
   const queryKey = [api.articles.list.path, JSON.stringify(params)];
 
   return useQuery({
     queryKey,
     queryFn: async () => {
-      // Build query string
       const searchParams = new URLSearchParams();
       if (params) {
         if (params.search) searchParams.set("search", params.search);
         if (params.sourceId) searchParams.set("sourceId", params.sourceId.toString());
         if (params.sentiment) searchParams.set("sentiment", params.sentiment);
+        if (params.category) searchParams.set("category", params.category);
+        if (params.sourceType) searchParams.set("sourceType", params.sourceType);
+        if (params.lang) searchParams.set("lang", params.lang);
         if (params.page) searchParams.set("page", params.page.toString());
         if (params.limit) searchParams.set("limit", params.limit.toString());
       }
@@ -22,7 +24,7 @@ export function useArticles(params?: ArticleQueryParams) {
       const res = await fetch(url);
       
       if (!res.ok) throw new Error("Failed to fetch articles");
-      return api.articles.list.responses[200].parse(await res.json());
+      return res.json();
     },
   });
 }

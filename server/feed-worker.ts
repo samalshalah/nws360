@@ -1,7 +1,7 @@
 import RssParser from "rss-parser";
 import { storage } from "./storage";
 import { openai } from "./replit_integrations/image/client";
-import { scrapeWebsite, fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed } from "./web-scraper";
+import { scrapeWebsite, fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed, fetchTelegramFeed } from "./web-scraper";
 
 const parser = new RssParser({
   timeout: 15000,
@@ -35,11 +35,14 @@ function truncate(text: string, maxLen: number): string {
   return text.substring(0, maxLen).replace(/\s+\S*$/, "") + "...";
 }
 
+const VALID_CATEGORIES = ["political", "health", "tech", "sports", "business", "entertainment", "science", "urgent", "general"];
+
 async function analyzeWithAI(title: string, content: string): Promise<{
   sentimentLabel: string;
   sentimentScore: number;
   keywords: string[];
   summary: string;
+  category: string;
 }> {
   try {
     const textToAnalyze = truncate(`${title}. ${content}`, 2000);
@@ -49,20 +52,22 @@ async function analyzeWithAI(title: string, content: string): Promise<{
         {
           role: "system",
           content:
-            'You analyze news articles. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "summary" (1-2 sentence summary). Respond ONLY with valid JSON.',
+            'You analyze news articles. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "summary" (1-2 sentence summary), "category" (exactly one of: political, health, tech, sports, business, entertainment, science, urgent, general). Respond ONLY with valid JSON.',
         },
         { role: "user", content: textToAnalyze },
       ],
       response_format: { type: "json_object" },
-      max_completion_tokens: 300,
+      max_completion_tokens: 400,
     });
 
     const result = JSON.parse(completion.choices[0].message.content || "{}");
+    const cat = typeof result.category === "string" ? result.category.toLowerCase() : "general";
     return {
       sentimentLabel: result.sentiment || "neutral",
       sentimentScore: typeof result.score === "number" ? result.score : 0,
       keywords: Array.isArray(result.keywords) ? result.keywords : [],
       summary: result.summary || truncate(content, 200),
+      category: VALID_CATEGORIES.includes(cat) ? cat : "general",
     };
   } catch (e) {
     console.error("AI analysis failed:", e);
@@ -71,6 +76,7 @@ async function analyzeWithAI(title: string, content: string): Promise<{
       sentimentScore: 0,
       keywords: [],
       summary: truncate(content, 200),
+      category: "general",
     };
   }
 }
@@ -197,6 +203,13 @@ async function fetchInstagramArticles(source: { id: number; name: string; url: s
   return await processItems(source, posts);
 }
 
+async function fetchTelegramArticles(source: { id: number; name: string; url: string }): Promise<number> {
+  console.log(`[Worker] Fetching Telegram: ${source.url} for source: ${source.name}`);
+  const posts = await fetchTelegramFeed(source.url);
+  console.log(`[Worker] Got ${posts.length} Telegram posts from ${source.name}`);
+  return await processItems(source, posts);
+}
+
 async function processItems(
   source: { id: number; name: string },
   items: { title: string; url: string; content: string; publishedAt: Date }[]
@@ -227,6 +240,7 @@ async function processItems(
       sentimentLabel: analysis.sentimentLabel,
       sentimentScore: analysis.sentimentScore,
       keywords: analysis.keywords,
+      category: analysis.category,
     };
 
     try {
@@ -264,6 +278,9 @@ export async function fetchSourceFeed(sourceId: number): Promise<number> {
       break;
     case "instagram":
       newArticles = await fetchInstagramArticles(source);
+      break;
+    case "telegram":
+      newArticles = await fetchTelegramArticles(source);
       break;
     default:
       newArticles = await fetchRssArticles(source);
