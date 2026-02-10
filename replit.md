@@ -27,7 +27,7 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 
 ## Database Schema
 - `users`: id, username, password, role (admin/client), createdAt
-- `sources`: id, name, url, type, active, intervalMinutes, lastFetchedAt, createdAt
+- `sources`: id, name, url, type, active, intervalMinutes, retentionDays, lastFetchedAt, createdAt
 - `articles`: id, title, content, summary, url, sourceId, publishedAt, language, sentimentScore, sentimentLabel, keywords[], category, createdAt
 - `keywords`: id, term, createdAt
 
@@ -57,6 +57,7 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - **Telegram**: Scrapes public channel preview pages via t.me/s/channel
 
 ## Recent Changes
+- 2026-02-10: Added per-source article retention setting (1-30 days) with automatic cleanup
 - 2026-02-10: Added article categorization (political, health, tech, sports, business, entertainment, science, urgent, general)
 - 2026-02-10: Added auto-translation of all articles based on selected UI language
 - 2026-02-10: Added filtering by channel, source type, sentiment, and category

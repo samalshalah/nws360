@@ -36,6 +36,9 @@ export interface IStorage {
   // Sources - update last fetched
   updateSourceLastFetched(id: number): Promise<void>;
 
+  // Cleanup
+  deleteExpiredArticles(): Promise<number>;
+
   // Analytics
   getStats(): Promise<{
     totalArticles: number;
@@ -228,6 +231,30 @@ export class DatabaseStorage implements IStorage {
       sentimentDistribution,
       trendingKeywords,
     };
+  }
+
+  async deleteExpiredArticles(): Promise<number> {
+    const allSources = await this.getSources();
+    let totalDeleted = 0;
+
+    for (const source of allSources) {
+      const retentionDays = source.retentionDays ?? 30;
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+
+      const result = await db
+        .delete(articles)
+        .where(
+          and(
+            eq(articles.sourceId, source.id),
+            lte(articles.createdAt, cutoffDate)
+          )
+        )
+        .returning({ id: articles.id });
+      totalDeleted += result.length;
+    }
+
+    return totalDeleted;
   }
 }
 

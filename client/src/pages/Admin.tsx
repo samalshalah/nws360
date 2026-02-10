@@ -55,7 +55,8 @@ function SourcesManager() {
     name: "",
     url: "",
     type: "rss" as string,
-    intervalMinutes: 15
+    intervalMinutes: 15,
+    retentionDays: 30
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -63,7 +64,7 @@ function SourcesManager() {
     createSource(formData, {
       onSuccess: () => {
         setIsOpen(false);
-        setFormData({ name: "", url: "", type: "rss" as string, intervalMinutes: 15 });
+        setFormData({ name: "", url: "", type: "rss" as string, intervalMinutes: 15, retentionDays: 30 });
       }
     });
   };
@@ -131,27 +132,27 @@ function SourcesManager() {
                   data-testid="input-source-url"
                 />
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="type">{t("admin.type")}</Label>
+                <Select 
+                  value={formData.type} 
+                  onValueChange={(val: any) => setFormData(prev => ({ ...prev, type: val }))}
+                >
+                  <SelectTrigger data-testid="select-source-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="rss">{t("admin.rss")}</SelectItem>
+                    <SelectItem value="website">{t("admin.website")}</SelectItem>
+                    <SelectItem value="twitter">{t("admin.twitter")}</SelectItem>
+                    <SelectItem value="youtube">{t("admin.youtube")}</SelectItem>
+                    <SelectItem value="facebook">{t("admin.facebook")}</SelectItem>
+                    <SelectItem value="instagram">{t("admin.instagram")}</SelectItem>
+                    <SelectItem value="telegram">{t("admin.telegram")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="type">{t("admin.type")}</Label>
-                  <Select 
-                    value={formData.type} 
-                    onValueChange={(val: any) => setFormData(prev => ({ ...prev, type: val }))}
-                  >
-                    <SelectTrigger data-testid="select-source-type">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="rss">{t("admin.rss")}</SelectItem>
-                      <SelectItem value="website">{t("admin.website")}</SelectItem>
-                      <SelectItem value="twitter">{t("admin.twitter")}</SelectItem>
-                      <SelectItem value="youtube">{t("admin.youtube")}</SelectItem>
-                      <SelectItem value="facebook">{t("admin.facebook")}</SelectItem>
-                      <SelectItem value="instagram">{t("admin.instagram")}</SelectItem>
-                      <SelectItem value="telegram">{t("admin.telegram")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
                 <div className="space-y-2">
                   <Label htmlFor="interval">{t("admin.fetchInterval")}</Label>
                   <Input 
@@ -162,6 +163,19 @@ function SourcesManager() {
                     onChange={e => setFormData(prev => ({ ...prev, intervalMinutes: parseInt(e.target.value) }))}
                     required
                     data-testid="input-source-interval"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="retention">{t("admin.retentionDays")}</Label>
+                  <Input 
+                    id="retention" 
+                    type="number" 
+                    min={1}
+                    max={30}
+                    value={formData.retentionDays}
+                    onChange={e => setFormData(prev => ({ ...prev, retentionDays: Math.min(30, Math.max(1, parseInt(e.target.value) || 1)) }))}
+                    required
+                    data-testid="input-source-retention"
                   />
                 </div>
               </div>
@@ -179,6 +193,7 @@ function SourcesManager() {
             <TableRow>
               <TableHead>{t("admin.sourceName")}</TableHead>
               <TableHead>{t("admin.type")}</TableHead>
+              <TableHead>{t("admin.retention")}</TableHead>
               <TableHead>{t("admin.status")}</TableHead>
               <TableHead>{t("admin.lastFetched")}</TableHead>
               <TableHead className="text-right rtl:text-left">{t("admin.actions")}</TableHead>
@@ -199,6 +214,9 @@ function SourcesManager() {
                     {source.type === 'telegram' && <Send className="w-3.5 h-3.5" />}
                     <span className="uppercase">{sourceTypes[source.type] || source.type}</span>
                   </div>
+                </TableCell>
+                <TableCell className="text-muted-foreground text-sm">
+                  {source.retentionDays ?? 30} {t("admin.days")}
                 </TableCell>
                 <TableCell>
                   <Badge variant={source.active ? "default" : "secondary"}>

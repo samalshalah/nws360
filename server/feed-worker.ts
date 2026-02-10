@@ -326,6 +326,12 @@ export function startFeedWorker(intervalMinutes: number = 10) {
     } catch (e) {
       console.error("[Worker] Initial fetch error:", e);
     }
+    try {
+      const deleted = await storage.deleteExpiredArticles();
+      if (deleted > 0) console.log(`[Worker] Cleaned up ${deleted} expired articles`);
+    } catch (e) {
+      console.error("[Worker] Cleanup error:", e);
+    }
   }, 5000);
 
   workerInterval = setInterval(async () => {
@@ -336,6 +342,12 @@ export function startFeedWorker(intervalMinutes: number = 10) {
       console.log(`[Worker] Scheduled fetch complete: ${total} new articles`);
     } catch (e) {
       console.error("[Worker] Scheduled fetch error:", e);
+    }
+    try {
+      const deleted = await storage.deleteExpiredArticles();
+      if (deleted > 0) console.log(`[Worker] Cleaned up ${deleted} expired articles`);
+    } catch (e) {
+      console.error("[Worker] Cleanup error:", e);
     }
   }, intervalMinutes * 60 * 1000);
 }
