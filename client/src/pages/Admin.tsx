@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Globe, Rss, Loader2, RefreshCw } from "lucide-react";
+import { Plus, Trash2, Globe, Rss, Loader2, RefreshCw, Twitter } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 export default function Admin() {
@@ -23,8 +23,8 @@ export default function Admin() {
 
       <Tabs defaultValue="sources" className="w-full">
         <TabsList className="grid w-full max-w-md grid-cols-2 mb-8">
-          <TabsTrigger value="sources">Sources</TabsTrigger>
-          <TabsTrigger value="keywords">Keywords</TabsTrigger>
+          <TabsTrigger value="sources" data-testid="tab-sources">Sources</TabsTrigger>
+          <TabsTrigger value="keywords" data-testid="tab-keywords">Keywords</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sources">
@@ -100,17 +100,26 @@ function SourcesManager() {
                   value={formData.name}
                   onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
                   placeholder="e.g. TechCrunch"
-                  required 
+                  required
+                  data-testid="input-source-name"
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="url">URL (RSS Feed or API Endpoint)</Label>
+                <Label htmlFor="url">
+                  {formData.type === 'twitter' ? 'X/Twitter Username or URL' : 
+                   formData.type === 'website' ? 'Website URL' : 'RSS Feed URL'}
+                </Label>
                 <Input 
                   id="url" 
                   value={formData.url}
                   onChange={e => setFormData(prev => ({ ...prev, url: e.target.value }))}
-                  placeholder="https://..."
+                  placeholder={
+                    formData.type === 'twitter' ? '@username or https://x.com/username' :
+                    formData.type === 'website' ? 'https://aljazeera.net' :
+                    'https://example.com/feed.xml'
+                  }
                   required 
+                  data-testid="input-source-url"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -120,12 +129,13 @@ function SourcesManager() {
                     value={formData.type} 
                     onValueChange={(val: any) => setFormData(prev => ({ ...prev, type: val }))}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger data-testid="select-source-type">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="rss">RSS Feed</SelectItem>
-                      <SelectItem value="api">JSON API</SelectItem>
+                      <SelectItem value="website">Website</SelectItem>
+                      <SelectItem value="twitter">X / Twitter</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -137,11 +147,12 @@ function SourcesManager() {
                     min={5}
                     value={formData.intervalMinutes}
                     onChange={e => setFormData(prev => ({ ...prev, intervalMinutes: parseInt(e.target.value) }))}
-                    required 
+                    required
+                    data-testid="input-source-interval"
                   />
                 </div>
               </div>
-              <Button type="submit" className="w-full" disabled={isCreating}>
+              <Button type="submit" className="w-full" disabled={isCreating} data-testid="button-submit-source">
                 {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add Source"}
               </Button>
             </form>
@@ -166,7 +177,9 @@ function SourcesManager() {
                 <TableCell className="font-medium">{source.name}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                    {source.type === 'rss' ? <Rss className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
+                    {source.type === 'rss' && <Rss className="w-3.5 h-3.5" />}
+                    {source.type === 'website' && <Globe className="w-3.5 h-3.5" />}
+                    {source.type === 'twitter' && <Twitter className="w-3.5 h-3.5" />}
                     <span className="uppercase">{source.type}</span>
                   </div>
                 </TableCell>

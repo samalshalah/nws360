@@ -1,6 +1,7 @@
 import RssParser from "rss-parser";
 import { storage } from "./storage";
 import { openai } from "./replit_integrations/image/client";
+import { scrapeWebsite, fetchTwitterFeed } from "./web-scraper";
 
 const parser = new RssParser({
   timeout: 15000,
@@ -74,67 +75,133 @@ async function analyzeWithAI(title: string, content: string): Promise<{
   }
 }
 
-export async function fetchSourceFeed(sourceId: number): Promise<number> {
-  const source = await storage.getSource(sourceId);
-  if (!source) throw new Error(`Source ${sourceId} not found`);
+function normalizeUrl(url: string): string {
+  let normalized = url.trim();
+  if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+    normalized = "https://" + normalized;
+  }
+  return normalized;
+}
 
-  let feedUrl = source.url;
+async function discoverRssFeed(url: string): Promise<string | null> {
+  const normalized = normalizeUrl(url);
+  
+  const possibleFeeds = [
+    `${normalized.replace(/\/$/, "")}/feed`,
+    `${normalized.replace(/\/$/, "")}/rss`,
+    `${normalized.replace(/\/$/, "")}/feed.xml`,
+    `${normalized.replace(/\/$/, "")}/rss.xml`,
+    `${normalized.replace(/\/$/, "")}/atom.xml`,
+    `${normalized.replace(/\/$/, "")}/index.xml`,
+    `${normalized.replace(/\/$/, "")}/feeds/posts/default`,
+    `${normalized.replace(/\/$/, "")}/?feed=rss2`,
+  ];
 
-  // Try to auto-discover RSS feed if the URL isn't an RSS feed directly
-  if (!feedUrl.match(/\.(xml|rss|atom)$/i) && !feedUrl.includes("/feed") && !feedUrl.includes("/rss")) {
-    const possibleFeeds = [
-      `${feedUrl.replace(/\/$/, "")}/feed`,
-      `${feedUrl.replace(/\/$/, "")}/rss`,
-      `${feedUrl.replace(/\/$/, "")}/feed.xml`,
-      `${feedUrl.replace(/\/$/, "")}/rss.xml`,
-      `${feedUrl.replace(/\/$/, "")}/atom.xml`,
-      `${feedUrl.replace(/\/$/, "")}/index.xml`,
-    ];
-
-    let found = false;
-    for (const tryUrl of possibleFeeds) {
-      try {
-        await parser.parseURL(tryUrl);
-        feedUrl = tryUrl;
-        found = true;
-        break;
-      } catch {
-        continue;
-      }
-    }
-
-    if (!found) {
-      // Try the original URL directly (it might be a feed itself)
-      feedUrl = source.url;
+  for (const tryUrl of possibleFeeds) {
+    try {
+      await parser.parseURL(tryUrl);
+      return tryUrl;
+    } catch {
+      continue;
     }
   }
 
-  console.log(`[Worker] Fetching feed: ${feedUrl} for source: ${source.name}`);
-  const feed = await parser.parseURL(feedUrl);
+  try {
+    const response = await fetch(normalized, {
+      headers: { "User-Agent": "NWS360/1.0 (RSS Reader)" },
+      signal: AbortSignal.timeout(10000),
+    });
+    const html = await response.text();
+    const rssMatch = html.match(/<link[^>]*type=["']application\/(rss|atom)\+xml["'][^>]*href=["']([^"']+)["']/i);
+    if (rssMatch && rssMatch[2]) {
+      const feedUrl = rssMatch[2].startsWith("http") ? rssMatch[2] : new URL(rssMatch[2], normalized).href;
+      try {
+        await parser.parseURL(feedUrl);
+        return feedUrl;
+      } catch {}
+    }
+  } catch {}
 
+  return null;
+}
+
+async function fetchRssArticles(source: { id: number; name: string; url: string }): Promise<number> {
+  let feedUrl = normalizeUrl(source.url);
+
+  if (!feedUrl.match(/\.(xml|rss|atom)$/i) && !feedUrl.includes("/feed") && !feedUrl.includes("/rss")) {
+    const discovered = await discoverRssFeed(feedUrl);
+    if (discovered) {
+      feedUrl = discovered;
+      console.log(`[Worker] Discovered RSS feed: ${feedUrl}`);
+    } else {
+      console.log(`[Worker] No RSS feed discovered for ${feedUrl}, trying direct parse`);
+    }
+  }
+
+  console.log(`[Worker] Fetching RSS: ${feedUrl} for source: ${source.name}`);
+  const feed = await parser.parseURL(feedUrl);
+  return await processItems(source, feed.items.slice(0, 20).map(item => ({
+    title: stripHtml(item.title || "Untitled"),
+    url: item.link || "",
+    content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || ""),
+    publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+  })));
+}
+
+async function fetchWebsiteArticles(source: { id: number; name: string; url: string }): Promise<number> {
+  const url = normalizeUrl(source.url);
+  console.log(`[Worker] Scraping website: ${url} for source: ${source.name}`);
+
+  const discovered = await discoverRssFeed(url);
+  if (discovered) {
+    console.log(`[Worker] Found RSS feed for ${source.name}: ${discovered}`);
+    const feed = await parser.parseURL(discovered);
+    return await processItems(source, feed.items.slice(0, 20).map(item => ({
+      title: stripHtml(item.title || "Untitled"),
+      url: item.link || "",
+      content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || ""),
+      publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+    })));
+  }
+
+  const scraped = await scrapeWebsite(url);
+  console.log(`[Worker] Scraped ${scraped.length} articles from ${source.name}`);
+  return await processItems(source, scraped);
+}
+
+async function fetchTwitterArticles(source: { id: number; name: string; url: string }): Promise<number> {
+  console.log(`[Worker] Fetching Twitter/X: ${source.url} for source: ${source.name}`);
+  const tweets = await fetchTwitterFeed(source.url);
+  console.log(`[Worker] Got ${tweets.length} tweets from ${source.name}`);
+  return await processItems(source, tweets);
+}
+
+async function processItems(
+  source: { id: number; name: string },
+  items: { title: string; url: string; content: string; publishedAt: Date }[]
+): Promise<number> {
   let newArticles = 0;
 
-  for (const item of feed.items.slice(0, 20)) {
-    if (!item.link) continue;
+  for (const item of items) {
+    if (!item.url) continue;
 
-    const existing = await storage.getArticleByUrl(item.link);
+    const existing = await storage.getArticleByUrl(item.url);
     if (existing) continue;
 
-    const rawContent = item.contentEncoded || item.content || item.contentSnippet || item.summary || "";
-    const plainContent = stripHtml(rawContent);
-    const title = stripHtml(item.title || "Untitled");
+    const title = item.title || "Untitled";
+    const content = item.content || title;
 
-    if (!plainContent && !title) continue;
+    if (!content && !title) continue;
 
-    const analysis = await analyzeWithAI(title, plainContent);
+    const analysis = await analyzeWithAI(title, content);
 
     const article = {
       title,
-      content: truncate(plainContent, 5000),
+      content: truncate(content, 5000),
       summary: analysis.summary,
-      url: item.link,
+      url: item.url,
       sourceId: source.id,
-      publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+      publishedAt: item.publishedAt,
       language: "en",
       sentimentLabel: analysis.sentimentLabel,
       sentimentScore: analysis.sentimentScore,
@@ -145,13 +212,34 @@ export async function fetchSourceFeed(sourceId: number): Promise<number> {
       await storage.createArticle(article);
       newArticles++;
     } catch (e) {
-      console.error(`[Worker] Failed to insert article: ${item.link}`, e);
+      console.error(`[Worker] Failed to insert article: ${item.url}`, e);
     }
   }
 
-  // Update the source's lastFetchedAt
-  await storage.updateSourceLastFetched(source.id);
+  return newArticles;
+}
 
+export async function fetchSourceFeed(sourceId: number): Promise<number> {
+  const source = await storage.getSource(sourceId);
+  if (!source) throw new Error(`Source ${sourceId} not found`);
+
+  let newArticles = 0;
+
+  switch (source.type) {
+    case "rss":
+      newArticles = await fetchRssArticles(source);
+      break;
+    case "website":
+      newArticles = await fetchWebsiteArticles(source);
+      break;
+    case "twitter":
+      newArticles = await fetchTwitterArticles(source);
+      break;
+    default:
+      newArticles = await fetchRssArticles(source);
+  }
+
+  await storage.updateSourceLastFetched(source.id);
   console.log(`[Worker] ${source.name}: fetched ${newArticles} new articles`);
   return newArticles;
 }
@@ -182,7 +270,6 @@ export function startFeedWorker(intervalMinutes: number = 10) {
 
   console.log(`[Worker] Starting feed worker, interval: ${intervalMinutes} minutes`);
 
-  // Run once on startup after a short delay
   setTimeout(async () => {
     console.log("[Worker] Initial feed fetch...");
     try {
