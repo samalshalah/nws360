@@ -1,0 +1,97 @@
+Build a full-stack web application for NWS360 with the following architecture:
+
+1) Frontend (User Interface)
+
+Create a modern web dashboard using React (or Next.js) with:
+
+Login and authentication system (email + password).
+
+Main news feed displaying articles in card format (title, source, time, short summary).
+
+Filters for:
+
+Country / Region
+
+Source (TV, social media, websites, influencers)
+
+Topics / Keywords
+
+Time range
+
+Search bar for real-time keyword search across stored articles.
+
+Analytics dashboard with visual charts showing:
+
+Trending topics
+
+Most repeated words and phrases
+
+Top publishing sources
+
+Volume of news over time
+
+Multi-language support with a toggle for Arabic, English, and other languages.
+
+Responsive design for desktop and mobile.
+
+2) Backend (Server & Data Processing)
+
+Use Node.js with Express (or Python Django/FastAPI) as the backend.
+
+Create a REST API that handles:
+
+User authentication (JWT-based login system).
+
+Fetching and storing news articles in a database.
+
+Processing RSS feeds and APIs from selected sources.
+
+Running text analysis on articles to extract:
+
+Keywords
+
+Repeated phrases
+
+Sentiment (positive/negative/neutral)
+
+Automatic translation of articles using an AI translation service.
+
+Database structure:
+
+Users table (Admin, Client roles).
+
+Sources table (TV, social media, influencers, websites).
+
+Articles table (title, content, source, timestamp, language).
+
+Keywords table (client-specific tracking terms).
+
+Background worker that fetches news every 5–15 minutes.
+
+3) Admin Panel
+
+Separate admin dashboard where Admin can:
+
+Add, edit, or remove news sources (RSS feeds, social media accounts, websites).
+
+Assign keywords to specific clients.
+
+Manage user accounts and permissions.
+
+View system performance and data processing logs.
+
+Configure:
+
+News refresh intervals
+
+Language translation settings
+
+Storage retention period (how long articles are kept).
+
+4) Deployment
+
+Host the app as a web application accessible via browser.
+
+Use cloud storage for images and data backups.
+
+Ensure secure HTTPS connection.
