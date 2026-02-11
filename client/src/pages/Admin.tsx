@@ -528,59 +528,166 @@ function SourcesManager() {
             <p className="text-sm">{t("admin.noSources")}</p>
           </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t("admin.sourceName")}</TableHead>
-                <TableHead>{t("admin.type")}</TableHead>
-                <TableHead>{t("admin.postsPerFetch")}</TableHead>
-                <TableHead>{t("admin.retention")}</TableHead>
-                <TableHead>{t("admin.status")}</TableHead>
-                <TableHead>{t("admin.lastFetched")}</TableHead>
-                <TableHead className="text-right rtl:text-left">{t("admin.actions")}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <>
+            <div className="hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t("admin.sourceName")}</TableHead>
+                    <TableHead>{t("admin.type")}</TableHead>
+                    <TableHead>{t("admin.postsPerFetch")}</TableHead>
+                    <TableHead>{t("admin.retention")}</TableHead>
+                    <TableHead>{t("admin.status")}</TableHead>
+                    <TableHead>{t("admin.lastFetched")}</TableHead>
+                    <TableHead className="text-right rtl:text-left">{t("admin.actions")}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sources?.map((source) => {
+                    const Icon = getSourceIcon(source.type);
+                    return (
+                      <TableRow key={source.id}>
+                        <TableCell className="font-medium">{source.name}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2 text-sm">
+                            <Icon className={`w-3.5 h-3.5 ${getSourceColor(source.type)}`} />
+                            <span className="text-muted-foreground">{sourceTypeLabels[source.type] || source.type}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={50}
+                            className="w-16 h-8 text-center text-sm"
+                            defaultValue={source.maxArticlesPerFetch ?? 10}
+                            key={`posts-${source.id}-${source.maxArticlesPerFetch}`}
+                            onBlur={(e) => {
+                              const val = Math.min(50, Math.max(1, parseInt(e.target.value) || 1));
+                              if (val !== (source.maxArticlesPerFetch ?? 10)) {
+                                updateSource({ id: source.id, maxArticlesPerFetch: val });
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                            }}
+                            data-testid={`input-posts-${source.id}`}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min={1}
+                              max={30}
+                              className="w-16 h-8 text-center text-sm"
+                              defaultValue={source.retentionDays ?? 7}
+                              key={`retention-${source.id}-${source.retentionDays}`}
+                              onBlur={(e) => {
+                                const val = Math.min(30, Math.max(1, parseInt(e.target.value) || 1));
+                                if (val !== (source.retentionDays ?? 7)) {
+                                  updateSource({ id: source.id, retentionDays: val });
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                              }}
+                              data-testid={`input-retention-${source.id}`}
+                            />
+                            <span className="text-sm text-muted-foreground">{t("admin.days")}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={source.active ? "default" : "secondary"}>
+                            {source.active ? t("common.active") : t("common.inactive")}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground text-sm">
+                          {source.lastFetchedAt
+                            ? formatDistanceToNow(new Date(source.lastFetchedAt), { addSuffix: true })
+                            : t("common.never")}
+                        </TableCell>
+                        <TableCell className="text-right rtl:text-left">
+                          <div className="flex items-center justify-end rtl:justify-start gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => fetchSource(source.id)}
+                              disabled={isFetchingOne && fetchingSourceId === source.id}
+                              data-testid={`button-fetch-source-${source.id}`}
+                            >
+                              <RefreshCw className={`w-4 h-4 ${isFetchingOne && fetchingSourceId === source.id ? "animate-spin" : ""}`} />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              onClick={() => deleteSource(source.id)}
+                              disabled={isDeleting}
+                              data-testid={`button-delete-source-${source.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="md:hidden space-y-3">
               {sources?.map((source) => {
                 const Icon = getSourceIcon(source.type);
                 return (
-                  <TableRow key={source.id}>
-                    <TableCell className="font-medium">{source.name}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2 text-sm">
-                        <Icon className={`w-3.5 h-3.5 ${getSourceColor(source.type)}`} />
-                        <span className="text-muted-foreground">{sourceTypeLabels[source.type] || source.type}</span>
+                  <div key={source.id} className="border border-border rounded-md p-4 space-y-3" data-testid={`mobile-source-card-${source.id}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Icon className={`w-4 h-4 shrink-0 ${getSourceColor(source.type)}`} />
+                        <span className="font-medium truncate">{source.name}</span>
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={50}
-                        className="w-16 h-8 text-center text-sm"
-                        defaultValue={source.maxArticlesPerFetch ?? 10}
-                        key={`posts-${source.id}-${source.maxArticlesPerFetch}`}
-                        onBlur={(e) => {
-                          const val = Math.min(50, Math.max(1, parseInt(e.target.value) || 1));
-                          if (val !== (source.maxArticlesPerFetch ?? 10)) {
-                            updateSource({ id: source.id, maxArticlesPerFetch: val });
-                          }
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                        }}
-                        data-testid={`input-posts-${source.id}`}
-                      />
-                    </TableCell>
-                    <TableCell>
+                      <Badge variant={source.active ? "default" : "secondary"}>
+                        {source.active ? t("common.active") : t("common.inactive")}
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {sourceTypeLabels[source.type] || source.type}
+                      {source.lastFetchedAt && (
+                        <span> &middot; {formatDistanceToNow(new Date(source.lastFetchedAt), { addSuffix: true })}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-4 flex-wrap">
                       <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">{t("admin.postsPerFetch")}:</span>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={50}
+                          className="w-16 h-8 text-center text-sm"
+                          defaultValue={source.maxArticlesPerFetch ?? 10}
+                          key={`m-posts-${source.id}-${source.maxArticlesPerFetch}`}
+                          onBlur={(e) => {
+                            const val = Math.min(50, Math.max(1, parseInt(e.target.value) || 1));
+                            if (val !== (source.maxArticlesPerFetch ?? 10)) {
+                              updateSource({ id: source.id, maxArticlesPerFetch: val });
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                          }}
+                          data-testid={`input-posts-mobile-${source.id}`}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">{t("admin.retention")}:</span>
                         <Input
                           type="number"
                           min={1}
                           max={30}
                           className="w-16 h-8 text-center text-sm"
                           defaultValue={source.retentionDays ?? 7}
-                          key={`retention-${source.id}-${source.retentionDays}`}
+                          key={`m-retention-${source.id}-${source.retentionDays}`}
                           onBlur={(e) => {
                             const val = Math.min(30, Math.max(1, parseInt(e.target.value) || 1));
                             if (val !== (source.retentionDays ?? 7)) {
@@ -590,49 +697,37 @@ function SourcesManager() {
                           onKeyDown={(e) => {
                             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
                           }}
-                          data-testid={`input-retention-${source.id}`}
+                          data-testid={`input-retention-mobile-${source.id}`}
                         />
-                        <span className="text-sm text-muted-foreground">{t("admin.days")}</span>
+                        <span className="text-xs text-muted-foreground">{t("admin.days")}</span>
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={source.active ? "default" : "secondary"}>
-                        {source.active ? t("common.active") : t("common.inactive")}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-sm">
-                      {source.lastFetchedAt
-                        ? formatDistanceToNow(new Date(source.lastFetchedAt), { addSuffix: true })
-                        : t("common.never")}
-                    </TableCell>
-                    <TableCell className="text-right rtl:text-left">
-                      <div className="flex items-center justify-end rtl:justify-start gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => fetchSource(source.id)}
-                          disabled={isFetchingOne && fetchingSourceId === source.id}
-                          data-testid={`button-fetch-source-${source.id}`}
-                        >
-                          <RefreshCw className={`w-4 h-4 ${isFetchingOne && fetchingSourceId === source.id ? "animate-spin" : ""}`} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive"
-                          onClick={() => deleteSource(source.id)}
-                          disabled={isDeleting}
-                          data-testid={`button-delete-source-${source.id}`}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
+                    </div>
+                    <div className="flex items-center justify-end gap-1 pt-1 border-t border-border/50">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => fetchSource(source.id)}
+                        disabled={isFetchingOne && fetchingSourceId === source.id}
+                        data-testid={`button-fetch-source-mobile-${source.id}`}
+                      >
+                        <RefreshCw className={`w-4 h-4 ${isFetchingOne && fetchingSourceId === source.id ? "animate-spin" : ""}`} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive"
+                        onClick={() => deleteSource(source.id)}
+                        disabled={isDeleting}
+                        data-testid={`button-delete-source-mobile-${source.id}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
                 );
               })}
-            </TableBody>
-          </Table>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

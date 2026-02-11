@@ -89,7 +89,7 @@ export default function Feed() {
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-feed-title">{t("feed.title")}</h1>
+            <h1 className="text-2xl md:text-3xl font-display font-bold text-foreground" data-testid="text-feed-title">{t("feed.title")}</h1>
             {isFetching && (
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -136,12 +136,12 @@ export default function Feed() {
           </div>
         </div>
         
-        <div className="flex flex-wrap gap-3 items-center">
+        <div className="grid grid-cols-2 md:flex md:flex-wrap gap-3 items-center">
           <Select 
             value={filters.sourceId} 
             onValueChange={(val) => { setFilters(prev => ({ ...prev, sourceId: val === "all" ? undefined : val })); setPage(1); }}
           >
-            <SelectTrigger className="w-[160px] bg-background" data-testid="select-filter-source">
+            <SelectTrigger className="w-full md:w-[160px] bg-background" data-testid="select-filter-source">
               <SelectValue placeholder={t("feed.allSources")} />
             </SelectTrigger>
             <SelectContent>
@@ -158,7 +158,7 @@ export default function Feed() {
             value={filters.sourceType} 
             onValueChange={(val) => { setFilters(prev => ({ ...prev, sourceType: val === "all" ? undefined : val })); setPage(1); }}
           >
-            <SelectTrigger className="w-[160px] bg-background" data-testid="select-filter-source-type">
+            <SelectTrigger className="w-full md:w-[160px] bg-background" data-testid="select-filter-source-type">
               <SelectValue placeholder={t("feed.allSourceTypes")} />
             </SelectTrigger>
             <SelectContent>
@@ -175,7 +175,7 @@ export default function Feed() {
             value={filters.sentiment} 
             onValueChange={(val) => { setFilters(prev => ({ ...prev, sentiment: val === "all" ? undefined : val })); setPage(1); }}
           >
-            <SelectTrigger className="w-[150px] bg-background" data-testid="select-filter-sentiment">
+            <SelectTrigger className="w-full md:w-[150px] bg-background" data-testid="select-filter-sentiment">
               <SelectValue placeholder={t("feed.allSentiment")} />
             </SelectTrigger>
             <SelectContent>
@@ -190,7 +190,7 @@ export default function Feed() {
             value={filters.category} 
             onValueChange={(val) => { setFilters(prev => ({ ...prev, category: val === "all" ? undefined : val })); setPage(1); }}
           >
-            <SelectTrigger className="w-[170px] bg-background" data-testid="select-filter-category">
+            <SelectTrigger className="w-full md:w-[170px] bg-background" data-testid="select-filter-category">
               <SelectValue placeholder={t("feed.allCategories")} />
             </SelectTrigger>
             <SelectContent>
@@ -204,7 +204,7 @@ export default function Feed() {
           </Select>
 
           {hasActiveFilters && (
-            <Button variant="ghost" size="sm" onClick={clearFilters} data-testid="button-clear-filters">
+            <Button variant="ghost" size="sm" onClick={clearFilters} className="col-span-2 md:col-span-1" data-testid="button-clear-filters">
               {t("feed.clearFilters")}
             </Button>
           )}

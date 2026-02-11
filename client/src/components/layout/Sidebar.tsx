@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash } from "lucide-react";
+import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash, Menu } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { LanguageSelector } from "@/components/LanguageSelector";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const analyticsSubPages = [
   { key: "overview", href: "/analytics", icon: BarChart3 },
@@ -23,7 +26,7 @@ const sourcesSubPages = [
   { key: "keywords", href: "/sources/keywords", icon: Hash },
 ];
 
-export function Sidebar() {
+function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const [location] = useLocation();
   const { logout } = useAuth();
   const { t } = useTranslation();
@@ -38,7 +41,7 @@ export function Sidebar() {
   ];
 
   return (
-    <div className="flex flex-col w-64 border-r border-border bg-card min-h-screen sticky top-0 h-screen rtl:border-r-0 rtl:border-l">
+    <div className="flex flex-col h-full">
       <div className="p-6 border-b border-border/50">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold font-display text-xl shadow-lg shadow-primary/25">
@@ -56,6 +59,7 @@ export function Sidebar() {
           return (
             <Link key={item.href} href={item.href}>
               <div
+                onClick={onNavigate}
                 data-testid={`nav-${item.href.replace("/", "") || "dashboard"}`}
                 className={cn(
                   "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
@@ -95,6 +99,7 @@ export function Sidebar() {
                 return (
                   <Link key={sub.href} href={sub.href}>
                     <div
+                      onClick={onNavigate}
                       data-testid={`nav-analytics-${sub.key}`}
                       className={cn(
                         "flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200 cursor-pointer group",
@@ -137,6 +142,7 @@ export function Sidebar() {
                 return (
                   <Link key={sub.href} href={sub.href}>
                     <div
+                      onClick={onNavigate}
                       data-testid={`nav-sources-${sub.key}`}
                       className={cn(
                         "flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200 cursor-pointer group",
@@ -167,6 +173,49 @@ export function Sidebar() {
           {t("nav.signOut")}
         </button>
       </div>
+    </div>
+  );
+}
+
+export function MobileHeader() {
+  const [open, setOpen] = useState(false);
+  const dir = document.documentElement.dir || "ltr";
+  const drawerSide = dir === "rtl" ? "right" : "left";
+
+  return (
+    <div className="md:hidden sticky top-0 z-50 flex items-center gap-3 px-4 py-3 border-b border-border bg-card">
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger asChild>
+          <Button variant="ghost" size="icon" data-testid="button-mobile-menu">
+            <Menu className="w-5 h-5" />
+          </Button>
+        </SheetTrigger>
+        <SheetContent side={drawerSide} className="p-0 w-72" data-testid="mobile-sidebar-drawer">
+          <SidebarContent onNavigate={() => setOpen(false)} />
+        </SheetContent>
+      </Sheet>
+      <div className="flex items-center gap-2">
+        <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold font-display text-lg shadow-lg shadow-primary/25">
+          N
+        </div>
+        <h1 className="text-lg font-bold font-display tracking-tight text-foreground">
+          NWS<span className="text-primary">360</span>
+        </h1>
+      </div>
+    </div>
+  );
+}
+
+export function Sidebar() {
+  const isMobile = useIsMobile();
+
+  if (isMobile) {
+    return null;
+  }
+
+  return (
+    <div className="hidden md:flex flex-col w-64 border-r border-border bg-card min-h-screen sticky top-0 h-screen rtl:border-r-0 rtl:border-l">
+      <SidebarContent />
     </div>
   );
 }
