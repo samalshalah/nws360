@@ -94,16 +94,18 @@ export default function Analytics() {
                         title={`${kw.text}: ${pos} positive, ${neu} neutral, ${neg} negative`}
                       >
                         <span className="w-24 text-sm font-medium truncate shrink-0">{kw.text}</span>
-                        <div className="flex-1 h-5 bg-muted rounded-sm overflow-hidden flex" style={{ width: `${pct}%` }}>
-                          {pos > 0 && (
-                            <div className="h-full bg-emerald-500 transition-all" style={{ width: `${posPct}%` }} />
-                          )}
-                          {neu > 0 && (
-                            <div className="h-full bg-slate-400 transition-all" style={{ width: `${neuPct}%` }} />
-                          )}
-                          {neg > 0 && (
-                            <div className="h-full bg-red-500 transition-all" style={{ width: `${negPct}%` }} />
-                          )}
+                        <div className="flex-1 h-6">
+                          <div className="h-full rounded-sm overflow-hidden flex" style={{ width: `${pct}%` }}>
+                            {pos > 0 && (
+                              <div className="h-full bg-emerald-500" style={{ width: `${posPct}%` }} />
+                            )}
+                            {neu > 0 && (
+                              <div className="h-full bg-slate-400" style={{ width: `${neuPct}%` }} />
+                            )}
+                            {neg > 0 && (
+                              <div className="h-full bg-red-500" style={{ width: `${negPct}%` }} />
+                            )}
+                          </div>
                         </div>
                         <span className="text-xs text-muted-foreground w-8 text-right shrink-0">{kw.value}</span>
                       </button>
