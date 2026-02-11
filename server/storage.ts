@@ -213,6 +213,11 @@ export class DatabaseStorage implements IStorage {
     return article;
   }
 
+  async updateArticle(id: number, data: Partial<InsertArticle>): Promise<Article | undefined> {
+    const [article] = await db.update(articles).set(data).where(eq(articles.id, id)).returning();
+    return article;
+  }
+
   async getArticleByUrl(url: string): Promise<Article | undefined> {
     const [article] = await db.select().from(articles).where(eq(articles.url, url));
     return article;

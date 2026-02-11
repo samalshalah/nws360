@@ -287,17 +287,91 @@ function extractGoogleNewsSubSource(item: any): string | undefined {
   return undefined;
 }
 
-function extractGoogleNewsImage(item: any): string | undefined {
-  const stdImage = extractImageFromRssItem(item);
-  if (stdImage) return stdImage;
+const PUBLISHER_DOMAINS: Record<string, string> = {
+  "CNN": "cnn.com", "NBC News": "nbcnews.com", "The New York Times": "nytimes.com",
+  "The Guardian": "theguardian.com", "Politico": "politico.com", "Fox News": "foxnews.com",
+  "ABC News": "abcnews.go.com", "ELLE": "elle.com", "Bloomberg": "bloomberg.com",
+  "PBS": "pbs.org", "The Salt Lake Tribune": "sltrib.com", "The Economist": "economist.com",
+  "Financial Times": "ft.com", "Nikkei Asia": "asia.nikkei.com", "The Korea Herald": "koreaherald.com",
+  "KITCO": "kitco.com", "Investing.com": "investing.com", "Foreign Policy": "foreignpolicy.com",
+  "Times of India": "timesofindia.indiatimes.com", "NBC 5 Chicago": "nbcchicago.com",
+  "Reuters": "reuters.com", "AP News": "apnews.com", "BBC": "bbc.com", "BBC News": "bbc.com",
+  "NPR": "npr.org", "The Washington Post": "washingtonpost.com", "USA Today": "usatoday.com",
+  "Forbes": "forbes.com", "Business Insider": "businessinsider.com", "TechCrunch": "techcrunch.com",
+  "The Verge": "theverge.com", "Wired": "wired.com", "Al Jazeera": "aljazeera.com",
+  "The Hill": "thehill.com", "Axios": "axios.com", "Vox": "vox.com",
+};
 
-  const desc = item.content || item.description || item.summary || "";
-  if (typeof desc === "string") {
-    const imgMatch = desc.match(/<img[^>]+src=["']([^"']+)["']/i);
-    if (imgMatch && imgMatch[1]) return imgMatch[1];
+let braveRateLimited = false;
+let braveRateLimitedUntil = 0;
+
+async function resolveGoogleNewsArticleUrl(title: string, subSource?: string): Promise<string | null> {
+  if (braveRateLimited && Date.now() < braveRateLimitedUntil) {
+    return null;
   }
+  braveRateLimited = false;
 
-  return undefined;
+  try {
+    const domain = subSource ? PUBLISHER_DOMAINS[subSource] : null;
+    const shortTitle = title.substring(0, 80);
+    const query = domain
+      ? `site:${domain} ${shortTitle}`
+      : `${shortTitle}${subSource ? " " + subSource : ""}`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const response = await fetch(`https://search.brave.com/search?q=${encodeURIComponent(query)}`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (response.status === 429) {
+      braveRateLimited = true;
+      braveRateLimitedUntil = Date.now() + 300000;
+      console.log("[Worker] Brave Search rate limited, pausing for 5 minutes");
+      return null;
+    }
+    if (response.status !== 200) {
+      console.log(`[Worker] Brave Search returned status ${response.status}`);
+      return null;
+    }
+    const html = await response.text();
+
+    const targetDomain = domain || (subSource ? subSource.toLowerCase().replace(/\s+/g, "") + ".com" : null);
+    if (targetDomain) {
+      const escapedDomain = targetDomain.replace(".", "\\.");
+      const pattern = new RegExp(`href="(https?://[^"]*${escapedDomain}[^"]+)"`, "g");
+      const matches = [...html.matchAll(pattern)];
+      for (const m of matches) {
+        const url = m[1];
+        if (url.length > 40 && !url.includes("/search") && !url.includes("brave.com")) {
+          return url;
+        }
+      }
+    }
+
+    const genericPattern = /href="(https?:\/\/(?!search\.brave\.com)[^"]+)"/g;
+    const genericMatches = [...html.matchAll(genericPattern)];
+    for (const m of genericMatches) {
+      const url = m[1];
+      if (url.length > 60 && !url.includes("brave.com") && !url.includes("google.com") && !url.includes("/search")) {
+        return url;
+      }
+    }
+  } catch (e: any) {
+    if (e?.name === 'AbortError') {
+      console.log("[Worker] Article URL resolve timed out");
+    } else {
+      console.error("[Worker] Failed to resolve article URL:", e?.message || e);
+    }
+  }
+  return null;
+}
+
+function isGenericGoogleImage(url: string): boolean {
+  return url.includes("lh3.googleusercontent.com") || url.includes("gstatic.com");
 }
 
 async function fetchOgImage(url: string): Promise<string | undefined> {
@@ -305,7 +379,7 @@ async function fetchOgImage(url: string): Promise<string | undefined> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     const response = await fetch(url, {
-      headers: { "User-Agent": "NWS360/1.0 (News Reader)" },
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
       signal: controller.signal,
       redirect: "follow",
     });
@@ -345,25 +419,28 @@ async function fetchGoogleNewsArticles(source: { id: number; name: string; url: 
   try {
     const feed = await parser.parseURL(rssUrl);
     const rawItems = feed.items.slice(0, limit);
-    const items = await Promise.all(rawItems.map(async (item) => {
+    const items: { title: string; url: string; content: string; publishedAt: Date; image?: string; subSource?: string }[] = [];
+    for (const item of rawItems) {
       const subSource = extractGoogleNewsSubSource(item);
       const rawTitle = stripHtml(item.title || "Untitled");
-      let image = extractGoogleNewsImage(item);
-      const articleUrl = item.link || "";
+      const cleanTitle = cleanGoogleNewsTitle(rawTitle, subSource);
+      const googleNewsUrl = item.link || "";
+      let image: string | undefined;
 
-      if (!image && articleUrl) {
-        image = await fetchOgImage(articleUrl);
+      const stdImage = extractImageFromRssItem(item);
+      if (stdImage && !isGenericGoogleImage(stdImage)) {
+        image = stdImage;
       }
 
-      return {
-        title: cleanGoogleNewsTitle(rawTitle, subSource),
-        url: articleUrl,
+      items.push({
+        title: cleanTitle,
+        url: googleNewsUrl,
         content: stripHtml(item.contentSnippet || item.content || item.summary || item.title || ""),
         publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
         image,
         subSource,
-      };
-    }));
+      });
+    }
 
     return await processItems(source, items);
   } catch (e) {
@@ -477,6 +554,48 @@ export async function fetchAllFeeds(): Promise<{ sourceName: string; newArticles
   return results;
 }
 
+export async function backfillGoogleNewsImages(): Promise<number> {
+  const { items } = await storage.getArticles({ limit: 200 });
+  const googleNewsArticles = items.filter(
+    (a) => a.source?.type === "google_news" && (!a.imageUrl || isGenericGoogleImage(a.imageUrl)) && a.imageUrl !== "none"
+  );
+  if (googleNewsArticles.length === 0) return 0;
+
+  console.log(`[Worker] Backfilling images for ${googleNewsArticles.length} Google News articles...`);
+  let updated = 0;
+
+  const batch = googleNewsArticles.slice(0, 2);
+  for (const article of batch) {
+    if (braveRateLimited && Date.now() < braveRateLimitedUntil) {
+      console.log("[Worker] Brave rate limited, skipping remaining backfill");
+      break;
+    }
+    try {
+      const realUrl = await resolveGoogleNewsArticleUrl(article.title, article.subSource || undefined);
+      if (realUrl) {
+        console.log(`[Worker] Resolved: ${realUrl.substring(0, 100)}`);
+        const image = await fetchOgImage(realUrl);
+        if (image && !isGenericGoogleImage(image)) {
+          await storage.updateArticle(article.id, { imageUrl: image });
+          updated++;
+          console.log(`[Worker] Backfilled image for article ${article.id}: ${image.substring(0, 80)}`);
+        } else {
+          await storage.updateArticle(article.id, { imageUrl: "none" });
+          console.log(`[Worker] No usable image for article ${article.id}, marked as checked`);
+        }
+      } else {
+        await storage.updateArticle(article.id, { imageUrl: "none" });
+      }
+      await new Promise(resolve => setTimeout(resolve, 10000));
+    } catch (e) {
+      console.error(`[Worker] Backfill error for article ${article.id}:`, e);
+    }
+  }
+
+  console.log(`[Worker] Backfill complete: updated ${updated}/${googleNewsArticles.length} articles`);
+  return updated;
+}
+
 let workerInterval: ReturnType<typeof setInterval> | null = null;
 
 export function startFeedWorker(intervalMinutes: number = 10) {
@@ -498,6 +617,11 @@ export function startFeedWorker(intervalMinutes: number = 10) {
       if (deleted > 0) console.log(`[Worker] Cleaned up ${deleted} expired articles`);
     } catch (e) {
       console.error("[Worker] Cleanup error:", e);
+    }
+    try {
+      await backfillGoogleNewsImages();
+    } catch (e) {
+      console.error("[Worker] Image backfill error:", e);
     }
   }, 5000);
 

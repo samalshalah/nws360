@@ -33,6 +33,32 @@ const categoryColors: Record<string, string> = {
   general: "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700",
 };
 
+const PUBLISHER_DOMAIN_MAP: Record<string, string> = {
+  "CNN": "cnn.com", "NBC News": "nbcnews.com", "The New York Times": "nytimes.com",
+  "The Guardian": "theguardian.com", "Politico": "politico.com", "Fox News": "foxnews.com",
+  "ABC News": "abcnews.go.com", "ELLE": "elle.com", "Bloomberg": "bloomberg.com",
+  "PBS": "pbs.org", "The Salt Lake Tribune": "sltrib.com", "The Economist": "economist.com",
+  "Financial Times": "ft.com", "Nikkei Asia": "asia.nikkei.com", "The Korea Herald": "koreaherald.com",
+  "KITCO": "kitco.com", "Investing.com": "investing.com", "Foreign Policy": "foreignpolicy.com",
+  "Times of India": "timesofindia.indiatimes.com", "NBC 5 Chicago": "nbcchicago.com",
+  "Reuters": "reuters.com", "AP News": "apnews.com", "BBC": "bbc.com", "BBC News": "bbc.com",
+  "NPR": "npr.org", "The Washington Post": "washingtonpost.com", "USA Today": "usatoday.com",
+  "Forbes": "forbes.com", "Business Insider": "businessinsider.com", "TechCrunch": "techcrunch.com",
+  "The Verge": "theverge.com", "Wired": "wired.com", "Al Jazeera": "aljazeera.com",
+  "The Hill": "thehill.com", "Axios": "axios.com", "Vox": "vox.com",
+  "CNBC": "cnbc.com", "The Atlantic": "theatlantic.com", "Rolling Stone": "rollingstone.com",
+  "Vanity Fair": "vanityfair.com", "Vogue": "vogue.com", "GQ": "gq.com",
+  "Harper's Bazaar": "harpersbazaar.com", "Cosmopolitan": "cosmopolitan.com",
+  "wallpaper.com": "wallpaper.com", "Dezeen": "dezeen.com",
+};
+
+function getPublisherDomain(publisher: string): string | null {
+  if (PUBLISHER_DOMAIN_MAP[publisher]) return PUBLISHER_DOMAIN_MAP[publisher];
+  const normalized = publisher.toLowerCase().replace(/\s+/g, "");
+  if (normalized.includes(".")) return normalized;
+  return normalized + ".com";
+}
+
 export function ArticleCard({ article }: ArticleCardProps) {
   const { t } = useTranslation();
   const [imgError, setImgError] = useState(false);
@@ -46,7 +72,9 @@ export function ArticleCard({ article }: ArticleCardProps) {
   const SourceIcon = sourceTypeIcons[article.source?.type || "rss"] || Newspaper;
   const displayContent = article.summary || article.content.substring(0, 150) + "...";
   const articleCategory = (article as any).category || "general";
-  const hasImage = article.imageUrl && !imgError;
+  const hasImage = article.imageUrl && article.imageUrl !== "none" && !imgError;
+  const publisherDomain = article.subSource ? getPublisherDomain(article.subSource) : null;
+  const faviconUrl = publisherDomain ? `https://www.google.com/s2/favicons?sz=128&domain=${publisherDomain}` : null;
 
   return (
     <motion.div
@@ -57,7 +85,7 @@ export function ArticleCard({ article }: ArticleCardProps) {
       className="bg-card border border-border/50 rounded-md overflow-hidden shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 group flex flex-col"
       data-testid={`card-article-${article.id}`}
     >
-      {hasImage && (
+      {hasImage ? (
         <div className="relative w-full h-48 overflow-hidden bg-muted" data-testid={`img-article-${article.id}`}>
           <img
             src={article.imageUrl!}
@@ -67,7 +95,17 @@ export function ArticleCard({ article }: ArticleCardProps) {
             onError={() => setImgError(true)}
           />
         </div>
-      )}
+      ) : faviconUrl && article.source?.type === "google_news" ? (
+        <div className="relative w-full h-32 overflow-hidden bg-gradient-to-br from-muted to-muted/60 flex items-center justify-center gap-3" data-testid={`favicon-article-${article.id}`}>
+          <img
+            src={faviconUrl}
+            alt={article.subSource || ""}
+            className="w-10 h-10 rounded-md"
+            loading="lazy"
+          />
+          <span className="text-sm font-semibold text-muted-foreground/70">{article.subSource}</span>
+        </div>
+      ) : null}
 
       <div className="p-6 flex flex-col flex-1">
         <div className="flex items-start justify-between gap-2 mb-4 flex-wrap">

@@ -57,6 +57,10 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - **Telegram**: Scrapes public channel preview pages via t.me/s/channel
 
 ## Recent Changes
+- 2026-02-11: Google News articles show publisher favicon + name as visual fallback when article images are unavailable
+- 2026-02-11: Generic Google placeholder images (lh3.googleusercontent.com) are filtered out from articles
+- 2026-02-11: Background image backfill via Brave Search resolves real article URLs and fetches og:image (rate-limited, processes ~2 articles per cycle)
+- 2026-02-11: Added publisher domain mapping (30+ publishers) for favicon display and URL resolution
 - 2026-02-11: Google News feeds now extract sub-source publisher name (e.g., CNN, Reuters) and article images (via og:image fallback)
 - 2026-02-11: Added subSource field to articles schema for tracking original publisher
 - 2026-02-11: ArticleCard shows sub-source with "via" label for Google News articles
