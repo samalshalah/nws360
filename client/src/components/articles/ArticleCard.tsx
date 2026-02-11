@@ -73,7 +73,15 @@ export function ArticleCard({ article }: ArticleCardProps) {
         <div className="flex items-start justify-between gap-2 mb-4 flex-wrap">
           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground bg-muted/50 px-2 py-1 rounded-md">
             <SourceIcon className="w-3.5 h-3.5" />
-            {article.source?.name || t("common.noResults")}
+            {article.subSource ? (
+              <>
+                <span className="font-semibold text-foreground/80" data-testid={`text-subsource-${article.id}`}>{article.subSource}</span>
+                <span className="text-muted-foreground/40" data-testid={`text-via-${article.id}`}>{t("common.via")}</span>
+                <span data-testid={`text-source-${article.id}`}>{article.source?.name || t("common.noResults")}</span>
+              </>
+            ) : (
+              <span data-testid={`text-source-${article.id}`}>{article.source?.name || t("common.noResults")}</span>
+            )}
             <span className="text-muted-foreground/60">
               {article.source?.type ? t(`feed.sourceTypes.${article.source.type}`) : ""}
             </span>

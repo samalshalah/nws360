@@ -17,6 +17,7 @@ export default {
     noResults: "No se encontraron resultados",
     language: "Idioma",
     error: "Algo salió mal",
+    via: "vía",
   },
   nav: {
     dashboard: "Panel de control",

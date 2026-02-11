@@ -17,6 +17,7 @@ export default {
     noResults: "Sonuç bulunamadı",
     language: "Dil",
     error: "Bir şeyler yanlış gitti",
+    via: "üzerinden",
   },
   nav: {
     dashboard: "Kontrol Paneli",

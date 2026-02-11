@@ -28,7 +28,7 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 ## Database Schema
 - `users`: id, username, password, role (admin/client), createdAt
 - `sources`: id, name, url, type, active, intervalMinutes, retentionDays, lastFetchedAt, createdAt
-- `articles`: id, title, content, summary, url, sourceId, publishedAt, language, sentimentScore, sentimentLabel, keywords[], category, imageUrl, createdAt
+- `articles`: id, title, content, summary, url, sourceId, publishedAt, language, sentimentScore, sentimentLabel, keywords[], category, imageUrl, subSource, createdAt
 - `keywords`: id, term, createdAt
 
 ## API Routes
@@ -57,6 +57,10 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - **Telegram**: Scrapes public channel preview pages via t.me/s/channel
 
 ## Recent Changes
+- 2026-02-11: Google News feeds now extract sub-source publisher name (e.g., CNN, Reuters) and article images (via og:image fallback)
+- 2026-02-11: Added subSource field to articles schema for tracking original publisher
+- 2026-02-11: ArticleCard shows sub-source with "via" label for Google News articles
+- 2026-02-11: Restructured sidebar navigation with collapsible Sources sub-menu (Add Source, Manage Sources, Keywords)
 - 2026-02-11: Fixed AI sentiment analysis - switched from gpt-5-nano to gpt-4o-mini model
 - 2026-02-11: Added /api/reanalyze endpoint and UI button to re-analyze articles with AI
 - 2026-02-11: Improved News Feed page with pagination (24 per page), article count, clear filters

@@ -17,6 +17,7 @@ export default {
     noResults: "Aucun résultat trouvé",
     language: "Langue",
     error: "Une erreur s'est produite",
+    via: "via",
   },
   nav: {
     dashboard: "Tableau de bord",

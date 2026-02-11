@@ -17,6 +17,7 @@ export default {
     noResults: "لم يتم العثور على نتائج",
     language: "اللغة",
     error: "حدث خطأ ما",
+    via: "عبر",
   },
   nav: {
     dashboard: "لوحة التحكم",

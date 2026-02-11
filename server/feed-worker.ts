@@ -14,6 +14,7 @@ const parser = new RssParser({
       ["media:content", "mediaContent"],
       ["media:thumbnail", "mediaThumbnail"],
       ["content:encoded", "contentEncoded"],
+      ["source", "source"],
     ],
   },
 });
@@ -267,6 +268,73 @@ async function fetchTelegramArticles(source: { id: number; name: string; url: st
   return await processItems(source, posts.slice(0, limit));
 }
 
+function extractGoogleNewsSubSource(item: any): string | undefined {
+  if (item.source) {
+    if (typeof item.source === "string") return item.source;
+    if (item.source._ || item.source.$t) return item.source._ || item.source.$t;
+    if (item.source.$ && item.source.$.url) {
+      const text = item.source._ || item.source.$text || item.source.$t;
+      if (text) return text;
+    }
+  }
+
+  const title = item.title || "";
+  const dashIndex = title.lastIndexOf(" - ");
+  if (dashIndex > 0) {
+    return title.substring(dashIndex + 3).trim();
+  }
+
+  return undefined;
+}
+
+function extractGoogleNewsImage(item: any): string | undefined {
+  const stdImage = extractImageFromRssItem(item);
+  if (stdImage) return stdImage;
+
+  const desc = item.content || item.description || item.summary || "";
+  if (typeof desc === "string") {
+    const imgMatch = desc.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (imgMatch && imgMatch[1]) return imgMatch[1];
+  }
+
+  return undefined;
+}
+
+async function fetchOgImage(url: string): Promise<string | undefined> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const response = await fetch(url, {
+      headers: { "User-Agent": "NWS360/1.0 (News Reader)" },
+      signal: controller.signal,
+      redirect: "follow",
+    });
+    clearTimeout(timeout);
+    const html = await response.text();
+    const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+      || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+    if (ogMatch && ogMatch[1]) {
+      const imgUrl = ogMatch[1];
+      if (imgUrl.startsWith("http")) return imgUrl;
+      try {
+        return new URL(imgUrl, url).href;
+      } catch {
+        return imgUrl;
+      }
+    }
+  } catch {}
+  return undefined;
+}
+
+function cleanGoogleNewsTitle(title: string, subSource?: string): string {
+  if (!subSource) return title;
+  const suffix = ` - ${subSource}`;
+  if (title.endsWith(suffix)) {
+    return title.substring(0, title.length - suffix.length).trim();
+  }
+  return title;
+}
+
 async function fetchGoogleNewsArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
   const limit = source.maxArticlesPerFetch || 10;
   const keyword = source.url.trim();
@@ -276,13 +344,28 @@ async function fetchGoogleNewsArticles(source: { id: number; name: string; url: 
 
   try {
     const feed = await parser.parseURL(rssUrl);
-    return await processItems(source, feed.items.slice(0, limit).map(item => ({
-      title: stripHtml(item.title || "Untitled"),
-      url: item.link || "",
-      content: stripHtml(item.contentSnippet || item.content || item.summary || item.title || ""),
-      publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
-      image: extractImageFromRssItem(item),
-    })));
+    const rawItems = feed.items.slice(0, limit);
+    const items = await Promise.all(rawItems.map(async (item) => {
+      const subSource = extractGoogleNewsSubSource(item);
+      const rawTitle = stripHtml(item.title || "Untitled");
+      let image = extractGoogleNewsImage(item);
+      const articleUrl = item.link || "";
+
+      if (!image && articleUrl) {
+        image = await fetchOgImage(articleUrl);
+      }
+
+      return {
+        title: cleanGoogleNewsTitle(rawTitle, subSource),
+        url: articleUrl,
+        content: stripHtml(item.contentSnippet || item.content || item.summary || item.title || ""),
+        publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+        image,
+        subSource,
+      };
+    }));
+
+    return await processItems(source, items);
   } catch (e) {
     console.error(`[Worker] Google News fetch failed for "${keyword}":`, e);
     return 0;
@@ -291,7 +374,7 @@ async function fetchGoogleNewsArticles(source: { id: number; name: string; url: 
 
 async function processItems(
   source: { id: number; name: string },
-  items: { title: string; url: string; content: string; publishedAt: Date; image?: string }[]
+  items: { title: string; url: string; content: string; publishedAt: Date; image?: string; subSource?: string }[]
 ): Promise<number> {
   let newArticles = 0;
 
@@ -321,6 +404,7 @@ async function processItems(
       keywords: analysis.keywords,
       category: analysis.category,
       imageUrl: item.image || null,
+      subSource: item.subSource || null,
     };
 
     try {

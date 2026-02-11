@@ -189,6 +189,7 @@ export class DatabaseStorage implements IStorage {
       keywords: articles.keywords,
       category: articles.category,
       imageUrl: articles.imageUrl,
+      subSource: articles.subSource,
       createdAt: articles.createdAt,
       source: sources
     })
