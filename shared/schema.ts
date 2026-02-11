@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { relations } from "drizzle-orm";
@@ -60,6 +60,30 @@ export const keywords = pgTable("keywords", {
 
 export const insertKeywordSchema = createInsertSchema(keywords).omit({ id: true, createdAt: true });
 
+// === BOOKMARKS ===
+export const bookmarks = pgTable("bookmarks", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  articleId: integer("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("bookmarks_user_article_idx").on(table.userId, table.articleId),
+]);
+
+export const insertBookmarkSchema = createInsertSchema(bookmarks).omit({ id: true, createdAt: true });
+
+// === SOURCE FETCH LOGS ===
+export const sourceFetchLogs = pgTable("source_fetch_logs", {
+  id: serial("id").primaryKey(),
+  sourceId: integer("source_id").notNull().references(() => sources.id, { onDelete: "cascade" }),
+  status: text("status").notNull(), // 'success' | 'error'
+  articlesFound: integer("articles_found").default(0),
+  errorMessage: text("error_message"),
+  fetchedAt: timestamp("fetched_at").defaultNow(),
+});
+
+export const insertSourceFetchLogSchema = createInsertSchema(sourceFetchLogs).omit({ id: true, fetchedAt: true });
+
 // === RELATIONS ===
 export const sourceRelations = relations(sources, ({ many }) => ({
   articles: many(articles),
@@ -84,6 +108,12 @@ export type InsertArticle = z.infer<typeof insertArticleSchema>;
 
 export type Keyword = typeof keywords.$inferSelect;
 export type InsertKeyword = z.infer<typeof insertKeywordSchema>;
+
+export type Bookmark = typeof bookmarks.$inferSelect;
+export type InsertBookmark = z.infer<typeof insertBookmarkSchema>;
+
+export type SourceFetchLog = typeof sourceFetchLogs.$inferSelect;
+export type InsertSourceFetchLog = z.infer<typeof insertSourceFetchLogSchema>;
 
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;
