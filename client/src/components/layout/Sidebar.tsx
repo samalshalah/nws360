@@ -1,18 +1,31 @@
+import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut } from "lucide-react";
+import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { LanguageSelector } from "@/components/LanguageSelector";
 
+const analyticsSubPages = [
+  { key: "overview", href: "/analytics", icon: BarChart3 },
+  { key: "contentVolume", href: "/analytics/content-volume", icon: FileBarChart },
+  { key: "trendingTopics", href: "/analytics/trending-topics", icon: TrendingUp },
+  { key: "keywordAnalysis", href: "/analytics/keyword-analysis", icon: Search },
+  { key: "sentimentReports", href: "/analytics/sentiment-reports", icon: MessageSquare },
+  { key: "sourceBehavior", href: "/analytics/source-behavior", icon: Shield },
+  { key: "customReports", href: "/analytics/custom-reports", icon: FileText },
+  { key: "networkMapping", href: "/analytics/network-mapping", icon: Network },
+];
+
 export function Sidebar() {
   const [location] = useLocation();
   const { logout } = useAuth();
   const { t } = useTranslation();
+  const isAnalyticsActive = location.startsWith("/analytics");
+  const [analyticsOpen, setAnalyticsOpen] = useState(isAnalyticsActive);
 
   const navigation = [
     { name: t("nav.newsFeed"), href: '/feed', icon: Newspaper },
-    { name: t("nav.analytics"), href: '/analytics', icon: BarChart3 },
     { name: t("nav.dashboard"), href: '/', icon: LayoutDashboard },
     { name: t("nav.addSource"), href: '/admin', icon: Settings },
   ];
@@ -30,8 +43,70 @@ export function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 p-4 space-y-1">
-        {navigation.map((item) => {
+      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        {navigation.slice(0, 1).map((item) => {
+          const isActive = location === item.href;
+          return (
+            <Link key={item.href} href={item.href}>
+              <div
+                data-testid={`nav-${item.href.replace("/", "") || "dashboard"}`}
+                className={cn(
+                  "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
+                  isActive
+                    ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
+                )}
+              >
+                <item.icon className={cn("w-5 h-5", isActive ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
+                {item.name}
+              </div>
+            </Link>
+          );
+        })}
+
+        <div>
+          <button
+            onClick={() => setAnalyticsOpen(!analyticsOpen)}
+            data-testid="nav-analytics-toggle"
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
+              isAnalyticsActive && !analyticsOpen
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            )}
+          >
+            <BarChart3 className={cn("w-5 h-5", isAnalyticsActive && !analyticsOpen ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
+            <span className="flex-1 text-left rtl:text-right">{t("nav.analytics")}</span>
+            <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", analyticsOpen ? "rotate-180" : "")} />
+          </button>
+
+          {analyticsOpen && (
+            <div className="mt-1 space-y-0.5 ltr:ml-4 rtl:mr-4">
+              {analyticsSubPages.map((sub) => {
+                const isActive = location === sub.href;
+                const SubIcon = sub.icon;
+                return (
+                  <Link key={sub.href} href={sub.href}>
+                    <div
+                      data-testid={`nav-analytics-${sub.key}`}
+                      className={cn(
+                        "flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200 cursor-pointer group",
+                        isActive
+                          ? "bg-primary/10 text-primary font-semibold"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      )}
+                    >
+                      <SubIcon className={cn("w-3.5 h-3.5", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+                      {t(`analyticsPages.nav.${sub.key}`)}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {navigation.slice(1).map((item) => {
           const isActive = location === item.href;
           return (
             <Link key={item.href} href={item.href}>

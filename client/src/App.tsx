@@ -14,6 +14,13 @@ import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Feed from "@/pages/Feed";
 import Analytics from "@/pages/Analytics";
+import ContentVolume from "@/pages/analytics/ContentVolume";
+import TrendingTopics from "@/pages/analytics/TrendingTopics";
+import KeywordAnalysis from "@/pages/analytics/KeywordAnalysis";
+import SentimentReports from "@/pages/analytics/SentimentReports";
+import SourceBehavior from "@/pages/analytics/SourceBehavior";
+import CustomReports from "@/pages/analytics/CustomReports";
+import NetworkMapping from "@/pages/analytics/NetworkMapping";
 import Admin from "@/pages/Admin";
 import NotFound from "@/pages/not-found";
 
@@ -59,6 +66,27 @@ function Router() {
       </Route>
       <Route path="/analytics">
         <ProtectedRoute component={Analytics} />
+      </Route>
+      <Route path="/analytics/content-volume">
+        <ProtectedRoute component={ContentVolume} />
+      </Route>
+      <Route path="/analytics/trending-topics">
+        <ProtectedRoute component={TrendingTopics} />
+      </Route>
+      <Route path="/analytics/keyword-analysis">
+        <ProtectedRoute component={KeywordAnalysis} />
+      </Route>
+      <Route path="/analytics/sentiment-reports">
+        <ProtectedRoute component={SentimentReports} />
+      </Route>
+      <Route path="/analytics/source-behavior">
+        <ProtectedRoute component={SourceBehavior} />
+      </Route>
+      <Route path="/analytics/custom-reports">
+        <ProtectedRoute component={CustomReports} />
+      </Route>
+      <Route path="/analytics/network-mapping">
+        <ProtectedRoute component={NetworkMapping} />
       </Route>
       <Route path="/admin">
         <ProtectedRoute component={Admin} />

@@ -345,6 +345,51 @@ export async function registerRoutes(
     res.json(trend);
   });
 
+  app.get("/api/analytics/content-volume", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
+    if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
+    const data = await storage.getContentVolume(startDate, endDate);
+    res.json(data);
+  });
+
+  app.get("/api/analytics/trending-topics", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
+    if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
+    const data = await storage.getTrendingTopics(startDate, endDate);
+    res.json(data);
+  });
+
+  app.get("/api/analytics/keyword-analysis", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
+    if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
+    const data = await storage.getKeywordAnalysis(startDate, endDate);
+    res.json(data);
+  });
+
+  app.get("/api/analytics/sentiment-reports", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
+    if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
+    const data = await storage.getSentimentReports(startDate, endDate);
+    res.json(data);
+  });
+
+  app.get("/api/analytics/source-behavior", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
+    if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
+    const data = await storage.getSourceBehavior(startDate, endDate);
+    res.json(data);
+  });
+
   // === SEED & START WORKER ===
   await seed();
   startFeedWorker(1);
