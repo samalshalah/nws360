@@ -327,47 +327,84 @@ export async function fetchFacebookFeed(input: string): Promise<ScrapedArticle[]
       signal: AbortSignal.timeout(20000),
     });
 
-    if (!response.ok) {
-      console.log(`[Facebook] mbasic returned ${response.status}`);
-      return [];
-    }
+    if (response.ok) {
+      const html = await response.text();
+      const $ = cheerio.load(html);
+      const articles: ScrapedArticle[] = [];
 
-    const html = await response.text();
-    const $ = cheerio.load(html);
+      $("div[data-ft], div.bx, div.by, article, div[role='article']").each((_, el) => {
+        if (articles.length >= 20) return false;
+        const $post = $(el);
+        const text = $post.find("p, div.d2, div.dj").first().text().trim();
+        const link = $post.find("a[href*='/story.php'], a[href*='/permalink']").first().attr("href");
+
+        if (!text || text.length < 10) return;
+
+        const postUrl = link
+          ? (link.startsWith("http") ? link : `https://mbasic.facebook.com${link}`)
+          : `https://www.facebook.com/${pageName}`;
+
+        let image: string | undefined;
+        const imgEl = $post.find("img[src]").first();
+        if (imgEl.length) {
+          const src = imgEl.attr("src") || "";
+          if (src.startsWith("http") && !src.includes("emoji")) image = src;
+        }
+
+        articles.push({
+          title: text.substring(0, 200),
+          url: postUrl.replace("mbasic.facebook.com", "www.facebook.com"),
+          content: text,
+          publishedAt: new Date(),
+          image,
+        });
+      });
+
+      if (articles.length > 0) {
+        console.log(`[Facebook] Scraped ${articles.length} posts from mbasic`);
+        return articles;
+      }
+    } else {
+      console.log(`[Facebook] mbasic returned ${response.status}`);
+    }
+  } catch (e) {
+    console.log(`[Facebook] mbasic scraping failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  console.log(`[Facebook] All direct methods failed, using Google News fallback for ${pageName}`);
+  try {
+    const RssParser = (await import("rss-parser")).default;
+    const parser = new RssParser();
+    const searchName = pageName.replace(/[._-]/g, " ").replace(/official$/i, "").trim();
+    const feedUrl = `https://news.google.com/rss/search?q=%22${encodeURIComponent(searchName)}%22&hl=en&gl=US&ceid=US:en`;
+    const feed = await parser.parseURL(feedUrl);
     const articles: ScrapedArticle[] = [];
 
-    $("div[data-ft], div.bx, div.by, article, div[role='article']").each((_, el) => {
-      if (articles.length >= 20) return false;
-      const $post = $(el);
-      const text = $post.find("p, div.d2, div.dj").first().text().trim();
-      const link = $post.find("a[href*='/story.php'], a[href*='/permalink']").first().attr("href");
+    for (const item of feed.items || []) {
+      if (articles.length >= 20) break;
+      if (!item.title) continue;
 
-      if (!text || text.length < 10) return;
-
-      const postUrl = link
-        ? (link.startsWith("http") ? link : `https://mbasic.facebook.com${link}`)
-        : `https://www.facebook.com/${pageName}`;
+      const source = item.source?.name || item.creator || "";
+      const isFromPublisher = source.toLowerCase().includes(searchName.toLowerCase()) ||
+                              item.title.toLowerCase().includes(searchName.toLowerCase());
 
       let image: string | undefined;
-      const imgEl = $post.find("img[src]").first();
-      if (imgEl.length) {
-        const src = imgEl.attr("src") || "";
-        if (src.startsWith("http") && !src.includes("emoji")) image = src;
-      }
+      if (item.enclosure?.url) image = item.enclosure.url;
+      if (!image && item["media:content"]?.$.url) image = item["media:content"].$.url;
 
       articles.push({
-        title: text.substring(0, 200),
-        url: postUrl.replace("mbasic.facebook.com", "www.facebook.com"),
-        content: text,
-        publishedAt: new Date(),
+        title: item.title,
+        url: item.link || `https://www.facebook.com/${pageName}`,
+        content: item.contentSnippet || item.content || item.title,
+        publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
         image,
       });
-    });
+    }
 
-    console.log(`[Facebook] Scraped ${articles.length} posts from mbasic`);
+    console.log(`[Facebook] Got ${articles.length} articles via Google News for "${searchName}"`);
     return articles;
   } catch (e) {
-    console.error(`[Facebook] Scraping failed:`, e);
+    console.error(`[Facebook] Google News fallback failed:`, e instanceof Error ? e.message : String(e));
     return [];
   }
 }
