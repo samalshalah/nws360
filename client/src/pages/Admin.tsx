@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources } from "@/hooks/use-sources";
+import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources, useUpdateSource } from "@/hooks/use-sources";
 import { useKeywords, useCreateKeyword, useDeleteKeyword } from "@/hooks/use-keywords";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { Plus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ArrowRight } from "lucide-react";
+import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ArrowRight } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
@@ -475,6 +475,7 @@ function SourcesManager() {
   const { mutate: deleteSource, isPending: isDeleting } = useDeleteSource();
   const { mutate: fetchSource, isPending: isFetchingOne, variables: fetchingSourceId } = useFetchSource();
   const { mutate: fetchAll, isPending: isFetchingAll } = useFetchAllSources();
+  const { mutate: updateSource } = useUpdateSource();
 
   const sourceTypeLabels: Record<string, string> = {
     rss: t("admin.rss"),
@@ -551,11 +552,71 @@ function SourcesManager() {
                         <span className="text-muted-foreground">{sourceTypeLabels[source.type] || source.type}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-sm">
-                      {source.maxArticlesPerFetch ?? 10}
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => {
+                            const current = source.maxArticlesPerFetch ?? 10;
+                            if (current > 1) updateSource({ id: source.id, maxArticlesPerFetch: current - 1 });
+                          }}
+                          disabled={(source.maxArticlesPerFetch ?? 10) <= 1}
+                          data-testid={`button-decrease-posts-${source.id}`}
+                        >
+                          <Minus className="w-3 h-3" />
+                        </Button>
+                        <span className="text-sm font-medium w-8 text-center" data-testid={`text-posts-${source.id}`}>
+                          {source.maxArticlesPerFetch ?? 10}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => {
+                            const current = source.maxArticlesPerFetch ?? 10;
+                            if (current < 50) updateSource({ id: source.id, maxArticlesPerFetch: current + 1 });
+                          }}
+                          disabled={(source.maxArticlesPerFetch ?? 10) >= 50}
+                          data-testid={`button-increase-posts-${source.id}`}
+                        >
+                          <Plus className="w-3 h-3" />
+                        </Button>
+                      </div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-sm">
-                      {source.retentionDays ?? 30} {t("admin.days")}
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => {
+                            const current = source.retentionDays ?? 7;
+                            if (current > 1) updateSource({ id: source.id, retentionDays: current - 1 });
+                          }}
+                          disabled={(source.retentionDays ?? 7) <= 1}
+                          data-testid={`button-decrease-retention-${source.id}`}
+                        >
+                          <Minus className="w-3 h-3" />
+                        </Button>
+                        <span className="text-sm font-medium min-w-[4rem] text-center" data-testid={`text-retention-${source.id}`}>
+                          {source.retentionDays ?? 7} {t("admin.days")}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => {
+                            const current = source.retentionDays ?? 7;
+                            if (current < 30) updateSource({ id: source.id, retentionDays: current + 1 });
+                          }}
+                          disabled={(source.retentionDays ?? 7) >= 30}
+                          data-testid={`button-increase-retention-${source.id}`}
+                        >
+                          <Plus className="w-3 h-3" />
+                        </Button>
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Badge variant={source.active ? "default" : "secondary"}>
