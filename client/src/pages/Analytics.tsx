@@ -1,14 +1,16 @@
 import { useAnalytics } from "@/hooks/use-analytics";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "react-i18next";
+import { useLocation } from "wouter";
 
 const COLORS = ['#22c55e', '#64748b', '#ef4444'];
 
 export default function Analytics() {
   const { data: analytics, isLoading } = useAnalytics();
   const { t } = useTranslation();
+  const [, setLocation] = useLocation();
 
   if (isLoading) {
     return (
@@ -70,25 +72,34 @@ export default function Analytics() {
             <CardDescription>{t("analytics.trendingDescription")}</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={analytics?.trendingKeywords} layout="vertical" margin={{ left: 20 }}>
-                  <XAxis type="number" hide />
-                  <YAxis 
-                    type="category" 
-                    dataKey="text" 
-                    tick={{ fontSize: 12 }} 
-                    width={100}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <Tooltip 
-                    cursor={{ fill: 'transparent' }}
-                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                  />
-                  <Bar dataKey="value" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={20} />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="h-[300px] w-full overflow-y-auto">
+              {analytics?.trendingKeywords && analytics.trendingKeywords.length > 0 ? (
+                <div className="space-y-2">
+                  {analytics.trendingKeywords.map((kw: any, index: number) => {
+                    const maxVal = analytics.trendingKeywords[0]?.value || 1;
+                    const pct = Math.round((kw.value / maxVal) * 100);
+                    return (
+                      <button
+                        key={kw.text}
+                        className="w-full flex items-center gap-3 p-2 rounded-md hover-elevate cursor-pointer text-left"
+                        data-testid={`keyword-bar-${index}`}
+                        onClick={() => setLocation(`/feed?search=${encodeURIComponent(kw.text)}`)}
+                      >
+                        <span className="w-24 text-sm font-medium truncate shrink-0">{kw.text}</span>
+                        <div className="flex-1 h-5 bg-muted rounded-sm overflow-hidden">
+                          <div
+                            className="h-full bg-blue-500 rounded-sm transition-all"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-muted-foreground w-8 text-right shrink-0">{kw.value}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-sm">{t("analytics.noData")}</p>
+              )}
             </div>
           </CardContent>
         </Card>

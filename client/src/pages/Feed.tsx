@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useArticles } from "@/hooks/use-articles";
 import { useSources } from "@/hooks/use-sources";
 import { ArticleCard } from "@/components/articles/ArticleCard";
@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useSearch } from "wouter";
 
 const CATEGORIES = ["political", "health", "tech", "sports", "business", "entertainment", "science", "urgent", "general"] as const;
 const SOURCE_TYPES = ["rss", "website", "google_news", "twitter", "youtube", "facebook", "instagram", "telegram"] as const;
@@ -21,14 +22,27 @@ export default function Feed() {
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const currentLang = i18n.language?.split("-")[0] || "en";
+  const searchString = useSearch();
   const [page, setPage] = useState(1);
-  const [filters, setFilters] = useState({
-    search: "",
-    sourceId: undefined as string | undefined,
-    sentiment: undefined as string | undefined,
-    category: undefined as string | undefined,
-    sourceType: undefined as string | undefined,
+  const [filters, setFilters] = useState(() => {
+    const params = new URLSearchParams(searchString);
+    return {
+      search: params.get("search") || "",
+      sourceId: undefined as string | undefined,
+      sentiment: undefined as string | undefined,
+      category: undefined as string | undefined,
+      sourceType: undefined as string | undefined,
+    };
   });
+
+  useEffect(() => {
+    const params = new URLSearchParams(searchString);
+    const searchParam = params.get("search");
+    if (searchParam) {
+      setFilters(prev => ({ ...prev, search: searchParam }));
+      setPage(1);
+    }
+  }, [searchString]);
 
   const { data: articlesData, isLoading: isLoadingArticles, isFetching } = useArticles({
     search: filters.search,

@@ -99,6 +99,7 @@ export default {
     sentimentDescription: "Breakdown of positive, neutral, and negative articles",
     trendingKeywords: "Trending Keywords",
     trendingDescription: "Most frequent terms across all articles",
+    noData: "No data available yet.",
   },
   admin: {
     title: "Add Source",
