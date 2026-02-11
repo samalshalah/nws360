@@ -557,7 +557,7 @@ export async function fetchAllFeeds(): Promise<{ sourceName: string; newArticles
 export async function backfillGoogleNewsImages(): Promise<number> {
   const { items } = await storage.getArticles({ limit: 200 });
   const googleNewsArticles = items.filter(
-    (a) => a.source?.type === "google_news" && (!a.imageUrl || isGenericGoogleImage(a.imageUrl)) && a.imageUrl !== "none"
+    (a) => (a.source?.type === "google_news" || a.source?.type === "facebook") && (!a.imageUrl || isGenericGoogleImage(a.imageUrl)) && a.imageUrl !== "none"
   );
   if (googleNewsArticles.length === 0) return 0;
 

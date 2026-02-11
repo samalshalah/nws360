@@ -6,6 +6,7 @@ interface ScrapedArticle {
   content: string;
   publishedAt: Date;
   image?: string;
+  subSource?: string;
 }
 
 function resolveUrl(base: string, relative: string): string {
@@ -374,30 +375,71 @@ export async function fetchFacebookFeed(input: string): Promise<ScrapedArticle[]
   console.log(`[Facebook] All direct methods failed, using Google News fallback for ${pageName}`);
   try {
     const RssParser = (await import("rss-parser")).default;
-    const parser = new RssParser();
+    const parser = new RssParser({
+      customFields: {
+        item: [
+          ["media:content", "mediaContent"],
+          ["media:thumbnail", "mediaThumbnail"],
+        ],
+      },
+    });
     const searchName = pageName.replace(/[._-]/g, " ").replace(/official$/i, "").trim();
     const feedUrl = `https://news.google.com/rss/search?q=%22${encodeURIComponent(searchName)}%22&hl=en&gl=US&ceid=US:en`;
     const feed = await parser.parseURL(feedUrl);
     const articles: ScrapedArticle[] = [];
 
-    for (const item of feed.items || []) {
+    for (const item of (feed.items || []) as any[]) {
       if (articles.length >= 20) break;
       if (!item.title) continue;
 
-      const source = item.source?.name || item.creator || "";
-      const isFromPublisher = source.toLowerCase().includes(searchName.toLowerCase()) ||
-                              item.title.toLowerCase().includes(searchName.toLowerCase());
+      let subSource: string | undefined;
+      if (item.source) {
+        if (typeof item.source === "string") subSource = item.source;
+        else if (item.source._ || item.source.$t) subSource = item.source._ || item.source.$t;
+      }
+      if (!subSource) {
+        const dashIdx = (item.title || "").lastIndexOf(" - ");
+        if (dashIdx > 0) subSource = item.title.substring(dashIdx + 3).trim();
+      }
+
+      let cleanTitle = item.title;
+      if (subSource) {
+        const suffix = ` - ${subSource}`;
+        if (cleanTitle.endsWith(suffix)) cleanTitle = cleanTitle.slice(0, -suffix.length);
+      }
 
       let image: string | undefined;
-      if (item.enclosure?.url) image = item.enclosure.url;
-      if (!image && item["media:content"]?.$.url) image = item["media:content"].$.url;
+      if (item.mediaContent) {
+        const mc = Array.isArray(item.mediaContent) ? item.mediaContent[0] : item.mediaContent;
+        const url = mc?.$ ? mc.$.url : mc?.url;
+        if (url) image = url;
+      }
+      if (!image && item.mediaThumbnail) {
+        const mt = Array.isArray(item.mediaThumbnail) ? item.mediaThumbnail[0] : item.mediaThumbnail;
+        const url = mt?.$ ? mt.$.url : mt?.url;
+        if (url) image = url;
+      }
+      if (!image && item.enclosure?.url) image = item.enclosure.url;
+
+      if (image && (image.includes("lh3.googleusercontent.com") || image.includes("gstatic.com"))) image = undefined;
+
+      let realUrl = item.link || "";
+
+      if (!image && subSource) {
+        const resolved = await resolveArticleFromPublisher(cleanTitle, subSource);
+        if (resolved) {
+          if (resolved.image) image = resolved.image;
+          if (resolved.url) realUrl = resolved.url;
+        }
+      }
 
       articles.push({
-        title: item.title,
-        url: item.link || `https://www.facebook.com/${pageName}`,
+        title: cleanTitle,
+        url: realUrl || `https://www.facebook.com/${pageName}`,
         content: item.contentSnippet || item.content || item.title,
         publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
         image,
+        subSource,
       });
     }
 
@@ -407,6 +449,146 @@ export async function fetchFacebookFeed(input: string): Promise<ScrapedArticle[]
     console.error(`[Facebook] Google News fallback failed:`, e instanceof Error ? e.message : String(e));
     return [];
   }
+}
+
+const PUBLISHER_RSS_FEEDS: Record<string, string[]> = {
+  "CNN": ["http://rss.cnn.com/rss/edition.rss", "http://rss.cnn.com/rss/cnn_topstories.rss", "http://rss.cnn.com/rss/cnn_latest.rss"],
+  "Al Jazeera": ["https://www.aljazeera.com/xml/rss/all.xml"],
+  "Reuters": ["https://www.reutersagency.com/feed/"],
+  "BBC": ["https://feeds.bbci.co.uk/news/rss.xml"],
+  "BBC News": ["https://feeds.bbci.co.uk/news/rss.xml"],
+  "Fox News": ["https://moxie.foxnews.com/google-publisher/latest.xml"],
+  "NPR": ["https://feeds.npr.org/1001/rss.xml"],
+  "The Guardian": ["https://www.theguardian.com/world/rss"],
+  "Forbes": ["https://www.forbes.com/real-time/feed2/"],
+  "NBC News": ["https://feeds.nbcnews.com/nbcnews/public/news"],
+  "ABC News": ["https://abcnews.go.com/abcnews/topstories"],
+  "The Washington Post": ["https://feeds.washingtonpost.com/rss/world"],
+  "USA Today": ["http://rssfeeds.usatoday.com/UsatodaycomNation-TopStories"],
+  "The Hill": ["https://thehill.com/feed/"],
+  "Politico": ["https://www.politico.com/rss/politicopicks.xml"],
+  "TechCrunch": ["https://techcrunch.com/feed/"],
+  "The Verge": ["https://www.theverge.com/rss/index.xml"],
+};
+
+async function resolveArticleFromPublisher(title: string, publisher: string): Promise<{ url?: string; image?: string } | null> {
+  const feeds = PUBLISHER_RSS_FEEDS[publisher];
+  if (!feeds) {
+    return await fetchOgImageFromArticleSearch(title, publisher);
+  }
+
+  try {
+    const RssParser = (await import("rss-parser")).default;
+    const parser = new RssParser({
+      customFields: {
+        item: [
+          ["media:content", "mediaContent"],
+          ["media:thumbnail", "mediaThumbnail"],
+        ],
+      },
+    });
+
+    const titleWords = title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+
+    for (const feedUrl of feeds) {
+      try {
+        const feed = await parser.parseURL(feedUrl);
+        for (const item of (feed.items || []) as any[]) {
+          const itemTitle = (item.title || "").toLowerCase();
+          const matchCount = titleWords.filter(w => itemTitle.includes(w)).length;
+          if (matchCount >= Math.min(3, titleWords.length * 0.5)) {
+            let image: string | undefined;
+            if (item.mediaContent) {
+              const mc = Array.isArray(item.mediaContent) ? item.mediaContent[0] : item.mediaContent;
+              image = mc?.$ ? mc.$.url : mc?.url;
+            }
+            if (!image && item.mediaThumbnail) {
+              const mt = Array.isArray(item.mediaThumbnail) ? item.mediaThumbnail[0] : item.mediaThumbnail;
+              image = mt?.$ ? mt.$.url : mt?.url;
+            }
+            if (!image && item.enclosure?.url) {
+              const enc = item.enclosure;
+              if (!enc.type || enc.type.startsWith("image")) image = enc.url;
+            }
+
+            if (!image && item.link) {
+              image = await fetchOgImageDirect(item.link);
+            }
+
+            if (image && !image.includes("placeholder") && !image.includes("gstatic")) {
+              return { url: item.link, image };
+            }
+
+            if (item.link) {
+              return { url: item.link };
+            }
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+  } catch {}
+
+  return await fetchOgImageFromArticleSearch(title, publisher);
+}
+
+async function fetchOgImageDirect(url: string): Promise<string | undefined> {
+  try {
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "NWS360/1.0 (RSS Reader)" },
+      signal: AbortSignal.timeout(6000),
+      redirect: "follow",
+    });
+    if (!resp.ok) return undefined;
+    const html = await resp.text();
+    const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+      || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+    if (ogMatch?.[1]) {
+      const imgUrl = ogMatch[1];
+      if (imgUrl.includes("placeholder") || imgUrl.includes("gstatic")) return undefined;
+      return imgUrl.startsWith("http") ? imgUrl : new URL(imgUrl, url).href;
+    }
+  } catch {}
+  return undefined;
+}
+
+async function fetchOgImageFromArticleSearch(title: string, publisher: string): Promise<{ url?: string; image?: string } | null> {
+  const publisherDomains: Record<string, string> = {
+    "CNN": "cnn.com", "NBC News": "nbcnews.com", "The New York Times": "nytimes.com",
+    "The Guardian": "theguardian.com", "Fox News": "foxnews.com", "Reuters": "reuters.com",
+    "AP News": "apnews.com", "BBC": "bbc.com", "BBC News": "bbc.com", "Al Jazeera": "aljazeera.com",
+    "NPR": "npr.org", "Forbes": "forbes.com", "TechCrunch": "techcrunch.com", "The Verge": "theverge.com",
+    "The Washington Post": "washingtonpost.com", "Politico": "politico.com", "ABC News": "abcnews.go.com",
+    "USA Today": "usatoday.com", "Bloomberg": "bloomberg.com", "The Hill": "thehill.com",
+    "Wired": "wired.com", "Axios": "axios.com", "Vox": "vox.com",
+  };
+
+  const domain = publisherDomains[publisher];
+  if (!domain) return null;
+
+  try {
+    const searchUrl = `https://www.${domain}/search?q=${encodeURIComponent(title.substring(0, 80))}`;
+    const resp = await fetch(searchUrl, {
+      headers: { "User-Agent": "NWS360/1.0 (RSS Reader)" },
+      signal: AbortSignal.timeout(6000),
+      redirect: "follow",
+    });
+    if (!resp.ok) return null;
+    const html = await resp.text();
+
+    const articleLinks = [...html.matchAll(/href="(https?:\/\/[^"]*(?:\/\d{4}\/\d{2}\/|\/article|\/story|\/news\/)[^"]+)"/g)];
+    for (const match of articleLinks.slice(0, 3)) {
+      const articleUrl = match[1];
+      if (articleUrl.includes("search") || articleUrl.includes("javascript")) continue;
+      const image = await fetchOgImageDirect(articleUrl);
+      if (image) {
+        return { url: articleUrl, image };
+      }
+    }
+  } catch {}
+
+  return null;
 }
 
 export async function fetchInstagramFeed(input: string): Promise<ScrapedArticle[]> {

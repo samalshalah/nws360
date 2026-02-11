@@ -95,7 +95,7 @@ export function ArticleCard({ article }: ArticleCardProps) {
             onError={() => setImgError(true)}
           />
         </div>
-      ) : faviconUrl && article.source?.type === "google_news" ? (
+      ) : faviconUrl && (article.source?.type === "google_news" || article.source?.type === "facebook") ? (
         <div className="relative w-full h-32 overflow-hidden bg-gradient-to-br from-muted to-muted/60 flex items-center justify-center gap-3" data-testid={`favicon-article-${article.id}`}>
           <img
             src={faviconUrl}
