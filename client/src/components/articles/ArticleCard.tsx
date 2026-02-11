@@ -1,14 +1,20 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { formatDistanceToNow } from "date-fns";
-import { ExternalLink, Calendar, Newspaper, Rss, Globe, Send, Youtube, Facebook, Instagram, Twitter } from "lucide-react";
+import { ExternalLink, Calendar, Newspaper, Rss, Globe, Send, Youtube, Facebook, Instagram, Twitter, Bookmark, Share2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { type Article, type Source } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
+import { useToast } from "@/hooks/use-toast";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 interface ArticleCardProps {
   article: Article & { source: Source | null };
+  selected?: boolean;
+  onToggleSelect?: (id: number) => void;
 }
 
 const sourceTypeIcons: Record<string, typeof Rss> = {
@@ -59,9 +65,46 @@ function getPublisherDomain(publisher: string): string | null {
   return normalized + ".com";
 }
 
-export function ArticleCard({ article }: ArticleCardProps) {
+export function ArticleCard({ article, selected, onToggleSelect }: ArticleCardProps) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const [imgError, setImgError] = useState(false);
+
+  const { data: bookmarkedIds = [] } = useQuery<number[]>({
+    queryKey: ["/api/bookmarks"],
+  });
+
+  const isBookmarked = bookmarkedIds.includes(article.id);
+
+  const addBookmark = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/bookmarks", { articleId: article.id }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/bookmarks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/bookmarks/articles"] });
+    },
+  });
+
+  const removeBookmark = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/bookmarks/${article.id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/bookmarks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/bookmarks/articles"] });
+    },
+  });
+
+  const handleBookmarkToggle = () => {
+    if (isBookmarked) {
+      removeBookmark.mutate();
+    } else {
+      addBookmark.mutate();
+    }
+  };
+
+  const handleShare = () => {
+    navigator.clipboard.writeText(article.url || "").then(() => {
+      toast({ title: t("feed.linkCopied") });
+    });
+  };
 
   const sentimentColor = {
     positive: "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800",
@@ -82,9 +125,24 @@ export function ArticleCard({ article }: ArticleCardProps) {
       animate={{ opacity: 1, y: 0 }}
       whileHover={{ y: -4 }}
       transition={{ duration: 0.2 }}
-      className="bg-card border border-border/50 rounded-md overflow-hidden shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 group flex flex-col"
+      className={cn(
+        "bg-card border rounded-md overflow-hidden shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 group flex flex-col relative",
+        selected ? "border-primary ring-1 ring-primary/30" : "border-border/50"
+      )}
       data-testid={`card-article-${article.id}`}
     >
+      {onToggleSelect && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleSelect(article.id); }}
+          className={cn(
+            "absolute top-3 left-3 rtl:left-auto rtl:right-3 z-10 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors",
+            selected ? "bg-primary border-primary text-primary-foreground" : "bg-background/80 border-muted-foreground/40"
+          )}
+          data-testid={`checkbox-article-${article.id}`}
+        >
+          {selected && <span className="text-xs font-bold">&#10003;</span>}
+        </button>
+      )}
       {hasImage ? (
         <div className="relative w-full h-48 overflow-hidden bg-muted" data-testid={`img-article-${article.id}`}>
           <img
@@ -155,16 +213,36 @@ export function ArticleCard({ article }: ArticleCardProps) {
             {article.publishedAt ? formatDistanceToNow(new Date(article.publishedAt), { addSuffix: true }) : t("common.recently")}
           </div>
 
-          <a
-            href={article.url || "#"}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 text-sm font-semibold text-primary hover:text-primary/80 transition-colors"
-            data-testid={`link-read-article-${article.id}`}
-          >
-            {t("feed.readFullStory")}
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
+          <div className="flex items-center gap-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={handleBookmarkToggle}
+              title={isBookmarked ? t("feed.unbookmark") : t("feed.bookmark")}
+              data-testid={`button-bookmark-${article.id}`}
+            >
+              <Bookmark className={cn("w-4 h-4", isBookmarked ? "fill-primary text-primary" : "text-muted-foreground")} />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={handleShare}
+              title={t("feed.share")}
+              data-testid={`button-share-${article.id}`}
+            >
+              <Share2 className="w-4 h-4 text-muted-foreground" />
+            </Button>
+            <a
+              href={article.url || "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-sm font-semibold text-primary hover:text-primary/80 transition-colors"
+              data-testid={`link-read-article-${article.id}`}
+            >
+              {t("feed.readFullStory")}
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
         </div>
       </div>
     </motion.div>

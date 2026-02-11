@@ -18,24 +18,41 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - Dashboard with analytics (sentiment distribution, trending keywords)
 - Admin panel for managing sources and keywords
 - User authentication (email/password with passport-local)
-- Responsive design with dark mode support
+- Responsive design with dark mode support (light/dark/system toggle)
 - Social media support: YouTube channels, Facebook pages, Instagram profiles, X/Twitter accounts, Telegram channels
 - Multi-language UI (English, Arabic, French, Spanish, Turkish) with RTL support
 - Auto-translation of all articles based on selected UI language
 - Article categorization (political, health, tech, sports, business, entertainment, science, urgent, general)
-- Filtering by channel, source type, sentiment, and category
+- Filtering by channel, source type, sentiment, category, and date range (today/week/month)
+- Article bookmarking with saved articles page
+- Share/copy-link for articles
+- Bulk article operations (select all, bulk delete)
+- CSV export of filtered articles
+- Breaking news notifications for urgent articles (polls every 60s)
+- Admin user management (role toggle, user deletion)
+- Source health monitoring with success rates and error logs
+- Rate limiting (200 req/15min API, 20 req/15min auth)
+- Input sanitization with sanitize-html
 
 ## Database Schema
 - `users`: id, username, password, role (admin/client), createdAt
 - `sources`: id, name, url, type, active, intervalMinutes, retentionDays, lastFetchedAt, createdAt
 - `articles`: id, title, content, summary, url, sourceId, publishedAt, language, sentimentScore, sentimentLabel, keywords[], category, imageUrl, subSource, createdAt
 - `keywords`: id, term, createdAt
+- `bookmarks`: id, userId, articleId, createdAt (unique on userId+articleId)
+- `source_fetch_logs`: id, sourceId, status, articlesFound, errorMessage, fetchedAt
 
 ## API Routes
 - Auth: POST /api/login, POST /api/register, POST /api/logout, GET /api/user
 - Sources: GET /api/sources, POST /api/sources, PATCH /api/sources/:id, DELETE /api/sources/:id
 - Manual Fetch: POST /api/sources/:id/fetch, POST /api/fetch-all
 - Articles: GET /api/articles (with search, filters, pagination), GET /api/articles/:id
+- Bookmarks: GET /api/bookmarks, POST /api/bookmarks, DELETE /api/bookmarks/:articleId
+- Bulk: POST /api/articles/bulk-delete, POST /api/articles/bulk-categorize
+- Export: GET /api/articles/export (CSV)
+- Urgent: GET /api/articles/urgent (breaking news)
+- Users (admin): GET /api/users, PATCH /api/users/:id/role, DELETE /api/users/:id
+- Source Health: GET /api/source-health, GET /api/source-health/:sourceId/logs
 - Keywords: GET /api/keywords, POST /api/keywords, DELETE /api/keywords/:id
 - Analytics: GET /api/analytics/stats
 - Translation: Auto-translates articles based on `lang` query param in GET /api/articles

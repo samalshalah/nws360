@@ -9,7 +9,9 @@ import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useEffect } from "react";
 import { getDirection } from "@/i18n";
+import { ThemeProvider } from "@/components/ThemeProvider";
 
+import { BreakingNewsBanner } from "@/components/BreakingNewsBanner";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Feed from "@/pages/Feed";
@@ -22,6 +24,9 @@ import SourceBehavior from "@/pages/analytics/SourceBehavior";
 import CustomReports from "@/pages/analytics/CustomReports";
 import NetworkMapping from "@/pages/analytics/NetworkMapping";
 import Admin from "@/pages/Admin";
+import Saved from "@/pages/Saved";
+import UserManagement from "@/pages/UserManagement";
+import SourceHealth from "@/pages/SourceHealth";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, ...rest }: { component: any, path?: string }) {
@@ -46,6 +51,7 @@ function ProtectedRoute({ component: Component, ...rest }: { component: any, pat
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0 h-screen">
         <MobileHeader />
+        <BreakingNewsBanner />
         <main className="flex-1 p-4 md:p-8 overflow-y-auto min-h-0">
           <div className="max-w-7xl mx-auto pb-10">
             <Component />
@@ -66,6 +72,9 @@ function Router() {
       </Route>
       <Route path="/feed">
         <ProtectedRoute component={Feed} />
+      </Route>
+      <Route path="/saved">
+        <ProtectedRoute component={Saved} />
       </Route>
       <Route path="/analytics">
         <ProtectedRoute component={Analytics} />
@@ -100,8 +109,14 @@ function Router() {
       <Route path="/sources/keywords">
         <ProtectedRoute component={() => <Admin tab="keywords" />} />
       </Route>
+      <Route path="/sources/health">
+        <ProtectedRoute component={SourceHealth} />
+      </Route>
       <Route path="/admin">
         <ProtectedRoute component={Admin} />
+      </Route>
+      <Route path="/users">
+        <ProtectedRoute component={UserManagement} />
       </Route>
 
       <Route component={NotFound} />
@@ -128,12 +143,14 @@ function App() {
   }, [i18n]);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Toaster />
+          <Router />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }
 

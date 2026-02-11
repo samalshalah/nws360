@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Search, SlidersHorizontal, Loader2, ChevronLeft, ChevronRight, RefreshCw, Newspaper } from "lucide-react";
+import { Search, SlidersHorizontal, Loader2, ChevronLeft, ChevronRight, RefreshCw, Newspaper, Download, Trash2, CheckSquare } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "react-i18next";
 import { useMutation } from "@tanstack/react-query";
@@ -24,6 +24,8 @@ export default function Feed() {
   const currentLang = i18n.language?.split("-")[0] || "en";
   const searchString = useSearch();
   const [page, setPage] = useState(1);
+
+  const [selectedArticles, setSelectedArticles] = useState<Set<number>>(new Set());
   const [filters, setFilters] = useState(() => {
     const params = new URLSearchParams(searchString);
     return {
@@ -32,6 +34,7 @@ export default function Feed() {
       sentiment: params.get("sentiment") || undefined as string | undefined,
       category: undefined as string | undefined,
       sourceType: undefined as string | undefined,
+      dateRange: "all" as string,
     };
   });
 
@@ -49,6 +52,27 @@ export default function Feed() {
     }
   }, [searchString]);
 
+  const getDateRange = (range: string) => {
+    const now = new Date();
+    if (range === "today") {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return { startDate: start.toISOString(), endDate: now.toISOString() };
+    }
+    if (range === "week") {
+      const start = new Date(now);
+      start.setDate(start.getDate() - 7);
+      return { startDate: start.toISOString(), endDate: now.toISOString() };
+    }
+    if (range === "month") {
+      const start = new Date(now);
+      start.setMonth(start.getMonth() - 1);
+      return { startDate: start.toISOString(), endDate: now.toISOString() };
+    }
+    return {};
+  };
+
+  const dateRange = getDateRange(filters.dateRange);
+
   const { data: articlesData, isLoading: isLoadingArticles, isFetching } = useArticles({
     search: filters.search,
     sourceId: filters.sourceId ? parseInt(filters.sourceId) : undefined,
@@ -56,6 +80,8 @@ export default function Feed() {
     category: filters.category,
     sourceType: filters.sourceType,
     lang: currentLang,
+    startDate: dateRange.startDate,
+    endDate: dateRange.endDate,
     page,
     limit: PAGE_SIZE,
   });
@@ -74,13 +100,52 @@ export default function Feed() {
     },
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (ids: number[]) => apiRequest("POST", "/api/articles/bulk-delete", { ids }),
+    onSuccess: () => {
+      toast({ title: t("feed.bulkDeleteSuccess") });
+      setSelectedArticles(new Set());
+      queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
+    },
+    onError: () => {
+      toast({ title: t("common.error"), variant: "destructive" });
+    },
+  });
+
+  const toggleSelectArticle = (id: number) => {
+    setSelectedArticles(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    if (selectedArticles.size === articles.length) {
+      setSelectedArticles(new Set());
+    } else {
+      setSelectedArticles(new Set(articles.map((a: any) => a.id)));
+    }
+  };
+
+  const handleExport = () => {
+    const params = new URLSearchParams();
+    if (filters.search) params.set("search", filters.search);
+    if (filters.sourceId) params.set("sourceId", filters.sourceId);
+    if (filters.sentiment) params.set("sentiment", filters.sentiment);
+    if (filters.category) params.set("category", filters.category);
+    if (filters.sourceType) params.set("sourceType", filters.sourceType);
+    window.open(`/api/articles/export?${params.toString()}`, "_blank");
+  };
+
   const totalPages = articlesData ? Math.ceil(articlesData.total / PAGE_SIZE) : 0;
   const articles = articlesData?.items || [];
 
-  const hasActiveFilters = filters.search || filters.sourceId || filters.sentiment || filters.category || filters.sourceType;
+  const hasActiveFilters = filters.search || filters.sourceId || filters.sentiment || filters.category || filters.sourceType || filters.dateRange !== "all";
 
   const clearFilters = () => {
-    setFilters({ search: "", sourceId: undefined, sentiment: undefined, category: undefined, sourceType: undefined });
+    setFilters({ search: "", sourceId: undefined, sentiment: undefined, category: undefined, sourceType: undefined, dateRange: "all" });
     setPage(1);
   };
 
@@ -104,6 +169,15 @@ export default function Feed() {
                 {articlesData.total} {t("feed.articles")}
               </Badge>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExport}
+              data-testid="button-export"
+            >
+              <Download className="w-3.5 h-3.5 mr-1.5" />
+              {t("feed.export")}
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -203,12 +277,50 @@ export default function Feed() {
             </SelectContent>
           </Select>
 
+          <Select
+            value={filters.dateRange}
+            onValueChange={(val) => { setFilters(prev => ({ ...prev, dateRange: val })); setPage(1); }}
+          >
+            <SelectTrigger className="w-full md:w-[150px] bg-background" data-testid="select-filter-date-range">
+              <SelectValue placeholder={t("feed.allDates")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("feed.allDates")}</SelectItem>
+              <SelectItem value="today">{t("feed.today")}</SelectItem>
+              <SelectItem value="week">{t("feed.thisWeek")}</SelectItem>
+              <SelectItem value="month">{t("feed.thisMonth")}</SelectItem>
+            </SelectContent>
+          </Select>
+
           {hasActiveFilters && (
             <Button variant="ghost" size="sm" onClick={clearFilters} className="col-span-2 md:col-span-1" data-testid="button-clear-filters">
               {t("feed.clearFilters")}
             </Button>
           )}
         </div>
+
+        {selectedArticles.size > 0 && (
+          <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-md border border-border/50">
+            <Badge variant="secondary">{selectedArticles.size} {t("feed.selected")}</Badge>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                if (window.confirm(t("feed.confirmBulkDelete"))) {
+                  bulkDeleteMutation.mutate(Array.from(selectedArticles));
+                }
+              }}
+              disabled={bulkDeleteMutation.isPending}
+              data-testid="button-bulk-delete"
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+              {t("feed.deleteSelected")}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedArticles(new Set())} data-testid="button-clear-selection">
+              {t("feed.clearSelection")}
+            </Button>
+          </div>
+        )}
       </div>
 
       {isLoadingArticles ? (
@@ -225,9 +337,20 @@ export default function Feed() {
         </div>
       ) : (
         <>
+          <div className="flex items-center justify-between mb-2">
+            <Button variant="ghost" size="sm" onClick={selectAllVisible} data-testid="button-select-all">
+              <CheckSquare className="w-3.5 h-3.5 mr-1.5" />
+              {selectedArticles.size === articles.length && articles.length > 0 ? t("feed.clearSelection") : t("feed.selectAll")}
+            </Button>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {articles.map((article: any) => (
-              <ArticleCard key={article.id} article={article} />
+              <ArticleCard
+                key={article.id}
+                article={article}
+                selected={selectedArticles.has(article.id)}
+                onToggleSelect={toggleSelectArticle}
+              />
             ))}
           </div>
 

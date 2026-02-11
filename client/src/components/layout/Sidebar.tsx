@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash, Menu } from "lucide-react";
+import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash, Menu, Bookmark, Users, Activity } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { LanguageSelector } from "@/components/LanguageSelector";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -24,11 +25,12 @@ const sourcesSubPages = [
   { key: "addSource", href: "/sources/add", icon: Plus },
   { key: "manageSources", href: "/sources/manage", icon: List },
   { key: "keywords", href: "/sources/keywords", icon: Hash },
+  { key: "sourceHealth", href: "/sources/health", icon: Activity },
 ];
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const [location] = useLocation();
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
   const { t } = useTranslation();
   const isAnalyticsActive = location.startsWith("/analytics");
   const isSourcesActive = location.startsWith("/sources") || location === "/admin";
@@ -37,6 +39,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
   const topNavItems = [
     { name: t("nav.newsFeed"), href: '/feed', icon: Newspaper },
+    { name: t("nav.saved"), href: '/saved', icon: Bookmark },
     { name: t("nav.dashboard"), href: '/', icon: LayoutDashboard },
   ];
 
@@ -60,7 +63,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             <Link key={item.href} href={item.href}>
               <div
                 onClick={onNavigate}
-                data-testid={`nav-${item.href.replace("/", "") || "dashboard"}`}
+                data-testid={`nav-${item.href === "/" ? "dashboard" : item.href.replace("/", "")}`}
                 className={cn(
                   "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
                   isActive
@@ -160,10 +163,33 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             </div>
           )}
         </div>
+
+        {user?.role === "admin" && (
+          <Link href="/users">
+            <div
+              onClick={onNavigate}
+              data-testid="nav-users"
+              className={cn(
+                "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
+                location === "/users"
+                  ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
+              )}
+            >
+              <Users className={cn("w-5 h-5", location === "/users" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
+              {t("nav.users")}
+            </div>
+          </Link>
+        )}
       </nav>
 
       <div className="p-4 border-t border-border/50 space-y-2">
-        <LanguageSelector />
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <LanguageSelector />
+          </div>
+          <ThemeToggle />
+        </div>
         <button
           onClick={() => logout()}
           data-testid="button-sign-out"
@@ -194,7 +220,7 @@ export function MobileHeader() {
           <SidebarContent onNavigate={() => setOpen(false)} />
         </SheetContent>
       </Sheet>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-1">
         <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold font-display text-lg shadow-lg shadow-primary/25">
           N
         </div>
@@ -202,6 +228,7 @@ export function MobileHeader() {
           NWS<span className="text-primary">360</span>
         </h1>
       </div>
+      <ThemeToggle />
     </div>
   );
 }

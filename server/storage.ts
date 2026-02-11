@@ -1,13 +1,15 @@
 import { db } from "./db";
 import {
-  users, sources, articles, keywords,
+  users, sources, articles, keywords, bookmarks, sourceFetchLogs,
   type User, type InsertUser,
   type Source, type InsertSource,
   type Article, type InsertArticle,
   type Keyword, type InsertKeyword,
+  type Bookmark, type InsertBookmark,
+  type SourceFetchLog, type InsertSourceFetchLog,
   type ArticleQueryParams
 } from "@shared/schema";
-import { eq, like, and, gte, lte, desc, sql } from "drizzle-orm";
+import { eq, like, and, gte, lte, desc, sql, inArray, asc } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -25,6 +27,7 @@ export interface IStorage {
   // Articles
   getArticles(params?: ArticleQueryParams): Promise<{ items: (Article & { source: Source | null })[], total: number }>;
   getArticle(id: number): Promise<Article | undefined>;
+  getArticlesByIds(ids: number[]): Promise<(Article & { source: Source | null })[]>;
   createArticle(article: InsertArticle): Promise<Article>;
   getArticleByUrl(url: string): Promise<Article | undefined>; // For deduplication
 
@@ -35,6 +38,25 @@ export interface IStorage {
   
   // Sources - update last fetched
   updateSourceLastFetched(id: number): Promise<void>;
+
+  // Bookmarks
+  getBookmarks(userId: number): Promise<number[]>;
+  addBookmark(userId: number, articleId: number): Promise<Bookmark>;
+  removeBookmark(userId: number, articleId: number): Promise<void>;
+
+  // Source Fetch Logs
+  createFetchLog(log: InsertSourceFetchLog): Promise<SourceFetchLog>;
+  getFetchLogs(sourceId: number, limit?: number): Promise<SourceFetchLog[]>;
+  getSourceHealth(): Promise<{ sourceId: number; sourceName: string; lastStatus: string; lastError: string | null; successRate: number; totalFetches: number; lastFetchedAt: Date | null }[]>;
+
+  // Users management
+  getUsers(): Promise<User[]>;
+  updateUserRole(id: number, role: string): Promise<User | undefined>;
+  deleteUser(id: number): Promise<void>;
+
+  // Bulk article operations
+  deleteArticles(ids: number[]): Promise<number>;
+  updateArticlesCategory(ids: number[], category: string): Promise<number>;
 
   // Cleanup
   deleteExpiredArticles(): Promise<number>;
@@ -208,6 +230,33 @@ export class DatabaseStorage implements IStorage {
     return article;
   }
 
+  async getArticlesByIds(ids: number[]): Promise<(Article & { source: Source | null })[]> {
+    if (ids.length === 0) return [];
+    const items = await db.select({
+      id: articles.id,
+      title: articles.title,
+      content: articles.content,
+      summary: articles.summary,
+      url: articles.url,
+      sourceId: articles.sourceId,
+      publishedAt: articles.publishedAt,
+      language: articles.language,
+      sentimentScore: articles.sentimentScore,
+      sentimentLabel: articles.sentimentLabel,
+      keywords: articles.keywords,
+      category: articles.category,
+      imageUrl: articles.imageUrl,
+      subSource: articles.subSource,
+      createdAt: articles.createdAt,
+      source: sources,
+    })
+      .from(articles)
+      .leftJoin(sources, eq(articles.sourceId, sources.id))
+      .where(inArray(articles.id, ids))
+      .orderBy(desc(articles.publishedAt));
+    return items as any;
+  }
+
   async createArticle(insertArticle: InsertArticle): Promise<Article> {
     const [article] = await db.insert(articles).values(insertArticle).returning();
     return article;
@@ -235,6 +284,104 @@ export class DatabaseStorage implements IStorage {
 
   async deleteKeyword(id: number): Promise<void> {
     await db.delete(keywords).where(eq(keywords.id, id));
+  }
+
+  async getBookmarks(userId: number): Promise<number[]> {
+    const rows = await db.select({ articleId: bookmarks.articleId })
+      .from(bookmarks)
+      .where(eq(bookmarks.userId, userId));
+    return rows.map(r => r.articleId);
+  }
+
+  async addBookmark(userId: number, articleId: number): Promise<Bookmark> {
+    const [bookmark] = await db.insert(bookmarks)
+      .values({ userId, articleId })
+      .onConflictDoNothing()
+      .returning();
+    if (!bookmark) {
+      const [existing] = await db.select().from(bookmarks)
+        .where(and(eq(bookmarks.userId, userId), eq(bookmarks.articleId, articleId)));
+      return existing;
+    }
+    return bookmark;
+  }
+
+  async removeBookmark(userId: number, articleId: number): Promise<void> {
+    await db.delete(bookmarks)
+      .where(and(eq(bookmarks.userId, userId), eq(bookmarks.articleId, articleId)));
+  }
+
+  async createFetchLog(log: InsertSourceFetchLog): Promise<SourceFetchLog> {
+    const [entry] = await db.insert(sourceFetchLogs).values(log).returning();
+    return entry;
+  }
+
+  async getFetchLogs(sourceId: number, limit = 20): Promise<SourceFetchLog[]> {
+    return await db.select().from(sourceFetchLogs)
+      .where(eq(sourceFetchLogs.sourceId, sourceId))
+      .orderBy(desc(sourceFetchLogs.fetchedAt))
+      .limit(limit);
+  }
+
+  async getSourceHealth() {
+    const rows = await db.execute(sql`
+      SELECT 
+        s.id as "sourceId",
+        s.name as "sourceName",
+        s.last_fetched_at as "lastFetchedAt",
+        COALESCE(
+          (SELECT status FROM source_fetch_logs WHERE source_id = s.id ORDER BY fetched_at DESC LIMIT 1),
+          'unknown'
+        ) as "lastStatus",
+        (SELECT error_message FROM source_fetch_logs WHERE source_id = s.id ORDER BY fetched_at DESC LIMIT 1) as "lastError",
+        COALESCE(
+          (SELECT COUNT(*)::int FROM source_fetch_logs WHERE source_id = s.id),
+          0
+        ) as "totalFetches",
+        COALESCE(
+          (SELECT (COUNT(*) FILTER (WHERE status = 'success')::float / NULLIF(COUNT(*)::float, 0) * 100)::int 
+           FROM source_fetch_logs WHERE source_id = s.id),
+          0
+        ) as "successRate"
+      FROM sources s
+      ORDER BY s.name ASC
+    `);
+    return (rows.rows as any[]).map(r => ({
+      sourceId: Number(r.sourceId),
+      sourceName: String(r.sourceName),
+      lastStatus: String(r.lastStatus),
+      lastError: r.lastError ? String(r.lastError) : null,
+      successRate: Number(r.successRate),
+      totalFetches: Number(r.totalFetches),
+      lastFetchedAt: r.lastFetchedAt ? new Date(r.lastFetchedAt) : null,
+    }));
+  }
+
+  async getUsers(): Promise<User[]> {
+    return await db.select().from(users).orderBy(desc(users.createdAt));
+  }
+
+  async updateUserRole(id: number, role: string): Promise<User | undefined> {
+    const [user] = await db.update(users).set({ role }).where(eq(users.id, id)).returning();
+    return user;
+  }
+
+  async deleteUser(id: number): Promise<void> {
+    await db.delete(bookmarks).where(eq(bookmarks.userId, id));
+    await db.delete(users).where(eq(users.id, id));
+  }
+
+  async deleteArticles(ids: number[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    await db.delete(bookmarks).where(inArray(bookmarks.articleId, ids));
+    const result = await db.delete(articles).where(inArray(articles.id, ids)).returning({ id: articles.id });
+    return result.length;
+  }
+
+  async updateArticlesCategory(ids: number[], category: string): Promise<number> {
+    if (ids.length === 0) return 0;
+    const result = await db.update(articles).set({ category }).where(inArray(articles.id, ids)).returning({ id: articles.id });
+    return result.length;
   }
 
   // Analytics

@@ -501,38 +501,55 @@ export async function fetchSourceFeed(sourceId: number): Promise<number> {
 
   let newArticles = 0;
 
-  switch (source.type) {
-    case "rss":
-      newArticles = await fetchRssArticles(source);
-      break;
-    case "website":
-      newArticles = await fetchWebsiteArticles(source);
-      break;
-    case "twitter":
-      newArticles = await fetchTwitterArticles(source);
-      break;
-    case "youtube":
-      newArticles = await fetchYouTubeArticles(source);
-      break;
-    case "facebook":
-      newArticles = await fetchFacebookArticles(source);
-      break;
-    case "instagram":
-      newArticles = await fetchInstagramArticles(source);
-      break;
-    case "telegram":
-      newArticles = await fetchTelegramArticles(source);
-      break;
-    case "google_news":
-      newArticles = await fetchGoogleNewsArticles(source);
-      break;
-    default:
-      newArticles = await fetchRssArticles(source);
-  }
+  try {
+    switch (source.type) {
+      case "rss":
+        newArticles = await fetchRssArticles(source);
+        break;
+      case "website":
+        newArticles = await fetchWebsiteArticles(source);
+        break;
+      case "twitter":
+        newArticles = await fetchTwitterArticles(source);
+        break;
+      case "youtube":
+        newArticles = await fetchYouTubeArticles(source);
+        break;
+      case "facebook":
+        newArticles = await fetchFacebookArticles(source);
+        break;
+      case "instagram":
+        newArticles = await fetchInstagramArticles(source);
+        break;
+      case "telegram":
+        newArticles = await fetchTelegramArticles(source);
+        break;
+      case "google_news":
+        newArticles = await fetchGoogleNewsArticles(source);
+        break;
+      default:
+        newArticles = await fetchRssArticles(source);
+    }
 
-  await storage.updateSourceLastFetched(source.id);
-  console.log(`[Worker] ${source.name}: fetched ${newArticles} new articles`);
-  return newArticles;
+    await storage.updateSourceLastFetched(source.id);
+    await storage.createFetchLog({
+      sourceId: source.id,
+      status: "success",
+      articlesFound: newArticles,
+    });
+    console.log(`[Worker] ${source.name}: fetched ${newArticles} new articles`);
+    return newArticles;
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    await storage.createFetchLog({
+      sourceId: source.id,
+      status: "error",
+      articlesFound: 0,
+      errorMessage: errorMsg.substring(0, 500),
+    });
+    console.error(`[Worker] ${source.name}: fetch error -`, errorMsg);
+    throw err;
+  }
 }
 
 export async function fetchAllFeeds(): Promise<{ sourceName: string; newArticles: number; error?: string }[]> {

@@ -9,13 +9,39 @@ import { openai } from "./replit_integrations/image/client";
 import { db } from "./db";
 import { articles } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import rateLimit from "express-rate-limit";
+import sanitizeHtml from "sanitize-html";
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many requests, please try again later." },
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many login attempts, please try again later." },
+});
+
+function sanitizeInput(text: string | undefined): string {
+  if (!text) return "";
+  return sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} }).trim();
+}
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // Setup Auth
   setupAuth(app);
+
+  app.use("/api/", apiLimiter);
+  app.use("/api/login", authLimiter);
+  app.use("/api/register", authLimiter);
 
   // === SOURCES ===
   app.get(api.sources.list.path, async (req, res) => {
@@ -388,6 +414,178 @@ export async function registerRoutes(
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
     const data = await storage.getSourceBehavior(startDate, endDate);
     res.json(data);
+  });
+
+  // === BOOKMARKS ===
+  app.get("/api/bookmarks", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const userId = (req.user as any).id;
+    const articleIds = await storage.getBookmarks(userId);
+    res.json(articleIds);
+  });
+
+  app.get("/api/bookmarks/articles", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const userId = (req.user as any).id;
+    try {
+      const articleIds = await storage.getBookmarks(userId);
+      if (articleIds.length === 0) return res.json([]);
+      const bookmarkedArticles = await storage.getArticlesByIds(articleIds);
+      res.json(bookmarkedArticles);
+    } catch (err) {
+      console.error("Error fetching bookmarked articles:", err);
+      res.status(500).json({ message: "Error fetching bookmarked articles" });
+    }
+  });
+
+  app.post("/api/bookmarks", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const userId = (req.user as any).id;
+    const { articleId } = req.body;
+    if (!articleId) return res.status(400).json({ message: "articleId required" });
+    const bookmark = await storage.addBookmark(userId, articleId);
+    res.status(201).json(bookmark);
+  });
+
+  app.delete("/api/bookmarks/:articleId", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const userId = (req.user as any).id;
+    const articleId = parseInt(req.params.articleId);
+    await storage.removeBookmark(userId, articleId);
+    res.sendStatus(204);
+  });
+
+  // === BULK ARTICLE OPERATIONS ===
+  app.post("/api/articles/bulk-delete", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (user.role !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids array required" });
+    const deleted = await storage.deleteArticles(ids);
+    res.json({ deleted });
+  });
+
+  app.post("/api/articles/bulk-categorize", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (user.role !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const { ids, category } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0 || !category) return res.status(400).json({ message: "ids and category required" });
+    const updated = await storage.updateArticlesCategory(ids, category);
+    res.json({ updated });
+  });
+
+  // === EXPORT ARTICLES CSV ===
+  app.get("/api/articles/export", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const params = {
+      search: req.query.search as string,
+      sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
+      sentiment: req.query.sentiment as string,
+      category: req.query.category as string,
+      sourceType: req.query.sourceType as string,
+      startDate: req.query.startDate as string,
+      endDate: req.query.endDate as string,
+      page: 1,
+      limit: 1000,
+    };
+    const result = await storage.getArticles(params);
+    const csvHeader = "ID,Title,Source,Category,Sentiment,Published,URL\n";
+    const csvRows = result.items.map(a => {
+      const title = `"${(a.title || "").replace(/"/g, '""')}"`;
+      const source = `"${(a.source?.name || "").replace(/"/g, '""')}"`;
+      const cat = a.category || "general";
+      const sentiment = a.sentimentLabel || "neutral";
+      const published = a.publishedAt ? new Date(a.publishedAt).toISOString() : "";
+      const url = a.url || "";
+      return `${a.id},${title},${source},${cat},${sentiment},${published},${url}`;
+    }).join("\n");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=nws360-articles.csv");
+    res.send(csvHeader + csvRows);
+  });
+
+  app.get("/api/articles/urgent", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    try {
+      const since = req.query.since as string;
+      const result = await storage.getArticles({
+        category: "urgent",
+        startDate: since || new Date(Date.now() - 3600000).toISOString(),
+        limit: 10,
+        page: 1,
+      });
+      res.json(result.items);
+    } catch (err) {
+      console.error("Error fetching urgent articles:", err);
+      res.json([]);
+    }
+  });
+
+  // === USER MANAGEMENT (Admin only) ===
+  app.get("/api/users", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (user.role !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const allUsers = await storage.getUsers();
+    const safeUsers = allUsers.map(u => ({ id: u.id, username: u.username, role: u.role, createdAt: u.createdAt }));
+    res.json(safeUsers);
+  });
+
+  app.patch("/api/users/:id/role", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const currentUser = req.user as any;
+    if (currentUser.role !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id);
+    if (id === currentUser.id) return res.status(400).json({ message: "Cannot change your own role" });
+    const { role } = req.body;
+    if (!role || !["admin", "client"].includes(role)) return res.status(400).json({ message: "Invalid role" });
+    const updated = await storage.updateUserRole(id, role);
+    if (!updated) return res.status(404).json({ message: "User not found" });
+    res.json({ id: updated.id, username: updated.username, role: updated.role, createdAt: updated.createdAt });
+  });
+
+  app.delete("/api/users/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const currentUser = req.user as any;
+    if (currentUser.role !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id);
+    if (id === currentUser.id) return res.status(400).json({ message: "Cannot delete yourself" });
+    await storage.deleteUser(id);
+    res.sendStatus(204);
+  });
+
+  // === SOURCE HEALTH ===
+  app.get("/api/source-health", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const health = await storage.getSourceHealth();
+    res.json(health);
+  });
+
+  app.get("/api/source-health/:sourceId/logs", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const sourceId = parseInt(req.params.sourceId);
+    const logs = await storage.getFetchLogs(sourceId, 50);
+    res.json(logs);
+  });
+
+  // === ANALYTICS EXPORT CSV ===
+  app.get("/api/analytics/export", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
+    if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
+    const sentimentData = await storage.getSentimentReports(startDate, endDate);
+    const csvHeader = "Source,Positive,Negative,Neutral,Total\n";
+    const csvRows = sentimentData.bySource.map(s => {
+      const total = s.positive + s.negative + s.neutral;
+      return `"${s.sourceName.replace(/"/g, '""')}",${s.positive},${s.negative},${s.neutral},${total}`;
+    }).join("\n");
+    const overallRow = `"Overall Total",${sentimentData.overall.positive},${sentimentData.overall.negative},${sentimentData.overall.neutral},${sentimentData.overall.positive + sentimentData.overall.negative + sentimentData.overall.neutral}`;
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=nws360-analytics.csv");
+    res.send(csvHeader + csvRows + "\n" + overallRow);
   });
 
   // === SEED & START WORKER ===
