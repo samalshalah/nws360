@@ -78,24 +78,42 @@ export default function Analytics() {
                   {analytics.trendingKeywords.map((kw: any, index: number) => {
                     const maxVal = analytics.trendingKeywords[0]?.value || 1;
                     const pct = Math.round((kw.value / maxVal) * 100);
+                    const pos = kw.positive || 0;
+                    const neg = kw.negative || 0;
+                    const neu = kw.neutral || 0;
+                    const total = pos + neg + neu || 1;
+                    const posPct = (pos / total) * 100;
+                    const negPct = (neg / total) * 100;
+                    const neuPct = (neu / total) * 100;
                     return (
                       <button
                         key={kw.text}
                         className="w-full flex items-center gap-3 p-2 rounded-md hover-elevate cursor-pointer text-left"
                         data-testid={`keyword-bar-${index}`}
                         onClick={() => setLocation(`/feed?search=${encodeURIComponent(kw.text)}`)}
+                        title={`${kw.text}: ${pos} positive, ${neu} neutral, ${neg} negative`}
                       >
                         <span className="w-24 text-sm font-medium truncate shrink-0">{kw.text}</span>
-                        <div className="flex-1 h-5 bg-muted rounded-sm overflow-hidden">
-                          <div
-                            className="h-full bg-blue-500 rounded-sm transition-all"
-                            style={{ width: `${pct}%` }}
-                          />
+                        <div className="flex-1 h-5 bg-muted rounded-sm overflow-hidden flex" style={{ width: `${pct}%` }}>
+                          {pos > 0 && (
+                            <div className="h-full bg-emerald-500 transition-all" style={{ width: `${posPct}%` }} />
+                          )}
+                          {neu > 0 && (
+                            <div className="h-full bg-slate-400 transition-all" style={{ width: `${neuPct}%` }} />
+                          )}
+                          {neg > 0 && (
+                            <div className="h-full bg-red-500 transition-all" style={{ width: `${negPct}%` }} />
+                          )}
                         </div>
                         <span className="text-xs text-muted-foreground w-8 text-right shrink-0">{kw.value}</span>
                       </button>
                     );
                   })}
+                  <div className="flex items-center justify-center gap-4 pt-2 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-500 inline-block" /> {t("feed.positive")}</span>
+                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" /> {t("feed.neutral")}</span>
+                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-500 inline-block" /> {t("feed.negative")}</span>
+                  </div>
                 </div>
               ) : (
                 <p className="text-muted-foreground text-sm">{t("analytics.noData")}</p>

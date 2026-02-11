@@ -44,7 +44,7 @@ export interface IStorage {
     totalArticles: number;
     sourcesCount: number;
     sentimentDistribution: { name: string; value: number }[];
-    trendingKeywords: { text: string; value: number }[];
+    trendingKeywords: { text: string; value: number; positive: number; negative: number; neutral: number }[];
   }>;
 }
 
@@ -212,18 +212,25 @@ export class DatabaseStorage implements IStorage {
       );
     }
 
-    // Real trending keywords from DB (unnest the keywords array column)
     const keywordRows = await db.execute(sql`
-      SELECT kw as keyword, COUNT(*)::int as count
+      SELECT 
+        kw as keyword, 
+        COUNT(*)::int as total,
+        COUNT(*) FILTER (WHERE COALESCE(sentiment_label, 'neutral') = 'positive')::int as positive,
+        COUNT(*) FILTER (WHERE COALESCE(sentiment_label, 'neutral') = 'negative')::int as negative,
+        COUNT(*) FILTER (WHERE COALESCE(sentiment_label, 'neutral') = 'neutral')::int as neutral
       FROM articles, unnest(keywords) as kw
       WHERE keywords IS NOT NULL
       GROUP BY kw
-      ORDER BY count DESC
+      ORDER BY total DESC
       LIMIT 10
     `);
     const trendingKeywords = (keywordRows.rows as any[]).map((r: any) => ({
       text: String(r.keyword),
-      value: Number(r.count),
+      value: Number(r.total),
+      positive: Number(r.positive),
+      negative: Number(r.negative),
+      neutral: Number(r.neutral),
     }));
 
     return {
