@@ -112,8 +112,18 @@ export async function registerRoutes(
           return res.status(403).json({ message: "Access denied" });
         }
       }
-      const input = api.sources.update.input.parse(req.body);
-      const source = await storage.updateSource(id, input);
+      const rawBody = req.body;
+      const allowedFields = ['name', 'url', 'type', 'active', 'intervalMinutes', 'maxArticlesPerFetch', 'retentionDays', 'userId'] as const;
+      const cleanUpdates: Record<string, any> = {};
+      for (const key of allowedFields) {
+        if (key in rawBody && rawBody[key] !== undefined) {
+          cleanUpdates[key] = rawBody[key];
+        }
+      }
+      if (Object.keys(cleanUpdates).length === 0) {
+        return res.status(400).json({ message: "No valid fields to update" });
+      }
+      const source = await storage.updateSource(id, cleanUpdates);
       if (!source) return res.status(404).json({ message: "Source not found" });
       res.json(source);
     } catch (err) {
