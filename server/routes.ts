@@ -196,7 +196,13 @@ export async function registerRoutes(
   // === MANUAL FETCH ===
   app.post("/api/sources/:id/fetch", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
     const id = parseInt(req.params.id);
+    const source = await storage.getSource(id);
+    if (!source) return res.status(404).json({ message: "Source not found" });
+    if (user.role !== "admin" && source.userId !== user.id) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     try {
       const newArticles = await fetchSourceFeed(id);
       res.json({ success: true, newArticles });
@@ -218,9 +224,10 @@ export async function registerRoutes(
 
   // === ARTICLES ===
   app.get(api.articles.list.path, async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
     try {
-      const user = req.isAuthenticated() ? (req.user as any) : null;
-      const scopedSourceIds = user ? await getUserSourceIds(user) : undefined;
+      const user = req.user as any;
+      const scopedSourceIds = await getUserSourceIds(user);
       const params = {
         search: req.query.search as string,
         sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
@@ -285,9 +292,15 @@ export async function registerRoutes(
   });
 
   app.get(api.articles.get.path, async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
     const id = parseInt(req.params.id);
     const article = await storage.getArticle(id);
     if (!article) return res.status(404).json({ message: "Article not found" });
+    if (scopedSourceIds && article.sourceId && !scopedSourceIds.includes(article.sourceId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     res.json(article);
   });
 
@@ -408,57 +421,73 @@ export async function registerRoutes(
 
   // === ANALYTICS ===
   app.get(api.analytics.stats.path, async (req, res) => {
-    const stats = await storage.getStats();
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
+    const stats = await storage.getStats(scopedSourceIds);
     res.json(stats);
   });
 
   app.get(api.analytics.sentimentTrend.path, async (req, res) => {
-    const trend = await storage.getSentimentTrend();
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
+    const trend = await storage.getSentimentTrend(scopedSourceIds);
     res.json(trend);
   });
 
   app.get("/api/analytics/content-volume", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getContentVolume(startDate, endDate);
+    const data = await storage.getContentVolume(startDate, endDate, scopedSourceIds);
     res.json(data);
   });
 
   app.get("/api/analytics/trending-topics", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getTrendingTopics(startDate, endDate);
+    const data = await storage.getTrendingTopics(startDate, endDate, scopedSourceIds);
     res.json(data);
   });
 
   app.get("/api/analytics/keyword-analysis", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getKeywordAnalysis(startDate, endDate);
+    const data = await storage.getKeywordAnalysis(startDate, endDate, scopedSourceIds);
     res.json(data);
   });
 
   app.get("/api/analytics/sentiment-reports", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getSentimentReports(startDate, endDate);
+    const data = await storage.getSentimentReports(startDate, endDate, scopedSourceIds);
     res.json(data);
   });
 
   app.get("/api/analytics/source-behavior", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getSourceBehavior(startDate, endDate);
+    const data = await storage.getSourceBehavior(startDate, endDate, scopedSourceIds);
     res.json(data);
   });
 
@@ -657,13 +686,20 @@ export async function registerRoutes(
   // === SOURCE HEALTH ===
   app.get("/api/source-health", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    const health = await storage.getSourceHealth();
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
+    const health = await storage.getSourceHealth(scopedSourceIds);
     res.json(health);
   });
 
   app.get("/api/source-health/:sourceId/logs", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
     const sourceId = parseInt(req.params.sourceId);
+    const scopedSourceIds = await getUserSourceIds(user);
+    if (scopedSourceIds && !scopedSourceIds.includes(sourceId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     const logs = await storage.getFetchLogs(sourceId, 50);
     res.json(logs);
   });
@@ -674,7 +710,9 @@ export async function registerRoutes(
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const sentimentData = await storage.getSentimentReports(startDate, endDate);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
+    const sentimentData = await storage.getSentimentReports(startDate, endDate, scopedSourceIds);
     const csvHeader = "Source,Positive,Negative,Neutral,Total\n";
     const csvRows = sentimentData.bySource.map(s => {
       const total = s.positive + s.negative + s.neutral;

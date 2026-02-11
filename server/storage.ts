@@ -47,7 +47,7 @@ export interface IStorage {
   // Source Fetch Logs
   createFetchLog(log: InsertSourceFetchLog): Promise<SourceFetchLog>;
   getFetchLogs(sourceId: number, limit?: number): Promise<SourceFetchLog[]>;
-  getSourceHealth(): Promise<{ sourceId: number; sourceName: string; lastStatus: string; lastError: string | null; successRate: number; totalFetches: number; lastFetchedAt: Date | null }[]>;
+  getSourceHealth(sourceIds?: number[]): Promise<{ sourceId: number; sourceName: string; lastStatus: string; lastError: string | null; successRate: number; totalFetches: number; lastFetchedAt: Date | null }[]>;
 
   // Users management
   getUsers(parentId?: number): Promise<User[]>;
@@ -65,16 +65,16 @@ export interface IStorage {
   deleteExpiredArticles(): Promise<number>;
 
   // Analytics
-  getStats(): Promise<{
+  getStats(sourceIds?: number[]): Promise<{
     totalArticles: number;
     sourcesCount: number;
     sentimentDistribution: { name: string; value: number }[];
     trendingKeywords: { text: string; value: number }[];
   }>;
-  getSentimentTrend(): Promise<{ date: string; positive: number; negative: number; neutral: number }[]>;
+  getSentimentTrend(sourceIds?: number[]): Promise<{ date: string; positive: number; negative: number; neutral: number }[]>;
 
   // Analytics - Content Volume
-  getContentVolume(startDate: string, endDate: string): Promise<{
+  getContentVolume(startDate: string, endDate: string, sourceIds?: number[]): Promise<{
     timeline: { date: string; count: number }[];
     bySource: { sourceId: number; sourceName: string; count: number }[];
     byHour: { hour: number; count: number }[];
@@ -82,20 +82,20 @@ export interface IStorage {
   }>;
 
   // Analytics - Trending Topics
-  getTrendingTopics(startDate: string, endDate: string): Promise<{
+  getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[]): Promise<{
     topics: { topic: string; count: number; sentiment: string }[];
     topicTimeline: { date: string; topic: string; count: number }[];
     byCategory: { category: string; count: number }[];
   }>;
 
   // Analytics - Keyword Analysis
-  getKeywordAnalysis(startDate: string, endDate: string): Promise<{
+  getKeywordAnalysis(startDate: string, endDate: string, sourceIds?: number[]): Promise<{
     topKeywords: { keyword: string; count: number; avgSentiment: number }[];
     keywordTimeline: { date: string; keyword: string; count: number }[];
   }>;
 
   // Analytics - Sentiment Reports
-  getSentimentReports(startDate: string, endDate: string): Promise<{
+  getSentimentReports(startDate: string, endDate: string, sourceIds?: number[]): Promise<{
     overall: { positive: number; negative: number; neutral: number };
     bySource: { sourceId: number; sourceName: string; positive: number; negative: number; neutral: number }[];
     timeline: { date: string; positive: number; negative: number; neutral: number }[];
@@ -103,7 +103,7 @@ export interface IStorage {
   }>;
 
   // Analytics - Source Behavior
-  getSourceBehavior(startDate: string, endDate: string): Promise<{
+  getSourceBehavior(startDate: string, endDate: string, sourceIds?: number[]): Promise<{
     sources: {
       sourceId: number;
       sourceName: string;
@@ -334,7 +334,11 @@ export class DatabaseStorage implements IStorage {
       .limit(limit);
   }
 
-  async getSourceHealth() {
+  async getSourceHealth(sourceIds?: number[]) {
+    if (sourceIds !== undefined && sourceIds.length === 0) {
+      return [];
+    }
+    const sourceIdFilter = sourceIds ? sql`AND s.id = ANY(${sourceIds})` : sql``;
     const rows = await db.execute(sql`
       SELECT 
         s.id as "sourceId",
@@ -355,6 +359,7 @@ export class DatabaseStorage implements IStorage {
           0
         ) as "successRate"
       FROM sources s
+      WHERE 1=1 ${sourceIdFilter}
       ORDER BY s.name ASC
     `);
     return (rows.rows as any[]).map(r => ({
@@ -423,16 +428,34 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Analytics
-  async getStats() {
-    const [totalArticles] = await db.select({ count: sql<number>`count(*)` }).from(articles);
-    const [sourcesCount] = await db.select({ count: sql<number>`count(*)` }).from(sources);
+  async getStats(sourceIds?: number[]) {
+    if (sourceIds !== undefined && sourceIds.length === 0) {
+      return {
+        totalArticles: 0,
+        sourcesCount: 0,
+        sentimentDistribution: [
+          { name: 'positive', value: 0 },
+          { name: 'neutral', value: 0 },
+          { name: 'negative', value: 0 },
+        ],
+        trendingKeywords: [],
+      };
+    }
+    const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+    const sourceIdFilter = sourceIds ? sql`AND id = ANY(${sourceIds})` : sql``;
 
-    // Real sentiment distribution from DB
+    const totalArticlesRows = await db.execute(sql`SELECT COUNT(*)::int as count FROM articles WHERE 1=1 ${sourceFilter}`);
+    const totalArticles = Number((totalArticlesRows.rows[0] as any)?.count || 0);
+
+    const sourcesCountRows = await db.execute(sql`SELECT COUNT(*)::int as count FROM sources WHERE 1=1 ${sourceIdFilter}`);
+    const sourcesCount = Number((sourcesCountRows.rows[0] as any)?.count || 0);
+
     const sentimentRows = await db.execute(sql`
       SELECT 
         COALESCE(sentiment_label, 'neutral') as label,
         COUNT(*)::int as count
       FROM articles
+      WHERE 1=1 ${sourceFilter}
       GROUP BY sentiment_label
     `);
     const sentimentDistribution = (sentimentRows.rows as any[]).map((r: any) => ({
@@ -447,11 +470,10 @@ export class DatabaseStorage implements IStorage {
       );
     }
 
-    // Real trending keywords from DB (unnest the keywords array column)
     const keywordRows = await db.execute(sql`
       SELECT kw as keyword, COUNT(*)::int as count
       FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL
+      WHERE keywords IS NOT NULL ${sourceFilter}
       GROUP BY kw
       ORDER BY count DESC
       LIMIT 10
@@ -462,14 +484,18 @@ export class DatabaseStorage implements IStorage {
     }));
 
     return {
-      totalArticles: Number(totalArticles?.count || 0),
-      sourcesCount: Number(sourcesCount?.count || 0),
+      totalArticles,
+      sourcesCount,
       sentimentDistribution,
       trendingKeywords,
     };
   }
 
-  async getSentimentTrend(): Promise<{ date: string; positive: number; negative: number; neutral: number }[]> {
+  async getSentimentTrend(sourceIds?: number[]): Promise<{ date: string; positive: number; negative: number; neutral: number }[]> {
+    if (sourceIds !== undefined && sourceIds.length === 0) {
+      return [];
+    }
+    const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
     const rows = await db.execute(sql`
       SELECT 
         TO_CHAR(published_at, 'YYYY-MM-DD') as date,
@@ -477,7 +503,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= NOW() - INTERVAL '30 days'
+      WHERE published_at >= NOW() - INTERVAL '30 days' ${sourceFilter}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
     `);
@@ -489,14 +515,19 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  async getContentVolume(startDate: string, endDate: string) {
+  async getContentVolume(startDate: string, endDate: string, sourceIds?: number[]) {
+    if (sourceIds !== undefined && sourceIds.length === 0) {
+      return { timeline: [], bySource: [], byHour: [], peaks: [] };
+    }
     const start = new Date(startDate);
     const end = new Date(endDate);
+    const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
 
     const timelineRows = await db.execute(sql`
       SELECT TO_CHAR(published_at, 'YYYY-MM-DD') as date, COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
     `);
@@ -505,7 +536,7 @@ export class DatabaseStorage implements IStorage {
       SELECT a.source_id as "sourceId", s.name as "sourceName", COUNT(*)::int as count
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${start} AND a.published_at <= ${end}
+      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA}
       GROUP BY a.source_id, s.name
       ORDER BY count DESC
       LIMIT 20
@@ -514,7 +545,7 @@ export class DatabaseStorage implements IStorage {
     const byHourRows = await db.execute(sql`
       SELECT EXTRACT(HOUR FROM published_at)::int as hour, COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
       GROUP BY EXTRACT(HOUR FROM published_at)
       ORDER BY hour ASC
     `);
@@ -536,15 +567,21 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getTrendingTopics(startDate: string, endDate: string) {
+  async getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[]) {
+    if (sourceIds !== undefined && sourceIds.length === 0) {
+      return { topics: [], topicTimeline: [], byCategory: [] };
+    }
     const start = new Date(startDate);
     const end = new Date(endDate);
+    const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilterA2 = sourceIds ? sql`AND a2.source_id = ANY(${sourceIds})` : sql``;
 
     const topicRows = await db.execute(sql`
       SELECT kw as topic, COUNT(*)::int as count,
         MODE() WITHIN GROUP (ORDER BY sentiment_label) as sentiment
       FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end}
+      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
       GROUP BY kw
       ORDER BY count DESC
       LIMIT 20
@@ -553,10 +590,10 @@ export class DatabaseStorage implements IStorage {
     const topicTimelineRows = await db.execute(sql`
       SELECT TO_CHAR(a.published_at, 'YYYY-MM-DD') as date, kw as topic, COUNT(*)::int as count
       FROM articles a, unnest(a.keywords) as kw
-      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end}
+      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA}
       AND kw IN (
         SELECT kw2 FROM articles a2, unnest(a2.keywords) as kw2
-        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end}
+        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end} ${sourceFilterA2}
         GROUP BY kw2 ORDER BY COUNT(*) DESC LIMIT 5
       )
       GROUP BY TO_CHAR(a.published_at, 'YYYY-MM-DD'), kw
@@ -566,7 +603,7 @@ export class DatabaseStorage implements IStorage {
     const categoryRows = await db.execute(sql`
       SELECT COALESCE(category, 'general') as category, COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
       GROUP BY category
       ORDER BY count DESC
     `);
@@ -589,15 +626,21 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getKeywordAnalysis(startDate: string, endDate: string) {
+  async getKeywordAnalysis(startDate: string, endDate: string, sourceIds?: number[]) {
+    if (sourceIds !== undefined && sourceIds.length === 0) {
+      return { topKeywords: [], keywordTimeline: [] };
+    }
     const start = new Date(startDate);
     const end = new Date(endDate);
+    const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilterA2 = sourceIds ? sql`AND a2.source_id = ANY(${sourceIds})` : sql``;
 
     const topKeywordsRows = await db.execute(sql`
       SELECT kw as keyword, COUNT(*)::int as count,
         COALESCE(AVG(sentiment_score), 0)::int as "avgSentiment"
       FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end}
+      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
       GROUP BY kw
       ORDER BY count DESC
       LIMIT 25
@@ -606,10 +649,10 @@ export class DatabaseStorage implements IStorage {
     const keywordTimelineRows = await db.execute(sql`
       SELECT TO_CHAR(a.published_at, 'YYYY-MM-DD') as date, kw as keyword, COUNT(*)::int as count
       FROM articles a, unnest(a.keywords) as kw
-      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end}
+      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA}
       AND kw IN (
         SELECT kw2 FROM articles a2, unnest(a2.keywords) as kw2
-        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end}
+        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end} ${sourceFilterA2}
         GROUP BY kw2 ORDER BY COUNT(*) DESC LIMIT 10
       )
       GROUP BY TO_CHAR(a.published_at, 'YYYY-MM-DD'), kw
@@ -630,9 +673,19 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getSentimentReports(startDate: string, endDate: string) {
+  async getSentimentReports(startDate: string, endDate: string, sourceIds?: number[]) {
+    if (sourceIds !== undefined && sourceIds.length === 0) {
+      return {
+        overall: { positive: 0, negative: 0, neutral: 0 },
+        bySource: [],
+        timeline: [],
+        byCategory: [],
+      };
+    }
     const start = new Date(startDate);
     const end = new Date(endDate);
+    const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
 
     const overallRows = await db.execute(sql`
       SELECT
@@ -640,7 +693,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
     `);
     const overall = overallRows.rows[0] as any;
 
@@ -651,7 +704,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE a.sentiment_label = 'neutral' OR a.sentiment_label IS NULL)::int as neutral
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${start} AND a.published_at <= ${end}
+      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA}
       GROUP BY a.source_id, s.name
       ORDER BY (COUNT(*) FILTER (WHERE a.sentiment_label = 'positive') + COUNT(*) FILTER (WHERE a.sentiment_label = 'negative') + COUNT(*) FILTER (WHERE a.sentiment_label = 'neutral' OR a.sentiment_label IS NULL)) DESC
       LIMIT 15
@@ -663,7 +716,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
     `);
@@ -674,7 +727,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
       GROUP BY category
       ORDER BY (COUNT(*)) DESC
     `);
@@ -707,10 +760,15 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getSourceBehavior(startDate: string, endDate: string) {
+  async getSourceBehavior(startDate: string, endDate: string, sourceIds?: number[]) {
+    if (sourceIds !== undefined && sourceIds.length === 0) {
+      return { sources: [], diversity: [] };
+    }
     const start = new Date(startDate);
     const end = new Date(endDate);
     const daysDiff = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+    const sourceIdFilter = sourceIds ? sql`AND s.id = ANY(${sourceIds})` : sql``;
+    const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
 
     const sourceRows = await db.execute(sql`
       SELECT 
@@ -721,6 +779,7 @@ export class DatabaseStorage implements IStorage {
       FROM sources s
       LEFT JOIN articles a ON a.source_id = s.id AND a.published_at >= ${start} AND a.published_at <= ${end}
       LEFT JOIN LATERAL unnest(a.keywords) as unnest_kw ON true
+      WHERE 1=1 ${sourceIdFilter}
       GROUP BY s.id, s.name, s.type
       ORDER BY "articleCount" DESC
     `);
@@ -729,7 +788,7 @@ export class DatabaseStorage implements IStorage {
       SELECT s.type as "sourceType", COUNT(DISTINCT a.id)::int as count
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${start} AND a.published_at <= ${end}
+      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA}
       GROUP BY s.type
       ORDER BY count DESC
     `);
