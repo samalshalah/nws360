@@ -1,14 +1,17 @@
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { useTranslation } from "react-i18next";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Shield, ShieldOff, Trash2, ShieldAlert } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Shield, ShieldOff, Trash2, UserPlus } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { User } from "@shared/schema";
 
@@ -18,8 +21,29 @@ export default function UserManagement() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const { data: users, isLoading, error } = useQuery<User[]>({
+  const [newUsername, setNewUsername] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newRole, setNewRole] = useState("client");
+
+  const { data: users, isLoading } = useQuery<(User & { parentId?: number | null })[]>({
     queryKey: ["/api/users"],
+  });
+
+  const createUserMutation = useMutation({
+    mutationFn: async (data: { username: string; password: string; role: string }) => {
+      const res = await apiRequest("POST", "/api/users", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: t("userManagement.userCreated") });
+      setNewUsername("");
+      setNewPassword("");
+      setNewRole("client");
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: t("common.error"), description: error.message });
+    },
   });
 
   const updateRoleMutation = useMutation({
@@ -52,14 +76,17 @@ export default function UserManagement() {
     }
   };
 
-  if (error && (error as Error).message?.includes("403")) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-        <ShieldAlert className="w-12 h-12 mb-4 opacity-30" />
-        <p className="text-lg font-medium" data-testid="text-access-denied">{t("userManagement.accessDenied")}</p>
-      </div>
-    );
-  }
+  const handleCreateUser = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUsername.trim() || !newPassword.trim()) return;
+    createUserMutation.mutate({ username: newUsername.trim(), password: newPassword, role: newRole });
+  };
+
+  const getParentUsername = (parentId: number | null | undefined) => {
+    if (!parentId || !users) return "-";
+    const parent = users.find(u => u.id === parentId);
+    return parent ? parent.username : "-";
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -69,6 +96,57 @@ export default function UserManagement() {
         </h1>
         <p className="text-muted-foreground">{t("userManagement.subtitle")}</p>
       </div>
+
+      <Card className="border-border/50 shadow-md">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <UserPlus className="w-5 h-5" />
+            {t("userManagement.createUser")}
+          </CardTitle>
+          <CardDescription>{t("userManagement.createUserSubtitle")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleCreateUser} className="flex flex-col sm:flex-row items-end gap-3 flex-wrap" data-testid="form-create-user">
+            <div className="flex-1 min-w-[180px] space-y-1">
+              <label className="text-sm text-muted-foreground">{t("userManagement.newUsername")}</label>
+              <Input
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value)}
+                placeholder={t("userManagement.newUsername")}
+                data-testid="input-new-username"
+              />
+            </div>
+            <div className="flex-1 min-w-[180px] space-y-1">
+              <label className="text-sm text-muted-foreground">{t("userManagement.newPassword")}</label>
+              <Input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder={t("userManagement.newPassword")}
+                data-testid="input-new-password"
+              />
+            </div>
+            {currentUser?.role === "admin" && (
+              <div className="min-w-[140px] space-y-1">
+                <label className="text-sm text-muted-foreground">{t("userManagement.role")}</label>
+                <Select value={newRole} onValueChange={setNewRole} data-testid="select-new-role">
+                  <SelectTrigger data-testid="select-trigger-new-role">
+                    <SelectValue placeholder={t("userManagement.selectRole")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="client" data-testid="select-item-client">{t("userManagement.client")}</SelectItem>
+                    <SelectItem value="admin" data-testid="select-item-admin">{t("userManagement.admin")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <Button type="submit" disabled={createUserMutation.isPending || !newUsername.trim() || !newPassword.trim()} data-testid="button-create-user">
+              <UserPlus className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
+              {createUserMutation.isPending ? t("userManagement.creating") : t("userManagement.createUser")}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
 
       <Card className="border-border/50 shadow-md">
         <CardContent className="pt-6">
@@ -95,6 +173,7 @@ export default function UserManagement() {
                     <TableRow>
                       <TableHead>{t("userManagement.username")}</TableHead>
                       <TableHead>{t("userManagement.role")}</TableHead>
+                      <TableHead>{t("userManagement.parent")}</TableHead>
                       <TableHead>{t("userManagement.joined")}</TableHead>
                       <TableHead className="text-right rtl:text-left">{t("userManagement.actions")}</TableHead>
                     </TableRow>
@@ -115,25 +194,30 @@ export default function UserManagement() {
                               {u.role === "admin" ? t("userManagement.admin") : t("userManagement.client")}
                             </Badge>
                           </TableCell>
+                          <TableCell className="text-muted-foreground text-sm" data-testid={`text-parent-${u.id}`}>
+                            {getParentUsername(u.parentId)}
+                          </TableCell>
                           <TableCell className="text-muted-foreground text-sm">
                             {u.createdAt ? formatDistanceToNow(new Date(u.createdAt), { addSuffix: true }) : "-"}
                           </TableCell>
                           <TableCell className="text-right rtl:text-left">
                             {isCurrentUser ? null : (
                               <div className="flex items-center gap-2 justify-end rtl:justify-start flex-wrap">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={updateRoleMutation.isPending}
-                                  onClick={() => updateRoleMutation.mutate({ id: u.id, role: u.role === "admin" ? "client" : "admin" })}
-                                  data-testid={`button-toggle-role-${u.id}`}
-                                >
-                                  {u.role === "admin" ? (
-                                    <><ShieldOff className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />{t("userManagement.makeClient")}</>
-                                  ) : (
-                                    <><Shield className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />{t("userManagement.makeAdmin")}</>
-                                  )}
-                                </Button>
+                                {currentUser?.role === "admin" && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={updateRoleMutation.isPending}
+                                    onClick={() => updateRoleMutation.mutate({ id: u.id, role: u.role === "admin" ? "client" : "admin" })}
+                                    data-testid={`button-toggle-role-${u.id}`}
+                                  >
+                                    {u.role === "admin" ? (
+                                      <><ShieldOff className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />{t("userManagement.makeClient")}</>
+                                    ) : (
+                                      <><Shield className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />{t("userManagement.makeAdmin")}</>
+                                    )}
+                                  </Button>
+                                )}
                                 <Button
                                   variant="outline"
                                   size="sm"
@@ -173,23 +257,28 @@ export default function UserManagement() {
                           </Badge>
                         </div>
                         <div className="text-xs text-muted-foreground">
+                          {t("userManagement.parent")}: {getParentUsername(u.parentId)}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
                           {t("userManagement.joined")}: {u.createdAt ? formatDistanceToNow(new Date(u.createdAt), { addSuffix: true }) : "-"}
                         </div>
                         {!isCurrentUser && (
                           <div className="flex items-center gap-2 flex-wrap">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={updateRoleMutation.isPending}
-                              onClick={() => updateRoleMutation.mutate({ id: u.id, role: u.role === "admin" ? "client" : "admin" })}
-                              data-testid={`button-toggle-role-mobile-${u.id}`}
-                            >
-                              {u.role === "admin" ? (
-                                <><ShieldOff className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />{t("userManagement.makeClient")}</>
-                              ) : (
-                                <><Shield className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />{t("userManagement.makeAdmin")}</>
-                              )}
-                            </Button>
+                            {currentUser?.role === "admin" && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={updateRoleMutation.isPending}
+                                onClick={() => updateRoleMutation.mutate({ id: u.id, role: u.role === "admin" ? "client" : "admin" })}
+                                data-testid={`button-toggle-role-mobile-${u.id}`}
+                              >
+                                {u.role === "admin" ? (
+                                  <><ShieldOff className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />{t("userManagement.makeClient")}</>
+                                ) : (
+                                  <><Shield className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />{t("userManagement.makeAdmin")}</>
+                                )}
+                              </Button>
+                            )}
                             <Button
                               variant="outline"
                               size="sm"

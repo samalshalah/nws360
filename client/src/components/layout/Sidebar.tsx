@@ -164,7 +164,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           )}
         </div>
 
-        {user?.role === "admin" && (
+        {user && (
           <Link href="/users">
             <div
               onClick={onNavigate}

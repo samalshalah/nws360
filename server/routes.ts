@@ -11,6 +11,10 @@ import { articles } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
 import sanitizeHtml from "sanitize-html";
+import { scrypt, randomBytes } from "crypto";
+import { promisify } from "util";
+
+const scryptAsync = promisify(scrypt);
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -33,6 +37,19 @@ function sanitizeInput(text: string | undefined): string {
   return sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} }).trim();
 }
 
+async function getUserSourceIds(user: any): Promise<number[] | undefined> {
+  if (user.role === "admin") return undefined;
+  const userIds = [user.id];
+  const children = await storage.getUserChildren(user.id);
+  for (const child of children) {
+    userIds.push(child.id);
+  }
+  const userSources = await storage.getSources();
+  return userSources
+    .filter(s => s.userId && userIds.includes(s.userId))
+    .map(s => s.id);
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -45,15 +62,25 @@ export async function registerRoutes(
 
   // === SOURCES ===
   app.get(api.sources.list.path, async (req, res) => {
-    const sources = await storage.getSources();
-    res.json(sources);
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (user.role === "admin") {
+      const allSources = await storage.getSources();
+      return res.json(allSources);
+    }
+    const children = await storage.getUserChildren(user.id);
+    const userIds = [user.id, ...children.map((c: any) => c.id)];
+    const allSources = await storage.getSources();
+    const filtered = allSources.filter((s: any) => userIds.includes(s.userId));
+    res.json(filtered);
   });
 
   app.post(api.sources.create.path, async (req, res) => {
     try {
       if (!req.isAuthenticated()) return res.sendStatus(401);
+      const user = req.user as any;
       const input = api.sources.create.input.parse(req.body);
-      const source = await storage.createSource(input);
+      const source = await storage.createSource({...input, userId: user.id});
 
       // Immediately fetch articles from the new source
       setTimeout(async () => {
@@ -77,7 +104,14 @@ export async function registerRoutes(
   app.patch(api.sources.update.path, async (req, res) => {
     try {
       if (!req.isAuthenticated()) return res.sendStatus(401);
+      const user = req.user as any;
       const id = parseInt(req.params.id);
+      if (user.role !== "admin") {
+        const existingSource = await storage.getSource(id);
+        if (!existingSource || existingSource.userId !== user.id) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
       const input = api.sources.update.input.parse(req.body);
       const source = await storage.updateSource(id, input);
       if (!source) return res.status(404).json({ message: "Source not found" });
@@ -89,7 +123,14 @@ export async function registerRoutes(
 
   app.delete(api.sources.delete.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
     const id = parseInt(req.params.id);
+    if (user.role !== "admin") {
+      const existingSource = await storage.getSource(id);
+      if (!existingSource || existingSource.userId !== user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+    }
     await storage.deleteSource(id);
     res.sendStatus(204);
   });
@@ -178,9 +219,12 @@ export async function registerRoutes(
   // === ARTICLES ===
   app.get(api.articles.list.path, async (req, res) => {
     try {
+      const user = req.isAuthenticated() ? (req.user as any) : null;
+      const scopedSourceIds = user ? await getUserSourceIds(user) : undefined;
       const params = {
         search: req.query.search as string,
         sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
+        sourceIds: scopedSourceIds,
         sentiment: req.query.sentiment as string,
         category: req.query.category as string,
         sourceType: req.query.sourceType as string,
@@ -323,7 +367,9 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     
     try {
-      const allArticles = await storage.getArticles({ limit: 500 });
+      const user = req.user as any;
+      const scopedSourceIds = await getUserSourceIds(user);
+      const allArticles = await storage.getArticles({ limit: 500, sourceIds: scopedSourceIds });
       const unanalyzed = allArticles.items.filter(
         a => (!a.sentimentLabel || a.sentimentLabel === "neutral") && a.sentimentScore === 0 && (!a.keywords || a.keywords.length === 0)
       );
@@ -479,9 +525,12 @@ export async function registerRoutes(
   // === EXPORT ARTICLES CSV ===
   app.get("/api/articles/export", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
     const params = {
       search: req.query.search as string,
       sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
+      sourceIds: scopedSourceIds,
       sentiment: req.query.sentiment as string,
       category: req.query.category as string,
       sourceType: req.query.sourceType as string,
@@ -509,9 +558,12 @@ export async function registerRoutes(
   app.get("/api/articles/urgent", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     try {
+      const user = req.user as any;
+      const scopedSourceIds = await getUserSourceIds(user);
       const since = req.query.since as string;
       const result = await storage.getArticles({
         category: "urgent",
+        sourceIds: scopedSourceIds,
         startDate: since || new Date(Date.now() - 3600000).toISOString(),
         limit: 10,
         page: 1,
@@ -523,35 +575,81 @@ export async function registerRoutes(
     }
   });
 
-  // === USER MANAGEMENT (Admin only) ===
+  // === USER MANAGEMENT ===
   app.get("/api/users", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    if (user.role !== "admin") return res.status(403).json({ message: "Admin access required" });
-    const allUsers = await storage.getUsers();
-    const safeUsers = allUsers.map(u => ({ id: u.id, username: u.username, role: u.role, createdAt: u.createdAt }));
+    let allUsers;
+    if (user.role === "admin") {
+      allUsers = await storage.getUsers();
+    } else {
+      allUsers = await storage.getUsers(user.id);
+    }
+    const safeUsers = allUsers.map((u: any) => ({ id: u.id, username: u.username, role: u.role, parentId: u.parentId, createdAt: u.createdAt }));
     res.json(safeUsers);
+  });
+
+  app.post("/api/users", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const currentUser = req.user as any;
+    const { username, password, role } = req.body;
+    if (!username || !password) return res.status(400).json({ message: "Username and password required" });
+
+    const existingUser = await storage.getUserByUsername(username);
+    if (existingUser) return res.status(400).json({ message: "Username already exists" });
+
+    let assignedRole = "client";
+    if (currentUser.role === "admin" && role && ["admin", "client"].includes(role)) {
+      assignedRole = role;
+    }
+
+    const salt = randomBytes(16).toString("hex");
+    const buf = (await scryptAsync(password, salt, 64)) as Buffer;
+    const hashedPassword = `${salt}:${buf.toString("hex")}`;
+
+    const newUser = await storage.createUser({
+      username,
+      password: hashedPassword,
+      role: assignedRole,
+      parentId: currentUser.id,
+    });
+
+    res.status(201).json({ id: newUser.id, username: newUser.username, role: newUser.role, parentId: newUser.parentId, createdAt: newUser.createdAt });
   });
 
   app.patch("/api/users/:id/role", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const currentUser = req.user as any;
-    if (currentUser.role !== "admin") return res.status(403).json({ message: "Admin access required" });
     const id = parseInt(req.params.id);
     if (id === currentUser.id) return res.status(400).json({ message: "Cannot change your own role" });
+
+    if (currentUser.role !== "admin") {
+      const targetUser = await storage.getUser(id);
+      if (!targetUser || targetUser.parentId !== currentUser.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+    }
+
     const { role } = req.body;
     if (!role || !["admin", "client"].includes(role)) return res.status(400).json({ message: "Invalid role" });
     const updated = await storage.updateUserRole(id, role);
     if (!updated) return res.status(404).json({ message: "User not found" });
-    res.json({ id: updated.id, username: updated.username, role: updated.role, createdAt: updated.createdAt });
+    res.json({ id: updated.id, username: updated.username, role: updated.role, parentId: updated.parentId, createdAt: updated.createdAt });
   });
 
   app.delete("/api/users/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const currentUser = req.user as any;
-    if (currentUser.role !== "admin") return res.status(403).json({ message: "Admin access required" });
     const id = parseInt(req.params.id);
     if (id === currentUser.id) return res.status(400).json({ message: "Cannot delete yourself" });
+
+    if (currentUser.role !== "admin") {
+      const targetUser = await storage.getUser(id);
+      if (!targetUser || targetUser.parentId !== currentUser.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+    }
+
     await storage.deleteUser(id);
     res.sendStatus(204);
   });

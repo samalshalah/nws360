@@ -29,14 +29,16 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - Bulk article operations (select all, bulk delete)
 - CSV export of filtered articles
 - Breaking news notifications for urgent articles (polls every 60s)
-- Admin user management (role toggle, user deletion)
+- Multi-tenant user hierarchy (admin creates clients, clients create sub-users)
+- User management with create user form (admin/client can manage their users)
+- Sources and articles scoped to user hierarchy (each user sees only their own data)
 - Source health monitoring with success rates and error logs
 - Rate limiting (200 req/15min API, 20 req/15min auth)
 - Input sanitization with sanitize-html
 
 ## Database Schema
-- `users`: id, username, password, role (admin/client), createdAt
-- `sources`: id, name, url, type, active, intervalMinutes, retentionDays, lastFetchedAt, createdAt
+- `users`: id, username, password, role (admin/client), parentId, createdAt
+- `sources`: id, name, url, type, active, intervalMinutes, retentionDays, userId, lastFetchedAt, createdAt
 - `articles`: id, title, content, summary, url, sourceId, publishedAt, language, sentimentScore, sentimentLabel, keywords[], category, imageUrl, subSource, createdAt
 - `keywords`: id, term, createdAt
 - `bookmarks`: id, userId, articleId, createdAt (unique on userId+articleId)
@@ -44,6 +46,7 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 
 ## API Routes
 - Auth: POST /api/login, POST /api/register, POST /api/logout, GET /api/user
+- Users: GET /api/users, POST /api/users, PATCH /api/users/:id/role, DELETE /api/users/:id
 - Sources: GET /api/sources, POST /api/sources, PATCH /api/sources/:id, DELETE /api/sources/:id
 - Manual Fetch: POST /api/sources/:id/fetch, POST /api/fetch-all
 - Articles: GET /api/articles (with search, filters, pagination), GET /api/articles/:id

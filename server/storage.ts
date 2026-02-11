@@ -50,7 +50,10 @@ export interface IStorage {
   getSourceHealth(): Promise<{ sourceId: number; sourceName: string; lastStatus: string; lastError: string | null; successRate: number; totalFetches: number; lastFetchedAt: Date | null }[]>;
 
   // Users management
-  getUsers(): Promise<User[]>;
+  getUsers(parentId?: number): Promise<User[]>;
+  getUserChildren(parentId: number): Promise<User[]>;
+  getUsersByParent(parentId: number | null): Promise<User[]>;
+  getSourcesByUserId(userId: number): Promise<Source[]>;
   updateUserRole(id: number, role: string): Promise<User | undefined>;
   deleteUser(id: number): Promise<void>;
 
@@ -163,9 +166,16 @@ export class DatabaseStorage implements IStorage {
   // Articles
   async getArticles(params?: ArticleQueryParams): Promise<{ items: (Article & { source: Source | null })[], total: number }> {
     const conditions = [];
+    let needsSourceJoin = false;
 
     if (params?.search) {
       conditions.push(sql`(${articles.title} ILIKE ${`%${params.search}%`} OR ${articles.content} ILIKE ${`%${params.search}%`})`);
+    }
+    if (params?.sourceIds !== undefined) {
+      if (params.sourceIds.length === 0) {
+        return { items: [], total: 0 };
+      }
+      conditions.push(inArray(articles.sourceId, params.sourceIds));
     }
     if (params?.sourceId) {
       conditions.push(eq(articles.sourceId, params.sourceId));
@@ -178,6 +188,7 @@ export class DatabaseStorage implements IStorage {
     }
     if (params?.sourceType) {
       conditions.push(eq(sources.type, params.sourceType));
+      needsSourceJoin = true;
     }
     if (params?.startDate) {
       conditions.push(gte(articles.publishedAt, new Date(params.startDate)));
@@ -191,7 +202,7 @@ export class DatabaseStorage implements IStorage {
     const offset = ((params?.page || 1) - 1) * limit;
 
     const countQuery = db.select({ count: sql<number>`count(*)` }).from(articles);
-    if (params?.sourceType) {
+    if (needsSourceJoin) {
       countQuery.leftJoin(sources, eq(articles.sourceId, sources.id));
     }
     const [countResult] = await countQuery.where(whereClause);
@@ -357,8 +368,26 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  async getUsers(): Promise<User[]> {
+  async getUsers(parentId?: number): Promise<User[]> {
+    if (parentId !== undefined) {
+      return await db.select().from(users).where(eq(users.parentId, parentId)).orderBy(desc(users.createdAt));
+    }
     return await db.select().from(users).orderBy(desc(users.createdAt));
+  }
+
+  async getUserChildren(parentId: number): Promise<User[]> {
+    return await db.select().from(users).where(eq(users.parentId, parentId)).orderBy(desc(users.createdAt));
+  }
+
+  async getUsersByParent(parentId: number | null): Promise<User[]> {
+    if (parentId === null) {
+      return await db.select().from(users).where(sql`${users.parentId} IS NULL`).orderBy(desc(users.createdAt));
+    }
+    return await db.select().from(users).where(eq(users.parentId, parentId)).orderBy(desc(users.createdAt));
+  }
+
+  async getSourcesByUserId(userId: number): Promise<Source[]> {
+    return await db.select().from(sources).where(eq(sources.userId, userId));
   }
 
   async updateUserRole(id: number, role: string): Promise<User | undefined> {
@@ -367,6 +396,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteUser(id: number): Promise<void> {
+    const children = await this.getUserChildren(id);
+    for (const child of children) {
+      await this.deleteUser(child.id);
+    }
+    const userSources = await this.getSourcesByUserId(id);
+    for (const source of userSources) {
+      await db.delete(articles).where(eq(articles.sourceId, source.id));
+      await db.delete(sources).where(eq(sources.id, source.id));
+    }
     await db.delete(bookmarks).where(eq(bookmarks.userId, id));
     await db.delete(users).where(eq(users.id, id));
   }
