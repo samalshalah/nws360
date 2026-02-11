@@ -7,13 +7,13 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - **Frontend**: React + Vite + Tailwind CSS + shadcn/ui + wouter (routing) + recharts (charts)
 - **Backend**: Express.js + Passport.js (local auth with sessions)
 - **Database**: PostgreSQL via Drizzle ORM
-- **AI**: OpenAI (gpt-5-nano) via Replit AI Integrations for sentiment analysis & keyword extraction
+- **AI**: OpenAI (gpt-4o-mini) via Replit AI Integrations for sentiment analysis, keyword/topic extraction & country detection
 - **RSS Parsing**: rss-parser for fetching real RSS feeds
 
 ## Key Features
 - Real RSS feed fetching from any website (auto-discovers RSS feeds)
 - AI-powered sentiment analysis and keyword extraction on articles
-- Background worker that auto-fetches news every 1 minute
+- Background worker that auto-fetches news every 5 minutes (configurable via FEED_REFRESH_MINUTES env var)
 - Manual fetch trigger per source or all sources
 - Dashboard with analytics (sentiment distribution, trending keywords)
 - Admin panel for managing sources and keywords
@@ -39,10 +39,10 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 ## Database Schema
 - `users`: id, username, password, role (admin/client), parentId, createdAt
 - `sources`: id, name, url, type, active, intervalMinutes, retentionDays, userId, lastFetchedAt, createdAt
-- `articles`: id, title, content, summary, url, sourceId, publishedAt, language, sentimentScore, sentimentLabel, keywords[], category, imageUrl, subSource, createdAt
+- `articles`: id, title, content, contentClean, summary, url, sourceId, publishedAt, ingestedAt, language, country, sentimentScore, sentimentLabel, keywords[], topics[], category, imageUrl, subSource, createdAt
 - `keywords`: id, term, createdAt
 - `bookmarks`: id, userId, articleId, createdAt (unique on userId+articleId)
-- `source_fetch_logs`: id, sourceId, status, articlesFound, errorMessage, fetchedAt
+- `source_fetch_logs`: id, sourceId, status, articlesFound, errorMessage, retryCount, durationMs, pipelineStep, fetchedAt
 
 ## API Routes
 - Auth: POST /api/login, POST /api/register, POST /api/logout, GET /api/user
@@ -56,6 +56,7 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - Urgent: GET /api/articles/urgent (breaking news)
 - Users (admin): GET /api/users, PATCH /api/users/:id/role, DELETE /api/users/:id
 - Source Health: GET /api/source-health, GET /api/source-health/:sourceId/logs
+- Ingestion Logs: GET /api/ingestion-logs?from=&to=&limit=&offset=
 - Keywords: GET /api/keywords, POST /api/keywords, DELETE /api/keywords/:id
 - Analytics: GET /api/analytics/stats
 - Translation: Auto-translates articles based on `lang` query param in GET /api/articles
@@ -64,10 +65,14 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - Located in `server/feed-worker.ts`
 - Uses rss-parser to fetch RSS/Atom feeds
 - Auto-discovers RSS feed URLs from website URLs
-- Runs AI analysis (sentiment + keywords) on each new article
+- Deterministic pipeline: FETCH -> CLEAN -> STRUCTURE -> ANALYZE -> STORE
+- AI analysis extracts: sentiment, keywords, topics, summary, category, country
+- Retry logic: up to 3 retries with exponential backoff per source
+- Failed sources are skipped without crashing the worker
+- Structured logging with source name, duration, success/failure, article count
 - Deduplicates by article URL
-- Runs every 1 minute automatically, with initial fetch on startup
-- Supports source types: rss, website, twitter, youtube, facebook, instagram, telegram
+- Runs every 5 minutes by default (configurable via FEED_REFRESH_MINUTES env var)
+- Supports source types: rss, website, twitter, youtube, facebook, instagram, telegram, google_news
 
 ## Social Media Fetchers (server/web-scraper.ts)
 - **YouTube**: Extracts channel ID from handle/URL, fetches via YouTube RSS feeds

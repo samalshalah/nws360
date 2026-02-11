@@ -37,15 +37,19 @@ export const articles = pgTable("articles", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
   content: text("content").notNull(),
+  contentClean: text("content_clean"),
   summary: text("summary"),
   url: text("url").unique(),
   sourceId: integer("source_id").references(() => sources.id),
   publishedAt: timestamp("published_at"),
+  ingestedAt: timestamp("ingested_at").defaultNow(),
   language: text("language").default("en"),
-  sentimentScore: integer("sentiment_score"), // -100 to 100
-  sentimentLabel: text("sentiment_label"), // 'positive' | 'negative' | 'neutral'
+  country: text("country"),
+  sentimentScore: integer("sentiment_score"),
+  sentimentLabel: text("sentiment_label"),
   keywords: text("keywords").array(),
-  category: text("category"), // 'political' | 'health' | 'tech' | 'sports' | 'business' | 'entertainment' | 'science' | 'urgent' | 'general'
+  topics: text("topics").array(),
+  category: text("category"),
   imageUrl: text("image_url"),
   subSource: text("sub_source"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -74,13 +78,16 @@ export const bookmarks = pgTable("bookmarks", {
 
 export const insertBookmarkSchema = createInsertSchema(bookmarks).omit({ id: true, createdAt: true });
 
-// === SOURCE FETCH LOGS ===
+// === SOURCE FETCH LOGS (Ingestion Logs) ===
 export const sourceFetchLogs = pgTable("source_fetch_logs", {
   id: serial("id").primaryKey(),
   sourceId: integer("source_id").notNull().references(() => sources.id, { onDelete: "cascade" }),
-  status: text("status").notNull(), // 'success' | 'error'
+  status: text("status").notNull(),
   articlesFound: integer("articles_found").default(0),
   errorMessage: text("error_message"),
+  retryCount: integer("retry_count").default(0),
+  durationMs: integer("duration_ms"),
+  pipelineStep: text("pipeline_step"),
   fetchedAt: timestamp("fetched_at").defaultNow(),
 });
 
@@ -133,6 +140,8 @@ export interface ArticleQueryParams {
   sentiment?: string;
   category?: string;
   sourceType?: string;
+  country?: string;
+  topic?: string;
   lang?: string;
   startDate?: string;
   endDate?: string;

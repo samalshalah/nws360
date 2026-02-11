@@ -245,6 +245,8 @@ export async function registerRoutes(
         sentiment: req.query.sentiment as string,
         category: req.query.category as string,
         sourceType: req.query.sourceType as string,
+        country: req.query.country as string,
+        topic: req.query.topic as string,
         lang: req.query.lang as string,
         startDate: req.query.startDate as string,
         endDate: req.query.endDate as string,
@@ -714,6 +716,22 @@ export async function registerRoutes(
     res.json(logs);
   });
 
+  // === INGESTION LOGS ===
+  app.get("/api/ingestion-logs", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
+    const params = {
+      from: req.query.from as string,
+      to: req.query.to as string,
+      sourceIds: scopedSourceIds,
+      limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+      offset: req.query.offset ? parseInt(req.query.offset as string) : 0,
+    };
+    const result = await storage.getIngestionLogs(params);
+    res.json(result);
+  });
+
   // === ANALYTICS EXPORT CSV ===
   app.get("/api/analytics/export", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
@@ -736,7 +754,7 @@ export async function registerRoutes(
 
   // === SEED & START WORKER ===
   await seed();
-  startFeedWorker(1);
+  startFeedWorker();
 
   return httpServer;
 }

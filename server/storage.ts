@@ -44,9 +44,10 @@ export interface IStorage {
   addBookmark(userId: number, articleId: number): Promise<Bookmark>;
   removeBookmark(userId: number, articleId: number): Promise<void>;
 
-  // Source Fetch Logs
+  // Source Fetch Logs / Ingestion Logs
   createFetchLog(log: InsertSourceFetchLog): Promise<SourceFetchLog>;
   getFetchLogs(sourceId: number, limit?: number): Promise<SourceFetchLog[]>;
+  getIngestionLogs(params?: { from?: string; to?: string; sourceIds?: number[]; limit?: number; offset?: number }): Promise<{ items: (SourceFetchLog & { sourceName: string })[], total: number }>;
   getSourceHealth(sourceIds?: number[]): Promise<{ sourceId: number; sourceName: string; lastStatus: string; lastError: string | null; successRate: number; totalFetches: number; lastFetchedAt: Date | null }[]>;
 
   // Users management
@@ -186,6 +187,12 @@ export class DatabaseStorage implements IStorage {
     if (params?.category) {
       conditions.push(eq(articles.category, params.category));
     }
+    if (params?.country) {
+      conditions.push(eq(articles.country, params.country));
+    }
+    if (params?.topic) {
+      conditions.push(sql`${params.topic} = ANY(${articles.topics})`);
+    }
     if (params?.sourceType) {
       conditions.push(eq(sources.type, params.sourceType));
       needsSourceJoin = true;
@@ -212,14 +219,18 @@ export class DatabaseStorage implements IStorage {
       id: articles.id,
       title: articles.title,
       content: articles.content,
+      contentClean: articles.contentClean,
       summary: articles.summary,
       url: articles.url,
       sourceId: articles.sourceId,
       publishedAt: articles.publishedAt,
+      ingestedAt: articles.ingestedAt,
       language: articles.language,
+      country: articles.country,
       sentimentScore: articles.sentimentScore,
       sentimentLabel: articles.sentimentLabel,
       keywords: articles.keywords,
+      topics: articles.topics,
       category: articles.category,
       imageUrl: articles.imageUrl,
       subSource: articles.subSource,
@@ -247,14 +258,18 @@ export class DatabaseStorage implements IStorage {
       id: articles.id,
       title: articles.title,
       content: articles.content,
+      contentClean: articles.contentClean,
       summary: articles.summary,
       url: articles.url,
       sourceId: articles.sourceId,
       publishedAt: articles.publishedAt,
+      ingestedAt: articles.ingestedAt,
       language: articles.language,
+      country: articles.country,
       sentimentScore: articles.sentimentScore,
       sentimentLabel: articles.sentimentLabel,
       keywords: articles.keywords,
+      topics: articles.topics,
       category: articles.category,
       imageUrl: articles.imageUrl,
       subSource: articles.subSource,
@@ -332,6 +347,51 @@ export class DatabaseStorage implements IStorage {
       .where(eq(sourceFetchLogs.sourceId, sourceId))
       .orderBy(desc(sourceFetchLogs.fetchedAt))
       .limit(limit);
+  }
+
+  async getIngestionLogs(params?: { from?: string; to?: string; sourceIds?: number[]; limit?: number; offset?: number }): Promise<{ items: (SourceFetchLog & { sourceName: string })[], total: number }> {
+    const conditions = [];
+    if (params?.sourceIds !== undefined) {
+      if (params.sourceIds.length === 0) return { items: [], total: 0 };
+      conditions.push(inArray(sourceFetchLogs.sourceId, params.sourceIds));
+    }
+    if (params?.from) {
+      conditions.push(gte(sourceFetchLogs.fetchedAt, new Date(params.from)));
+    }
+    if (params?.to) {
+      conditions.push(lte(sourceFetchLogs.fetchedAt, new Date(params.to)));
+    }
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    const limit = params?.limit || 50;
+    const offset = params?.offset || 0;
+
+    const [countResult] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(sourceFetchLogs)
+      .where(where);
+
+    const rows = await db.select({
+      id: sourceFetchLogs.id,
+      sourceId: sourceFetchLogs.sourceId,
+      status: sourceFetchLogs.status,
+      articlesFound: sourceFetchLogs.articlesFound,
+      errorMessage: sourceFetchLogs.errorMessage,
+      retryCount: sourceFetchLogs.retryCount,
+      durationMs: sourceFetchLogs.durationMs,
+      pipelineStep: sourceFetchLogs.pipelineStep,
+      fetchedAt: sourceFetchLogs.fetchedAt,
+      sourceName: sources.name,
+    })
+      .from(sourceFetchLogs)
+      .leftJoin(sources, eq(sourceFetchLogs.sourceId, sources.id))
+      .where(where)
+      .orderBy(desc(sourceFetchLogs.fetchedAt))
+      .limit(limit)
+      .offset(offset);
+
+    return {
+      items: rows.map(r => ({ ...r, sourceName: r.sourceName || "Unknown" })),
+      total: countResult?.count || 0,
+    };
   }
 
   async getSourceHealth(sourceIds?: number[]) {

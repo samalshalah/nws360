@@ -1,0 +1,107 @@
+Here is your updated Phase 1 prompt, identical to before but with the default changed to 5 minutes so you can paste it cleanly into Replit without having to edit anything yourself.
+
+PHASE 1 — FOUNDATION PROMPT (UPDATED: 5 MINUTES DEFAULT)
+
+Improve the stability, structure, and reliability of the NWS360 backend and data model before adding new features.
+
+1) Standardize the Core Data Model
+
+Define and enforce a single, consistent “Article” schema in the database with the following required fields:
+
+id (UUID)
+
+title (string)
+
+source_name (string)
+
+source_type (enum: TV, Social, Web, Influencer)
+
+published_at (timestamp)
+
+ingested_at (timestamp)
+
+language (string, ISO code)
+
+country (string, ISO code, if available)
+
+content_raw (text)
+
+content_clean (text, stripped of ads, HTML, and noise)
+
+summary (AI-generated, max 3 sentences)
+
+keywords (array of strings)
+
+sentiment (enum: positive, neutral, negative)
+
+topics (array of strings, auto-classified)
+
+url (string)
+
+Add validation so articles cannot be saved unless required fields exist.
+
+2) Make Feed Ingestion Deterministic and Observable
+
+Refactor feed-worker.ts so every ingestion follows this exact pipeline:
+
+FETCH → retrieve raw data from RSS/API
+
+CLEAN → normalize text (remove HTML, scripts, duplicates)
+
+STRUCTURE → map to standardized Article schema
+
+ANALYZE → extract keywords, topics, and sentiment
+
+STORE → save only after successful processing
+
+Add structured logging for each step with:
+
+source name
+
+start time
+
+success/failure
+
+error message (if any)
+
+number of articles processed
+
+Store logs in a dedicated table: ingestion_logs.
+
+3) Improve Error Handling
+
+If a source fails:
+
+retry up to 3 times with exponential backoff
+
+log the failure with reason
+
+skip only the failed source, do not crash the entire worker
+
+4) Separate Frontend and Backend Responsibilities
+
+Ensure that:
+
+All data processing (cleaning, analysis, classification) happens in the backend.
+
+The frontend only requests already-processed articles via API.
+
+No heavy processing runs in the client browser.
+
+5) Predictable Scheduling (UPDATED)
+
+Configure the background worker to run every 5 minutes by default, with a configurable setting in an env file:
+
+FEED_REFRESH_MINUTES=5
+
+6) Minimal API Contract
+
+Expose these endpoints:
+
+GET /articles?limit=&offset=&source=&country=&topic=&from=&to=
+
+GET /sources
+
+GET /ingestion-logs?from=&to=
+
+Return consistent JSON format for all responses.

@@ -43,8 +43,10 @@ export async function analyzeWithAI(title: string, content: string): Promise<{
   sentimentLabel: string;
   sentimentScore: number;
   keywords: string[];
+  topics: string[];
   summary: string;
   category: string;
+  country: string | null;
 }> {
   try {
     const textToAnalyze = truncate(`${title}. ${content}`, 2000);
@@ -54,12 +56,12 @@ export async function analyzeWithAI(title: string, content: string): Promise<{
         {
           role: "system",
           content:
-            'You analyze news articles. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "summary" (1-2 sentence summary), "category" (exactly one of: political, health, tech, sports, business, entertainment, science, urgent, general). Respond ONLY with valid JSON.',
+            'You analyze news articles. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "topics" (array of 1-3 topic labels like "economy", "elections", "climate", "cybersecurity", "AI", "conflict", "trade", "healthcare"), "summary" (1-2 sentence summary), "category" (exactly one of: political, health, tech, sports, business, entertainment, science, urgent, general), "country" (ISO 3166-1 alpha-2 code of the primary country the article is about, or null if unclear). Respond ONLY with valid JSON.',
         },
         { role: "user", content: textToAnalyze },
       ],
       response_format: { type: "json_object" },
-      max_completion_tokens: 400,
+      max_completion_tokens: 500,
     });
 
     const result = JSON.parse(completion.choices[0].message.content || "{}");
@@ -70,8 +72,10 @@ export async function analyzeWithAI(title: string, content: string): Promise<{
       sentimentLabel: validSentiments.includes(rawSentiment) ? rawSentiment : "neutral",
       sentimentScore: typeof result.score === "number" ? result.score : 0,
       keywords: Array.isArray(result.keywords) ? result.keywords : [],
+      topics: Array.isArray(result.topics) ? result.topics : [],
       summary: result.summary || truncate(content, 200),
       category: VALID_CATEGORIES.includes(cat) ? cat : "general",
+      country: typeof result.country === "string" && result.country.length === 2 ? result.country.toUpperCase() : null,
     };
   } catch (e) {
     console.error("AI analysis failed:", e);
@@ -79,8 +83,10 @@ export async function analyzeWithAI(title: string, content: string): Promise<{
       sentimentLabel: "neutral",
       sentimentScore: 0,
       keywords: [],
+      topics: [],
       summary: truncate(content, 200),
       category: "general",
+      country: null,
     };
   }
 }
@@ -449,6 +455,21 @@ async function fetchGoogleNewsArticles(source: { id: number; name: string; url: 
   }
 }
 
+function cleanText(raw: string): string {
+  return raw
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function processItems(
   source: { id: number; name: string },
   items: { title: string; url: string; content: string; publishedAt: Date; image?: string; subSource?: string }[]
@@ -462,23 +483,27 @@ async function processItems(
     if (existing) continue;
 
     const title = item.title || "Untitled";
-    const content = item.content || title;
+    const contentRaw = item.content || title;
+    if (!contentRaw && !title) continue;
 
-    if (!content && !title) continue;
+    const contentClean = cleanText(contentRaw);
 
-    const analysis = await analyzeWithAI(title, content);
+    const analysis = await analyzeWithAI(title, contentClean);
 
     const article = {
       title,
-      content: truncate(content, 5000),
+      content: truncate(contentRaw, 5000),
+      contentClean: truncate(contentClean, 5000),
       summary: analysis.summary,
       url: item.url,
       sourceId: source.id,
       publishedAt: item.publishedAt,
       language: "en",
+      country: analysis.country,
       sentimentLabel: analysis.sentimentLabel,
       sentimentScore: analysis.sentimentScore,
       keywords: analysis.keywords,
+      topics: analysis.topics,
       category: analysis.category,
       imageUrl: item.image || null,
       subSource: item.subSource || null,
@@ -488,66 +513,81 @@ async function processItems(
       await storage.createArticle(article);
       newArticles++;
     } catch (e) {
-      console.error(`[Worker] Failed to insert article: ${item.url}`, e);
+      console.error(`[Worker] STORE failed for article: ${item.url}`, e);
     }
   }
 
   return newArticles;
 }
 
+const MAX_RETRIES = 3;
+const RETRY_BASE_MS = 2000;
+
+async function fetchWithRetry(source: any): Promise<{ newArticles: number; retries: number }> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const delay = RETRY_BASE_MS * Math.pow(2, attempt - 1);
+      console.log(`[Worker] ${source.name}: retry ${attempt}/${MAX_RETRIES} after ${delay}ms`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+    try {
+      let newArticles: number;
+      switch (source.type) {
+        case "rss": newArticles = await fetchRssArticles(source); break;
+        case "website": newArticles = await fetchWebsiteArticles(source); break;
+        case "twitter": newArticles = await fetchTwitterArticles(source); break;
+        case "youtube": newArticles = await fetchYouTubeArticles(source); break;
+        case "facebook": newArticles = await fetchFacebookArticles(source); break;
+        case "instagram": newArticles = await fetchInstagramArticles(source); break;
+        case "telegram": newArticles = await fetchTelegramArticles(source); break;
+        case "google_news": newArticles = await fetchGoogleNewsArticles(source); break;
+        default: newArticles = await fetchRssArticles(source);
+      }
+      return { newArticles, retries: attempt };
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.warn(`[Worker] ${source.name}: attempt ${attempt + 1} failed - ${lastError.message}`);
+    }
+  }
+  throw lastError || new Error("All retries exhausted");
+}
+
 export async function fetchSourceFeed(sourceId: number): Promise<number> {
   const source = await storage.getSource(sourceId);
   if (!source) throw new Error(`Source ${sourceId} not found`);
 
-  let newArticles = 0;
+  const startTime = Date.now();
 
   try {
-    switch (source.type) {
-      case "rss":
-        newArticles = await fetchRssArticles(source);
-        break;
-      case "website":
-        newArticles = await fetchWebsiteArticles(source);
-        break;
-      case "twitter":
-        newArticles = await fetchTwitterArticles(source);
-        break;
-      case "youtube":
-        newArticles = await fetchYouTubeArticles(source);
-        break;
-      case "facebook":
-        newArticles = await fetchFacebookArticles(source);
-        break;
-      case "instagram":
-        newArticles = await fetchInstagramArticles(source);
-        break;
-      case "telegram":
-        newArticles = await fetchTelegramArticles(source);
-        break;
-      case "google_news":
-        newArticles = await fetchGoogleNewsArticles(source);
-        break;
-      default:
-        newArticles = await fetchRssArticles(source);
-    }
+    console.log(`[Worker] FETCH start | source=${source.name} | type=${source.type}`);
+    const result = await fetchWithRetry(source);
+    const durationMs = Date.now() - startTime;
 
     await storage.updateSourceLastFetched(source.id);
     await storage.createFetchLog({
       sourceId: source.id,
       status: "success",
-      articlesFound: newArticles,
+      articlesFound: result.newArticles,
+      retryCount: result.retries,
+      durationMs,
+      pipelineStep: "complete",
     });
-    console.log(`[Worker] ${source.name}: fetched ${newArticles} new articles`);
-    return newArticles;
+    console.log(`[Worker] COMPLETE | source=${source.name} | articles=${result.newArticles} | retries=${result.retries} | duration=${durationMs}ms`);
+    return result.newArticles;
   } catch (err) {
+    const durationMs = Date.now() - startTime;
     const errorMsg = err instanceof Error ? err.message : String(err);
     await storage.createFetchLog({
       sourceId: source.id,
       status: "error",
       articlesFound: 0,
       errorMessage: errorMsg.substring(0, 500),
+      retryCount: MAX_RETRIES,
+      durationMs,
+      pipelineStep: "fetch",
     });
-    console.error(`[Worker] ${source.name}: fetch error -`, errorMsg);
+    console.error(`[Worker] FAILED | source=${source.name} | error=${errorMsg} | retries=${MAX_RETRIES} | duration=${durationMs}ms`);
     throw err;
   }
 }
@@ -556,6 +596,9 @@ export async function fetchAllFeeds(): Promise<{ sourceName: string; newArticles
   const allSources = await storage.getSources();
   const activeSources = allSources.filter((s) => s.active);
   const results: { sourceName: string; newArticles: number; error?: string }[] = [];
+  const batchStart = Date.now();
+
+  console.log(`[Worker] Batch fetch starting | sources=${activeSources.length}`);
 
   for (const source of activeSources) {
     try {
@@ -563,10 +606,13 @@ export async function fetchAllFeeds(): Promise<{ sourceName: string; newArticles
       results.push({ sourceName: source.name, newArticles });
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : String(e);
-      console.error(`[Worker] Error fetching ${source.name}:`, errorMsg);
       results.push({ sourceName: source.name, newArticles: 0, error: errorMsg });
     }
   }
+
+  const totalArticles = results.reduce((sum, r) => sum + r.newArticles, 0);
+  const failures = results.filter(r => r.error).length;
+  console.log(`[Worker] Batch complete | articles=${totalArticles} | success=${results.length - failures} | failed=${failures} | duration=${Date.now() - batchStart}ms`);
 
   return results;
 }
@@ -615,10 +661,11 @@ export async function backfillGoogleNewsImages(): Promise<number> {
 
 let workerInterval: ReturnType<typeof setInterval> | null = null;
 
-export function startFeedWorker(intervalMinutes: number = 10) {
+export function startFeedWorker(intervalMinutes?: number) {
+  const interval = intervalMinutes ?? parseInt(process.env.FEED_REFRESH_MINUTES || "5", 10);
   if (workerInterval) clearInterval(workerInterval);
 
-  console.log(`[Worker] Starting feed worker, interval: ${intervalMinutes} minutes`);
+  console.log(`[Worker] Starting feed worker, interval: ${interval} minutes`);
 
   setTimeout(async () => {
     console.log("[Worker] Initial feed fetch...");
@@ -657,7 +704,7 @@ export function startFeedWorker(intervalMinutes: number = 10) {
     } catch (e) {
       console.error("[Worker] Cleanup error:", e);
     }
-  }, intervalMinutes * 60 * 1000);
+  }, interval * 60 * 1000);
 }
 
 export function stopFeedWorker() {
