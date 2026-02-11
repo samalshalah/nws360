@@ -45,6 +45,7 @@ export const articles = pgTable("articles", {
   keywords: text("keywords").array(),
   category: text("category"), // 'political' | 'health' | 'tech' | 'sports' | 'business' | 'entertainment' | 'science' | 'urgent' | 'general'
   imageUrl: text("image_url"),
+  subSource: text("sub_source"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
