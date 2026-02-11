@@ -46,6 +46,7 @@ export interface IStorage {
     sentimentDistribution: { name: string; value: number }[];
     trendingKeywords: { text: string; value: number }[];
   }>;
+  getSentimentTrend(): Promise<{ date: string; positive: number; negative: number; neutral: number }[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -201,14 +202,14 @@ export class DatabaseStorage implements IStorage {
       GROUP BY sentiment_label
     `);
     const sentimentDistribution = (sentimentRows.rows as any[]).map((r: any) => ({
-      name: String(r.label).charAt(0).toUpperCase() + String(r.label).slice(1),
+      name: String(r.label).toLowerCase(),
       value: Number(r.count),
     }));
     if (sentimentDistribution.length === 0) {
       sentimentDistribution.push(
-        { name: 'Positive', value: 0 },
-        { name: 'Neutral', value: 0 },
-        { name: 'Negative', value: 0 },
+        { name: 'positive', value: 0 },
+        { name: 'neutral', value: 0 },
+        { name: 'negative', value: 0 },
       );
     }
 
@@ -232,6 +233,26 @@ export class DatabaseStorage implements IStorage {
       sentimentDistribution,
       trendingKeywords,
     };
+  }
+
+  async getSentimentTrend(): Promise<{ date: string; positive: number; negative: number; neutral: number }[]> {
+    const rows = await db.execute(sql`
+      SELECT 
+        TO_CHAR(published_at, 'YYYY-MM-DD') as date,
+        COUNT(*) FILTER (WHERE sentiment_label = 'positive')::int as positive,
+        COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
+        COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
+      FROM articles
+      WHERE published_at >= NOW() - INTERVAL '30 days'
+      GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
+      ORDER BY date ASC
+    `);
+    return (rows.rows as any[]).map((r: any) => ({
+      date: String(r.date),
+      positive: Number(r.positive),
+      negative: Number(r.negative),
+      neutral: Number(r.neutral),
+    }));
   }
 
   async deleteExpiredArticles(): Promise<number> {

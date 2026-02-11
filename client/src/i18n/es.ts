@@ -99,6 +99,9 @@ export default {
     sentimentDescription: "Desglose de artículos positivos, neutrales y negativos",
     trendingKeywords: "Palabras clave en tendencia",
     trendingDescription: "Términos más frecuentes en todos los artículos",
+    sentimentTrend: "Tendencia del sentimiento",
+    sentimentTrendDescription: "Cómo ha cambiado el sentimiento en los últimos 30 días",
+    noData: "No hay datos disponibles todavía.",
   },
   admin: {
     title: "Agregar fuente",

@@ -29,7 +29,7 @@ export default function Feed() {
     return {
       search: params.get("search") || "",
       sourceId: undefined as string | undefined,
-      sentiment: undefined as string | undefined,
+      sentiment: params.get("sentiment") || undefined as string | undefined,
       category: undefined as string | undefined,
       sourceType: undefined as string | undefined,
     };
@@ -38,8 +38,13 @@ export default function Feed() {
   useEffect(() => {
     const params = new URLSearchParams(searchString);
     const searchParam = params.get("search");
-    if (searchParam) {
-      setFilters(prev => ({ ...prev, search: searchParam }));
+    const sentimentParam = params.get("sentiment");
+    if (searchParam || sentimentParam) {
+      setFilters(prev => ({
+        ...prev,
+        ...(searchParam ? { search: searchParam } : {}),
+        ...(sentimentParam ? { sentiment: sentimentParam } : {}),
+      }));
       setPage(1);
     }
   }, [searchString]);

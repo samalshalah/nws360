@@ -340,6 +340,11 @@ export async function registerRoutes(
     res.json(stats);
   });
 
+  app.get(api.analytics.sentimentTrend.path, async (req, res) => {
+    const trend = await storage.getSentimentTrend();
+    res.json(trend);
+  });
+
   // === SEED & START WORKER ===
   await seed();
   startFeedWorker(1);

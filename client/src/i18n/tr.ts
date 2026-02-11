@@ -99,6 +99,9 @@ export default {
     sentimentDescription: "Olumlu, nötr ve olumsuz makalelerin dağılımı",
     trendingKeywords: "Gündem Anahtar Kelimeler",
     trendingDescription: "Tüm makalelerdeki en sık kullanılan terimler",
+    sentimentTrend: "Duygu Trendi",
+    sentimentTrendDescription: "Son 30 günde duygu nasıl değişti",
+    noData: "Henüz veri yok.",
   },
   admin: {
     title: "Kaynak Ekle",

@@ -99,6 +99,8 @@ export default {
     sentimentDescription: "Breakdown of positive, neutral, and negative articles",
     trendingKeywords: "Trending Keywords",
     trendingDescription: "Most frequent terms across all articles",
+    sentimentTrend: "Sentiment Trend",
+    sentimentTrendDescription: "How sentiment has changed over the last 30 days",
     noData: "No data available yet.",
   },
   admin: {

@@ -99,6 +99,9 @@ export default {
     sentimentDescription: "Répartition des articles positifs, neutres et négatifs",
     trendingKeywords: "Mots-clés tendance",
     trendingDescription: "Termes les plus fréquents dans tous les articles",
+    sentimentTrend: "Tendance du sentiment",
+    sentimentTrendDescription: "Évolution du sentiment au cours des 30 derniers jours",
+    noData: "Aucune donnée disponible.",
   },
   admin: {
     title: "Ajouter une source",

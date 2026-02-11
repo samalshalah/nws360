@@ -168,6 +168,18 @@ export const api = {
         }),
       },
     },
+    sentimentTrend: {
+      method: 'GET' as const,
+      path: '/api/analytics/sentiment-trend' as const,
+      responses: {
+        200: z.array(z.object({
+          date: z.string(),
+          positive: z.number(),
+          negative: z.number(),
+          neutral: z.number(),
+        })),
+      },
+    },
   },
 };
 

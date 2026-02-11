@@ -1,16 +1,25 @@
+import { useQuery } from "@tanstack/react-query";
 import { useAnalytics } from "@/hooks/use-analytics";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, AreaChart, Area, XAxis, YAxis, CartesianGrid } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "wouter";
 
-const COLORS = ['#22c55e', '#64748b', '#ef4444'];
+const SENTIMENT_COLORS: Record<string, string> = {
+  positive: '#22c55e',
+  neutral: '#64748b',
+  negative: '#ef4444',
+};
 
 export default function Analytics() {
   const { data: analytics, isLoading } = useAnalytics();
   const { t } = useTranslation();
   const [, setLocation] = useLocation();
+
+  const { data: sentimentTrend, isLoading: isTrendLoading } = useQuery<{ date: string; positive: number; negative: number; neutral: number }[]>({
+    queryKey: ["/api/analytics/sentiment-trend"],
+  });
 
   if (isLoading) {
     return (
@@ -21,10 +30,20 @@ export default function Analytics() {
     );
   }
 
-  const sentimentData = analytics?.sentimentDistribution.map(item => ({
-    name: item.name === "positive" ? t("feed.positive") : item.name === "negative" ? t("feed.negative") : t("feed.neutral"),
-    value: item.value
-  }));
+  const sentimentOrder = ["positive", "neutral", "negative"];
+  const sentimentData = sentimentOrder.map(key => {
+    const found = analytics?.sentimentDistribution.find(item => item.name === key);
+    return {
+      name: key,
+      label: key === "positive" ? t("feed.positive") : key === "negative" ? t("feed.negative") : t("feed.neutral"),
+      value: found?.value || 0,
+    };
+  });
+
+  const trendFormatted = sentimentTrend?.map(item => ({
+    ...item,
+    dateLabel: new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+  })) || [];
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -40,7 +59,7 @@ export default function Analytics() {
             <CardDescription>{t("analytics.sentimentDescription")}</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-[300px] w-full">
+            <div className="h-[250px] w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -51,17 +70,37 @@ export default function Analytics() {
                     outerRadius={100}
                     paddingAngle={5}
                     dataKey="value"
+                    nameKey="label"
                   >
-                    {sentimentData?.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    {sentimentData.map((entry) => (
+                      <Cell
+                        key={entry.name}
+                        fill={SENTIMENT_COLORS[entry.name]}
+                        className="cursor-pointer"
+                        onClick={() => setLocation(`/feed?sentiment=${entry.name}`)}
+                      />
                     ))}
                   </Pie>
-                  <Tooltip 
+                  <Tooltip
                     contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
                   />
                   <Legend verticalAlign="bottom" height={36} />
                 </PieChart>
               </ResponsiveContainer>
+            </div>
+            <div className="flex justify-center gap-4 mt-2">
+              {sentimentData.map((entry) => (
+                <button
+                  key={entry.name}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-md hover-elevate cursor-pointer text-sm"
+                  data-testid={`sentiment-btn-${entry.name}`}
+                  onClick={() => setLocation(`/feed?sentiment=${entry.name}`)}
+                >
+                  <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: SENTIMENT_COLORS[entry.name] }} />
+                  <span className="font-medium">{entry.label}</span>
+                  <span className="text-muted-foreground">({entry.value})</span>
+                </button>
+              ))}
             </div>
           </CardContent>
         </Card>
@@ -104,6 +143,51 @@ export default function Analytics() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="border-border/50 shadow-md">
+        <CardHeader>
+          <CardTitle className="font-display">{t("analytics.sentimentTrend")}</CardTitle>
+          <CardDescription>{t("analytics.sentimentTrendDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isTrendLoading ? (
+            <Skeleton className="h-[300px] w-full" />
+          ) : trendFormatted.length > 0 ? (
+            <div className="h-[300px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trendFormatted} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradPositive" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="gradNegative" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="gradNeutral" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#64748b" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#64748b" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                  <XAxis dataKey="dateLabel" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <Tooltip
+                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                  />
+                  <Area type="monotone" dataKey="positive" name={t("feed.positive")} stroke="#22c55e" fill="url(#gradPositive)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="negative" name={t("feed.negative")} stroke="#ef4444" fill="url(#gradNegative)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="neutral" name={t("feed.neutral")} stroke="#64748b" fill="url(#gradNeutral)" strokeWidth={2} />
+                  <Legend />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-sm">{t("analytics.noData")}</p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

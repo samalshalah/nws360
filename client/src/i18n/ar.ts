@@ -99,6 +99,9 @@ export default {
     sentimentDescription: "تفصيل المقالات الإيجابية والمحايدة والسلبية",
     trendingKeywords: "الكلمات المفتاحية الرائجة",
     trendingDescription: "أكثر المصطلحات تكراراً عبر جميع المقالات",
+    sentimentTrend: "اتجاه المشاعر",
+    sentimentTrendDescription: "كيف تغيرت المشاعر خلال آخر 30 يوماً",
+    noData: "لا تتوفر بيانات بعد.",
   },
   admin: {
     title: "إضافة مصدر",
