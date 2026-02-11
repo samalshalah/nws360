@@ -553,69 +553,46 @@ function SourcesManager() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => {
-                            const current = source.maxArticlesPerFetch ?? 10;
-                            if (current > 1) updateSource({ id: source.id, maxArticlesPerFetch: current - 1 });
-                          }}
-                          disabled={(source.maxArticlesPerFetch ?? 10) <= 1}
-                          data-testid={`button-decrease-posts-${source.id}`}
-                        >
-                          <Minus className="w-3 h-3" />
-                        </Button>
-                        <span className="text-sm font-medium w-8 text-center" data-testid={`text-posts-${source.id}`}>
-                          {source.maxArticlesPerFetch ?? 10}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => {
-                            const current = source.maxArticlesPerFetch ?? 10;
-                            if (current < 50) updateSource({ id: source.id, maxArticlesPerFetch: current + 1 });
-                          }}
-                          disabled={(source.maxArticlesPerFetch ?? 10) >= 50}
-                          data-testid={`button-increase-posts-${source.id}`}
-                        >
-                          <Plus className="w-3 h-3" />
-                        </Button>
-                      </div>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={50}
+                        className="w-16 h-8 text-center text-sm"
+                        defaultValue={source.maxArticlesPerFetch ?? 10}
+                        key={`posts-${source.id}-${source.maxArticlesPerFetch}`}
+                        onBlur={(e) => {
+                          const val = Math.min(50, Math.max(1, parseInt(e.target.value) || 1));
+                          if (val !== (source.maxArticlesPerFetch ?? 10)) {
+                            updateSource({ id: source.id, maxArticlesPerFetch: val });
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                        }}
+                        data-testid={`input-posts-${source.id}`}
+                      />
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => {
-                            const current = source.retentionDays ?? 7;
-                            if (current > 1) updateSource({ id: source.id, retentionDays: current - 1 });
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="number"
+                          min={1}
+                          max={30}
+                          className="w-16 h-8 text-center text-sm"
+                          defaultValue={source.retentionDays ?? 7}
+                          key={`retention-${source.id}-${source.retentionDays}`}
+                          onBlur={(e) => {
+                            const val = Math.min(30, Math.max(1, parseInt(e.target.value) || 1));
+                            if (val !== (source.retentionDays ?? 7)) {
+                              updateSource({ id: source.id, retentionDays: val });
+                            }
                           }}
-                          disabled={(source.retentionDays ?? 7) <= 1}
-                          data-testid={`button-decrease-retention-${source.id}`}
-                        >
-                          <Minus className="w-3 h-3" />
-                        </Button>
-                        <span className="text-sm font-medium min-w-[4rem] text-center" data-testid={`text-retention-${source.id}`}>
-                          {source.retentionDays ?? 7} {t("admin.days")}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => {
-                            const current = source.retentionDays ?? 7;
-                            if (current < 30) updateSource({ id: source.id, retentionDays: current + 1 });
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
                           }}
-                          disabled={(source.retentionDays ?? 7) >= 30}
-                          data-testid={`button-increase-retention-${source.id}`}
-                        >
-                          <Plus className="w-3 h-3" />
-                        </Button>
+                          data-testid={`input-retention-${source.id}`}
+                        />
+                        <span className="text-sm text-muted-foreground">{t("admin.days")}</span>
                       </div>
                     </TableCell>
                     <TableCell>
