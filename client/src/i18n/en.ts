@@ -16,6 +16,7 @@ export default {
     recently: "Recently",
     noResults: "No results found",
     language: "Language",
+    error: "Something went wrong",
   },
   nav: {
     dashboard: "Dashboard",
@@ -63,6 +64,12 @@ export default {
     noArticlesHint: "Try adjusting your search or filters to find what you're looking for.",
     readFullStory: "Read Full Story",
     translating: "Translating...",
+    articles: "articles",
+    reanalyze: "Re-analyze",
+    reanalyzeSuccess: "Articles re-analyzed successfully",
+    clearFilters: "Clear Filters",
+    previous: "Previous",
+    next: "Next",
     categories: {
       political: "Political",
       health: "Health",

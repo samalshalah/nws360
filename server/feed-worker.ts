@@ -38,7 +38,7 @@ function truncate(text: string, maxLen: number): string {
 
 const VALID_CATEGORIES = ["political", "health", "tech", "sports", "business", "entertainment", "science", "urgent", "general"];
 
-async function analyzeWithAI(title: string, content: string): Promise<{
+export async function analyzeWithAI(title: string, content: string): Promise<{
   sentimentLabel: string;
   sentimentScore: number;
   keywords: string[];
@@ -48,7 +48,7 @@ async function analyzeWithAI(title: string, content: string): Promise<{
   try {
     const textToAnalyze = truncate(`${title}. ${content}`, 2000);
     const completion = await openai.chat.completions.create({
-      model: "gpt-5-nano",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -63,8 +63,10 @@ async function analyzeWithAI(title: string, content: string): Promise<{
 
     const result = JSON.parse(completion.choices[0].message.content || "{}");
     const cat = typeof result.category === "string" ? result.category.toLowerCase() : "general";
+    const validSentiments = ["positive", "negative", "neutral"];
+    const rawSentiment = typeof result.sentiment === "string" ? result.sentiment.toLowerCase() : "neutral";
     return {
-      sentimentLabel: result.sentiment || "neutral",
+      sentimentLabel: validSentiments.includes(rawSentiment) ? rawSentiment : "neutral",
       sentimentScore: typeof result.score === "number" ? result.score : 0,
       keywords: Array.isArray(result.keywords) ? result.keywords : [],
       summary: result.summary || truncate(content, 200),

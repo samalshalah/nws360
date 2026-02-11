@@ -57,6 +57,10 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - **Telegram**: Scrapes public channel preview pages via t.me/s/channel
 
 ## Recent Changes
+- 2026-02-11: Fixed AI sentiment analysis - switched from gpt-5-nano to gpt-4o-mini model
+- 2026-02-11: Added /api/reanalyze endpoint and UI button to re-analyze articles with AI
+- 2026-02-11: Improved News Feed page with pagination (24 per page), article count, clear filters
+- 2026-02-11: Added sentiment validation to only accept positive/negative/neutral values
 - 2026-02-10: Redesigned Admin page to rss.app-style interface with source type grid, topic categories, search bar, and inline form with sliders
 - 2026-02-10: Added maxArticlesPerFetch setting per source (1-50 posts per fetch)
 - 2026-02-10: Renamed sidebar "Admin" to "Add Source"

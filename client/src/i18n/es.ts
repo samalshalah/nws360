@@ -16,6 +16,7 @@ export default {
     recently: "Recientemente",
     noResults: "No se encontraron resultados",
     language: "Idioma",
+    error: "Algo salió mal",
   },
   nav: {
     dashboard: "Panel de control",
@@ -63,6 +64,12 @@ export default {
     noArticlesHint: "Intenta ajustar tu búsqueda o filtros para encontrar lo que buscas.",
     readFullStory: "Leer historia completa",
     translating: "Traduciendo...",
+    articles: "artículos",
+    reanalyze: "Re-analizar",
+    reanalyzeSuccess: "Artículos re-analizados exitosamente",
+    clearFilters: "Limpiar Filtros",
+    previous: "Anterior",
+    next: "Siguiente",
     categories: {
       political: "Político",
       health: "Salud",

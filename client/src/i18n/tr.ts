@@ -16,6 +16,7 @@ export default {
     recently: "Son zamanlarda",
     noResults: "Sonuç bulunamadı",
     language: "Dil",
+    error: "Bir şeyler yanlış gitti",
   },
   nav: {
     dashboard: "Kontrol Paneli",
@@ -63,6 +64,12 @@ export default {
     noArticlesHint: "Aradığınızı bulmak için arama veya filtreleri ayarlamayı deneyin.",
     readFullStory: "Haberin Tamamını Oku",
     translating: "Çevriliyor...",
+    articles: "makaleler",
+    reanalyze: "Yeniden Analiz Et",
+    reanalyzeSuccess: "Makaleler başarıyla yeniden analiz edildi",
+    clearFilters: "Filtreleri Temizle",
+    previous: "Önceki",
+    next: "Sonraki",
     categories: {
       political: "Siyasi",
       health: "Sağlık",

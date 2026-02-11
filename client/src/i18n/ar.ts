@@ -16,6 +16,7 @@ export default {
     recently: "مؤخراً",
     noResults: "لم يتم العثور على نتائج",
     language: "اللغة",
+    error: "حدث خطأ ما",
   },
   nav: {
     dashboard: "لوحة التحكم",
@@ -63,6 +64,12 @@ export default {
     noArticlesHint: "حاول تعديل البحث أو الفلاتر للعثور على ما تبحث عنه.",
     readFullStory: "اقرأ القصة كاملة",
     translating: "جاري الترجمة...",
+    articles: "مقالات",
+    reanalyze: "إعادة تحليل",
+    reanalyzeSuccess: "تم إعادة تحليل المقالات بنجاح",
+    clearFilters: "مسح الفلاتر",
+    previous: "السابق",
+    next: "التالي",
     categories: {
       political: "سياسي",
       health: "صحة",

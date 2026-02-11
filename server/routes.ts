@@ -4,8 +4,11 @@ import { setupAuth } from "./auth";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { startFeedWorker, fetchAllFeeds, fetchSourceFeed } from "./feed-worker";
+import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI } from "./feed-worker";
 import { openai } from "./replit_integrations/image/client";
+import { db } from "./db";
+import { articles } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -178,7 +181,7 @@ export async function registerRoutes(
             try {
               const textToTranslate = `Title: ${article.title}\nSummary: ${article.summary || article.content.substring(0, 500)}`;
               const completion = await openai.chat.completions.create({
-                model: "gpt-5-nano",
+                model: "gpt-4o-mini",
                 messages: [
                   {
                     role: "system",
@@ -264,7 +267,7 @@ export async function registerRoutes(
       const textToTranslate = `Title: ${article.title}\n\nContent: ${article.content?.substring(0, 3000) || ""}${article.summary ? `\n\nSummary: ${article.summary}` : ""}`;
       
       const completion = await openai.chat.completions.create({
-        model: "gpt-5-nano",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
@@ -286,6 +289,48 @@ export async function registerRoutes(
     } catch (e) {
       console.error("Translation failed:", e);
       res.status(500).json({ message: "Translation failed" });
+    }
+  });
+
+  // === RE-ANALYZE ARTICLES ===
+  app.post("/api/reanalyze", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    
+    try {
+      const allArticles = await storage.getArticles({ limit: 500 });
+      const unanalyzed = allArticles.items.filter(
+        a => (!a.sentimentLabel || a.sentimentLabel === "neutral") && a.sentimentScore === 0 && (!a.keywords || a.keywords.length === 0)
+      );
+      
+      let analyzed = 0;
+      const batchSize = 5;
+      
+      for (let i = 0; i < Math.min(unanalyzed.length, 100); i += batchSize) {
+        const batch = unanalyzed.slice(i, i + batchSize);
+        const promises = batch.map(async (article) => {
+          try {
+            const analysis = await analyzeWithAI(article.title, article.content || article.title);
+            await db.update(articles)
+              .set({
+                sentimentLabel: analysis.sentimentLabel,
+                sentimentScore: analysis.sentimentScore,
+                keywords: analysis.keywords,
+                summary: analysis.summary,
+                category: analysis.category,
+              })
+              .where(eq(articles.id, article.id));
+            analyzed++;
+          } catch (e) {
+            console.error(`[Reanalyze] Failed for article ${article.id}:`, e);
+          }
+        });
+        await Promise.all(promises);
+      }
+      
+      res.json({ success: true, analyzed, total: unanalyzed.length });
+    } catch (err) {
+      console.error("[Reanalyze] Error:", err);
+      res.status(500).json({ success: false, message: "Re-analysis failed" });
     }
   });
 
