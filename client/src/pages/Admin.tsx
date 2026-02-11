@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
@@ -66,36 +67,27 @@ const TOPIC_CATEGORIES = [
   },
 ];
 
-export default function Admin() {
+export default function Admin({ tab = "add" }: { tab?: "add" | "manage" | "keywords" }) {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<"add" | "manage" | "keywords">("add");
+
+  const titles: Record<string, { title: string; subtitle: string }> = {
+    add: { title: t("admin.title"), subtitle: t("admin.subtitle") },
+    manage: { title: t("admin.manageSources"), subtitle: t("admin.subtitle") },
+    keywords: { title: t("admin.keywords"), subtitle: t("admin.keywordsDescription") },
+  };
+
+  const current = titles[tab] || titles.add;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-admin-title">{t("admin.title")}</h1>
-        <p className="text-muted-foreground">{t("admin.subtitle")}</p>
+        <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-admin-title">{current.title}</h1>
+        <p className="text-muted-foreground">{current.subtitle}</p>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "add" | "manage")} className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-3 mb-6">
-          <TabsTrigger value="add" data-testid="tab-add-source">{t("admin.addSource")}</TabsTrigger>
-          <TabsTrigger value="manage" data-testid="tab-sources">{t("admin.manageSources")}</TabsTrigger>
-          <TabsTrigger value="keywords" data-testid="tab-keywords">{t("admin.keywords")}</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="add">
-          <AddSourceView />
-        </TabsContent>
-
-        <TabsContent value="manage">
-          <SourcesManager />
-        </TabsContent>
-
-        <TabsContent value="keywords">
-          <KeywordsManager />
-        </TabsContent>
-      </Tabs>
+      {tab === "add" && <AddSourceView />}
+      {tab === "manage" && <SourcesManager />}
+      {tab === "keywords" && <KeywordsManager />}
     </div>
   );
 }

@@ -22,7 +22,10 @@ export default {
     dashboard: "لوحة التحكم",
     newsFeed: "آخر الأخبار",
     analytics: "التحليلات",
+    sources: "المصادر",
     addSource: "إضافة مصدر",
+    manageSources: "إدارة المصادر",
+    keywords: "الكلمات المفتاحية",
     signOut: "تسجيل الخروج",
   },
   auth: {

@@ -22,7 +22,10 @@ export default {
     dashboard: "Tableau de bord",
     newsFeed: "Fil d'actualités",
     analytics: "Analytique",
+    sources: "Sources",
     addSource: "Ajouter une source",
+    manageSources: "Gérer les sources",
+    keywords: "Mots-clés",
     signOut: "Déconnexion",
   },
   auth: {

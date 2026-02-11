@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network } from "lucide-react";
+import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
@@ -17,17 +17,24 @@ const analyticsSubPages = [
   { key: "networkMapping", href: "/analytics/network-mapping", icon: Network },
 ];
 
+const sourcesSubPages = [
+  { key: "addSource", href: "/sources/add", icon: Plus },
+  { key: "manageSources", href: "/sources/manage", icon: List },
+  { key: "keywords", href: "/sources/keywords", icon: Hash },
+];
+
 export function Sidebar() {
   const [location] = useLocation();
   const { logout } = useAuth();
   const { t } = useTranslation();
   const isAnalyticsActive = location.startsWith("/analytics");
+  const isSourcesActive = location.startsWith("/sources") || location === "/admin";
   const [analyticsOpen, setAnalyticsOpen] = useState(isAnalyticsActive);
+  const [sourcesOpen, setSourcesOpen] = useState(isSourcesActive);
 
-  const navigation = [
+  const topNavItems = [
     { name: t("nav.newsFeed"), href: '/feed', icon: Newspaper },
     { name: t("nav.dashboard"), href: '/', icon: LayoutDashboard },
-    { name: t("nav.addSource"), href: '/admin', icon: Settings },
   ];
 
   return (
@@ -44,7 +51,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        {navigation.slice(0, 1).map((item) => {
+        {topNavItems.map((item) => {
           const isActive = location === item.href;
           return (
             <Link key={item.href} href={item.href}>
@@ -106,25 +113,47 @@ export function Sidebar() {
           )}
         </div>
 
-        {navigation.slice(1).map((item) => {
-          const isActive = location === item.href;
-          return (
-            <Link key={item.href} href={item.href}>
-              <div
-                data-testid={`nav-${item.href.replace("/", "") || "dashboard"}`}
-                className={cn(
-                  "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
-                  isActive
-                    ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
-                )}
-              >
-                <item.icon className={cn("w-5 h-5", isActive ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
-                {item.name}
-              </div>
-            </Link>
-          );
-        })}
+        <div>
+          <button
+            onClick={() => setSourcesOpen(!sourcesOpen)}
+            data-testid="nav-sources-toggle"
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
+              isSourcesActive && !sourcesOpen
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            )}
+          >
+            <Settings className={cn("w-5 h-5", isSourcesActive && !sourcesOpen ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
+            <span className="flex-1 text-left rtl:text-right">{t("nav.sources")}</span>
+            <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", sourcesOpen ? "rotate-180" : "")} />
+          </button>
+
+          {sourcesOpen && (
+            <div className="mt-1 space-y-0.5 ltr:ml-4 rtl:mr-4">
+              {sourcesSubPages.map((sub) => {
+                const isActive = location === sub.href;
+                const SubIcon = sub.icon;
+                return (
+                  <Link key={sub.href} href={sub.href}>
+                    <div
+                      data-testid={`nav-sources-${sub.key}`}
+                      className={cn(
+                        "flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200 cursor-pointer group",
+                        isActive
+                          ? "bg-primary/10 text-primary font-semibold"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      )}
+                    >
+                      <SubIcon className={cn("w-3.5 h-3.5", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+                      {t(`nav.${sub.key}`)}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </nav>
 
       <div className="p-4 border-t border-border/50 space-y-2">

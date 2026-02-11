@@ -88,6 +88,15 @@ function Router() {
       <Route path="/analytics/network-mapping">
         <ProtectedRoute component={NetworkMapping} />
       </Route>
+      <Route path="/sources/add">
+        <ProtectedRoute component={() => <Admin tab="add" />} />
+      </Route>
+      <Route path="/sources/manage">
+        <ProtectedRoute component={() => <Admin tab="manage" />} />
+      </Route>
+      <Route path="/sources/keywords">
+        <ProtectedRoute component={() => <Admin tab="keywords" />} />
+      </Route>
       <Route path="/admin">
         <ProtectedRoute component={Admin} />
       </Route>

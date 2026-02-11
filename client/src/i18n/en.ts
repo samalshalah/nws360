@@ -22,7 +22,10 @@ export default {
     dashboard: "Dashboard",
     newsFeed: "News Feed",
     analytics: "Analytics",
+    sources: "Sources",
     addSource: "Add Source",
+    manageSources: "Manage Sources",
+    keywords: "Keywords",
     signOut: "Sign Out",
   },
   auth: {

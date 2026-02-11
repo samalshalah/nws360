@@ -22,7 +22,10 @@ export default {
     dashboard: "Kontrol Paneli",
     newsFeed: "Haber Akışı",
     analytics: "Analitik",
+    sources: "Kaynaklar",
     addSource: "Kaynak Ekle",
+    manageSources: "Kaynakları Yönet",
+    keywords: "Anahtar Kelimeler",
     signOut: "Çıkış Yap",
   },
   auth: {

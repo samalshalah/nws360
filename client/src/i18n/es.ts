@@ -22,7 +22,10 @@ export default {
     dashboard: "Panel de control",
     newsFeed: "Noticias",
     analytics: "Analítica",
+    sources: "Fuentes",
     addSource: "Agregar fuente",
+    manageSources: "Gestionar fuentes",
+    keywords: "Palabras clave",
     signOut: "Cerrar sesión",
   },
   auth: {
