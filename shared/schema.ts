@@ -8,7 +8,8 @@ export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
-  role: text("role").notNull().default("client"), // 'admin' | 'client'
+  role: text("role").notNull().default("client"),
+  parentId: integer("parent_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -19,11 +20,12 @@ export const sources = pgTable("sources", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   url: text("url").notNull(),
-  type: text("type").notNull(), // 'rss' | 'website' | 'twitter' | 'youtube' | 'facebook' | 'instagram' | 'telegram'
+  type: text("type").notNull(),
   active: boolean("active").default(true),
   intervalMinutes: integer("interval_minutes").default(15),
   maxArticlesPerFetch: integer("max_articles_per_fetch").default(10),
   retentionDays: integer("retention_days").default(30),
+  userId: integer("user_id"),
   lastFetchedAt: timestamp("last_fetched_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
