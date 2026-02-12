@@ -1155,6 +1155,170 @@ export type InsertChangeHistory = z.infer<typeof insertChangeHistorySchema>;
 export type ActivityEvent = typeof activityEvents.$inferSelect;
 export type InsertActivityEvent = z.infer<typeof insertActivityEventSchema>;
 
+// === KNOWLEDGE MEMORY & HISTORICAL INTELLIGENCE ===
+
+export const storyTimelines = pgTable("story_timelines", {
+  id: serial("id").primaryKey(),
+  mainTopic: text("main_topic").notNull(),
+  summary: text("summary"),
+  status: text("status").notNull().default("active"),
+  storyClusterId: integer("story_cluster_id"),
+  clientId: integer("client_id"),
+  firstSeen: timestamp("first_seen").defaultNow(),
+  lastSeen: timestamp("last_seen").defaultNow(),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const timelineEvents = pgTable("timeline_events", {
+  id: serial("id").primaryKey(),
+  timelineId: integer("timeline_id").notNull(),
+  articleId: integer("article_id"),
+  eventDate: timestamp("event_date").defaultNow(),
+  label: text("label").notNull(),
+  description: text("description"),
+  metadata: jsonb("metadata"),
+});
+
+export const recurringPatterns = pgTable("recurring_patterns", {
+  id: serial("id").primaryKey(),
+  topic: text("topic").notNull(),
+  recurrenceInterval: text("recurrence_interval"),
+  confidence: integer("confidence").default(50),
+  lastOccurrence: timestamp("last_occurrence"),
+  occurrenceCount: integer("occurrence_count").default(1),
+  clientId: integer("client_id"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const entityMemory = pgTable("entity_memory", {
+  id: serial("id").primaryKey(),
+  entityName: text("entity_name").notNull(),
+  entityType: text("entity_type"),
+  biography: text("biography"),
+  firstSeenAt: timestamp("first_seen_at"),
+  lastSeenAt: timestamp("last_seen_at"),
+  peakMoments: jsonb("peak_moments"),
+  associatedTopics: text("associated_topics").array(),
+  toneEvolution: jsonb("tone_evolution"),
+  clientId: integer("client_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const narrativeShifts = pgTable("narrative_shifts", {
+  id: serial("id").primaryKey(),
+  topic: text("topic").notNull(),
+  periodStart: timestamp("period_start"),
+  periodEnd: timestamp("period_end"),
+  framingTerms: text("framing_terms").array(),
+  sentimentDelta: integer("sentiment_delta"),
+  summary: text("summary"),
+  storyClusterId: integer("story_cluster_id"),
+  clientId: integer("client_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const institutionalNotes = pgTable("institutional_notes", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id"),
+  userId: integer("user_id"),
+  relatedTopic: text("related_topic").notNull(),
+  targetType: text("target_type"),
+  targetId: integer("target_id"),
+  content: text("content").notNull(),
+  noteType: text("note_type").default("context"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const historicalMatches = pgTable("historical_matches", {
+  id: serial("id").primaryKey(),
+  currentStoryId: integer("current_story_id"),
+  pastStoryId: integer("past_story_id"),
+  similarityScore: integer("similarity_score").default(0),
+  matchReason: text("match_reason"),
+  acknowledged: boolean("acknowledged").default(false),
+  clientId: integer("client_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const trendLifecycles = pgTable("trend_lifecycles", {
+  id: serial("id").primaryKey(),
+  topic: text("topic").notNull(),
+  stage: text("stage").notNull().default("emergence"),
+  stageStartAt: timestamp("stage_start_at").defaultNow(),
+  signals: jsonb("signals"),
+  clientId: integer("client_id"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const longRangeBriefings = pgTable("long_range_briefings", {
+  id: serial("id").primaryKey(),
+  periodType: text("period_type").notNull(),
+  periodStart: timestamp("period_start"),
+  periodEnd: timestamp("period_end"),
+  summary: text("summary"),
+  findings: jsonb("findings"),
+  generatedBy: integer("generated_by"),
+  clientId: integer("client_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const aiMemoryAnswers = pgTable("ai_memory_answers", {
+  id: serial("id").primaryKey(),
+  query: text("query").notNull(),
+  answer: text("answer"),
+  contextRefs: jsonb("context_refs"),
+  createdBy: integer("created_by"),
+  clientId: integer("client_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Knowledge Memory Insert Schemas
+export const insertStoryTimelineSchema = createInsertSchema(storyTimelines).omit({ id: true, createdAt: true });
+export const insertTimelineEventSchema = createInsertSchema(timelineEvents).omit({ id: true });
+export const insertRecurringPatternSchema = createInsertSchema(recurringPatterns).omit({ id: true, createdAt: true });
+export const insertEntityMemorySchema = createInsertSchema(entityMemory).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertNarrativeShiftSchema = createInsertSchema(narrativeShifts).omit({ id: true, createdAt: true });
+export const insertInstitutionalNoteSchema = createInsertSchema(institutionalNotes).omit({ id: true, createdAt: true });
+export const insertHistoricalMatchSchema = createInsertSchema(historicalMatches).omit({ id: true, createdAt: true });
+export const insertTrendLifecycleSchema = createInsertSchema(trendLifecycles).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertLongRangeBriefingSchema = createInsertSchema(longRangeBriefings).omit({ id: true, createdAt: true });
+export const insertAiMemoryAnswerSchema = createInsertSchema(aiMemoryAnswers).omit({ id: true, createdAt: true });
+
+// Knowledge Memory Types
+export type StoryTimeline = typeof storyTimelines.$inferSelect;
+export type InsertStoryTimeline = z.infer<typeof insertStoryTimelineSchema>;
+
+export type TimelineEvent = typeof timelineEvents.$inferSelect;
+export type InsertTimelineEvent = z.infer<typeof insertTimelineEventSchema>;
+
+export type RecurringPattern = typeof recurringPatterns.$inferSelect;
+export type InsertRecurringPattern = z.infer<typeof insertRecurringPatternSchema>;
+
+export type EntityMemory = typeof entityMemory.$inferSelect;
+export type InsertEntityMemory = z.infer<typeof insertEntityMemorySchema>;
+
+export type NarrativeShift = typeof narrativeShifts.$inferSelect;
+export type InsertNarrativeShift = z.infer<typeof insertNarrativeShiftSchema>;
+
+export type InstitutionalNote = typeof institutionalNotes.$inferSelect;
+export type InsertInstitutionalNote = z.infer<typeof insertInstitutionalNoteSchema>;
+
+export type HistoricalMatch = typeof historicalMatches.$inferSelect;
+export type InsertHistoricalMatch = z.infer<typeof insertHistoricalMatchSchema>;
+
+export type TrendLifecycle = typeof trendLifecycles.$inferSelect;
+export type InsertTrendLifecycle = z.infer<typeof insertTrendLifecycleSchema>;
+
+export type LongRangeBriefing = typeof longRangeBriefings.$inferSelect;
+export type InsertLongRangeBriefing = z.infer<typeof insertLongRangeBriefingSchema>;
+
+export type AiMemoryAnswer = typeof aiMemoryAnswers.$inferSelect;
+export type InsertAiMemoryAnswer = z.infer<typeof insertAiMemoryAnswerSchema>;
+
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;
 export type RegisterRequest = InsertUser;

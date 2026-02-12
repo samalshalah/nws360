@@ -65,6 +65,19 @@ import {
   type InternalAlert, type InsertInternalAlert,
   type ChangeHistoryEntry, type InsertChangeHistory,
   type ActivityEvent, type InsertActivityEvent,
+  storyTimelines, timelineEvents, recurringPatterns, entityMemory,
+  narrativeShifts, institutionalNotes, historicalMatches, trendLifecycles,
+  longRangeBriefings, aiMemoryAnswers,
+  type StoryTimeline, type InsertStoryTimeline,
+  type TimelineEvent, type InsertTimelineEvent,
+  type RecurringPattern, type InsertRecurringPattern,
+  type EntityMemory, type InsertEntityMemory,
+  type NarrativeShift, type InsertNarrativeShift,
+  type InstitutionalNote, type InsertInstitutionalNote,
+  type HistoricalMatch, type InsertHistoricalMatch,
+  type TrendLifecycle, type InsertTrendLifecycle,
+  type LongRangeBriefing, type InsertLongRangeBriefing,
+  type AiMemoryAnswer, type InsertAiMemoryAnswer,
 } from "@shared/schema";
 import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
@@ -445,6 +458,61 @@ export interface IStorage {
   // Activity Feed
   getActivityFeed(params?: { workspaceId?: number; limit?: number }): Promise<ActivityEvent[]>;
   createActivityEvent(data: InsertActivityEvent): Promise<ActivityEvent>;
+
+  // Knowledge Memory - Story Timelines
+  getStoryTimelines(clientId?: number): Promise<StoryTimeline[]>;
+  getStoryTimeline(id: number): Promise<StoryTimeline | undefined>;
+  createStoryTimeline(data: InsertStoryTimeline): Promise<StoryTimeline>;
+  updateStoryTimeline(id: number, data: Partial<InsertStoryTimeline>): Promise<StoryTimeline | undefined>;
+  deleteStoryTimeline(id: number): Promise<void>;
+
+  // Knowledge Memory - Timeline Events
+  getTimelineEvents(timelineId: number): Promise<TimelineEvent[]>;
+  createTimelineEvent(data: InsertTimelineEvent): Promise<TimelineEvent>;
+  deleteTimelineEvent(id: number): Promise<void>;
+
+  // Knowledge Memory - Recurring Patterns
+  getRecurringPatterns(clientId?: number): Promise<RecurringPattern[]>;
+  createRecurringPattern(data: InsertRecurringPattern): Promise<RecurringPattern>;
+  updateRecurringPattern(id: number, data: Partial<InsertRecurringPattern>): Promise<RecurringPattern | undefined>;
+  deleteRecurringPattern(id: number): Promise<void>;
+
+  // Knowledge Memory - Entity Memory
+  getEntityMemories(clientId?: number): Promise<EntityMemory[]>;
+  getEntityMemoryByName(name: string): Promise<EntityMemory | undefined>;
+  createEntityMemory(data: InsertEntityMemory): Promise<EntityMemory>;
+  updateEntityMemory(id: number, data: Partial<InsertEntityMemory>): Promise<EntityMemory | undefined>;
+  deleteEntityMemory(id: number): Promise<void>;
+
+  // Knowledge Memory - Narrative Shifts
+  getNarrativeShifts(params?: { topic?: string; clientId?: number }): Promise<NarrativeShift[]>;
+  createNarrativeShift(data: InsertNarrativeShift): Promise<NarrativeShift>;
+  deleteNarrativeShift(id: number): Promise<void>;
+
+  // Knowledge Memory - Institutional Notes
+  getInstitutionalNotes(clientId?: number, topic?: string): Promise<InstitutionalNote[]>;
+  createInstitutionalNote(data: InsertInstitutionalNote): Promise<InstitutionalNote>;
+  deleteInstitutionalNote(id: number): Promise<void>;
+
+  // Knowledge Memory - Historical Matches
+  getHistoricalMatches(clientId?: number): Promise<HistoricalMatch[]>;
+  createHistoricalMatch(data: InsertHistoricalMatch): Promise<HistoricalMatch>;
+  acknowledgeHistoricalMatch(id: number): Promise<void>;
+
+  // Knowledge Memory - Trend Lifecycles
+  getTrendLifecycles(clientId?: number): Promise<TrendLifecycle[]>;
+  createTrendLifecycle(data: InsertTrendLifecycle): Promise<TrendLifecycle>;
+  updateTrendLifecycle(id: number, data: Partial<InsertTrendLifecycle>): Promise<TrendLifecycle | undefined>;
+  deleteTrendLifecycle(id: number): Promise<void>;
+
+  // Knowledge Memory - Long-Range Briefings
+  getLongRangeBriefings(clientId?: number, periodType?: string): Promise<LongRangeBriefing[]>;
+  createLongRangeBriefing(data: InsertLongRangeBriefing): Promise<LongRangeBriefing>;
+  deleteLongRangeBriefing(id: number): Promise<void>;
+
+  // Knowledge Memory - AI Memory Answers
+  getAiMemoryAnswers(clientId?: number, limit?: number): Promise<AiMemoryAnswer[]>;
+  createAiMemoryAnswer(data: InsertAiMemoryAnswer): Promise<AiMemoryAnswer>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2637,6 +2705,192 @@ export class DatabaseStorage implements IStorage {
 
   async createActivityEvent(data: InsertActivityEvent): Promise<ActivityEvent> {
     const [row] = await db.insert(activityEvents).values(data).returning();
+    return row;
+  }
+
+  // === KNOWLEDGE MEMORY - Story Timelines ===
+  async getStoryTimelines(clientId?: number): Promise<StoryTimeline[]> {
+    if (clientId) return db.select().from(storyTimelines).where(eq(storyTimelines.clientId, clientId)).orderBy(desc(storyTimelines.lastSeen));
+    return db.select().from(storyTimelines).orderBy(desc(storyTimelines.lastSeen));
+  }
+
+  async getStoryTimeline(id: number): Promise<StoryTimeline | undefined> {
+    const [row] = await db.select().from(storyTimelines).where(eq(storyTimelines.id, id));
+    return row;
+  }
+
+  async createStoryTimeline(data: InsertStoryTimeline): Promise<StoryTimeline> {
+    const [row] = await db.insert(storyTimelines).values(data).returning();
+    return row;
+  }
+
+  async updateStoryTimeline(id: number, data: Partial<InsertStoryTimeline>): Promise<StoryTimeline | undefined> {
+    const [row] = await db.update(storyTimelines).set(data).where(eq(storyTimelines.id, id)).returning();
+    return row;
+  }
+
+  async deleteStoryTimeline(id: number): Promise<void> {
+    await db.delete(timelineEvents).where(eq(timelineEvents.timelineId, id));
+    await db.delete(storyTimelines).where(eq(storyTimelines.id, id));
+  }
+
+  // === KNOWLEDGE MEMORY - Timeline Events ===
+  async getTimelineEvents(timelineId: number): Promise<TimelineEvent[]> {
+    return db.select().from(timelineEvents).where(eq(timelineEvents.timelineId, timelineId)).orderBy(desc(timelineEvents.eventDate));
+  }
+
+  async createTimelineEvent(data: InsertTimelineEvent): Promise<TimelineEvent> {
+    const [row] = await db.insert(timelineEvents).values(data).returning();
+    return row;
+  }
+
+  async deleteTimelineEvent(id: number): Promise<void> {
+    await db.delete(timelineEvents).where(eq(timelineEvents.id, id));
+  }
+
+  // === KNOWLEDGE MEMORY - Recurring Patterns ===
+  async getRecurringPatterns(clientId?: number): Promise<RecurringPattern[]> {
+    if (clientId) return db.select().from(recurringPatterns).where(eq(recurringPatterns.clientId, clientId)).orderBy(desc(recurringPatterns.createdAt));
+    return db.select().from(recurringPatterns).orderBy(desc(recurringPatterns.createdAt));
+  }
+
+  async createRecurringPattern(data: InsertRecurringPattern): Promise<RecurringPattern> {
+    const [row] = await db.insert(recurringPatterns).values(data).returning();
+    return row;
+  }
+
+  async updateRecurringPattern(id: number, data: Partial<InsertRecurringPattern>): Promise<RecurringPattern | undefined> {
+    const [row] = await db.update(recurringPatterns).set(data).where(eq(recurringPatterns.id, id)).returning();
+    return row;
+  }
+
+  async deleteRecurringPattern(id: number): Promise<void> {
+    await db.delete(recurringPatterns).where(eq(recurringPatterns.id, id));
+  }
+
+  // === KNOWLEDGE MEMORY - Entity Memory ===
+  async getEntityMemories(clientId?: number): Promise<EntityMemory[]> {
+    if (clientId) return db.select().from(entityMemory).where(eq(entityMemory.clientId, clientId)).orderBy(desc(entityMemory.updatedAt));
+    return db.select().from(entityMemory).orderBy(desc(entityMemory.updatedAt));
+  }
+
+  async getEntityMemoryByName(name: string): Promise<EntityMemory | undefined> {
+    const [row] = await db.select().from(entityMemory).where(eq(entityMemory.entityName, name));
+    return row;
+  }
+
+  async createEntityMemory(data: InsertEntityMemory): Promise<EntityMemory> {
+    const [row] = await db.insert(entityMemory).values(data).returning();
+    return row;
+  }
+
+  async updateEntityMemory(id: number, data: Partial<InsertEntityMemory>): Promise<EntityMemory | undefined> {
+    const [row] = await db.update(entityMemory).set({ ...data, updatedAt: new Date() }).where(eq(entityMemory.id, id)).returning();
+    return row;
+  }
+
+  async deleteEntityMemory(id: number): Promise<void> {
+    await db.delete(entityMemory).where(eq(entityMemory.id, id));
+  }
+
+  // === KNOWLEDGE MEMORY - Narrative Shifts ===
+  async getNarrativeShifts(params?: { topic?: string; clientId?: number }): Promise<NarrativeShift[]> {
+    const conditions = [];
+    if (params?.topic) conditions.push(eq(narrativeShifts.topic, params.topic));
+    if (params?.clientId) conditions.push(eq(narrativeShifts.clientId, params.clientId));
+    if (conditions.length > 0) return db.select().from(narrativeShifts).where(and(...conditions)).orderBy(desc(narrativeShifts.createdAt));
+    return db.select().from(narrativeShifts).orderBy(desc(narrativeShifts.createdAt));
+  }
+
+  async createNarrativeShift(data: InsertNarrativeShift): Promise<NarrativeShift> {
+    const [row] = await db.insert(narrativeShifts).values(data).returning();
+    return row;
+  }
+
+  async deleteNarrativeShift(id: number): Promise<void> {
+    await db.delete(narrativeShifts).where(eq(narrativeShifts.id, id));
+  }
+
+  // === KNOWLEDGE MEMORY - Institutional Notes ===
+  async getInstitutionalNotes(clientId?: number, topic?: string): Promise<InstitutionalNote[]> {
+    const conditions = [];
+    if (clientId) conditions.push(eq(institutionalNotes.clientId, clientId));
+    if (topic) conditions.push(eq(institutionalNotes.relatedTopic, topic));
+    if (conditions.length > 0) return db.select().from(institutionalNotes).where(and(...conditions)).orderBy(desc(institutionalNotes.createdAt));
+    return db.select().from(institutionalNotes).orderBy(desc(institutionalNotes.createdAt));
+  }
+
+  async createInstitutionalNote(data: InsertInstitutionalNote): Promise<InstitutionalNote> {
+    const [row] = await db.insert(institutionalNotes).values(data).returning();
+    return row;
+  }
+
+  async deleteInstitutionalNote(id: number): Promise<void> {
+    await db.delete(institutionalNotes).where(eq(institutionalNotes.id, id));
+  }
+
+  // === KNOWLEDGE MEMORY - Historical Matches ===
+  async getHistoricalMatches(clientId?: number): Promise<HistoricalMatch[]> {
+    if (clientId) return db.select().from(historicalMatches).where(eq(historicalMatches.clientId, clientId)).orderBy(desc(historicalMatches.createdAt));
+    return db.select().from(historicalMatches).orderBy(desc(historicalMatches.createdAt));
+  }
+
+  async createHistoricalMatch(data: InsertHistoricalMatch): Promise<HistoricalMatch> {
+    const [row] = await db.insert(historicalMatches).values(data).returning();
+    return row;
+  }
+
+  async acknowledgeHistoricalMatch(id: number): Promise<void> {
+    await db.update(historicalMatches).set({ acknowledged: true }).where(eq(historicalMatches.id, id));
+  }
+
+  // === KNOWLEDGE MEMORY - Trend Lifecycles ===
+  async getTrendLifecycles(clientId?: number): Promise<TrendLifecycle[]> {
+    if (clientId) return db.select().from(trendLifecycles).where(eq(trendLifecycles.clientId, clientId)).orderBy(desc(trendLifecycles.updatedAt));
+    return db.select().from(trendLifecycles).orderBy(desc(trendLifecycles.updatedAt));
+  }
+
+  async createTrendLifecycle(data: InsertTrendLifecycle): Promise<TrendLifecycle> {
+    const [row] = await db.insert(trendLifecycles).values(data).returning();
+    return row;
+  }
+
+  async updateTrendLifecycle(id: number, data: Partial<InsertTrendLifecycle>): Promise<TrendLifecycle | undefined> {
+    const [row] = await db.update(trendLifecycles).set({ ...data, updatedAt: new Date() }).where(eq(trendLifecycles.id, id)).returning();
+    return row;
+  }
+
+  async deleteTrendLifecycle(id: number): Promise<void> {
+    await db.delete(trendLifecycles).where(eq(trendLifecycles.id, id));
+  }
+
+  // === KNOWLEDGE MEMORY - Long-Range Briefings ===
+  async getLongRangeBriefings(clientId?: number, periodType?: string): Promise<LongRangeBriefing[]> {
+    const conditions = [];
+    if (clientId) conditions.push(eq(longRangeBriefings.clientId, clientId));
+    if (periodType) conditions.push(eq(longRangeBriefings.periodType, periodType));
+    if (conditions.length > 0) return db.select().from(longRangeBriefings).where(and(...conditions)).orderBy(desc(longRangeBriefings.createdAt));
+    return db.select().from(longRangeBriefings).orderBy(desc(longRangeBriefings.createdAt));
+  }
+
+  async createLongRangeBriefing(data: InsertLongRangeBriefing): Promise<LongRangeBriefing> {
+    const [row] = await db.insert(longRangeBriefings).values(data).returning();
+    return row;
+  }
+
+  async deleteLongRangeBriefing(id: number): Promise<void> {
+    await db.delete(longRangeBriefings).where(eq(longRangeBriefings.id, id));
+  }
+
+  // === KNOWLEDGE MEMORY - AI Memory Answers ===
+  async getAiMemoryAnswers(clientId?: number, limit?: number): Promise<AiMemoryAnswer[]> {
+    const lim = limit || 50;
+    if (clientId) return db.select().from(aiMemoryAnswers).where(eq(aiMemoryAnswers.clientId, clientId)).orderBy(desc(aiMemoryAnswers.createdAt)).limit(lim);
+    return db.select().from(aiMemoryAnswers).orderBy(desc(aiMemoryAnswers.createdAt)).limit(lim);
+  }
+
+  async createAiMemoryAnswer(data: InsertAiMemoryAnswer): Promise<AiMemoryAnswer> {
+    const [row] = await db.insert(aiMemoryAnswers).values(data).returning();
     return row;
   }
 

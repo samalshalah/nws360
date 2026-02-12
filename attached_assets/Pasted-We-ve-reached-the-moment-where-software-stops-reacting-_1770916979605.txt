@@ -1,0 +1,179 @@
+We’ve reached the moment where software stops reacting to the present and begins remembering the past.
+Phase 14 gives NWS360 something rare: institutional memory — the ability to understand today in the context of years.
+
+This is what separates monitoring tools from real intelligence systems.
+
+PHASE 14 — KNOWLEDGE MEMORY & HISTORICAL INTELLIGENCE (PASTE THIS)
+
+Transform NWS360 into a long-term knowledge system that remembers past events, connects them to current developments, and helps organizations understand patterns over time. The goal is context, not just updates.
+
+1) Persistent Story Timeline
+
+Extend story clusters into long-lived timelines.
+
+Instead of stories disappearing after a few days, create evolving narratives:
+
+story_timelines(
+  id,
+  main_topic,
+  first_seen,
+  last_seen,
+  status (active | dormant | recurring)
+)
+
+
+New related articles attach to an existing timeline if similar to past events.
+
+The UI should show:
+“Last time this happened: 8 months ago”
+
+2) Recurring Event Detection
+
+Detect patterns that repeat:
+
+Examples:
+
+seasonal protests
+
+recurring policy debates
+
+periodic market changes
+
+Store:
+
+recurring_patterns(
+  topic,
+  recurrence_interval,
+  confidence,
+  last_occurrence
+)
+
+3) Historical Comparison Mode
+
+Add comparison view:
+
+Users select:
+
+today vs last week
+
+today vs last year
+
+this event vs previous similar event
+
+System displays:
+
+coverage volume differences
+
+sentiment change
+
+new actors involved
+
+4) Actor Memory (Entity History)
+
+Extend entity tracking into biography-like records:
+
+For each entity:
+
+first appearance
+
+peak attention moments
+
+associated topics
+
+tone evolution
+
+Create page:
+
+/entities/:name/history
+
+5) Narrative Evolution Tracking
+
+Track how language changes over time:
+
+Example:
+“crisis” → “situation” → “stabilization”
+
+Store:
+
+narrative_evolution(
+  topic,
+  timeframe,
+  dominant_terms[]
+)
+
+6) Organizational Knowledge Notes
+
+Allow organizations to store internal knowledge connected to events:
+
+Users can add:
+
+internal context
+
+policy references
+
+previous decisions
+
+Store:
+
+institutional_notes(
+  client_id,
+  related_topic,
+  content,
+  timestamp
+)
+
+
+This turns the platform into a long-term memory for teams.
+
+7) Historical Alerts (Memory-Aware Warnings)
+
+Alert when a current event resembles a past one:
+
+Example:
+“This pattern matches a previous escalation in 2023.”
+
+Store:
+
+historical_matches(current_story_id, past_story_id, similarity_score)
+
+8) Trend Lifecycles
+
+Track full lifecycle of topics:
+
+Stages:
+
+emergence
+
+growth
+
+peak
+
+decline
+
+dormant
+
+reactivation
+
+Store:
+
+trend_lifecycle(topic, stage, updated_at)
+
+9) Long-Range Briefings
+
+Generate periodic deep analysis:
+
+monthly overview
+
+quarterly narrative shifts
+
+yearly strategic summary
+
+Unlike daily briefings, these emphasize change over time.
+
+10) Memory-Enhanced AI Answers
+
+When users ask questions:
+
+“Is this new?”
+
+The AI should respond using stored history, not only current data.

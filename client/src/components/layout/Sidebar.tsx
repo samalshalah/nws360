@@ -297,6 +297,22 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         </Link>
 
+        <Link href="/knowledge">
+          <div
+            onClick={onNavigate}
+            data-testid="nav-knowledge"
+            className={cn(
+              "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
+              location === "/knowledge"
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
+            )}
+          >
+            <Brain className={cn("w-5 h-5", location === "/knowledge" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
+            {t("nav.knowledge", "Knowledge Memory")}
+          </div>
+        </Link>
+
         <Link href="/integrations">
           <div
             onClick={onNavigate}

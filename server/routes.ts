@@ -1450,6 +1450,350 @@ export async function registerRoutes(
     });
   });
 
+  // ===================================================================
+  // KNOWLEDGE MEMORY & HISTORICAL INTELLIGENCE ROUTES
+  // ===================================================================
+
+  // === STORY TIMELINES ===
+  app.get("/api/knowledge/timelines", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const items = await storage.getStoryTimelines(user.clientId || undefined);
+    res.json(items);
+  });
+
+  app.get("/api/knowledge/timelines/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const timeline = await storage.getStoryTimeline(parseInt(req.params.id));
+    if (!timeline) return res.status(404).json({ message: "Not found" });
+    res.json(timeline);
+  });
+
+  app.post("/api/knowledge/timelines", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ mainTopic: z.string().min(1), summary: z.string().optional(), status: z.enum(["active", "dormant", "recurring"]).optional(), storyClusterId: z.number().int().optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const item = await storage.createStoryTimeline({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(item);
+  });
+
+  app.patch("/api/knowledge/timelines/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const item = await storage.updateStoryTimeline(parseInt(req.params.id), req.body);
+    if (!item) return res.status(404).json({ message: "Not found" });
+    res.json(item);
+  });
+
+  app.delete("/api/knowledge/timelines/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteStoryTimeline(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === TIMELINE EVENTS ===
+  app.get("/api/knowledge/timelines/:id/events", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const events = await storage.getTimelineEvents(parseInt(req.params.id));
+    res.json(events);
+  });
+
+  app.post("/api/knowledge/timelines/:id/events", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ label: z.string().min(1), description: z.string().optional(), articleId: z.number().int().optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const item = await storage.createTimelineEvent({ ...parsed.data, timelineId: parseInt(req.params.id) });
+    await storage.updateStoryTimeline(parseInt(req.params.id), { lastSeen: new Date() });
+    res.status(201).json(item);
+  });
+
+  app.delete("/api/knowledge/timeline-events/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteTimelineEvent(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === RECURRING PATTERNS ===
+  app.get("/api/knowledge/patterns", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const items = await storage.getRecurringPatterns(user.clientId || undefined);
+    res.json(items);
+  });
+
+  app.post("/api/knowledge/patterns", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ topic: z.string().min(1), recurrenceInterval: z.string().optional(), confidence: z.number().int().min(0).max(100).optional(), occurrenceCount: z.number().int().optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const item = await storage.createRecurringPattern({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(item);
+  });
+
+  app.patch("/api/knowledge/patterns/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const item = await storage.updateRecurringPattern(parseInt(req.params.id), req.body);
+    if (!item) return res.status(404).json({ message: "Not found" });
+    res.json(item);
+  });
+
+  app.delete("/api/knowledge/patterns/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteRecurringPattern(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === ENTITY MEMORY ===
+  app.get("/api/knowledge/entity-memory", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const items = await storage.getEntityMemories(user.clientId || undefined);
+    res.json(items);
+  });
+
+  app.get("/api/knowledge/entity-memory/by-name/:name", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const item = await storage.getEntityMemoryByName(decodeURIComponent(req.params.name));
+    if (!item) return res.status(404).json({ message: "Not found" });
+    res.json(item);
+  });
+
+  app.post("/api/knowledge/entity-memory", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ entityName: z.string().min(1), entityType: z.string().optional(), biography: z.string().optional(), associatedTopics: z.array(z.string()).optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const item = await storage.createEntityMemory({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(item);
+  });
+
+  app.patch("/api/knowledge/entity-memory/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const item = await storage.updateEntityMemory(parseInt(req.params.id), req.body);
+    if (!item) return res.status(404).json({ message: "Not found" });
+    res.json(item);
+  });
+
+  app.delete("/api/knowledge/entity-memory/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteEntityMemory(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === NARRATIVE SHIFTS ===
+  app.get("/api/knowledge/narrative-shifts", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const topic = req.query.topic as string | undefined;
+    const items = await storage.getNarrativeShifts({ topic, clientId: user.clientId || undefined });
+    res.json(items);
+  });
+
+  app.post("/api/knowledge/narrative-shifts", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ topic: z.string().min(1), framingTerms: z.array(z.string()).optional(), sentimentDelta: z.number().int().optional(), summary: z.string().optional(), storyClusterId: z.number().int().optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const item = await storage.createNarrativeShift({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(item);
+  });
+
+  app.delete("/api/knowledge/narrative-shifts/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteNarrativeShift(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === INSTITUTIONAL / ORG NOTES ===
+  app.get("/api/knowledge/org-notes", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const topic = req.query.topic as string | undefined;
+    const items = await storage.getInstitutionalNotes(user.clientId || undefined, topic);
+    res.json(items);
+  });
+
+  app.post("/api/knowledge/org-notes", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ relatedTopic: z.string().min(1), content: z.string().min(1), noteType: z.enum(["context", "policy", "decision", "reference"]).optional(), targetType: z.string().optional(), targetId: z.number().int().optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const item = await storage.createInstitutionalNote({ ...parsed.data, userId: user.id, clientId: user.clientId });
+    res.status(201).json(item);
+  });
+
+  app.delete("/api/knowledge/org-notes/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteInstitutionalNote(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === HISTORICAL MATCHES ===
+  app.get("/api/knowledge/historical-matches", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const items = await storage.getHistoricalMatches(user.clientId || undefined);
+    res.json(items);
+  });
+
+  app.post("/api/knowledge/historical-matches", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ currentStoryId: z.number().int().optional(), pastStoryId: z.number().int().optional(), similarityScore: z.number().int().min(0).max(100).optional(), matchReason: z.string().optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const item = await storage.createHistoricalMatch({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(item);
+  });
+
+  app.patch("/api/knowledge/historical-matches/:id/acknowledge", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.acknowledgeHistoricalMatch(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === TREND LIFECYCLES ===
+  app.get("/api/knowledge/trends", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const items = await storage.getTrendLifecycles(user.clientId || undefined);
+    res.json(items);
+  });
+
+  app.post("/api/knowledge/trends", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ topic: z.string().min(1), stage: z.enum(["emergence", "growth", "peak", "decline", "dormant", "reactivation"]).optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const item = await storage.createTrendLifecycle({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(item);
+  });
+
+  app.patch("/api/knowledge/trends/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const item = await storage.updateTrendLifecycle(parseInt(req.params.id), req.body);
+    if (!item) return res.status(404).json({ message: "Not found" });
+    res.json(item);
+  });
+
+  app.delete("/api/knowledge/trends/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteTrendLifecycle(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === LONG-RANGE BRIEFINGS ===
+  app.get("/api/knowledge/briefings", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const periodType = req.query.periodType as string | undefined;
+    const items = await storage.getLongRangeBriefings(user.clientId || undefined, periodType);
+    res.json(items);
+  });
+
+  app.post("/api/knowledge/briefings", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ periodType: z.enum(["monthly", "quarterly", "yearly"]), summary: z.string().optional(), findings: z.any().optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const item = await storage.createLongRangeBriefing({ ...parsed.data, generatedBy: user.id, clientId: user.clientId });
+    res.status(201).json(item);
+  });
+
+  app.delete("/api/knowledge/briefings/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteLongRangeBriefing(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === AI MEMORY ANSWERS ===
+  app.get("/api/knowledge/ai-answers", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const items = await storage.getAiMemoryAnswers(user.clientId || undefined, 50);
+    res.json(items);
+  });
+
+  app.post("/api/knowledge/ai-answers", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ query: z.string().min(1) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    try {
+      const timelines = await storage.getStoryTimelines(user.clientId || undefined);
+      const patterns = await storage.getRecurringPatterns(user.clientId || undefined);
+      const trends = await storage.getTrendLifecycles(user.clientId || undefined);
+      const entityMems = await storage.getEntityMemories(user.clientId || undefined);
+      const notes = await storage.getInstitutionalNotes(user.clientId || undefined);
+      const matches = await storage.getHistoricalMatches(user.clientId || undefined);
+
+      const contextSummary = [
+        timelines.length > 0 ? `Active timelines: ${timelines.slice(0, 10).map(t => `${t.mainTopic} (${t.status})`).join(", ")}` : "",
+        patterns.length > 0 ? `Recurring patterns: ${patterns.slice(0, 10).map(p => `${p.topic} (interval: ${p.recurrenceInterval}, confidence: ${p.confidence}%)`).join(", ")}` : "",
+        trends.length > 0 ? `Trend lifecycles: ${trends.slice(0, 10).map(t => `${t.topic} (${t.stage})`).join(", ")}` : "",
+        entityMems.length > 0 ? `Known entities: ${entityMems.slice(0, 10).map(e => `${e.entityName} (${e.entityType || "unknown"})`).join(", ")}` : "",
+        notes.length > 0 ? `Org notes: ${notes.slice(0, 5).map(n => `[${n.relatedTopic}] ${n.content.substring(0, 100)}`).join("; ")}` : "",
+        matches.length > 0 ? `Historical matches: ${matches.slice(0, 5).map(m => `story ${m.currentStoryId} ~ story ${m.pastStoryId} (${m.similarityScore}%)`).join(", ")}` : "",
+      ].filter(Boolean).join("\n");
+
+      const OpenAI = (await import("openai")).default;
+      const openai = new OpenAI();
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: `You are a memory-enhanced intelligence analyst for a news platform. You have access to institutional knowledge including story timelines, recurring patterns, trend lifecycles, entity histories, organizational notes, and historical matches. Use this context to provide historically-aware, contextual answers. Always reference relevant past data when available.\n\nKnowledge Context:\n${contextSummary || "No historical data available yet."}` },
+          { role: "user", content: parsed.data.query },
+        ],
+        max_tokens: 1000,
+      });
+
+      const answer = completion.choices[0]?.message?.content || "Unable to generate answer.";
+      const saved = await storage.createAiMemoryAnswer({
+        query: parsed.data.query,
+        answer,
+        contextRefs: { timelinesUsed: timelines.length, patternsUsed: patterns.length, trendsUsed: trends.length, entitiesUsed: entityMems.length },
+        createdBy: user.id,
+        clientId: user.clientId,
+      });
+      res.status(201).json(saved);
+    } catch (err: any) {
+      console.error("AI Memory answer error:", err.message);
+      const saved = await storage.createAiMemoryAnswer({
+        query: parsed.data.query,
+        answer: "AI analysis is temporarily unavailable. Your question has been saved and can be re-analyzed later.",
+        createdBy: user.id,
+        clientId: user.clientId,
+      });
+      res.status(201).json(saved);
+    }
+  });
+
   // === SEED & START WORKERS ===
   await seed();
   startFeedWorker();
