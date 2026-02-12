@@ -83,26 +83,24 @@ export default function Feed() {
     setTimeout(() => { isResettingRef.current = false; }, 500);
   }, []);
 
-  const getDateRange = (range: string) => {
+  const dateRange = useMemo(() => {
     const now = new Date();
-    if (range === "today") {
+    if (filters.dateRange === "today") {
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       return { startDate: start.toISOString(), endDate: now.toISOString() };
     }
-    if (range === "week") {
+    if (filters.dateRange === "week") {
       const start = new Date(now);
       start.setDate(start.getDate() - 7);
       return { startDate: start.toISOString(), endDate: now.toISOString() };
     }
-    if (range === "month") {
+    if (filters.dateRange === "month") {
       const start = new Date(now);
       start.setMonth(start.getMonth() - 1);
       return { startDate: start.toISOString(), endDate: now.toISOString() };
     }
-    return {};
-  };
-
-  const dateRange = getDateRange(filters.dateRange);
+    return {} as { startDate?: string; endDate?: string };
+  }, [filters.dateRange]);
 
   const { data: articlesData, isLoading: isLoadingArticles, isFetching } = useArticles({
     search: filters.search,
