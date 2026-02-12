@@ -116,6 +116,28 @@ export interface IStorage {
     }[];
     diversity: { sourceType: string; count: number }[];
   }>;
+
+  getNarrativeComparison(topic: string, startDate: string, endDate: string, sourceIds?: number[]): Promise<{
+    topic: string;
+    sources: { sourceId: number; sourceName: string; positive: number; negative: number; neutral: number; total: number }[];
+    hasContrast: boolean;
+  }>;
+
+  getDailyBrief(date: string, sourceIds?: number[]): Promise<{
+    date: string;
+    topStories: { title: string; url: string; sourceName: string; sentiment: string }[];
+    biggestTopic: string;
+    sentimentShift: { previous: { positive: number; negative: number; neutral: number }; current: { positive: number; negative: number; neutral: number } };
+    sourceSpike: { sourceName: string; count: number; avgCount: number } | null;
+  }>;
+
+  getKeywordDetail(keyword: string, startDate: string, endDate: string, sourceIds?: number[]): Promise<{
+    keyword: string;
+    frequency: { date: string; count: number }[];
+    topSources: { sourceName: string; count: number }[];
+    sentiment: { positive: number; negative: number; neutral: number };
+    headlines: { title: string; url: string; sourceName: string; publishedAt: string; sentiment: string }[];
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -881,6 +903,218 @@ export class DatabaseStorage implements IStorage {
       diversity: (diversityRows.rows as any[]).map(r => ({
         sourceType: String(r.sourceType || "unknown"),
         count: Number(r.count),
+      })),
+    };
+  }
+
+  async getNarrativeComparison(topic: string, startDate: string, endDate: string, sourceIds?: number[]) {
+    if (sourceIds !== undefined && sourceIds.length === 0) {
+      return { topic, sources: [], hasContrast: false };
+    }
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const sourceFilter = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+
+    const rows = await db.execute(sql`
+      SELECT 
+        s.id as "sourceId", s.name as "sourceName",
+        COUNT(*) FILTER (WHERE a.sentiment_label = 'positive')::int as positive,
+        COUNT(*) FILTER (WHERE a.sentiment_label = 'negative')::int as negative,
+        COUNT(*) FILTER (WHERE a.sentiment_label = 'neutral' OR a.sentiment_label IS NULL)::int as neutral,
+        COUNT(*)::int as total
+      FROM articles a
+      JOIN sources s ON a.source_id = s.id
+      WHERE (a.keywords IS NOT NULL AND ${topic} = ANY(a.keywords))
+        AND a.published_at >= ${start} AND a.published_at <= ${end}
+        ${sourceFilter}
+      GROUP BY s.id, s.name
+      HAVING COUNT(*) >= 1
+      ORDER BY total DESC
+      LIMIT 10
+    `);
+
+    const sourcesData = (rows.rows as any[]).map(r => ({
+      sourceId: Number(r.sourceId),
+      sourceName: String(r.sourceName),
+      positive: Number(r.positive),
+      negative: Number(r.negative),
+      neutral: Number(r.neutral),
+      total: Number(r.total),
+    }));
+
+    let hasContrast = false;
+    if (sourcesData.length >= 2) {
+      const ratios = sourcesData.map(s => {
+        const total = s.total || 1;
+        return { name: s.sourceName, posRatio: s.positive / total, negRatio: s.negative / total };
+      });
+      for (let i = 0; i < ratios.length - 1; i++) {
+        for (let j = i + 1; j < ratios.length; j++) {
+          if (Math.abs(ratios[i].posRatio - ratios[j].posRatio) > 0.3 ||
+              Math.abs(ratios[i].negRatio - ratios[j].negRatio) > 0.3) {
+            hasContrast = true;
+            break;
+          }
+        }
+        if (hasContrast) break;
+      }
+    }
+
+    return { topic, sources: sourcesData, hasContrast };
+  }
+
+  async getDailyBrief(date: string, sourceIds?: number[]) {
+    if (sourceIds !== undefined && sourceIds.length === 0) {
+      return {
+        date,
+        topStories: [],
+        biggestTopic: "",
+        sentimentShift: { previous: { positive: 0, negative: 0, neutral: 0 }, current: { positive: 0, negative: 0, neutral: 0 } },
+        sourceSpike: null,
+      };
+    }
+    const dayStart = new Date(date);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(date);
+    dayEnd.setHours(23, 59, 59, 999);
+    const prevDayStart = new Date(dayStart.getTime() - 24 * 60 * 60 * 1000);
+    const sourceFilter = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilterPlain = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+
+    const topStoriesRows = await db.execute(sql`
+      SELECT a.title, a.url, s.name as "sourceName", a.sentiment_label as sentiment
+      FROM articles a
+      JOIN sources s ON a.source_id = s.id
+      WHERE a.published_at >= ${dayStart} AND a.published_at <= ${dayEnd} ${sourceFilter}
+      ORDER BY a.published_at DESC
+      LIMIT 5
+    `);
+
+    const topicRows = await db.execute(sql`
+      SELECT kw as topic, COUNT(*)::int as count
+      FROM articles, unnest(keywords) as kw
+      WHERE keywords IS NOT NULL AND published_at >= ${dayStart} AND published_at <= ${dayEnd} ${sourceFilterPlain}
+      GROUP BY kw ORDER BY count DESC LIMIT 1
+    `);
+
+    const currentSentimentRows = await db.execute(sql`
+      SELECT
+        COUNT(*) FILTER (WHERE sentiment_label = 'positive')::int as positive,
+        COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
+        COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
+      FROM articles
+      WHERE published_at >= ${dayStart} AND published_at <= ${dayEnd} ${sourceFilterPlain}
+    `);
+
+    const prevSentimentRows = await db.execute(sql`
+      SELECT
+        COUNT(*) FILTER (WHERE sentiment_label = 'positive')::int as positive,
+        COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
+        COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
+      FROM articles
+      WHERE published_at >= ${prevDayStart} AND published_at < ${dayStart} ${sourceFilterPlain}
+    `);
+
+    const spikeRows = await db.execute(sql`
+      SELECT s.name as "sourceName",
+        COUNT(*) FILTER (WHERE a.published_at >= ${dayStart} AND a.published_at <= ${dayEnd})::int as "todayCount",
+        COUNT(*) FILTER (WHERE a.published_at >= ${prevDayStart} AND a.published_at < ${dayStart})::int as "yesterdayCount"
+      FROM articles a
+      JOIN sources s ON a.source_id = s.id
+      WHERE a.published_at >= ${prevDayStart} AND a.published_at <= ${dayEnd} ${sourceFilter}
+      GROUP BY s.name
+      HAVING COUNT(*) FILTER (WHERE a.published_at >= ${dayStart} AND a.published_at <= ${dayEnd}) > 0
+      ORDER BY "todayCount" DESC
+      LIMIT 1
+    `);
+
+    const currentSent = currentSentimentRows.rows[0] as any || { positive: 0, negative: 0, neutral: 0 };
+    const prevSent = prevSentimentRows.rows[0] as any || { positive: 0, negative: 0, neutral: 0 };
+    const spikeRow = spikeRows.rows[0] as any;
+
+    return {
+      date,
+      topStories: (topStoriesRows.rows as any[]).map(r => ({
+        title: String(r.title || ""),
+        url: String(r.url || ""),
+        sourceName: String(r.sourceName || ""),
+        sentiment: String(r.sentiment || "neutral"),
+      })),
+      biggestTopic: String((topicRows.rows[0] as any)?.topic || ""),
+      sentimentShift: {
+        previous: { positive: Number(prevSent.positive), negative: Number(prevSent.negative), neutral: Number(prevSent.neutral) },
+        current: { positive: Number(currentSent.positive), negative: Number(currentSent.negative), neutral: Number(currentSent.neutral) },
+      },
+      sourceSpike: spikeRow ? {
+        sourceName: String(spikeRow.sourceName),
+        count: Number(spikeRow.todayCount),
+        avgCount: Number(spikeRow.yesterdayCount),
+      } : null,
+    };
+  }
+
+  async getKeywordDetail(keyword: string, startDate: string, endDate: string, sourceIds?: number[]) {
+    if (sourceIds !== undefined && sourceIds.length === 0) {
+      return { keyword, frequency: [], topSources: [], sentiment: { positive: 0, negative: 0, neutral: 0 }, headlines: [] };
+    }
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const sourceFilter = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilterPlain = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+
+    const freqRows = await db.execute(sql`
+      SELECT TO_CHAR(published_at, 'YYYY-MM-DD') as date, COUNT(*)::int as count
+      FROM articles
+      WHERE keywords IS NOT NULL AND ${keyword} = ANY(keywords)
+        AND published_at >= ${start} AND published_at <= ${end} ${sourceFilterPlain}
+      GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
+      ORDER BY date ASC
+    `);
+
+    const sourceRows = await db.execute(sql`
+      SELECT s.name as "sourceName", COUNT(*)::int as count
+      FROM articles a
+      JOIN sources s ON a.source_id = s.id
+      WHERE a.keywords IS NOT NULL AND ${keyword} = ANY(a.keywords)
+        AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilter}
+      GROUP BY s.name
+      ORDER BY count DESC
+      LIMIT 10
+    `);
+
+    const sentimentRows = await db.execute(sql`
+      SELECT
+        COUNT(*) FILTER (WHERE sentiment_label = 'positive')::int as positive,
+        COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
+        COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
+      FROM articles
+      WHERE keywords IS NOT NULL AND ${keyword} = ANY(keywords)
+        AND published_at >= ${start} AND published_at <= ${end} ${sourceFilterPlain}
+    `);
+
+    const headlineRows = await db.execute(sql`
+      SELECT a.title, a.url, s.name as "sourceName", a.published_at as "publishedAt", a.sentiment_label as sentiment
+      FROM articles a
+      JOIN sources s ON a.source_id = s.id
+      WHERE a.keywords IS NOT NULL AND ${keyword} = ANY(a.keywords)
+        AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilter}
+      ORDER BY a.published_at DESC
+      LIMIT 20
+    `);
+
+    const sent = sentimentRows.rows[0] as any || { positive: 0, negative: 0, neutral: 0 };
+
+    return {
+      keyword,
+      frequency: (freqRows.rows as any[]).map(r => ({ date: String(r.date), count: Number(r.count) })),
+      topSources: (sourceRows.rows as any[]).map(r => ({ sourceName: String(r.sourceName), count: Number(r.count) })),
+      sentiment: { positive: Number(sent.positive), negative: Number(sent.negative), neutral: Number(sent.neutral) },
+      headlines: (headlineRows.rows as any[]).map(r => ({
+        title: String(r.title || ""),
+        url: String(r.url || ""),
+        sourceName: String(r.sourceName || ""),
+        publishedAt: String(r.publishedAt || ""),
+        sentiment: String(r.sentiment || "neutral"),
       })),
     };
   }

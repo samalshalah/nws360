@@ -1,0 +1,182 @@
+Here is your Phase 3 — Analytics (Where NWS360 Creates Real Value) prompt. It is written in a precise, implementation-ready way so you can paste it directly into Replit, assuming Phases 1 and 2 are in place.
+
+This phase is where your platform stops being “a news viewer” and starts behaving like an intelligence system.
+
+PHASE 3 — ANALYTICS PROMPT (PASTE THIS)
+
+Add a robust, real-time analytics layer to NWS360 that turns stored articles into actionable intelligence through dashboards, trends, sentiment, and client-specific insights.
+
+1) Core Analytics Dashboard (Main Page)
+
+Create a dedicated /analytics page with four primary visualizations:
+
+A. News Volume Over Time
+
+Line chart showing number of articles per hour (last 24h) and per day (last 30 days).
+
+Detect and label significant spikes automatically:
+
+If volume increases by more than 2x the previous period, mark as “Information Surge.”
+
+Allow filters:
+
+By source type (TV, Social, Web, Influencer)
+
+By country
+
+By topic
+
+API endpoint:
+GET /analytics/volume?from=&to=&source=&country=&topic=
+
+B. Top Sources Ranking
+
+Bar chart ranking sources by number of articles.
+
+Toggle views:
+
+Last 24 hours
+
+Last 7 days
+
+Last 30 days
+
+Clicking a source should open a filtered article list for that source.
+
+API endpoint:
+GET /analytics/top-sources?from=&to=
+
+C. Trending Topics
+
+Dynamic visualization:
+
+Either a word cloud or ranked list.
+
+Topics must be generated from your standardized topics field in the database.
+
+Clicking a topic should:
+
+Filter the news feed to show only related articles.
+
+Update all other analytics widgets to reflect that topic.
+
+API endpoint:
+GET /analytics/trending-topics?from=&to=
+
+D. Sentiment Overview
+
+Stacked bar or pie chart showing:
+
+Positive / Neutral / Negative article distribution.
+
+Allow comparison by:
+
+Source
+
+Country
+
+Topic
+
+API endpoint:
+GET /analytics/sentiment?from=&to=&source=&country=&topic=
+
+2) Keyword Tracking Panel (Client Value Driver)
+
+Create a /keywords analytics section where each client can monitor their chosen terms.
+
+For each tracked keyword, display:
+
+Frequency over time (line chart).
+
+Top sources mentioning the keyword.
+
+Sentiment breakdown around that keyword.
+
+Sample headlines where the keyword appears.
+
+API endpoints:
+
+GET /analytics/keywords?client_id=&from=&to=
+
+GET /analytics/keyword-details?keyword=&from=&to=
+
+3) Narrative Comparison (Source Framing)
+
+Add a comparison view where users can analyze how different sources frame the same topic.
+
+Functionality:
+
+Select a topic (e.g., “Economy”).
+
+Show side-by-side sentiment bars for:
+
+Top 5 sources covering that topic.
+
+Highlight contrasting framing:
+
+If one source is mostly negative while another is mostly positive, visually emphasize the difference.
+
+API endpoint:
+GET /analytics/narrative-comparison?topic=&from=&to=
+
+4) Automated Daily Brief (AI Summary)
+
+Every morning, generate an AI-powered report that includes:
+
+Top 5 stories of the day.
+
+Biggest trending topic.
+
+Largest sentiment shift compared to the previous day.
+
+Biggest source activity spike.
+
+Delivery:
+
+Display as a dashboard card.
+
+Allow download as a PDF.
+
+Optionally send via email to selected clients.
+
+Backend task:
+
+Run this as a scheduled job once per day.
+
+API endpoint:
+GET /analytics/daily-brief?date=
+
+5) Real-Time Alerts (Optional but Powerful)
+
+Allow users to set alerts such as:
+
+Notify me when:
+
+A keyword spikes by 150%.
+
+Sentiment shifts sharply negative.
+
+A new source suddenly becomes highly active.
+
+Store alerts in a table:
+user_alerts (user_id, condition, threshold, notification_method)
+
+6) Performance & Data Strategy
+
+To keep analytics fast:
+
+Precompute analytics every 15 minutes and cache results.
+
+Store historical trends separately from raw articles.
+
+Avoid calculating everything on every page load.
+
+Create background job:
+analytics-worker.ts
+Which:
+
+Aggregates data
+
+Updates cached dashboards
+
+Stores historical metrics.

@@ -503,6 +503,57 @@ export async function registerRoutes(
     res.json(data);
   });
 
+  app.get("/api/analytics/narrative-comparison", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
+    const topic = req.query.topic as string;
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
+    if (!topic || typeof topic !== "string" || topic.trim().length === 0) return res.status(400).json({ message: "topic is required" });
+    if (!startDate || !endDate || isNaN(Date.parse(startDate)) || isNaN(Date.parse(endDate))) return res.status(400).json({ message: "valid startDate and endDate required" });
+    try {
+      const data = await storage.getNarrativeComparison(topic.trim(), startDate, endDate, scopedSourceIds);
+      res.json(data);
+    } catch (e: any) {
+      console.error("Narrative comparison error:", e.message);
+      res.status(500).json({ message: "Failed to fetch narrative comparison" });
+    }
+  });
+
+  app.get("/api/analytics/daily-brief", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
+    const dateStr = (req.query.date as string) || new Date().toISOString().split("T")[0];
+    if (isNaN(Date.parse(dateStr))) return res.status(400).json({ message: "valid date required" });
+    try {
+      const data = await storage.getDailyBrief(dateStr, scopedSourceIds);
+      res.json(data);
+    } catch (e: any) {
+      console.error("Daily brief error:", e.message);
+      res.status(500).json({ message: "Failed to fetch daily brief" });
+    }
+  });
+
+  app.get("/api/analytics/keyword-detail", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
+    const keyword = req.query.keyword as string;
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
+    if (!keyword || typeof keyword !== "string" || keyword.trim().length === 0) return res.status(400).json({ message: "keyword is required" });
+    if (!startDate || !endDate || isNaN(Date.parse(startDate)) || isNaN(Date.parse(endDate))) return res.status(400).json({ message: "valid startDate and endDate required" });
+    try {
+      const data = await storage.getKeywordDetail(keyword.trim(), startDate, endDate, scopedSourceIds);
+      res.json(data);
+    } catch (e: any) {
+      console.error("Keyword detail error:", e.message);
+      res.status(500).json({ message: "Failed to fetch keyword detail" });
+    }
+  });
+
   // === BOOKMARKS ===
   app.get("/api/bookmarks", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);

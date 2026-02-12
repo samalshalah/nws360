@@ -24,6 +24,9 @@ import SentimentReports from "@/pages/analytics/SentimentReports";
 import SourceBehavior from "@/pages/analytics/SourceBehavior";
 import CustomReports from "@/pages/analytics/CustomReports";
 import NetworkMapping from "@/pages/analytics/NetworkMapping";
+import NarrativeComparison from "@/pages/analytics/NarrativeComparison";
+import DailyBrief from "@/pages/analytics/DailyBrief";
+import KeywordDetail from "@/pages/analytics/KeywordDetail";
 import Admin from "@/pages/Admin";
 import Saved from "@/pages/Saved";
 import UserManagement from "@/pages/UserManagement";
@@ -108,6 +111,15 @@ function Router() {
       </Route>
       <Route path="/analytics/network-mapping">
         <ProtectedRoute component={NetworkMapping} />
+      </Route>
+      <Route path="/analytics/narrative-comparison">
+        <ProtectedRoute component={NarrativeComparison} />
+      </Route>
+      <Route path="/analytics/daily-brief">
+        <ProtectedRoute component={DailyBrief} />
+      </Route>
+      <Route path="/analytics/keyword-detail">
+        <ProtectedRoute component={KeywordDetail} />
       </Route>
       <Route path="/sources/add">
         <ProtectedRoute component={() => <Admin tab="add" />} />

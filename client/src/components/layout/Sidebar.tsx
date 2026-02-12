@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash, Menu, Bookmark, Users, Activity } from "lucide-react";
+import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash, Menu, Bookmark, Users, Activity, GitCompare, Zap, Tag } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
@@ -18,6 +18,9 @@ const analyticsSubPages = [
   { key: "sourceBehavior", href: "/analytics/source-behavior", icon: Shield },
   { key: "customReports", href: "/analytics/custom-reports", icon: FileText },
   { key: "networkMapping", href: "/analytics/network-mapping", icon: Network },
+  { key: "narrativeComparison", href: "/analytics/narrative-comparison", icon: GitCompare },
+  { key: "dailyBrief", href: "/analytics/daily-brief", icon: Zap },
+  { key: "keywordDetail", href: "/analytics/keyword-detail", icon: Tag },
 ];
 
 const sourcesSubPages = [
