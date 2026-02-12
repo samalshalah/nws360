@@ -492,7 +492,8 @@ function SourcesManager() {
     queryFn: async () => {
       const res = await fetch(`/api/articles?sourceId=${viewingSource!.id}&limit=50`);
       if (!res.ok) return [];
-      return res.json();
+      const data = await res.json();
+      return data.items || data;
     },
     enabled: !!viewingSource,
   });
