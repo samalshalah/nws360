@@ -543,11 +543,26 @@ export class DatabaseStorage implements IStorage {
       value: Number(r.count),
     }));
 
+    const topSourceRows = await db.execute(sql`
+      SELECT s.name, COUNT(a.id)::int as count
+      FROM sources s
+      JOIN articles a ON a.source_id = s.id
+      WHERE 1=1 ${sourceIdFilter}
+      GROUP BY s.name
+      ORDER BY count DESC
+      LIMIT 5
+    `);
+    const topSources = (topSourceRows.rows as any[]).map((r: any) => ({
+      name: String(r.name),
+      count: Number(r.count),
+    }));
+
     return {
       totalArticles,
       sourcesCount,
       sentimentDistribution,
       trendingKeywords,
+      topSources,
     };
   }
 

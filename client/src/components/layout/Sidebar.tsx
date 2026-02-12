@@ -8,7 +8,6 @@ import { LanguageSelector } from "@/components/LanguageSelector";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { useIsMobile } from "@/hooks/use-mobile";
 
 const analyticsSubPages = [
   { key: "overview", href: "/analytics", icon: BarChart3 },
@@ -56,7 +55,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </div>
 
-      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+      <nav className="flex-1 p-4 space-y-1 overflow-y-auto" role="navigation" aria-label="Main navigation">
         {topNavItems.map((item) => {
           const isActive = location === item.href;
           return (
@@ -234,15 +233,49 @@ export function MobileHeader() {
 }
 
 export function Sidebar() {
-  const isMobile = useIsMobile();
-
-  if (isMobile) {
-    return null;
-  }
-
   return (
-    <div className="hidden md:flex flex-col w-64 border-r border-border bg-card min-h-screen sticky top-0 h-screen rtl:border-r-0 rtl:border-l">
+    <div className="hidden md:flex flex-col w-60 border-r border-border bg-card min-h-screen sticky top-0 h-screen rtl:border-r-0 rtl:border-l">
       <SidebarContent />
     </div>
+  );
+}
+
+export function MobileBottomNav() {
+  const [location, setLocation] = useLocation();
+  const { t } = useTranslation();
+
+  const tabs = [
+    { name: t("nav.newsFeed"), icon: Newspaper, href: "/feed", testId: "nav-bottom-feed" },
+    { name: t("nav.dashboard"), icon: LayoutDashboard, href: "/", testId: "nav-bottom-dashboard" },
+    { name: t("nav.saved"), icon: Bookmark, href: "/saved", testId: "nav-bottom-saved" },
+    { name: t("nav.analytics"), icon: BarChart3, href: "/analytics", testId: "nav-bottom-analytics" },
+    { name: t("nav.sources"), icon: Settings, href: "/sources/add", testId: "nav-bottom-sources" },
+  ];
+
+  return (
+    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border" style={{ height: 64, paddingBottom: "env(safe-area-inset-bottom)" }} role="navigation" aria-label="Mobile navigation">
+      <div className="flex items-center justify-around h-16">
+        {tabs.map((tab) => {
+          const isActive = location === tab.href || (tab.href === "/feed" && location.startsWith("/feed"));
+
+          return (
+            <button
+              key={tab.testId}
+              data-testid={tab.testId}
+              aria-label={tab.name}
+              aria-current={isActive ? "page" : undefined}
+              onClick={() => setLocation(tab.href)}
+              className={cn(
+                "flex flex-col items-center justify-center gap-1 min-w-[44px] min-h-[44px] px-2 py-1 rounded-lg transition-colors",
+                isActive ? "text-primary" : "text-muted-foreground"
+              )}
+            >
+              <tab.icon className="w-5 h-5" />
+              <span className="text-[10px] font-medium leading-none">{tab.name}</span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
   );
 }

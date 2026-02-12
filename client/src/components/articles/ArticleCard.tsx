@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { formatDistanceToNow } from "date-fns";
 import { ExternalLink, Calendar, Newspaper, Rss, Globe, Send, Youtube, Facebook, Instagram, Twitter, Bookmark, Share2 } from "lucide-react";
@@ -68,6 +69,7 @@ function getPublisherDomain(publisher: string): string | null {
 export function ArticleCard({ article, selected, onToggleSelect }: ArticleCardProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [imgError, setImgError] = useState(false);
 
   const { data: bookmarkedIds = [] } = useQuery<number[]>({
@@ -173,10 +175,18 @@ export function ArticleCard({ article, selected, onToggleSelect }: ArticleCardPr
               <>
                 <span className="font-semibold text-foreground/80" data-testid={`text-subsource-${article.id}`}>{article.subSource}</span>
                 <span className="text-muted-foreground/40" data-testid={`text-via-${article.id}`}>{t("common.via")}</span>
-                <span data-testid={`text-source-${article.id}`}>{article.source?.name || t("common.noResults")}</span>
+                <button
+                  className="hover:text-primary hover:underline transition-colors cursor-pointer"
+                  onClick={(e) => { e.stopPropagation(); if (article.sourceId) setLocation(`/feed?sourceId=${article.sourceId}`); }}
+                  data-testid={`text-source-${article.id}`}
+                >{article.source?.name || t("common.noResults")}</button>
               </>
             ) : (
-              <span data-testid={`text-source-${article.id}`}>{article.source?.name || t("common.noResults")}</span>
+              <button
+                className="hover:text-primary hover:underline transition-colors cursor-pointer"
+                onClick={(e) => { e.stopPropagation(); if (article.sourceId) setLocation(`/feed?sourceId=${article.sourceId}`); }}
+                data-testid={`text-source-${article.id}`}
+              >{article.source?.name || t("common.noResults")}</button>
             )}
             <span className="text-muted-foreground/60">
               {article.source?.type ? t(`feed.sourceTypes.${article.source.type}`) : ""}

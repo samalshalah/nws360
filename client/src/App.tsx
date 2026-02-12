@@ -4,7 +4,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
-import { Sidebar, MobileHeader } from "@/components/layout/Sidebar";
+import { Sidebar, MobileBottomNav, MobileHeader } from "@/components/layout/Sidebar";
+import { RightPanel } from "@/components/layout/RightPanel";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useEffect } from "react";
@@ -31,7 +32,7 @@ import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, ...rest }: { component: any, path?: string }) {
   const { user, isLoading } = useAuth();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
 
   if (isLoading) {
     return (
@@ -46,18 +47,26 @@ function ProtectedRoute({ component: Component, ...rest }: { component: any, pat
     return null;
   }
 
+  const showRightPanel = location === "/" || location === "/feed" || location.startsWith("/feed?");
+
   return (
-    <div className="flex h-screen bg-muted/10">
+    <div className="flex h-screen bg-background">
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0 h-screen">
         <MobileHeader />
         <BreakingNewsBanner />
-        <main className="flex-1 p-4 md:p-8 overflow-y-auto min-h-0">
-          <div className="max-w-7xl mx-auto pb-10">
+        <main className="flex-1 overflow-y-auto min-h-0 pb-16 md:pb-0">
+          <div className="max-w-7xl mx-auto p-4 md:p-6">
             <Component />
           </div>
         </main>
       </div>
+      {showRightPanel && (
+        <div className="hidden lg:flex flex-col w-72 border-l border-border bg-card h-screen sticky top-0 overflow-y-auto rtl:border-l-0 rtl:border-r">
+          <RightPanel />
+        </div>
+      )}
+      <MobileBottomNav />
     </div>
   );
 }

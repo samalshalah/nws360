@@ -601,6 +601,9 @@ export async function registerRoutes(
     try {
       const user = req.user as any;
       const scopedSourceIds = await getUserSourceIds(user);
+      if (Array.isArray(scopedSourceIds) && scopedSourceIds.length === 0) {
+        return res.json([]);
+      }
       const since = req.query.since as string;
       const result = await storage.getArticles({
         category: "urgent",

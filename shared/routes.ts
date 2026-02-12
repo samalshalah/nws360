@@ -165,6 +165,10 @@ export const api = {
             text: z.string(),
             value: z.number(),
           })),
+          topSources: z.array(z.object({
+            name: z.string(),
+            count: z.number(),
+          })).optional(),
         }),
       },
     },

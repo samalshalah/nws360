@@ -1,0 +1,169 @@
+Improve user experience, navigation clarity, and mobile usability of the NWS360 frontend while keeping performance fast and simple.
+
+1) Adopt a Clear Dashboard Layout (Core Structure)
+
+Refactor the main application layout into three persistent zones:
+
+Desktop layout:
+
+Left Sidebar (Navigation)
+
+Menu items:
+
+Home (News Feed)
+
+Analytics
+
+Search
+
+Clients
+
+Admin (admin-only)
+
+Collapsible on smaller screens.
+
+Center Panel (Primary Content)
+
+Default view = real-time news feed.
+
+Each article displayed as a card:
+
+Title
+
+Source + source type (TV / Social / Web / Influencer)
+
+Timestamp (published_at)
+
+Short summary
+
+Language tag
+
+Right Panel (Mini Analytics)
+
+Always-visible mini widgets:
+
+Top 5 trending topics (clickable)
+
+News volume sparkline (last 24 hours)
+
+Top 3 sources by volume.
+
+2) Mobile-First Redesign
+
+On screens below 768px width:
+
+Replace sidebar with a bottom navigation bar:
+
+Home | Analytics | Search | Admin
+
+Convert all tables into card-based layouts.
+
+Ensure:
+
+Text remains readable without zooming.
+
+Charts scale properly to fit small screens.
+
+Buttons are large enough for touch interaction (minimum 44px height).
+
+3) Simplify Filtering (Human-Friendly Controls)
+
+Replace complex dropdowns with intuitive filters:
+
+At the top of the news feed:
+
+Source type pills:
+
+All | TV | Social | Web | Influencers
+
+Time range pills:
+
+24h | 7d | 30d | Custom
+
+Country selector:
+
+Dropdown with flags where available.
+
+All filters must update results instantly via API:
+GET /articles?source=&country=&from=&to=&topic=
+
+4) Smart Search (Universal Search Bar)
+
+Implement a single global search bar that:
+
+Searches across:
+
+Titles
+
+Content
+
+Keywords
+
+Source names
+
+Provides auto-suggestions while typing:
+
+Trending terms
+
+Recently searched keywords
+
+Matching article titles
+
+API endpoint:
+GET /articles?search=
+
+5) Faster UI Performance
+
+Ensure:
+
+All heavy computations remain in the backend.
+
+Frontend only renders pre-processed data.
+
+Use pagination or infinite scroll for the news feed:
+
+Load 20 articles at a time.
+
+Fetch more when scrolling.
+
+6) Visual Consistency
+
+Apply a unified design system:
+
+Use consistent:
+
+Fonts
+
+Spacing
+
+Card styles
+
+Button styles
+
+Implement:
+
+Light mode
+
+Dark mode (toggle in user settings)
+
+7) Click-to-Explore Behavior
+
+Make the UI more interactive:
+
+Clicking a trending topic:
+
+Opens a filtered view showing only related articles.
+
+Clicking a source name:
+
+Shows all recent articles from that source.
+
+8) Accessibility Basics
+
+Ensure:
+
+Proper contrast ratios.
+
+Keyboard navigation support.
+
+Screen reader-friendly labels on major elements.
