@@ -553,6 +553,8 @@ async function fetchWithRetry(source: any): Promise<{ newArticles: number; retri
   throw lastError || new Error("All retries exhausted");
 }
 
+const AUTO_PAUSE_THRESHOLD = 5;
+
 export async function fetchSourceFeed(sourceId: number): Promise<number> {
   const source = await storage.getSource(sourceId);
   if (!source) throw new Error(`Source ${sourceId} not found`);
@@ -587,7 +589,22 @@ export async function fetchSourceFeed(sourceId: number): Promise<number> {
       durationMs,
       pipelineStep: "fetch",
     });
-    console.error(`[Worker] FAILED | source=${source.name} | error=${errorMsg} | retries=${MAX_RETRIES} | duration=${durationMs}ms`);
+
+    try {
+      const failures = await storage.getConsecutiveFailureCount(sourceId);
+      if (failures >= AUTO_PAUSE_THRESHOLD) {
+        console.warn(`[Worker] AUTO-PAUSE | source=${source.name} | consecutive failures=${failures} — deactivating source`);
+        await storage.updateSource(sourceId, { active: false });
+        try {
+          const { logSystemError } = await import("./processing-queue");
+          await logSystemError("feed-worker", `Source "${source.name}" auto-paused after ${failures} consecutive failures. Last error: ${errorMsg.substring(0, 200)}`, "warning", sourceId);
+        } catch {}
+      }
+      console.error(`[Worker] FAILED | source=${source.name} | error=${errorMsg} | retries=${MAX_RETRIES} | duration=${durationMs}ms | consecutive=${failures}`);
+    } catch {
+      console.error(`[Worker] FAILED | source=${source.name} | error=${errorMsg} | retries=${MAX_RETRIES} | duration=${durationMs}ms`);
+    }
+
     throw err;
   }
 }

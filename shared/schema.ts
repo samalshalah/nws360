@@ -218,6 +218,31 @@ export const analyticsCache = pgTable("analytics_cache", {
 
 export const insertAnalyticsCacheSchema = createInsertSchema(analyticsCache).omit({ id: true, computedAt: true });
 
+// === FEATURE FLAGS ===
+export const featureFlags = pgTable("feature_flags", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  enabled: boolean("enabled").default(false),
+  description: text("description"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertFeatureFlagSchema = createInsertSchema(featureFlags).omit({ id: true, updatedAt: true });
+
+// === USAGE METRICS ===
+export const usageMetrics = pgTable("usage_metrics", {
+  id: serial("id").primaryKey(),
+  event: text("event").notNull(),
+  userId: integer("user_id"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_usage_event").on(table.event),
+  index("idx_usage_created").on(table.createdAt),
+]);
+
+export const insertUsageMetricSchema = createInsertSchema(usageMetrics).omit({ id: true, createdAt: true });
+
 // === INDEXES for existing tables ===
 // These are added via SQL migration since Drizzle doesn't support adding indexes to existing table definitions inline
 
@@ -275,6 +300,12 @@ export type InsertApiKey = z.infer<typeof insertApiKeySchema>;
 
 export type AnalyticsCache = typeof analyticsCache.$inferSelect;
 export type InsertAnalyticsCache = z.infer<typeof insertAnalyticsCacheSchema>;
+
+export type FeatureFlag = typeof featureFlags.$inferSelect;
+export type InsertFeatureFlag = z.infer<typeof insertFeatureFlagSchema>;
+
+export type UsageMetric = typeof usageMetrics.$inferSelect;
+export type InsertUsageMetric = z.infer<typeof insertUsageMetricSchema>;
 
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;

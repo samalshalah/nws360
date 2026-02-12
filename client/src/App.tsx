@@ -32,6 +32,7 @@ import AdminDashboard from "@/pages/AdminDashboard";
 import Saved from "@/pages/Saved";
 import UserManagement from "@/pages/UserManagement";
 import SourceHealth from "@/pages/SourceHealth";
+import OpsDashboard from "@/pages/OpsDashboard";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, ...rest }: { component: any, path?: string }) {
@@ -139,6 +140,9 @@ function Router() {
       </Route>
       <Route path="/admin/dashboard">
         <ProtectedRoute component={AdminDashboard} />
+      </Route>
+      <Route path="/admin/ops">
+        <ProtectedRoute component={OpsDashboard} />
       </Route>
       <Route path="/admin">
         <ProtectedRoute component={Admin} />

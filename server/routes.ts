@@ -8,7 +8,7 @@ import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI } from "
 import { openai } from "./replit_integrations/image/client";
 import { db } from "./db";
 import { articles } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
 import sanitizeHtml from "sanitize-html";
 import { scrypt, randomBytes, createHash } from "crypto";
@@ -1244,6 +1244,187 @@ export async function registerRoutes(
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const data = await storage.getKeywordAnalysis(sevenDaysAgo.toISOString(), now.toISOString());
     res.json(data);
+  });
+
+  // === HEALTH CHECK ENDPOINTS (unauthenticated for monitoring) ===
+  const workerState = { lastRun: null as Date | null, isRunning: true, startedAt: new Date() };
+
+  app.get("/api/status", async (_req, res) => {
+    try {
+      await db.execute(sql`SELECT 1`);
+      const queueStats = await getQueueStats();
+      const dbHealthy = true;
+      const queueHealthy = (queueStats.failed || 0) < 50;
+      const workerHealthy = workerState.isRunning;
+      const overall = dbHealthy && queueHealthy && workerHealthy ? "healthy" : "degraded";
+      res.json({
+        status: overall,
+        uptime: Math.floor((Date.now() - workerState.startedAt.getTime()) / 1000),
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || "development",
+        components: {
+          database: dbHealthy ? "healthy" : "failed",
+          workers: workerHealthy ? "healthy" : "degraded",
+          queue: queueHealthy ? "healthy" : "degraded",
+        },
+      });
+    } catch (e) {
+      res.status(503).json({ status: "failed", error: "System health check failed" });
+    }
+  });
+
+  app.get("/api/status/database", async (_req, res) => {
+    try {
+      const start = Date.now();
+      await db.execute(sql`SELECT 1`);
+      const latencyMs = Date.now() - start;
+      const tableStats = await db.execute(sql`SELECT 
+        (SELECT count(*) FROM articles) as articles_count,
+        (SELECT count(*) FROM sources) as sources_count,
+        (SELECT count(*) FROM users) as users_count`);
+      res.json({
+        status: "healthy",
+        latencyMs,
+        tables: tableStats.rows?.[0] || {},
+      });
+    } catch (e) {
+      res.status(503).json({ status: "failed", error: "Database unreachable" });
+    }
+  });
+
+  app.get("/api/status/workers", async (_req, res) => {
+    try {
+      const health = await storage.getSystemHealth();
+      res.json({
+        status: workerState.isRunning ? "healthy" : "degraded",
+        feedWorker: {
+          lastRun: health.lastWorkerRun,
+          avgProcessingTimeMs: health.avgProcessingTime,
+          failedSources: health.failedSourcesCount,
+        },
+        uptime: Math.floor((Date.now() - workerState.startedAt.getTime()) / 1000),
+      });
+    } catch (e) {
+      res.status(503).json({ status: "failed", error: "Worker status unavailable" });
+    }
+  });
+
+  app.get("/api/status/queue", async (_req, res) => {
+    try {
+      const stats = await getQueueStats();
+      const healthy = (stats.failed || 0) < 50;
+      res.json({
+        status: healthy ? "healthy" : "degraded",
+        ...stats,
+      });
+    } catch (e) {
+      res.status(503).json({ status: "failed", error: "Queue status unavailable" });
+    }
+  });
+
+  // === ADMIN: FEATURE FLAGS ===
+  app.get("/api/admin/feature-flags", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const flags = await storage.getFeatureFlags();
+    res.json(flags);
+  });
+
+  const featureFlagSchema = z.object({
+    key: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_.-]+$/, "Key must be alphanumeric with underscores, dots, or hyphens"),
+    enabled: z.boolean().default(false),
+    description: z.string().max(500).optional(),
+  });
+
+  app.post("/api/admin/feature-flags", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const parsed = featureFlagSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const { key, enabled, description } = parsed.data;
+    const flag = await storage.upsertFeatureFlag(sanitizeInput(key), enabled, description ? sanitizeInput(description) : undefined);
+    await storage.createAuditLog({ userId: user.id, action: "upsert", entity: "feature_flag", entityId: flag.id, details: `Feature flag '${key}' set to ${enabled}` });
+    res.json(flag);
+  });
+
+  app.delete("/api/admin/feature-flags/:id", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    await storage.deleteFeatureFlag(id);
+    await storage.createAuditLog({ userId: user.id, action: "delete", entity: "feature_flag", entityId: id, details: `Deleted feature flag #${id}` });
+    res.sendStatus(204);
+  });
+
+  app.get("/api/feature-flags", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const flags = await storage.getFeatureFlags();
+    const flagMap: Record<string, boolean> = {};
+    for (const f of flags) flagMap[f.key] = f.enabled ?? false;
+    res.json(flagMap);
+  });
+
+  // === ADMIN: USAGE METRICS ===
+  app.get("/api/admin/usage-metrics", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const metrics = await storage.getUsageMetrics({
+      event: req.query.event as string,
+      startDate: req.query.startDate as string,
+      endDate: req.query.endDate as string,
+      limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+    });
+    res.json(metrics);
+  });
+
+  app.get("/api/admin/usage-summary", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const days = req.query.days ? parseInt(req.query.days as string) : 7;
+    const summary = await storage.getUsageSummary(days);
+    res.json(summary);
+  });
+
+  // === ADMIN: OPS DOCUMENTATION ===
+  app.get("/api/admin/docs", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    res.json({
+      architecture: {
+        overview: "NWS360 is a full-stack news aggregation platform with AI-powered analysis.",
+        stack: "React + Vite frontend, Express.js backend, PostgreSQL (Neon) database, OpenAI for AI analysis.",
+        workers: [
+          { name: "Feed Worker", schedule: "Priority-based (5/10/15 min)", file: "server/feed-worker.ts" },
+          { name: "Analytics Worker", schedule: "Every 15 minutes", file: "server/analytics-worker.ts" },
+          { name: "Data Retention Worker", schedule: "Every 24 hours", file: "server/data-retention-worker.ts" },
+          { name: "Processing Queue", schedule: "5-second polling", file: "server/processing-queue.ts" },
+        ],
+      },
+      ingestion: {
+        pipeline: "FETCH → CLEAN → STRUCTURE → ANALYZE → STORE",
+        supported: ["RSS/Atom feeds", "Websites (auto RSS discovery)", "YouTube", "Facebook", "Instagram", "Twitter/X", "Telegram", "Google News"],
+        deduplication: "By article URL",
+        retry: "Up to 3 retries with exponential backoff",
+      },
+      analytics: {
+        types: ["Content Volume", "Trending Topics", "Sentiment Reports", "Source Behavior", "Keyword Analysis", "Narrative Comparison", "Daily Brief"],
+        caching: "Pre-computed metrics for 7-day and 30-day periods, refreshed every 15 minutes",
+      },
+      recovery: {
+        database: "Neon PostgreSQL provides automatic point-in-time recovery. Use Replit's checkpoint system for rollback.",
+        workers: "Workers auto-restart on failure. Sources with 5+ consecutive failures are auto-paused.",
+        queue: "Failed jobs retry with exponential backoff (max 3 attempts). Admin can requeue failed jobs.",
+      },
+      healthChecks: {
+        endpoints: [
+          { path: "/api/status", description: "Overall system health" },
+          { path: "/api/status/database", description: "Database connectivity and stats" },
+          { path: "/api/status/workers", description: "Worker health and metrics" },
+          { path: "/api/status/queue", description: "Processing queue status" },
+        ],
+      },
+      featureFlags: {
+        description: "Toggle features without redeploying. Admin can create/update/delete flags via /api/admin/feature-flags.",
+        usage: "Frontend fetches flags from /api/feature-flags and gates UI components.",
+      },
+    });
   });
 
   // === SEED & START WORKERS ===

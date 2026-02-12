@@ -108,6 +108,7 @@ export function setupAuth(app: Express) {
       req.login(user, (err) => {
         if (err) return next(err);
         res.json(user);
+        storage.trackUsage("login", user.id).catch(() => {});
         setTimeout(() => {
           fetchAllFeeds().catch((e) =>
             console.error("[Login] Background fetch-all failed:", e)

@@ -185,21 +185,38 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         )}
 
         {user && (user as any).role === "admin" && (
-          <Link href="/admin/dashboard">
-            <div
-              onClick={onNavigate}
-              data-testid="nav-admin-dashboard"
-              className={cn(
-                "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
-                location === "/admin/dashboard"
-                  ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
-              )}
-            >
-              <Shield className={cn("w-5 h-5", location === "/admin/dashboard" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
-              {t("nav.adminDashboard", "Admin Dashboard")}
-            </div>
-          </Link>
+          <>
+            <Link href="/admin/dashboard">
+              <div
+                onClick={onNavigate}
+                data-testid="nav-admin-dashboard"
+                className={cn(
+                  "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
+                  location === "/admin/dashboard"
+                    ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
+                )}
+              >
+                <Shield className={cn("w-5 h-5", location === "/admin/dashboard" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
+                {t("nav.adminDashboard", "Admin Dashboard")}
+              </div>
+            </Link>
+            <Link href="/admin/ops">
+              <div
+                onClick={onNavigate}
+                data-testid="nav-ops-dashboard"
+                className={cn(
+                  "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
+                  location === "/admin/ops"
+                    ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
+                )}
+              >
+                <Activity className={cn("w-5 h-5", location === "/admin/ops" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
+                {t("nav.opsDashboard", "Operations")}
+              </div>
+            </Link>
+          </>
         )}
       </nav>
 

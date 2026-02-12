@@ -2,7 +2,7 @@ import { db } from "./db";
 import {
   users, sources, articles, keywords, bookmarks, sourceFetchLogs,
   clients, clientKeywords, systemSettings, adminAuditLogs,
-  processingJobs, systemErrors, apiKeys,
+  processingJobs, systemErrors, apiKeys, featureFlags, usageMetrics,
   type User, type InsertUser,
   type Source, type InsertSource,
   type Article, type InsertArticle,
@@ -13,9 +13,12 @@ import {
   type ClientKeyword, type InsertClientKeyword,
   type SystemSetting, type InsertSystemSetting,
   type AdminAuditLog, type InsertAdminAuditLog,
+  type FeatureFlag,
   type ArticleQueryParams
 } from "@shared/schema";
 import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
+
+const AUTO_PAUSE_THRESHOLD_DB = 5;
 
 export interface IStorage {
   // Users
@@ -53,6 +56,7 @@ export interface IStorage {
   // Source Fetch Logs / Ingestion Logs
   createFetchLog(log: InsertSourceFetchLog): Promise<SourceFetchLog>;
   getFetchLogs(sourceId: number, limit?: number): Promise<SourceFetchLog[]>;
+  getConsecutiveFailureCount(sourceId: number): Promise<number>;
   getIngestionLogs(params?: { from?: string; to?: string; sourceIds?: number[]; limit?: number; offset?: number }): Promise<{ items: (SourceFetchLog & { sourceName: string })[], total: number }>;
   getSourceHealth(sourceIds?: number[]): Promise<{ sourceId: number; sourceName: string; lastStatus: string; lastError: string | null; successRate: number; totalFetches: number; lastFetchedAt: Date | null }[]>;
 
@@ -195,6 +199,17 @@ export interface IStorage {
   createApiKey(data: any): Promise<any>;
   updateApiKeyLastUsed(id: number): Promise<void>;
   deactivateApiKey(id: number): Promise<void>;
+
+  // Feature Flags
+  getFeatureFlags(): Promise<FeatureFlag[]>;
+  getFeatureFlag(key: string): Promise<FeatureFlag | undefined>;
+  upsertFeatureFlag(key: string, enabled: boolean, description?: string): Promise<FeatureFlag>;
+  deleteFeatureFlag(id: number): Promise<void>;
+
+  // Usage Metrics
+  trackUsage(event: string, userId?: number, metadata?: any): Promise<void>;
+  getUsageMetrics(params?: { event?: string; startDate?: string; endDate?: string; limit?: number }): Promise<{ event: string; count: number; lastOccurred: Date | null }[]>;
+  getUsageSummary(days?: number): Promise<{ dailyActiveUsers: number; totalEvents: number; topEvents: { event: string; count: number }[]; topEndpoints: { event: string; count: number }[] }>;
 
 }
 
@@ -427,6 +442,20 @@ export class DatabaseStorage implements IStorage {
       .where(eq(sourceFetchLogs.sourceId, sourceId))
       .orderBy(desc(sourceFetchLogs.fetchedAt))
       .limit(limit);
+  }
+
+  async getConsecutiveFailureCount(sourceId: number): Promise<number> {
+    const recent = await db.select({ status: sourceFetchLogs.status })
+      .from(sourceFetchLogs)
+      .where(eq(sourceFetchLogs.sourceId, sourceId))
+      .orderBy(desc(sourceFetchLogs.fetchedAt))
+      .limit(AUTO_PAUSE_THRESHOLD_DB);
+    let count = 0;
+    for (const row of recent) {
+      if (row.status === "error") count++;
+      else break;
+    }
+    return count;
   }
 
   async getIngestionLogs(params?: { from?: string; to?: string; sourceIds?: number[]; limit?: number; offset?: number }): Promise<{ items: (SourceFetchLog & { sourceName: string })[], total: number }> {
@@ -1426,6 +1455,92 @@ export class DatabaseStorage implements IStorage {
 
   async deactivateApiKey(id: number) {
     await db.update(apiKeys).set({ active: false }).where(eq(apiKeys.id, id));
+  }
+
+  async getFeatureFlags(): Promise<FeatureFlag[]> {
+    return db.select().from(featureFlags).orderBy(asc(featureFlags.key));
+  }
+
+  async getFeatureFlag(key: string): Promise<FeatureFlag | undefined> {
+    const [flag] = await db.select().from(featureFlags).where(eq(featureFlags.key, key));
+    return flag;
+  }
+
+  async upsertFeatureFlag(key: string, enabled: boolean, description?: string): Promise<FeatureFlag> {
+    const existing = await this.getFeatureFlag(key);
+    if (existing) {
+      const [updated] = await db.update(featureFlags)
+        .set({ enabled, description: description ?? existing.description, updatedAt: new Date() })
+        .where(eq(featureFlags.key, key))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(featureFlags)
+      .values({ key, enabled, description })
+      .returning();
+    return created;
+  }
+
+  async deleteFeatureFlag(id: number): Promise<void> {
+    await db.delete(featureFlags).where(eq(featureFlags.id, id));
+  }
+
+  async trackUsage(event: string, userId?: number, metadata?: any): Promise<void> {
+    await db.insert(usageMetrics).values({ event, userId, metadata });
+  }
+
+  async getUsageMetrics(params?: { event?: string; startDate?: string; endDate?: string; limit?: number }) {
+    const conditions = [];
+    if (params?.event) conditions.push(eq(usageMetrics.event, params.event));
+    if (params?.startDate) conditions.push(gte(usageMetrics.createdAt, new Date(params.startDate)));
+    if (params?.endDate) conditions.push(lte(usageMetrics.createdAt, new Date(params.endDate)));
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    const result = await db.select({
+      event: usageMetrics.event,
+      count: sql<number>`count(*)::int`,
+      lastOccurred: sql<Date>`max(${usageMetrics.createdAt})`,
+    })
+      .from(usageMetrics)
+      .where(whereClause)
+      .groupBy(usageMetrics.event)
+      .orderBy(desc(sql`count(*)`))
+      .limit(params?.limit || 50);
+    return result;
+  }
+
+  async getUsageSummary(days: number = 7) {
+    const since = new Date(Date.now() - days * 86400000);
+    const [dauResult] = await db.select({
+      count: sql<number>`count(distinct ${usageMetrics.userId})::int`,
+    }).from(usageMetrics).where(and(
+      gte(usageMetrics.createdAt, since),
+      isNotNull(usageMetrics.userId)
+    ));
+    const [totalResult] = await db.select({
+      count: sql<number>`count(*)::int`,
+    }).from(usageMetrics).where(gte(usageMetrics.createdAt, since));
+    const topEvents = await db.select({
+      event: usageMetrics.event,
+      count: sql<number>`count(*)::int`,
+    }).from(usageMetrics)
+      .where(gte(usageMetrics.createdAt, since))
+      .groupBy(usageMetrics.event)
+      .orderBy(desc(sql`count(*)`))
+      .limit(10);
+    const topEndpoints = await db.select({
+      event: usageMetrics.event,
+      count: sql<number>`count(*)::int`,
+    }).from(usageMetrics)
+      .where(and(gte(usageMetrics.createdAt, since), sql`${usageMetrics.event} LIKE 'api:%'`))
+      .groupBy(usageMetrics.event)
+      .orderBy(desc(sql`count(*)`))
+      .limit(10);
+    return {
+      dailyActiveUsers: dauResult?.count || 0,
+      totalEvents: totalResult?.count || 0,
+      topEvents,
+      topEndpoints,
+    };
   }
 
 }
