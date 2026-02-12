@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ArrowRight } from "lucide-react";
+import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ArrowRight, ThumbsUp, MessageCircle, Share2 } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
@@ -824,6 +824,25 @@ function SourcesManager() {
                         >
                           {article.sentimentLabel}
                         </Badge>
+                      )}
+                      {(article.engagementLikes != null || article.engagementComments != null || article.engagementShares != null) && (
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                          {article.engagementLikes != null && (
+                            <span className="flex items-center gap-0.5" data-testid={`engagement-likes-${article.id}`}>
+                              <ThumbsUp className="w-3 h-3" /> {article.engagementLikes.toLocaleString()}
+                            </span>
+                          )}
+                          {article.engagementComments != null && (
+                            <span className="flex items-center gap-0.5" data-testid={`engagement-comments-${article.id}`}>
+                              <MessageCircle className="w-3 h-3" /> {article.engagementComments.toLocaleString()}
+                            </span>
+                          )}
+                          {article.engagementShares != null && (
+                            <span className="flex items-center gap-0.5" data-testid={`engagement-shares-${article.id}`}>
+                              <Share2 className="w-3 h-3" /> {article.engagementShares.toLocaleString()}
+                            </span>
+                          )}
+                        </div>
                       )}
                       {article.publishedAt && (
                         <span className="text-[10px] text-muted-foreground">

@@ -81,6 +81,9 @@ export const articles = pgTable("articles", {
   category: text("category"),
   imageUrl: text("image_url"),
   subSource: text("sub_source"),
+  engagementLikes: integer("engagement_likes"),
+  engagementComments: integer("engagement_comments"),
+  engagementShares: integer("engagement_shares"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

@@ -7,6 +7,9 @@ interface ScrapedArticle {
   publishedAt: Date;
   image?: string;
   subSource?: string;
+  engagementLikes?: number;
+  engagementComments?: number;
+  engagementShares?: number;
 }
 
 function resolveUrl(base: string, relative: string): string {
@@ -15,6 +18,17 @@ function resolveUrl(base: string, relative: string): string {
   } catch {
     return relative;
   }
+}
+
+function parseEngagementCount(text: string, pattern: RegExp): number | undefined {
+  const match = text.match(pattern);
+  if (!match) return undefined;
+  let raw = match[1].replace(/,/g, "").toLowerCase();
+  let multiplier = 1;
+  if (raw.endsWith("k")) { multiplier = 1000; raw = raw.slice(0, -1); }
+  else if (raw.endsWith("m")) { multiplier = 1000000; raw = raw.slice(0, -1); }
+  const num = parseFloat(raw);
+  return isNaN(num) ? undefined : Math.round(num * multiplier);
 }
 
 function extractBaseUrl(url: string): string {
@@ -352,12 +366,20 @@ export async function fetchFacebookFeed(input: string): Promise<ScrapedArticle[]
           if (src.startsWith("http") && !src.includes("emoji")) image = src;
         }
 
+        const footerText = $post.text().toLowerCase();
+        const engagementLikes = parseEngagementCount(footerText, /(\d[\d,.]*[km]?)\s*(?:likes?|reactions?|people reacted)/i);
+        const engagementComments = parseEngagementCount(footerText, /(\d[\d,.]*[km]?)\s*comments?/i);
+        const engagementShares = parseEngagementCount(footerText, /(\d[\d,.]*[km]?)\s*shares?/i);
+
         articles.push({
           title: text.substring(0, 200),
           url: postUrl.replace("mbasic.facebook.com", "www.facebook.com"),
           content: text,
           publishedAt: new Date(),
           image,
+          engagementLikes,
+          engagementComments,
+          engagementShares,
         });
       });
 
