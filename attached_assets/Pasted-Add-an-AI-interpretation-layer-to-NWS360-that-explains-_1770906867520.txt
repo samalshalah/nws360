@@ -1,0 +1,181 @@
+Add an AI interpretation layer to NWS360 that explains news activity, detects patterns, summarizes developments, and generates human-readable insights instead of only charts. The goal is decision intelligence, not just data visualization.
+
+1) AI Article Understanding (Semantic Processing)
+
+For each ingested article, generate structured meaning fields:
+
+Add to article processing pipeline:
+
+ai_analysis = {
+  main_topic,
+  subtopics[],
+  entities[] (people, organizations, locations),
+  event_type (political, economic, conflict, social, legal, etc),
+  importance_score (0–100),
+  narrative_summary (2–3 sentences explaining what actually happened)
+}
+
+
+Store in:
+
+article_ai_analysis
+
+
+The system should interpret the article, not paraphrase it.
+
+2) Story Clustering (Group Related Articles Into One Story)
+
+Detect when multiple articles refer to the same real-world event.
+
+Create:
+
+story_clusters(
+  id,
+  main_topic,
+  first_seen,
+  last_updated,
+  importance_score
+)
+
+
+Articles must attach to a cluster:
+
+article.cluster_id
+
+
+Dashboard should show:
+10 articles → 1 story
+
+3) Narrative Detection (How the Same Story Is Framed)
+
+For each story cluster:
+
+Analyze differences between sources:
+
+tone differences
+
+wording patterns
+
+topic emphasis
+
+Generate:
+
+narrative_variations = [
+  {source: A, framing: positive},
+  {source: B, framing: neutral},
+  {source: C, framing: negative}
+]
+
+
+Display as:
+“Coverage Comparison”
+
+4) Automatic Daily Intelligence Brief
+
+Every day generate a real written briefing:
+
+Include:
+
+Major developments
+
+Emerging topics
+
+Shifts in tone
+
+Unexpected activity
+
+This must read like an analyst report, not bullet points.
+
+Store:
+
+daily_briefs(date, content, key_stories[])
+
+5) Event Detection (Important Changes Alert)
+
+Detect unusual situations:
+
+Trigger alerts when:
+
+topic volume increases > 200%
+
+new topic appears suddenly
+
+sentiment sharply changes
+
+new actor repeatedly appears
+
+Store:
+
+detected_events(type, topic, severity, timestamp, explanation)
+
+6) Entity Tracking (People & Organizations)
+
+Track important entities across time:
+
+For each entity:
+
+mention frequency
+
+sentiment trend
+
+related topics
+
+Create page:
+
+/entities/:name
+
+
+Show:
+“how coverage of this entity evolves over time”
+
+7) Conversational Insight Assistant
+
+Add an internal AI query feature:
+
+User can ask:
+
+“Why is this topic trending?”
+
+“What changed today?”
+
+“How is media tone shifting?”
+
+System answers using stored analytics + clusters, not raw web search.
+
+Endpoint:
+
+POST /ai/query
+
+8) Predictive Signals (Early Warnings)
+
+Use historical patterns to estimate:
+
+topic escalation likelihood
+
+attention decay
+
+media amplification probability
+
+Store:
+
+trend_predictions(topic, probability, reasoning)
+
+9) Confidence Indicators
+
+Every AI output must include:
+
+confidence_score
+based_on_article_count
+based_on_source_diversity
+
+
+Users should know how reliable an insight is.
+
+10) Human-Readable Mode (Executive Friendly)
+
+Add toggle:
+
+Analyst Mode → charts & metrics
+Executive Mode → written explanations
+
+Same data, different presentation.

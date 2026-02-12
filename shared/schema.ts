@@ -243,6 +243,135 @@ export const usageMetrics = pgTable("usage_metrics", {
 
 export const insertUsageMetricSchema = createInsertSchema(usageMetrics).omit({ id: true, createdAt: true });
 
+// === STORY CLUSTERS ===
+export const storyClusters = pgTable("story_clusters", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  mainTopic: text("main_topic").notNull(),
+  subtopics: text("subtopics").array(),
+  importanceScore: integer("importance_score").default(50),
+  articleCount: integer("article_count").default(0),
+  sourceCount: integer("source_count").default(0),
+  avgSentiment: integer("avg_sentiment").default(0),
+  narrativeVariations: jsonb("narrative_variations"),
+  firstSeen: timestamp("first_seen").defaultNow(),
+  lastUpdated: timestamp("last_updated").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_cluster_topic").on(table.mainTopic),
+  index("idx_cluster_importance").on(table.importanceScore),
+  index("idx_cluster_last_updated").on(table.lastUpdated),
+]);
+
+export const insertStoryClusterSchema = createInsertSchema(storyClusters).omit({ id: true, createdAt: true });
+
+// === ARTICLE AI ANALYSIS ===
+export const articleAiAnalysis = pgTable("article_ai_analysis", {
+  id: serial("id").primaryKey(),
+  articleId: integer("article_id").references(() => articles.id).notNull(),
+  mainTopic: text("main_topic"),
+  subtopics: text("subtopics").array(),
+  entities: jsonb("entities"),
+  eventType: text("event_type"),
+  importanceScore: integer("importance_score").default(50),
+  narrativeSummary: text("narrative_summary"),
+  clusterId: integer("cluster_id").references(() => storyClusters.id),
+  confidenceScore: integer("confidence_score").default(70),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_ai_analysis_article").on(table.articleId),
+  index("idx_ai_analysis_cluster").on(table.clusterId),
+  index("idx_ai_analysis_event_type").on(table.eventType),
+  index("idx_ai_analysis_importance").on(table.importanceScore),
+]);
+
+export const insertArticleAiAnalysisSchema = createInsertSchema(articleAiAnalysis).omit({ id: true, createdAt: true });
+
+// === DAILY BRIEFS ===
+export const dailyBriefs = pgTable("daily_briefs", {
+  id: serial("id").primaryKey(),
+  date: text("date").notNull().unique(),
+  content: text("content").notNull(),
+  keyStories: jsonb("key_stories"),
+  majorDevelopments: jsonb("major_developments"),
+  emergingTopics: jsonb("emerging_topics"),
+  toneShifts: jsonb("tone_shifts"),
+  articleCount: integer("article_count").default(0),
+  sourceCount: integer("source_count").default(0),
+  confidenceScore: integer("confidence_score").default(70),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_brief_date").on(table.date),
+]);
+
+export const insertDailyBriefSchema = createInsertSchema(dailyBriefs).omit({ id: true, createdAt: true });
+
+// === DETECTED EVENTS ===
+export const detectedEvents = pgTable("detected_events", {
+  id: serial("id").primaryKey(),
+  type: text("type").notNull(),
+  topic: text("topic").notNull(),
+  severity: text("severity").notNull().default("medium"),
+  explanation: text("explanation").notNull(),
+  triggerValue: text("trigger_value"),
+  baselineValue: text("baseline_value"),
+  articleCount: integer("article_count").default(0),
+  sourceCount: integer("source_count").default(0),
+  confidenceScore: integer("confidence_score").default(70),
+  acknowledged: boolean("acknowledged").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_event_type").on(table.type),
+  index("idx_event_severity").on(table.severity),
+  index("idx_event_created").on(table.createdAt),
+]);
+
+export const insertDetectedEventSchema = createInsertSchema(detectedEvents).omit({ id: true, createdAt: true });
+
+// === ENTITY MENTIONS ===
+export const entityMentions = pgTable("entity_mentions", {
+  id: serial("id").primaryKey(),
+  entityName: text("entity_name").notNull(),
+  entityType: text("entity_type").notNull(),
+  articleId: integer("article_id").references(() => articles.id),
+  sourceId: integer("source_id").references(() => sources.id),
+  sentiment: text("sentiment"),
+  sentimentScore: integer("sentiment_score"),
+  context: text("context"),
+  mentionDate: timestamp("mention_date").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_entity_name").on(table.entityName),
+  index("idx_entity_type").on(table.entityType),
+  index("idx_entity_date").on(table.mentionDate),
+  index("idx_entity_article").on(table.articleId),
+]);
+
+export const insertEntityMentionSchema = createInsertSchema(entityMentions).omit({ id: true, createdAt: true });
+
+// === TREND PREDICTIONS ===
+export const trendPredictions = pgTable("trend_predictions", {
+  id: serial("id").primaryKey(),
+  topic: text("topic").notNull(),
+  predictionType: text("prediction_type").notNull(),
+  probability: integer("probability").default(50),
+  reasoning: text("reasoning"),
+  timeframe: text("timeframe"),
+  currentVolume: integer("current_volume"),
+  historicalAvg: integer("historical_avg"),
+  confidenceScore: integer("confidence_score").default(70),
+  basedOnArticleCount: integer("based_on_article_count").default(0),
+  basedOnSourceDiversity: integer("based_on_source_diversity").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  expiresAt: timestamp("expires_at"),
+}, (table) => [
+  index("idx_prediction_topic").on(table.topic),
+  index("idx_prediction_type").on(table.predictionType),
+  index("idx_prediction_created").on(table.createdAt),
+]);
+
+export const insertTrendPredictionSchema = createInsertSchema(trendPredictions).omit({ id: true, createdAt: true });
+
 // === INDEXES for existing tables ===
 // These are added via SQL migration since Drizzle doesn't support adding indexes to existing table definitions inline
 
@@ -306,6 +435,24 @@ export type InsertFeatureFlag = z.infer<typeof insertFeatureFlagSchema>;
 
 export type UsageMetric = typeof usageMetrics.$inferSelect;
 export type InsertUsageMetric = z.infer<typeof insertUsageMetricSchema>;
+
+export type StoryCluster = typeof storyClusters.$inferSelect;
+export type InsertStoryCluster = z.infer<typeof insertStoryClusterSchema>;
+
+export type ArticleAiAnalysis = typeof articleAiAnalysis.$inferSelect;
+export type InsertArticleAiAnalysis = z.infer<typeof insertArticleAiAnalysisSchema>;
+
+export type DailyBrief = typeof dailyBriefs.$inferSelect;
+export type InsertDailyBrief = z.infer<typeof insertDailyBriefSchema>;
+
+export type DetectedEvent = typeof detectedEvents.$inferSelect;
+export type InsertDetectedEvent = z.infer<typeof insertDetectedEventSchema>;
+
+export type EntityMention = typeof entityMentions.$inferSelect;
+export type InsertEntityMention = z.infer<typeof insertEntityMentionSchema>;
+
+export type TrendPrediction = typeof trendPredictions.$inferSelect;
+export type InsertTrendPrediction = z.infer<typeof insertTrendPredictionSchema>;
 
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;

@@ -536,7 +536,7 @@ export async function registerRoutes(
     const dateStr = (req.query.date as string) || new Date().toISOString().split("T")[0];
     if (isNaN(Date.parse(dateStr))) return res.status(400).json({ message: "valid date required" });
     try {
-      const data = await storage.getDailyBrief(dateStr, scopedSourceIds);
+      const data = await storage.getAnalyticsDailyBrief(dateStr, scopedSourceIds);
       res.json(data);
     } catch (e: any) {
       console.error("Daily brief error:", e.message);
@@ -1451,6 +1451,139 @@ export async function registerRoutes(
       console.error("[Retention Worker] Error:", e);
     }
   }, 24 * 60 * 60 * 1000);
+
+  // === AI INTELLIGENCE ROUTES ===
+  const { answerIntelligenceQuery, runIntelligencePipeline, analyzeNarratives } = await import("./ai-intelligence");
+
+  app.get("/api/stories", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+    const clusters = await storage.getStoryClusters({ limit, offset });
+    res.json(clusters);
+  });
+
+  app.get("/api/stories/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const cluster = await storage.getStoryCluster(id);
+    if (!cluster) return res.status(404).json({ message: "Story not found" });
+    const clusterArticles = await storage.getClusterArticles(id);
+    res.json({ ...cluster, articles: clusterArticles });
+  });
+
+  app.post("/api/stories/:id/narratives", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const result = await analyzeNarratives(id);
+    if (!result) return res.status(404).json({ message: "Not enough data for narrative analysis" });
+    res.json(result);
+  });
+
+  app.get("/api/briefs", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
+    const briefs = await storage.getDailyBriefs(limit);
+    res.json(briefs);
+  });
+
+  app.get("/api/briefs/:date", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const brief = await storage.getDailyBrief(req.params.date);
+    if (!brief) return res.status(404).json({ message: "No brief for this date" });
+    res.json(brief);
+  });
+
+  app.get("/api/events", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const events = await storage.getDetectedEvents({
+      type: req.query.type as string,
+      severity: req.query.severity as string,
+      limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+      acknowledged: req.query.acknowledged === "true" ? true : req.query.acknowledged === "false" ? false : undefined,
+    });
+    res.json(events);
+  });
+
+  app.post("/api/events/:id/acknowledge", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    await storage.acknowledgeEvent(id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/entities", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const topEntities = await storage.getTopEntities({
+      limit: req.query.limit ? parseInt(req.query.limit as string) : 30,
+      days: req.query.days ? parseInt(req.query.days as string) : 7,
+      entityType: req.query.type as string,
+    });
+    res.json(topEntities);
+  });
+
+  app.get("/api/entities/:name", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const name = decodeURIComponent(req.params.name);
+    const mentions = await storage.getEntityMentions(name, {
+      limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+      startDate: req.query.startDate as string,
+      endDate: req.query.endDate as string,
+    });
+    const timeline = await storage.getEntityTimeline(name, req.query.days ? parseInt(req.query.days as string) : 30);
+    res.json({ entityName: name, mentions, timeline });
+  });
+
+  app.get("/api/predictions", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const predictions = await storage.getTrendPredictions({
+      topic: req.query.topic as string,
+      limit: req.query.limit ? parseInt(req.query.limit as string) : 20,
+    });
+    res.json(predictions);
+  });
+
+  app.post("/api/ai/query", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const { question } = req.body;
+    if (!question || typeof question !== "string") return res.status(400).json({ message: "Question is required" });
+    const result = await answerIntelligenceQuery(sanitizeInput(question));
+    res.json(result);
+  });
+
+  app.get("/api/articles/:id/analysis", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const analysis = await storage.getArticleAiAnalysis(id);
+    if (!analysis) return res.status(404).json({ message: "No AI analysis available" });
+    res.json(analysis);
+  });
+
+  app.post("/api/admin/run-intelligence", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    runIntelligencePipeline().catch(e => console.error("[Intelligence Pipeline] Error:", e));
+    res.json({ message: "Intelligence pipeline started" });
+  });
+
+  setInterval(async () => {
+    try {
+      await runIntelligencePipeline();
+    } catch (e) {
+      console.error("[Intelligence Pipeline] Scheduled run error:", e);
+    }
+  }, 30 * 60 * 1000);
+
+  setTimeout(async () => {
+    try {
+      await runIntelligencePipeline();
+    } catch (e) {
+      console.error("[Intelligence Pipeline] Initial run error:", e);
+    }
+  }, 60 * 1000);
 
   return httpServer;
 }

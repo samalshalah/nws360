@@ -3,6 +3,7 @@ import {
   users, sources, articles, keywords, bookmarks, sourceFetchLogs,
   clients, clientKeywords, systemSettings, adminAuditLogs,
   processingJobs, systemErrors, apiKeys, featureFlags, usageMetrics,
+  storyClusters, articleAiAnalysis, dailyBriefs, detectedEvents, entityMentions, trendPredictions,
   type User, type InsertUser,
   type Source, type InsertSource,
   type Article, type InsertArticle,
@@ -14,7 +15,13 @@ import {
   type SystemSetting, type InsertSystemSetting,
   type AdminAuditLog, type InsertAdminAuditLog,
   type FeatureFlag,
-  type ArticleQueryParams
+  type ArticleQueryParams,
+  type StoryCluster, type InsertStoryCluster,
+  type ArticleAiAnalysis, type InsertArticleAiAnalysis,
+  type DailyBrief, type InsertDailyBrief,
+  type DetectedEvent, type InsertDetectedEvent,
+  type EntityMention, type InsertEntityMention,
+  type TrendPrediction, type InsertTrendPrediction,
 } from "@shared/schema";
 import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
@@ -133,7 +140,7 @@ export interface IStorage {
     hasContrast: boolean;
   }>;
 
-  getDailyBrief(date: string, sourceIds?: number[]): Promise<{
+  getAnalyticsDailyBrief(date: string, sourceIds?: number[]): Promise<{
     date: string;
     topStories: { title: string; url: string; sourceName: string; sentiment: string }[];
     biggestTopic: string;
@@ -210,6 +217,33 @@ export interface IStorage {
   trackUsage(event: string, userId?: number, metadata?: any): Promise<void>;
   getUsageMetrics(params?: { event?: string; startDate?: string; endDate?: string; limit?: number }): Promise<{ event: string; count: number; lastOccurred: Date | null }[]>;
   getUsageSummary(days?: number): Promise<{ dailyActiveUsers: number; totalEvents: number; topEvents: { event: string; count: number }[]; topEndpoints: { event: string; count: number }[] }>;
+
+  getArticleAiAnalysis(articleId: number): Promise<ArticleAiAnalysis | undefined>;
+  upsertArticleAiAnalysis(data: InsertArticleAiAnalysis): Promise<ArticleAiAnalysis>;
+  getUnanalyzedArticleIds(limit?: number): Promise<number[]>;
+
+  getStoryClusters(params?: { limit?: number; offset?: number }): Promise<StoryCluster[]>;
+  getStoryCluster(id: number): Promise<StoryCluster | undefined>;
+  createStoryCluster(data: InsertStoryCluster): Promise<StoryCluster>;
+  updateStoryCluster(id: number, data: Partial<InsertStoryCluster>): Promise<StoryCluster>;
+  getClusterArticles(clusterId: number): Promise<Article[]>;
+
+  getDailyBriefs(limit?: number): Promise<DailyBrief[]>;
+  getDailyBrief(date: string): Promise<DailyBrief | undefined>;
+  upsertDailyBrief(data: InsertDailyBrief): Promise<DailyBrief>;
+
+  getDetectedEvents(params?: { type?: string; severity?: string; limit?: number; acknowledged?: boolean }): Promise<DetectedEvent[]>;
+  createDetectedEvent(data: InsertDetectedEvent): Promise<DetectedEvent>;
+  acknowledgeEvent(id: number): Promise<void>;
+
+  getEntityMentions(entityName: string, params?: { limit?: number; startDate?: string; endDate?: string }): Promise<EntityMention[]>;
+  createEntityMention(data: InsertEntityMention): Promise<EntityMention>;
+  createEntityMentionsBatch(data: InsertEntityMention[]): Promise<void>;
+  getTopEntities(params?: { limit?: number; days?: number; entityType?: string }): Promise<{ entityName: string; entityType: string; mentionCount: number; avgSentiment: number }[]>;
+  getEntityTimeline(entityName: string, days?: number): Promise<{ date: string; mentionCount: number; avgSentiment: number }[]>;
+
+  getTrendPredictions(params?: { topic?: string; limit?: number }): Promise<TrendPrediction[]>;
+  createTrendPrediction(data: InsertTrendPrediction): Promise<TrendPrediction>;
 
 }
 
@@ -1050,7 +1084,7 @@ export class DatabaseStorage implements IStorage {
     return { topic, sources: sourcesData, hasContrast };
   }
 
-  async getDailyBrief(date: string, sourceIds?: number[]) {
+  async getAnalyticsDailyBrief(date: string, sourceIds?: number[]) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return {
         date,
@@ -1541,6 +1575,223 @@ export class DatabaseStorage implements IStorage {
       topEvents,
       topEndpoints,
     };
+  }
+
+  async getArticleAiAnalysis(articleId: number): Promise<ArticleAiAnalysis | undefined> {
+    const [row] = await db.select().from(articleAiAnalysis).where(eq(articleAiAnalysis.articleId, articleId));
+    return row;
+  }
+
+  async upsertArticleAiAnalysis(data: InsertArticleAiAnalysis): Promise<ArticleAiAnalysis> {
+    const [row] = await db.insert(articleAiAnalysis)
+      .values(data)
+      .onConflictDoUpdate({
+        target: articleAiAnalysis.articleId,
+        set: {
+          mainTopic: data.mainTopic,
+          subtopics: data.subtopics,
+          entities: data.entities,
+          eventType: data.eventType,
+          importanceScore: data.importanceScore,
+          narrativeSummary: data.narrativeSummary,
+          clusterId: data.clusterId,
+          confidenceScore: data.confidenceScore,
+        },
+      })
+      .returning();
+    return row;
+  }
+
+  async getUnanalyzedArticleIds(limit: number = 100): Promise<number[]> {
+    const rows = await db.select({ id: articles.id })
+      .from(articles)
+      .leftJoin(articleAiAnalysis, eq(articles.id, articleAiAnalysis.articleId))
+      .where(isNull(articleAiAnalysis.id))
+      .orderBy(desc(articles.publishedAt))
+      .limit(limit);
+    return rows.map(r => r.id);
+  }
+
+  async getStoryClusters(params?: { limit?: number; offset?: number }): Promise<StoryCluster[]> {
+    const limit = params?.limit || 50;
+    const offset = params?.offset || 0;
+    return await db.select().from(storyClusters)
+      .orderBy(desc(storyClusters.lastUpdated))
+      .limit(limit)
+      .offset(offset);
+  }
+
+  async getStoryCluster(id: number): Promise<StoryCluster | undefined> {
+    const [row] = await db.select().from(storyClusters).where(eq(storyClusters.id, id));
+    return row;
+  }
+
+  async createStoryCluster(data: InsertStoryCluster): Promise<StoryCluster> {
+    const [row] = await db.insert(storyClusters).values(data).returning();
+    return row;
+  }
+
+  async updateStoryCluster(id: number, data: Partial<InsertStoryCluster>): Promise<StoryCluster> {
+    const [row] = await db.update(storyClusters)
+      .set({ ...data, lastUpdated: new Date() })
+      .where(eq(storyClusters.id, id))
+      .returning();
+    return row;
+  }
+
+  async getClusterArticles(clusterId: number): Promise<Article[]> {
+    const rows = await db.select({
+      id: articles.id,
+      title: articles.title,
+      content: articles.content,
+      contentClean: articles.contentClean,
+      summary: articles.summary,
+      url: articles.url,
+      sourceId: articles.sourceId,
+      publishedAt: articles.publishedAt,
+      ingestedAt: articles.ingestedAt,
+      language: articles.language,
+      country: articles.country,
+      sentimentScore: articles.sentimentScore,
+      sentimentLabel: articles.sentimentLabel,
+      keywords: articles.keywords,
+      topics: articles.topics,
+      category: articles.category,
+      imageUrl: articles.imageUrl,
+      subSource: articles.subSource,
+      createdAt: articles.createdAt,
+    })
+      .from(articles)
+      .innerJoin(articleAiAnalysis, eq(articles.id, articleAiAnalysis.articleId))
+      .where(eq(articleAiAnalysis.clusterId, clusterId))
+      .orderBy(desc(articles.publishedAt));
+    return rows;
+  }
+
+  async getDailyBriefs(limit: number = 30): Promise<DailyBrief[]> {
+    return await db.select().from(dailyBriefs)
+      .orderBy(desc(dailyBriefs.date))
+      .limit(limit);
+  }
+
+  async getDailyBrief(date: string): Promise<DailyBrief | undefined> {
+    const [row] = await db.select().from(dailyBriefs).where(eq(dailyBriefs.date, date));
+    return row;
+  }
+
+  async upsertDailyBrief(data: InsertDailyBrief): Promise<DailyBrief> {
+    const [row] = await db.insert(dailyBriefs)
+      .values(data)
+      .onConflictDoUpdate({
+        target: dailyBriefs.date,
+        set: {
+          content: data.content,
+          keyStories: data.keyStories,
+          majorDevelopments: data.majorDevelopments,
+          emergingTopics: data.emergingTopics,
+          toneShifts: data.toneShifts,
+          articleCount: data.articleCount,
+          sourceCount: data.sourceCount,
+          confidenceScore: data.confidenceScore,
+        },
+      })
+      .returning();
+    return row;
+  }
+
+  async getDetectedEvents(params?: { type?: string; severity?: string; limit?: number; acknowledged?: boolean }): Promise<DetectedEvent[]> {
+    const conditions = [];
+    if (params?.type) conditions.push(eq(detectedEvents.type, params.type));
+    if (params?.severity) conditions.push(eq(detectedEvents.severity, params.severity));
+    if (params?.acknowledged !== undefined) conditions.push(eq(detectedEvents.acknowledged, params.acknowledged));
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    return await db.select().from(detectedEvents)
+      .where(whereClause)
+      .orderBy(desc(detectedEvents.createdAt))
+      .limit(params?.limit || 50);
+  }
+
+  async createDetectedEvent(data: InsertDetectedEvent): Promise<DetectedEvent> {
+    const [row] = await db.insert(detectedEvents).values(data).returning();
+    return row;
+  }
+
+  async acknowledgeEvent(id: number): Promise<void> {
+    await db.update(detectedEvents).set({ acknowledged: true }).where(eq(detectedEvents.id, id));
+  }
+
+  async getEntityMentions(entityName: string, params?: { limit?: number; startDate?: string; endDate?: string }): Promise<EntityMention[]> {
+    const conditions = [eq(entityMentions.entityName, entityName)];
+    if (params?.startDate) conditions.push(gte(entityMentions.mentionDate, new Date(params.startDate)));
+    if (params?.endDate) conditions.push(lte(entityMentions.mentionDate, new Date(params.endDate)));
+    return await db.select().from(entityMentions)
+      .where(and(...conditions))
+      .orderBy(desc(entityMentions.mentionDate))
+      .limit(params?.limit || 100);
+  }
+
+  async createEntityMention(data: InsertEntityMention): Promise<EntityMention> {
+    const [row] = await db.insert(entityMentions).values(data).returning();
+    return row;
+  }
+
+  async createEntityMentionsBatch(data: InsertEntityMention[]): Promise<void> {
+    if (data.length === 0) return;
+    await db.insert(entityMentions).values(data);
+  }
+
+  async getTopEntities(params?: { limit?: number; days?: number; entityType?: string }): Promise<{ entityName: string; entityType: string; mentionCount: number; avgSentiment: number }[]> {
+    const conditions = [];
+    if (params?.days) {
+      const since = new Date(Date.now() - (params.days) * 86400000);
+      conditions.push(gte(entityMentions.mentionDate, since));
+    }
+    if (params?.entityType) conditions.push(eq(entityMentions.entityType, params.entityType));
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    const rows = await db.select({
+      entityName: entityMentions.entityName,
+      entityType: entityMentions.entityType,
+      mentionCount: sql<number>`count(*)::int`,
+      avgSentiment: sql<number>`COALESCE(AVG(${entityMentions.sentimentScore}), 0)::int`,
+    })
+      .from(entityMentions)
+      .where(whereClause)
+      .groupBy(entityMentions.entityName, entityMentions.entityType)
+      .orderBy(desc(sql`count(*)`))
+      .limit(params?.limit || 20);
+    return rows;
+  }
+
+  async getEntityTimeline(entityName: string, days: number = 30): Promise<{ date: string; mentionCount: number; avgSentiment: number }[]> {
+    const since = new Date(Date.now() - days * 86400000);
+    const rows = await db.select({
+      date: sql<string>`TO_CHAR(${entityMentions.mentionDate}, 'YYYY-MM-DD')`,
+      mentionCount: sql<number>`count(*)::int`,
+      avgSentiment: sql<number>`COALESCE(AVG(${entityMentions.sentimentScore}), 0)::int`,
+    })
+      .from(entityMentions)
+      .where(and(
+        eq(entityMentions.entityName, entityName),
+        gte(entityMentions.mentionDate, since),
+      ))
+      .groupBy(sql`TO_CHAR(${entityMentions.mentionDate}, 'YYYY-MM-DD')`)
+      .orderBy(asc(sql`TO_CHAR(${entityMentions.mentionDate}, 'YYYY-MM-DD')`));
+    return rows;
+  }
+
+  async getTrendPredictions(params?: { topic?: string; limit?: number }): Promise<TrendPrediction[]> {
+    const conditions = [];
+    if (params?.topic) conditions.push(eq(trendPredictions.topic, params.topic));
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    return await db.select().from(trendPredictions)
+      .where(whereClause)
+      .orderBy(desc(trendPredictions.createdAt))
+      .limit(params?.limit || 50);
+  }
+
+  async createTrendPrediction(data: InsertTrendPrediction): Promise<TrendPrediction> {
+    const [row] = await db.insert(trendPredictions).values(data).returning();
+    return row;
   }
 
 }

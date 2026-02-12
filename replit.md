@@ -21,7 +21,8 @@ AI capabilities, including sentiment analysis, keyword/topic extraction, and cou
 
 **Core Features and Design Principles:**
 - **News Ingestion**: Utilizes `rss-parser` for real RSS feed fetching, with auto-discovery of RSS feeds from website URLs. Dedicated social media scrapers handle content from YouTube, Facebook, Instagram, X/Twitter, and Telegram.
-- **AI Analysis Pipeline**: A deterministic pipeline (FETCH -> CLEAN -> STRUCTURE -> ANALYZE -> STORE) processes articles, applying AI for sentiment, keywords, topics, summary, category, and country detection.
+- **AI Analysis Pipeline**: A deterministic pipeline (FETCH -> CLEAN -> STRUCTURE -> ANALYZE -> STORE) processes articles, applying AI for sentiment, keywords, topics, summary, category, and country detection. An extended AI Intelligence layer (server/ai-intelligence.ts) performs deep analysis: entity extraction, story clustering, narrative comparison, event detection, daily briefs, trend predictions, and a conversational insight assistant.
+- **Intelligence Hub**: A dedicated /intelligence page with 6 tabs: Story Clusters, Daily Briefs, Events & Alerts, Entity Tracking, Predictions, and AI Assistant. Supports Executive/Analyst mode toggle for different presentation styles.
 - **Multi-tenancy & User Hierarchy**: Supports a multi-tenant model where admins create clients, and clients manage their sub-users. Data (sources, articles) is scoped to the user hierarchy, ensuring each user sees only relevant information.
 - **Internationalization**: Full multi-language UI support (English, Arabic, French, Spanish, Turkish) with RTL layout capabilities and automatic article translation based on selected UI language.
 - **Performance & Scalability**: Features an in-process background job queue for asynchronous tasks, smart scheduling for priority-based feed refreshes, pre-computed analytics caching, and automated data retention policies. Extensive database indexing optimizes query performance.

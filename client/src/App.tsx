@@ -33,6 +33,7 @@ import Saved from "@/pages/Saved";
 import UserManagement from "@/pages/UserManagement";
 import SourceHealth from "@/pages/SourceHealth";
 import OpsDashboard from "@/pages/OpsDashboard";
+import IntelligencePage from "@/pages/IntelligencePage";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, ...rest }: { component: any, path?: string }) {
@@ -125,6 +126,9 @@ function Router() {
       </Route>
       <Route path="/analytics/keyword-detail">
         <ProtectedRoute component={KeywordDetail} />
+      </Route>
+      <Route path="/intelligence">
+        <ProtectedRoute component={IntelligencePage} />
       </Route>
       <Route path="/sources/add">
         <ProtectedRoute component={() => <Admin tab="add" />} />
