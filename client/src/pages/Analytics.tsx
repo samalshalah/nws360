@@ -14,10 +14,30 @@ import { useLocation } from "wouter";
 import { TimeRangeFilter, useTimeRange } from "@/components/analytics/TimeRangeFilter";
 import {
   Newspaper, TrendingUp, BarChart3, AlertTriangle,
-  ArrowRight, Flame, Zap
+  ArrowRight, Flame, Zap, Info
 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { UpdatedAt } from "@/components/UpdatedAt";
 import { ExportButton } from "@/components/ExportButton";
+
+function CardInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-card-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const SENTIMENT_COLORS: Record<string, string> = {
   positive: '#22c55e',
@@ -188,7 +208,10 @@ export default function Analytics() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-base font-semibold">{t("analytics.newsVolumeOverTime")}</CardTitle>
+            <div className="flex items-center gap-1">
+              <CardTitle className="text-base font-semibold">{t("analytics.newsVolumeOverTime")}</CardTitle>
+              <CardInfo description="Article count plotted over time to visualize coverage intensity. Spikes indicate breaking news or increased media attention on specific topics." />
+            </div>
             <div className="flex items-center gap-1">
               <ExportButton chartContainerId="chart-volume" csvData={volumeTimeline.map(d => ({ date: d.dateLabel, articles: d.count }))} filename="nws360-volume" />
               <Button variant="ghost" size="sm" onClick={() => setLocation("/analytics/content-volume")} data-testid="link-volume-detail">
@@ -219,7 +242,10 @@ export default function Analytics() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-base font-semibold">{t("analytics.topSourcesRanking")}</CardTitle>
+            <div className="flex items-center gap-1">
+              <CardTitle className="text-base font-semibold">{t("analytics.topSourcesRanking")}</CardTitle>
+              <CardInfo description="Your most active news sources ranked by article count. Helps identify which outlets are driving the most coverage in your monitored feeds." />
+            </div>
             <div className="flex items-center gap-1">
               <ExportButton csvData={topSources.map((s: any) => ({ source: s.sourceName, articles: s.count }))} filename="nws360-sources" />
               <Button variant="ghost" size="sm" onClick={() => setLocation("/analytics/source-behavior")} data-testid="link-sources-detail">
@@ -261,7 +287,10 @@ export default function Analytics() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-base font-semibold">{t("analytics.trendingKeywords")}</CardTitle>
+            <div className="flex items-center gap-1">
+              <CardTitle className="text-base font-semibold">{t("analytics.trendingKeywords")}</CardTitle>
+              <CardInfo description="The most frequently appearing keywords across recent articles. Larger values indicate higher prominence in current coverage." />
+            </div>
             <div className="flex items-center gap-1">
               <ExportButton csvData={topTopics.map(t => ({ topic: t.topic, count: t.count, sentiment: t.sentiment }))} filename="nws360-topics" />
               <Button variant="ghost" size="sm" onClick={() => setLocation("/analytics/trending-topics")} data-testid="link-topics-detail">
@@ -308,7 +337,10 @@ export default function Analytics() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-base font-semibold">{t("analytics.sentimentDistribution")}</CardTitle>
+            <div className="flex items-center gap-1">
+              <CardTitle className="text-base font-semibold">{t("analytics.sentimentDistribution")}</CardTitle>
+              <CardInfo description="Breakdown of all articles by sentiment — positive, negative, and neutral. Shows the overall tone of your news landscape." />
+            </div>
             <div className="flex items-center gap-1">
               <ExportButton csvData={sentimentData.map(d => ({ tone: d.label, count: d.value, percentage: Math.round((d.value / totalSentiment) * 100) + "%" }))} filename="nws360-tone" />
               <Button variant="ghost" size="sm" onClick={() => setLocation("/analytics/sentiment-reports")} data-testid="link-sentiment-detail">
@@ -366,7 +398,10 @@ export default function Analytics() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
           <div>
-            <CardTitle className="font-display text-base">{t("analytics.sentimentTrend")}</CardTitle>
+            <div className="flex items-center gap-1">
+              <CardTitle className="font-display text-base">{t("analytics.sentimentTrend")}</CardTitle>
+              <CardInfo description="How sentiment has shifted over time. Track whether coverage is becoming more positive or negative across your monitored sources." />
+            </div>
             <CardDescription>{t("analytics.sentimentTrendDescription")}</CardDescription>
           </div>
         </CardHeader>

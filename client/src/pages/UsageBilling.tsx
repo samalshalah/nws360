@@ -12,6 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   CreditCard,
   Users,
@@ -26,7 +27,23 @@ import {
   Crown,
   Shield,
   Sparkles,
+  Info,
 } from "lucide-react";
+
+function CardInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-card-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface UsageData {
   plan: string;
@@ -225,6 +242,7 @@ export default function UsageBilling() {
               <PlanIcon className="w-5 h-5" />
             </div>
             <CardTitle className="text-xl" data-testid="text-plan-name">{planInfo.label} Plan</CardTitle>
+            <CardInfo description="Your current subscription tier and included features. Upgrade to access higher article limits, more sources, and advanced intelligence capabilities." />
             <Badge variant={planInfo.badgeVariant} data-testid="badge-plan">{planInfo.label}</Badge>
           </div>
           {getStatusBadge(data.status)}
@@ -283,6 +301,7 @@ export default function UsageBilling() {
           <CardTitle className="flex items-center gap-2">
             <CreditCard className="w-5 h-5" />
             Plan Comparison
+            <CardInfo description="Real-time tracking of your resource consumption — articles processed, sources monitored, and API calls made against your plan limits." />
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -366,6 +385,7 @@ export default function UsageBilling() {
           <CardTitle className="flex items-center gap-2">
             <CreditCard className="w-5 h-5" />
             Billing Status
+            <CardInfo description="View and download past invoices. Manage payment methods and review billing history for your subscription." />
           </CardTitle>
         </CardHeader>
         <CardContent>

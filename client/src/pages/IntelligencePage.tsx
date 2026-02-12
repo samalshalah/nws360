@@ -14,11 +14,31 @@ import { Switch } from "@/components/ui/switch";
 import {
   Brain, Layers, BookOpen, AlertTriangle, Users, TrendingUp,
   MessageSquare, BarChart3, Eye, Shield, Clock, ChevronDown,
-  ChevronUp, Send, Sparkles
+  ChevronUp, Send, Sparkles, Info
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer
 } from "recharts";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+
+function TabInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-tab-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface StoryCluster {
   id: number;
@@ -158,6 +178,7 @@ function StoriesTab({ mode }: { mode: string }) {
 
   return (
     <div className="space-y-3">
+      <TabInfo description="AI-clustered story groups that combine related articles from multiple sources. See how different outlets cover the same event, compare narrative framings, and gauge overall story importance." />
       {stories?.map((story) => (
         <Card key={story.id} data-testid={`card-story-${story.id}`}>
           <CardContent className="p-4">
@@ -289,6 +310,7 @@ function BriefsTab({ mode }: { mode: string }) {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="Automated daily intelligence summaries highlighting major developments, emerging topics, and tone shifts across your monitored sources. Includes confidence scoring for each briefing." />
       {sorted.map((brief, idx) => (
         <Card key={brief.id} data-testid={`card-brief-${brief.id}`}>
           <CardHeader>
@@ -394,6 +416,7 @@ function EventsTab({ mode }: { mode: string }) {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="Real-time detection of significant events and breaking developments. Filter by type and severity to focus on what matters most — from political shifts to security alerts." />
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-muted-foreground">Type:</span>
@@ -492,6 +515,7 @@ function EntitiesTab({ mode }: { mode: string }) {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="Track people, organizations, and locations mentioned across your news sources. See mention frequency, average sentiment, and drill into recent articles for any entity." />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {entities?.map((entity) => (
           <Card
@@ -581,6 +605,7 @@ function PredictionsTab({ mode }: { mode: string }) {
 
   return (
     <div className="space-y-3">
+      <TabInfo description="AI-generated predictions about how stories and topics will develop. Each prediction includes a confidence score and tracks whether the forecast proved accurate over time." />
       {predictions?.map((pred) => (
         <Card key={pred.id} data-testid={`card-prediction-${pred.id}`}>
           <CardContent className="p-4 space-y-3">
@@ -667,6 +692,7 @@ function AiAssistantTab() {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="A conversational AI assistant that can answer questions about your news data. Ask about trends, summarize coverage on any topic, or request analysis across your monitored sources." />
       {messages.length === 0 && (
         <Card>
           <CardContent className="p-6 text-center space-y-4">

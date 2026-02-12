@@ -39,7 +39,28 @@ import {
   Loader2,
   Copy,
   Check,
+  Info,
 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+
+function TabInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-tab-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function DiscussionsTab() {
   const { toast } = useToast();
@@ -83,9 +104,12 @@ function DiscussionsTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-discussions-title">Discussions</h3>
-        <p className="text-sm text-muted-foreground">Post comments and discuss articles, stories, or entities with your team</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-discussions-title">Discussions</h3>
+          <p className="text-sm text-muted-foreground">Post comments and discuss articles, stories, or entities with your team</p>
+        </div>
+        <TabInfo description="Threaded conversations on articles, stories, and entities. Start discussions with your team to share context and coordinate analysis across different content items." />
       </div>
 
       <Card>
@@ -193,9 +217,12 @@ function NotesTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-notes-title">Notes & Annotations</h3>
-        <p className="text-sm text-muted-foreground">Add observations, warnings, hypotheses, and conclusions to targets</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-notes-title">Notes & Annotations</h3>
+          <p className="text-sm text-muted-foreground">Add observations, warnings, hypotheses, and conclusions to targets</p>
+        </div>
+        <TabInfo description="Analyst annotations categorized as observations, warnings, hypotheses, or conclusions. Attach structured notes to any content item for permanent reference." />
       </div>
 
       <Card>
@@ -346,11 +373,13 @@ function TasksTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
         <div>
           <h3 className="text-lg font-semibold" data-testid="text-tasks-title">Tasks</h3>
           <p className="text-sm text-muted-foreground">Create, assign, and track investigation tasks</p>
         </div>
+        <div className="flex items-center gap-1">
+          <TabInfo description="Assign and track analytical tasks within your team. Set priorities, deadlines, and statuses to coordinate who is investigating what." />
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button data-testid="button-add-task"><Plus className="w-4 h-4 mr-2" />Add Task</Button>
@@ -416,6 +445,7 @@ function TasksTab() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {(!tasks || tasks.length === 0) ? (
@@ -504,11 +534,13 @@ function BriefingsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
         <div>
           <h3 className="text-lg font-semibold" data-testid="text-briefings-title">Briefings & Reports</h3>
           <p className="text-sm text-muted-foreground">Create and share intelligence reports with your team</p>
         </div>
+        <div className="flex items-center gap-1">
+          <TabInfo description="Create and share intelligence briefings with your team. Generate shareable links so stakeholders can access curated analysis without needing a platform account." />
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button data-testid="button-add-report"><Plus className="w-4 h-4 mr-2" />Create Report</Button>
@@ -531,6 +563,7 @@ function BriefingsTab() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {(!reports || reports.length === 0) ? (
@@ -603,11 +636,13 @@ function WorkspacesTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
         <div>
           <h3 className="text-lg font-semibold" data-testid="text-workspaces-title">Workspaces</h3>
           <p className="text-sm text-muted-foreground">Organize your team into shared workspaces</p>
         </div>
+        <div className="flex items-center gap-1">
+          <TabInfo description="Organize team members into focused workspaces. Each workspace acts as a dedicated area for a specific project, region, or topic." />
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button data-testid="button-add-workspace"><Plus className="w-4 h-4 mr-2" />Create Workspace</Button>
@@ -630,6 +665,7 @@ function WorkspacesTab() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {(!workspaces || workspaces.length === 0) ? (
@@ -691,11 +727,13 @@ function WatchlistsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
         <div>
           <h3 className="text-lg font-semibold" data-testid="text-watchlists-title">Watchlists</h3>
           <p className="text-sm text-muted-foreground">Track entities and topics of interest</p>
         </div>
+        <div className="flex items-center gap-1">
+          <TabInfo description="Maintain persistent watchlists of topics, entities, or keywords you want to continuously monitor. Get notified when new coverage appears." />
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button data-testid="button-add-watchlist"><Plus className="w-4 h-4 mr-2" />Add to Watchlist</Button>
@@ -724,6 +762,7 @@ function WatchlistsTab() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {(!watchlists || watchlists.length === 0) ? (
@@ -794,11 +833,13 @@ function AlertsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
         <div>
           <h3 className="text-lg font-semibold" data-testid="text-alerts-title">Alerts</h3>
           <p className="text-sm text-muted-foreground">Send and receive alerts from team members</p>
         </div>
+        <div className="flex items-center gap-1">
+          <TabInfo description="Configure internal team alerts for specific conditions — keyword spikes, sentiment shifts, or new coverage in critical areas. Keep your team informed in real time." />
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button data-testid="button-send-alert"><Plus className="w-4 h-4 mr-2" />Send Alert</Button>
@@ -828,6 +869,7 @@ function AlertsTab() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {(!alerts || alerts.length === 0) ? (
@@ -869,9 +911,12 @@ function ActivityTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-activity-title">Activity Feed</h3>
-        <p className="text-sm text-muted-foreground">Recent actions and events across your team</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-activity-title">Activity Feed</h3>
+          <p className="text-sm text-muted-foreground">Recent actions and events across your team</p>
+        </div>
+        <TabInfo description="A chronological feed of all team actions — comments posted, tasks updated, briefings shared, and notes added. Stay aware of what your colleagues are working on." />
       </div>
 
       {(!activities || activities.length === 0) ? (
@@ -932,11 +977,13 @@ function TagsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
         <div>
           <h3 className="text-lg font-semibold" data-testid="text-tags-title">Tags</h3>
           <p className="text-sm text-muted-foreground">Create and manage tags for organizing content</p>
         </div>
+        <div className="flex items-center gap-1">
+          <TabInfo description="Create and manage a custom tagging system. Apply tags to articles, stories, and entities for flexible organization beyond the built-in categories." />
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button data-testid="button-add-tag"><Plus className="w-4 h-4 mr-2" />Create Tag</Button>
@@ -959,6 +1006,7 @@ function TagsTab() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {(!tags || tags.length === 0) ? (

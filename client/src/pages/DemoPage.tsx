@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
   Newspaper,
   AlertTriangle,
@@ -17,6 +18,21 @@ import {
   Info,
   Zap,
 } from "lucide-react";
+
+function CardInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-card-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface DemoTopStory {
   title: string;
@@ -168,6 +184,7 @@ export default function DemoPage() {
                 <CardTitle className="text-lg" data-testid="text-demo-top-story-title">
                   {topStory.title}
                 </CardTitle>
+                <CardInfo description="Sample top story showing how the platform clusters related articles and scores importance automatically." />
               </div>
               <Badge
                 className={`no-default-hover-elevate no-default-active-elevate shrink-0 ${getImportanceBadgeClass(topStory.importanceScore)}`}
@@ -194,6 +211,7 @@ export default function DemoPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <BookOpen className="w-5 h-5 text-primary" />
                 <CardTitle className="text-lg">Latest Brief</CardTitle>
+                <CardInfo description="Example AI-generated daily briefing showing major developments, emerging topics, and confidence scoring." />
               </div>
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="text-xs text-muted-foreground" data-testid="text-demo-brief-date">
@@ -261,6 +279,7 @@ export default function DemoPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <AlertTriangle className="w-5 h-5 text-amber-500 dark:text-amber-400" />
                 <CardTitle className="text-lg">Active Alerts</CardTitle>
+                <CardInfo description="Demonstration of the real-time alert system showing different severity levels and event types." />
               </div>
             </CardHeader>
             <CardContent className="pt-0">
@@ -303,6 +322,7 @@ export default function DemoPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <Users className="w-5 h-5 text-primary" />
                 <CardTitle className="text-lg">Entity Tracking</CardTitle>
+                <CardInfo description="Sample entity tracking showing how the platform monitors people, organizations, and locations across sources." />
               </div>
             </CardHeader>
             <CardContent className="pt-0">
@@ -329,6 +349,7 @@ export default function DemoPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <BarChart3 className="w-5 h-5 text-primary" />
                 <CardTitle className="text-lg">Usage Overview</CardTitle>
+                <CardInfo description="Example usage dashboard showing article counts, source tracking, and system utilization metrics." />
               </div>
             </CardHeader>
             <CardContent className="pt-0 space-y-4">

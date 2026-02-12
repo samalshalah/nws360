@@ -31,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
   BarChart3,
   MessageSquare,
@@ -41,7 +42,23 @@ import {
   Check,
   X,
   Plus,
+  Info,
 } from "lucide-react";
+
+function CardInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-card-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface ProductAnalyticsData {
   totalFeedback: number;
@@ -127,7 +144,10 @@ function FeedbackOverview() {
       <Card data-testid="card-total-feedback">
         <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap space-y-0 pb-2">
           <CardTitle className="text-base font-medium">Total Feedback</CardTitle>
-          <MessageSquare className="w-4 h-4 text-muted-foreground" />
+          <div className="flex items-center gap-1">
+            <CardInfo description="Total number of feedback submissions received from users across all products and features." />
+            <MessageSquare className="w-4 h-4 text-muted-foreground" />
+          </div>
         </CardHeader>
         <CardContent>
           <p className="text-3xl font-bold" data-testid="text-total-feedback-count">
@@ -167,7 +187,10 @@ function FeedbackOverview() {
 
       <Card data-testid="card-rating-distribution">
         <CardHeader>
-          <CardTitle className="text-base font-medium">Rating Distribution</CardTitle>
+          <div className="flex items-center gap-1 flex-wrap">
+            <CardTitle className="text-base font-medium">Rating Distribution</CardTitle>
+            <CardInfo description="Visual breakdown of how ratings are distributed across the scale, revealing whether feedback clusters at specific points." />
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -224,7 +247,10 @@ function EngagementMetrics() {
       <Card data-testid="card-stat-opened">
         <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap space-y-0 pb-2">
           <CardTitle className="text-base font-medium">Opened</CardTitle>
-          <FileText className="w-4 h-4 text-muted-foreground" />
+          <div className="flex items-center gap-1">
+            <CardInfo description="Number of articles or briefings that were opened/viewed by users, indicating content reach." />
+            <FileText className="w-4 h-4 text-muted-foreground" />
+          </div>
         </CardHeader>
         <CardContent>
           <p className="text-3xl font-bold" data-testid="text-opened-count">{opened}</p>
@@ -235,7 +261,10 @@ function EngagementMetrics() {
       <Card data-testid="card-stat-clicked">
         <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap space-y-0 pb-2">
           <CardTitle className="text-base font-medium">Clicked</CardTitle>
-          <BarChart3 className="w-4 h-4 text-muted-foreground" />
+          <div className="flex items-center gap-1">
+            <CardInfo description="Number of click-through actions on articles or links, showing active user engagement beyond just viewing." />
+            <BarChart3 className="w-4 h-4 text-muted-foreground" />
+          </div>
         </CardHeader>
         <CardContent>
           <p className="text-3xl font-bold" data-testid="text-clicked-count">{clicked}</p>
@@ -246,7 +275,10 @@ function EngagementMetrics() {
       <Card data-testid="card-stat-exported">
         <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap space-y-0 pb-2">
           <CardTitle className="text-base font-medium">Exported</CardTitle>
-          <FileText className="w-4 h-4 text-muted-foreground" />
+          <div className="flex items-center gap-1">
+            <CardInfo description="Number of data exports performed — CSV, JSON, or report downloads — indicating how often users extract data for external use." />
+            <FileText className="w-4 h-4 text-muted-foreground" />
+          </div>
         </CardHeader>
         <CardContent>
           <p className="text-3xl font-bold" data-testid="text-exported-count">{exported}</p>
@@ -257,7 +289,10 @@ function EngagementMetrics() {
       <Card data-testid="card-stat-engagement-rate">
         <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap space-y-0 pb-2">
           <CardTitle className="text-base font-medium">Engagement Rate</CardTitle>
-          <BarChart3 className="w-4 h-4 text-muted-foreground" />
+          <div className="flex items-center gap-1">
+            <CardInfo description="Percentage of users actively interacting with content through clicks, shares, or feedback relative to total views." />
+            <BarChart3 className="w-4 h-4 text-muted-foreground" />
+          </div>
         </CardHeader>
         <CardContent>
           <p className="text-3xl font-bold" data-testid="text-engagement-rate">{engagementRate}%</p>

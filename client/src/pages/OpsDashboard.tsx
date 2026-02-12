@@ -14,8 +14,28 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Activity, Shield, BarChart3, Database, FileText,
   RefreshCw, Plus, Trash2, Server, Clock,
-  AlertTriangle, CheckCircle, XCircle
+  AlertTriangle, CheckCircle, XCircle, Info
 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+
+function TabInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-tab-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface StatusResponse {
   status: string;
@@ -130,6 +150,9 @@ function SystemHealthTab() {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <TabInfo description="Monitor the health of all platform components — database, API server, job queues, and feed workers. View uptime, latency, and component status at a glance." />
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <CardContent className="p-4 flex items-center gap-3">
@@ -333,6 +356,9 @@ function FeatureFlagsTab() {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <TabInfo description="Toggle platform features on and off without redeployment. Use feature flags to gradually roll out new capabilities or disable problematic features instantly." />
+      </div>
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -438,6 +464,9 @@ function UsageMetricsTab() {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <TabInfo description="Track platform usage — daily active users, API calls, top endpoints, and event volumes. Understand how your team interacts with the platform." />
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card>
           <CardContent className="p-4 flex items-center gap-3">
@@ -558,6 +587,9 @@ function RecoveryBackupTab() {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <TabInfo description="Manage data backups and recovery procedures. Export system state, create restoration points, and recover from issues with minimal data loss." />
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card>
           <CardHeader>
@@ -725,6 +757,9 @@ function DocumentationTab() {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <TabInfo description="Access system documentation including API references, configuration guides, and architecture overviews. Keep your team aligned on how the platform works." />
+      </div>
       {Object.entries(docs).map(([section, content]) => (
         <Card key={section} data-testid={`card-doc-${section}`}>
           <CardHeader>

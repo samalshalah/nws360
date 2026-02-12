@@ -50,7 +50,28 @@ import {
   X,
   ExternalLink,
   Loader2,
+  Info,
 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+
+function TabInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-tab-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const EVENT_TYPES = [
   { value: "new_major_story", label: "New Major Story" },
@@ -115,7 +136,10 @@ function WebhooksTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h3 className="text-lg font-semibold" data-testid="text-webhooks-title">Webhooks</h3>
+          <div className="flex items-center gap-1">
+            <h3 className="text-lg font-semibold" data-testid="text-webhooks-title">Webhooks</h3>
+            <TabInfo description="Send automated HTTP callbacks to external systems when events occur — new major stories, keyword spikes, daily briefings, or sentiment shifts. Signed with HMAC SHA-256 for security." />
+          </div>
           <p className="text-sm text-muted-foreground">Send signed POST requests to external systems when events occur</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -236,7 +260,10 @@ function CommunicationTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h3 className="text-lg font-semibold" data-testid="text-communication-title">Communication Channels</h3>
+          <div className="flex items-center gap-1">
+            <h3 className="text-lg font-semibold" data-testid="text-communication-title">Communication Channels</h3>
+            <TabInfo description="Connect Slack or Microsoft Teams channels to receive real-time news alerts and briefing summaries directly in your team's communication platform." />
+          </div>
           <p className="text-sm text-muted-foreground">Connect Slack or Microsoft Teams to receive alerts and briefings</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -362,7 +389,10 @@ function EmailTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h3 className="text-lg font-semibold" data-testid="text-email-title">Email Subscriptions</h3>
+          <div className="flex items-center gap-1">
+            <h3 className="text-lg font-semibold" data-testid="text-email-title">Email Subscriptions</h3>
+            <TabInfo description="Set up email subscriptions for automated intelligence delivery. Schedule daily or weekly digests sent directly to stakeholders' inboxes." />
+          </div>
           <p className="text-sm text-muted-foreground">Custom email schedules with topic-based filtering</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -480,7 +510,10 @@ function EmbedsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h3 className="text-lg font-semibold" data-testid="text-embeds-title">Embeddable Widgets</h3>
+          <div className="flex items-center gap-1">
+            <h3 className="text-lg font-semibold" data-testid="text-embeds-title">Embeddable Widgets</h3>
+            <TabInfo description="Generate embeddable widgets that display live news feeds, trending topics, or sentiment gauges on external websites and internal portals." />
+          </div>
           <p className="text-sm text-muted-foreground">Embed NWS360 panels into your own portals via iframe</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -593,7 +626,10 @@ function ExportsTab() {
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-lg font-semibold" data-testid="text-exports-title">Data Export</h3>
+        <div className="flex items-center gap-1">
+          <h3 className="text-lg font-semibold" data-testid="text-exports-title">Data Export</h3>
+          <TabInfo description="Export your data in JSON or CSV format. Download articles, analytics, or briefings for offline analysis, presentations, or integration with other tools." />
+        </div>
         <p className="text-sm text-muted-foreground">Export insights in JSON or CSV format for external systems</p>
       </div>
 
@@ -698,7 +734,10 @@ function DataImportTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h3 className="text-lg font-semibold" data-testid="text-import-title">Data Import</h3>
+          <div className="flex items-center gap-1">
+            <h3 className="text-lg font-semibold" data-testid="text-import-title">Data Import</h3>
+            <TabInfo description="Import data from external sources — CSV files, API endpoints, or other intelligence platforms. Bring in historical data or supplement your feeds." />
+          </div>
           <p className="text-sm text-muted-foreground">Connect private RSS feeds or upload internal data sources</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -813,7 +852,10 @@ function SsoTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h3 className="text-lg font-semibold" data-testid="text-sso-title">Single Sign-On (SSO)</h3>
+          <div className="flex items-center gap-1">
+            <h3 className="text-lg font-semibold" data-testid="text-sso-title">Single Sign-On (SSO)</h3>
+            <TabInfo description="Configure Single Sign-On with Google, Microsoft, or SAML providers. Simplify authentication for your organization while maintaining security." />
+          </div>
           <p className="text-sm text-muted-foreground">Enterprise login via Google Workspace, Microsoft Entra ID, or SAML</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -909,7 +951,10 @@ function MobileNotificationsTab() {
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-lg font-semibold" data-testid="text-mobile-title">Mobile Notifications</h3>
+        <div className="flex items-center gap-1">
+          <h3 className="text-lg font-semibold" data-testid="text-mobile-title">Mobile Notifications</h3>
+          <TabInfo description="Configure push notification preferences for mobile devices. Choose which alert types and priority levels trigger mobile notifications." />
+        </div>
         <p className="text-sm text-muted-foreground">Control push notification preferences and severity levels</p>
       </div>
 

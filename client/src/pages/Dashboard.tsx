@@ -2,11 +2,32 @@ import { useAnalytics } from "@/hooks/use-analytics";
 import { useArticles } from "@/hooks/use-articles";
 import { ArticleCard } from "@/components/articles/ArticleCard";
 import { Card, CardContent } from "@/components/ui/card";
-import { Newspaper, Rss, TrendingUp, AlertTriangle, Landmark, Cpu, FlaskConical, HeartPulse, Briefcase, Gamepad2, Clapperboard, Layers } from "lucide-react";
+import { Newspaper, Rss, TrendingUp, AlertTriangle, Landmark, Cpu, FlaskConical, HeartPulse, Briefcase, Gamepad2, Clapperboard, Layers, Info } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "react-i18next";
 import { UpdatedAt } from "@/components/UpdatedAt";
 import { DashboardSuggestions } from "@/components/DashboardSuggestions";
+
+function CardInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-card-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const categories = [
   { key: "urgent", icon: AlertTriangle, color: "text-red-500 dark:text-red-400" },
@@ -73,6 +94,7 @@ export default function Dashboard() {
       icon: Newspaper,
       color: "text-blue-500 dark:text-blue-400",
       bg: "bg-blue-500/10 dark:bg-blue-500/20",
+      description: "Total number of articles collected from all your monitored sources. Includes both RSS feed articles and scraped content.",
     },
     {
       title: t("dashboard.activeSources"),
@@ -80,6 +102,7 @@ export default function Dashboard() {
       icon: Rss,
       color: "text-orange-500 dark:text-orange-400",
       bg: "bg-orange-500/10 dark:bg-orange-500/20",
+      description: "Number of news sources currently being monitored and actively returning content from RSS feeds, websites, and social media.",
     },
     {
       title: t("dashboard.trendingTopics"),
@@ -87,6 +110,7 @@ export default function Dashboard() {
       icon: TrendingUp,
       color: "text-purple-500 dark:text-purple-400",
       bg: "bg-purple-500/10 dark:bg-purple-500/20",
+      description: "Count of keywords and topics currently gaining traction across your sources, identified through AI-powered analysis.",
     },
   ];
 
@@ -114,7 +138,10 @@ export default function Dashboard() {
             <Card key={stat.title} className="hover-elevate" style={{ animationDelay: `${index * 60}ms` }}>
               <CardContent className="p-5 flex items-center justify-between gap-4">
                 <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-1">{stat.title}</p>
+                  <div className="flex items-center gap-1">
+                    <p className="text-xs font-medium text-muted-foreground">{stat.title}</p>
+                    <CardInfo description={stat.description} />
+                  </div>
                   <h3 className="text-2xl font-bold tabular-nums" data-testid={`metric-${stat.title.toLowerCase().replace(/\s+/g, '-')}`}>{stat.value.toLocaleString()}</h3>
                 </div>
                 <div className={`p-3 rounded-md ${stat.bg} ${stat.color}`}>

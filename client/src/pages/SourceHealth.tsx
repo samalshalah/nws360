@@ -2,12 +2,29 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Activity, AlertTriangle, Clock } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Activity, AlertTriangle, Clock, Info } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
+
+function CardInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-card-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface SourceHealthData {
   sourceId: number;
@@ -122,9 +139,12 @@ export default function SourceHealth() {
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-source-health-title">
-          {t("sourceHealth.title")}
-        </h1>
+        <div className="flex items-center gap-2 flex-wrap">
+          <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-source-health-title">
+            {t("sourceHealth.title")}
+          </h1>
+          <CardInfo description="Health monitoring for all configured news sources. Shows fetch success rates, error counts, and last successful update time for each feed." />
+        </div>
         <p className="text-muted-foreground">{t("sourceHealth.subtitle")}</p>
       </div>
 

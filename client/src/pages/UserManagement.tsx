@@ -12,9 +12,25 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-import { Shield, ShieldOff, Trash2, UserPlus, Users, Crown } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Shield, ShieldOff, Trash2, UserPlus, Users, Crown, Info } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { User } from "@shared/schema";
+
+function CardInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-card-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export default function UserManagement() {
   const { t } = useTranslation();
@@ -142,6 +158,7 @@ export default function UserManagement() {
           <CardTitle className="flex items-center gap-2">
             <UserPlus className="w-5 h-5" />
             {t("userManagement.createUser")}
+            <CardInfo description="Manage sub-user accounts under your organization. Create users, assign permissions, and control who has access to which features." />
           </CardTitle>
           <CardDescription>{t("userManagement.createUserSubtitle")}</CardDescription>
         </CardHeader>

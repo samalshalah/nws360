@@ -19,8 +19,28 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Database, Users, Settings, Shield, Activity,
   Plus, Trash2, RefreshCw, Eye, EyeOff,
-  Key, Clock, Server, AlertTriangle, CheckCircle, XCircle
+  Key, Clock, Server, AlertTriangle, CheckCircle, XCircle, Info
 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+
+function TabInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-tab-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface Source {
   id: number;
@@ -180,6 +200,9 @@ function SourcesTab() {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <TabInfo description="Manage all news sources in the platform — add RSS feeds, websites, and social media accounts. Configure fetch intervals, priorities, and monitor each source's health status." />
+      </div>
       <div className="hidden md:block">
         <Table>
           <TableHeader>
@@ -443,7 +466,8 @@ function ClientsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <TabInfo description="Create and manage client organizations. Each client can have their own users, sources, and data scope for multi-tenant intelligence delivery." />
         <Button onClick={() => setShowAddDialog(true)} data-testid="button-add-client">
           <Plus className="w-4 h-4 mr-1" />{t("Add Client")}
         </Button>
@@ -726,7 +750,8 @@ function UsersTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <TabInfo description="Manage user accounts across the platform. Create users, assign roles, set client associations, and control access permissions." />
         <Button onClick={() => setShowAddDialog(true)} data-testid="button-add-user">
           <Plus className="w-4 h-4 mr-1" />{t("Add User")}
         </Button>
@@ -967,7 +992,10 @@ function SettingsTab() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{t("System Settings")}</CardTitle>
+        <div className="flex items-center gap-2">
+          <CardTitle>{t("System Settings")}</CardTitle>
+          <TabInfo description="Configure system-wide settings including AI analysis parameters, data retention policies, and platform behavior preferences." />
+        </div>
         <CardDescription>{t("Configure system-wide settings for the platform")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -1094,6 +1122,7 @@ function LogsHealthTab() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
+        <TabInfo description="View system logs, audit trail, processing queue status, and recent errors. Monitor platform operations and troubleshoot issues." />
         {subTabs.map(st => (
           <Button
             key={st.key}

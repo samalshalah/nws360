@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Table,
   TableBody,
@@ -20,7 +22,23 @@ import {
   Check,
   X,
   AlertTriangle,
+  Info,
 } from "lucide-react";
+
+function CardInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-card-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface MonitoringData {
   webhooks: { total: number; active: number };
@@ -92,7 +110,7 @@ export default function IntegrationMonitoring() {
 
       {data.communication.platforms && Object.keys(data.communication.platforms).length > 0 && (
         <Card>
-          <CardHeader><CardTitle className="text-sm">Communication Platforms</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-sm flex items-center gap-2">Communication Platforms<CardInfo description="Status overview of connected communication channels — Slack workspaces, Teams channels, and their current delivery health." /></CardTitle></CardHeader>
           <CardContent>
             <div className="flex gap-3 flex-wrap">
               {Object.entries(data.communication.platforms).map(([platform, count]) => (
@@ -107,7 +125,7 @@ export default function IntegrationMonitoring() {
       )}
 
       <Card>
-        <CardHeader><CardTitle className="text-sm">Recent Webhook Deliveries</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-sm flex items-center gap-2">Recent Webhook Deliveries<CardInfo description="Log of recent webhook delivery attempts showing success/failure status, response codes, and payload details for troubleshooting." /></CardTitle></CardHeader>
         <CardContent>
           {data.recentDeliveries.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">No deliveries recorded yet</p>

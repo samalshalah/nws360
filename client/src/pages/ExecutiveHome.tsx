@@ -14,7 +14,28 @@ import {
   ArrowRight,
   Sparkles,
   Shield,
+  Info,
 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+
+function CardInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-card-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface TopStory {
   id: number;
@@ -194,6 +215,7 @@ export default function ExecutiveHome() {
               <CardTitle className="text-lg" data-testid="text-top-story-title">
                 {topStory.title}
               </CardTitle>
+              <CardInfo description="The most significant story right now based on article count, source diversity, and AI-scored importance. Your morning snapshot of what matters most." />
             </div>
             <Badge
               className={`no-default-hover-elevate no-default-active-elevate shrink-0 ${getImportanceBadgeClass(topStory.importanceScore)}`}
@@ -224,6 +246,7 @@ export default function ExecutiveHome() {
             <div className="flex items-center gap-2 flex-wrap">
               <Shield className="w-4 h-4 text-muted-foreground" />
               <CardTitle className="text-base">Coverage Tone</CardTitle>
+              <CardInfo description="Overall sentiment analysis of recent coverage. Shows average tone across all monitored sources to help you gauge the media landscape at a glance." />
             </div>
           </CardHeader>
           <CardContent className="pt-0">
@@ -264,6 +287,7 @@ export default function ExecutiveHome() {
             <div className="flex items-center gap-2 flex-wrap">
               <TrendingUp className="w-4 h-4 text-muted-foreground" />
               <CardTitle className="text-base">Emerging Topics</CardTitle>
+              <CardInfo description="Newly trending keywords and subjects gaining traction across your sources. Spots rising topics early so you can get ahead of developing stories." />
             </div>
           </CardHeader>
           <CardContent className="pt-0">
@@ -296,6 +320,7 @@ export default function ExecutiveHome() {
             <div className="flex items-center gap-2 flex-wrap">
               <AlertTriangle className="w-4 h-4 text-amber-500 dark:text-amber-400" />
               <CardTitle className="text-base">Key Alerts</CardTitle>
+              <CardInfo description="Active alerts requiring your attention — unacknowledged events, severity warnings, and breaking situations that may need immediate action." />
             </div>
             <Button
               variant="ghost"
@@ -347,6 +372,7 @@ export default function ExecutiveHome() {
             <div className="flex items-center gap-2 flex-wrap">
               <BookOpen className="w-4 h-4 text-muted-foreground" />
               <CardTitle className="text-base">Latest Briefing</CardTitle>
+              <CardInfo description="A preview of the most recent AI-generated daily briefing, including major developments and confidence scoring." />
             </div>
             <div className="flex items-center gap-3 flex-wrap">
               <span className="text-xs text-muted-foreground" data-testid="text-brief-date">
@@ -389,6 +415,7 @@ export default function ExecutiveHome() {
             <div className="flex items-center gap-2 flex-wrap">
               <Users className="w-4 h-4 text-muted-foreground" />
               <CardTitle className="text-base">Top Entities</CardTitle>
+              <CardInfo description="The most frequently mentioned people, organizations, and locations across your sources, with sentiment indicators for each." />
             </div>
           </CardHeader>
           <CardContent className="pt-0">

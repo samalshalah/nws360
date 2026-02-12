@@ -14,10 +14,26 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ArrowRight, ThumbsUp, MessageCircle, Share2 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ArrowRight, ThumbsUp, MessageCircle, Share2, Info } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
+
+function CardInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-card-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const SOURCE_TYPES = [
   { type: "website", icon: Globe, label: "admin.website", color: "text-blue-500" },
@@ -524,7 +540,7 @@ function SourcesManager() {
     <Card className="border-border/50 shadow-md">
       <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap">
         <div>
-          <CardTitle>{t("admin.newsSources")}</CardTitle>
+          <CardTitle className="flex items-center gap-2">{t("admin.newsSources")}<CardInfo description="Add and manage RSS feeds, websites, and social media accounts to monitor. Configure fetch frequency and auto-discovery for each source." /></CardTitle>
           <CardDescription>{t("admin.sourcesDescription")}</CardDescription>
         </div>
         <Button
@@ -878,7 +894,7 @@ function KeywordsManager() {
   return (
     <Card className="border-border/50 shadow-md">
       <CardHeader>
-        <CardTitle>{t("admin.trackedKeywords")}</CardTitle>
+        <CardTitle className="flex items-center gap-2">{t("admin.trackedKeywords")}<CardInfo description="Define keywords and phrases to monitor across all sources. Tracked keywords help filter and prioritize relevant coverage." /></CardTitle>
         <CardDescription>{t("admin.keywordsDescription")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">

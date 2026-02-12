@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
   HelpCircle,
   BookOpen,
@@ -23,9 +24,25 @@ import {
   Send,
   MessageSquare,
   Sparkles,
+  Info,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+
+function CardInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-card-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const quickHelpItems = [
   {
@@ -178,6 +195,7 @@ export default function HelpCenter() {
           <h2 className="text-lg font-semibold text-foreground" data-testid="text-quick-help-heading">
             Quick Help
           </h2>
+          <CardInfo description="Step-by-step guides for common platform tasks — adding sources, reading analytics, configuring alerts, and more." />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {quickHelpItems.map((item, index) => (
@@ -204,6 +222,7 @@ export default function HelpCenter() {
           <h2 className="text-lg font-semibold text-foreground" data-testid="text-glossary-heading">
             Glossary
           </h2>
+          <CardInfo description="Definitions of key platform terms and concepts. Reference this when you encounter unfamiliar terminology in the interface." />
         </div>
         <Card data-testid="card-glossary">
           <CardContent className="p-0 divide-y divide-border">
@@ -246,6 +265,7 @@ export default function HelpCenter() {
           <h2 className="text-lg font-semibold text-foreground" data-testid="text-support-heading">
             Support Request
           </h2>
+          <CardInfo description="Submit support tickets for technical issues, feature requests, or questions. Our team will respond within one business day." />
         </div>
         <Card data-testid="card-support-form">
           <CardContent className="pt-6">
