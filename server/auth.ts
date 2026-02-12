@@ -7,6 +7,7 @@ import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { storage } from "./storage";
 import { User } from "@shared/schema";
+import { fetchAllFeeds } from "./feed-worker";
 
 const scryptAsync = promisify(scrypt);
 const MemoryStore = createMemoryStore(session);
@@ -107,6 +108,11 @@ export function setupAuth(app: Express) {
       req.login(user, (err) => {
         if (err) return next(err);
         res.json(user);
+        setTimeout(() => {
+          fetchAllFeeds().catch((e) =>
+            console.error("[Login] Background fetch-all failed:", e)
+          );
+        }, 500);
       });
     })(req, res, next);
   });
