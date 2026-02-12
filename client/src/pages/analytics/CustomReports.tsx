@@ -26,7 +26,7 @@ export default function CustomReports() {
     byHour: { hour: number; count: number }[];
     peaks: { date: string; count: number }[];
   }>({
-    queryKey: ["/api/analytics/content-volume", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/content-volume?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   const { data: sentiment } = useQuery<{
@@ -35,7 +35,7 @@ export default function CustomReports() {
     timeline: any[];
     byCategory: any[];
   }>({
-    queryKey: ["/api/analytics/sentiment-reports", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/sentiment-reports?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   const totalInPeriod = volume?.timeline.reduce((s, t) => s + t.count, 0) || 0;

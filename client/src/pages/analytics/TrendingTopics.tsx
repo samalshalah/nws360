@@ -19,7 +19,7 @@ export default function TrendingTopics() {
     topicTimeline: { date: string; topic: string; count: number }[];
     byCategory: { category: string; count: number }[];
   }>({
-    queryKey: ["/api/analytics/trending-topics", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/trending-topics?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   const timelineByDate = data?.topicTimeline.reduce((acc, item) => {

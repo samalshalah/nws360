@@ -1011,7 +1011,7 @@ function LogsHealthTab() {
   const [page, setPage] = useState(0);
   const limit = 50;
   const { data: logsData, isLoading: logsLoading } = useQuery<{ items: AuditLog[]; total: number }>({
-    queryKey: ["/api/admin/audit-logs", `?limit=${limit}&offset=${page * limit}`],
+    queryKey: [`/api/admin/audit-logs?limit=${limit}&offset=${page * limit}`],
   });
   const [subTab, setSubTab] = useState<"health" | "errors" | "apikeys" | "logs">("health");
   const [showCreateKey, setShowCreateKey] = useState(false);

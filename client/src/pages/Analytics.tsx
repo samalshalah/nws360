@@ -43,7 +43,7 @@ export default function Analytics() {
     byHour: { hour: number; count: number }[];
     peaks: { date: string; count: number }[];
   }>({
-    queryKey: ["/api/analytics/content-volume", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/content-volume?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   const { data: topics, isLoading: topicsLoading } = useQuery<{
@@ -51,7 +51,7 @@ export default function Analytics() {
     topicTimeline: { date: string; topic: string; count: number }[];
     byCategory: { category: string; count: number }[];
   }>({
-    queryKey: ["/api/analytics/trending-topics", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/trending-topics?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   const isLoading = statsLoading || volumeLoading;

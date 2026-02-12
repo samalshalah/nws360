@@ -23,7 +23,7 @@ export default function NarrativeComparison() {
     topicTimeline: any[];
     byCategory: any[];
   }>({
-    queryKey: ["/api/analytics/trending-topics", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/trending-topics?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   const [selectedTopic, setSelectedTopic] = useState<string>("");
@@ -35,7 +35,7 @@ export default function NarrativeComparison() {
     sources: { sourceId: number; sourceName: string; positive: number; negative: number; neutral: number; total: number }[];
     hasContrast: boolean;
   }>({
-    queryKey: ["/api/analytics/narrative-comparison", `?topic=${encodeURIComponent(selectedTopic)}&startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/narrative-comparison?topic=${encodeURIComponent(selectedTopic)}&startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
     enabled: !!selectedTopic,
   });
 

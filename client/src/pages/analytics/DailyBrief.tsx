@@ -28,7 +28,7 @@ export default function DailyBrief() {
     };
     sourceSpike: { sourceName: string; count: number; avgCount: number } | null;
   }>({
-    queryKey: ["/api/analytics/daily-brief", `?date=${today}`],
+    queryKey: [`/api/analytics/daily-brief?date=${today}`],
   });
 
   const handleDownload = () => {

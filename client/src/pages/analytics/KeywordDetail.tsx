@@ -27,7 +27,7 @@ export default function KeywordDetail() {
     topicTimeline: any[];
     byCategory: any[];
   }>({
-    queryKey: ["/api/analytics/trending-topics", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/trending-topics?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   const { data, isLoading } = useQuery<{
@@ -37,7 +37,7 @@ export default function KeywordDetail() {
     sentiment: { positive: number; negative: number; neutral: number };
     headlines: { title: string; url: string; sourceName: string; publishedAt: string; sentiment: string }[];
   }>({
-    queryKey: ["/api/analytics/keyword-detail", `?keyword=${encodeURIComponent(keyword)}&startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/keyword-detail?keyword=${encodeURIComponent(keyword)}&startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
     enabled: !!keyword,
   });
 

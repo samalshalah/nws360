@@ -21,7 +21,7 @@ export default function SentimentReports() {
     timeline: { date: string; positive: number; negative: number; neutral: number }[];
     byCategory: { category: string; positive: number; negative: number; neutral: number }[];
   }>({
-    queryKey: ["/api/analytics/sentiment-reports", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/sentiment-reports?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   const overallPieData = data ? [

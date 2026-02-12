@@ -18,7 +18,7 @@ export default function KeywordAnalysis() {
     topKeywords: { keyword: string; count: number; avgSentiment: number }[];
     keywordTimeline: { date: string; keyword: string; count: number }[];
   }>({
-    queryKey: ["/api/analytics/keyword-analysis", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/keyword-analysis?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   const timelineByDate = data?.keywordTimeline.reduce((acc, item) => {

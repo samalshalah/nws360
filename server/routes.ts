@@ -266,9 +266,14 @@ export async function registerRoutes(
         };
         const targetLangName = langNames[targetLang] || targetLang;
         
+        const articlesToTranslate = result.items.filter((article) => {
+          const articleLang = (article.language || "en").split("-")[0].toLowerCase();
+          return articleLang !== targetLang;
+        });
+
         const batchSize = 5;
-        for (let i = 0; i < result.items.length; i += batchSize) {
-          const batch = result.items.slice(i, i + batchSize);
+        for (let i = 0; i < articlesToTranslate.length; i += batchSize) {
+          const batch = articlesToTranslate.slice(i, i + batchSize);
           const translationPromises = batch.map(async (article) => {
             try {
               const textToTranslate = `Title: ${article.title}\nSummary: ${article.summary || article.content.substring(0, 500)}`;

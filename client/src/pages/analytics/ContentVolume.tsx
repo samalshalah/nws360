@@ -17,7 +17,7 @@ export default function ContentVolume() {
     byHour: { hour: number; count: number }[];
     peaks: { date: string; count: number }[];
   }>({
-    queryKey: ["/api/analytics/content-volume", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/content-volume?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   const totalArticles = data?.timeline.reduce((s, t) => s + t.count, 0) || 0;

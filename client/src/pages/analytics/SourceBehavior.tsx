@@ -25,7 +25,7 @@ export default function SourceBehavior() {
     }[];
     diversity: { sourceType: string; count: number }[];
   }>({
-    queryKey: ["/api/analytics/source-behavior", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/source-behavior?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   return (

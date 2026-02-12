@@ -15,7 +15,7 @@ export default function NetworkMapping() {
     topicTimeline: { date: string; topic: string; count: number }[];
     byCategory: { category: string; count: number }[];
   }>({
-    queryKey: ["/api/analytics/trending-topics", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/trending-topics?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   const { data: sources } = useQuery<{
@@ -30,7 +30,7 @@ export default function NetworkMapping() {
     }[];
     diversity: { sourceType: string; count: number }[];
   }>({
-    queryKey: ["/api/analytics/source-behavior", `?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
+    queryKey: [`/api/analytics/source-behavior?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
   const sharedTopics = topics?.topics.slice(0, 10) || [];
