@@ -463,6 +463,153 @@ export const supportTickets = pgTable("support_tickets", {
 
 export const insertSupportTicketSchema = createInsertSchema(supportTickets).omit({ id: true, createdAt: true, updatedAt: true });
 
+// === PRODUCT INTELLIGENCE: USER FEEDBACK ===
+export const userFeedback = pgTable("user_feedback", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  feature: text("feature").notNull(),
+  targetId: integer("target_id"),
+  targetType: text("target_type"),
+  rating: text("rating").notNull(),
+  comment: text("comment"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_feedback_user").on(table.userId),
+  index("idx_feedback_feature").on(table.feature),
+]);
+
+export const insertUserFeedbackSchema = createInsertSchema(userFeedback).omit({ id: true, createdAt: true });
+
+// === PRODUCT INTELLIGENCE: INSIGHT ENGAGEMENT ===
+export const insightEngagement = pgTable("insight_engagement", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  insightType: text("insight_type").notNull(),
+  insightId: integer("insight_id").notNull(),
+  opened: boolean("opened").default(false),
+  clicked: boolean("clicked").default(false),
+  exported: boolean("exported").default(false),
+  dwellTimeSeconds: integer("dwell_time_seconds"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_engagement_user").on(table.userId),
+  index("idx_engagement_insight").on(table.insightType, table.insightId),
+]);
+
+export const insertInsightEngagementSchema = createInsertSchema(insightEngagement).omit({ id: true, createdAt: true });
+
+// === PRODUCT INTELLIGENCE: AI CORRECTIONS ===
+export const aiCorrections = pgTable("ai_corrections", {
+  id: serial("id").primaryKey(),
+  articleId: integer("article_id").references(() => articles.id),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  field: text("field").notNull(),
+  oldValue: text("old_value"),
+  newValue: text("new_value").notNull(),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_corrections_article").on(table.articleId),
+  index("idx_corrections_user").on(table.userId),
+]);
+
+export const insertAiCorrectionSchema = createInsertSchema(aiCorrections).omit({ id: true, createdAt: true });
+
+// === PRODUCT INTELLIGENCE: ALERT PREFERENCES ===
+export const alertPreferences = pgTable("alert_preferences", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  alertType: text("alert_type").notNull(),
+  sensitivityScore: integer("sensitivity_score").notNull().default(50),
+  autoTuned: boolean("auto_tuned").default(false),
+  lastUpdated: timestamp("last_updated").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_alert_pref_client_type").on(table.clientId, table.alertType),
+]);
+
+export const insertAlertPreferenceSchema = createInsertSchema(alertPreferences).omit({ id: true, createdAt: true, lastUpdated: true });
+
+// === PRODUCT INTELLIGENCE: DASHBOARD PREFERENCES ===
+export const dashboardPreferences = pgTable("dashboard_preferences", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  pinnedTopics: text("pinned_topics").array(),
+  favoriteEntities: text("favorite_entities").array(),
+  preferredSources: integer("preferred_sources").array(),
+  recommendedPanels: jsonb("recommended_panels"),
+  frequentSearches: text("frequent_searches").array(),
+  autoSuggested: boolean("auto_suggested").default(false),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_dash_pref_user").on(table.userId),
+]);
+
+export const insertDashboardPreferenceSchema = createInsertSchema(dashboardPreferences).omit({ id: true, createdAt: true, updatedAt: true });
+
+// === PRODUCT INTELLIGENCE: EXPERIMENTS (A/B TESTING) ===
+export const experiments = pgTable("experiments", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("active"),
+  variants: jsonb("variants").notNull(),
+  targetPercentage: integer("target_percentage").default(50),
+  startDate: timestamp("start_date").defaultNow(),
+  endDate: timestamp("end_date"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_experiment_name").on(table.name),
+]);
+
+export const insertExperimentSchema = createInsertSchema(experiments).omit({ id: true, createdAt: true });
+
+export const experimentAssignments = pgTable("experiment_assignments", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  experimentId: integer("experiment_id").references(() => experiments.id).notNull(),
+  variant: text("variant").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_exp_assign_user_exp").on(table.userId, table.experimentId),
+]);
+
+export const insertExperimentAssignmentSchema = createInsertSchema(experimentAssignments).omit({ id: true, createdAt: true });
+
+// === PRODUCT INTELLIGENCE: KNOWLEDGE BASE ===
+export const knowledgeEntries = pgTable("knowledge_entries", {
+  id: serial("id").primaryKey(),
+  questionPattern: text("question_pattern").notNull(),
+  answerSummary: text("answer_summary").notNull(),
+  queryCount: integer("query_count").notNull().default(1),
+  lastUsed: timestamp("last_used").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_knowledge_pattern").on(table.questionPattern),
+]);
+
+export const insertKnowledgeEntrySchema = createInsertSchema(knowledgeEntries).omit({ id: true, createdAt: true, lastUsed: true });
+
+// === PRODUCT INTELLIGENCE: VALUE REPORTS ===
+export const valueReports = pgTable("value_reports", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  reportMonth: text("report_month").notNull(),
+  alertsDetected: integer("alerts_detected").default(0),
+  emergingTopicsCaught: integer("emerging_topics_caught").default(0),
+  sentimentChanges: integer("sentiment_changes").default(0),
+  estimatedTimeSavedMinutes: integer("estimated_time_saved_minutes").default(0),
+  articlesProcessed: integer("articles_processed").default(0),
+  briefsGenerated: integer("briefs_generated").default(0),
+  reportData: jsonb("report_data"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_value_report_client_month").on(table.clientId, table.reportMonth),
+]);
+
+export const insertValueReportSchema = createInsertSchema(valueReports).omit({ id: true, createdAt: true });
+
 // === RELATIONS ===
 export const sourceRelations = relations(sources, ({ many }) => ({
   articles: many(articles),
@@ -564,6 +711,33 @@ export const PLAN_LIMITS = {
 } as const;
 
 export type PlanType = keyof typeof PLAN_LIMITS;
+
+export type UserFeedback = typeof userFeedback.$inferSelect;
+export type InsertUserFeedback = z.infer<typeof insertUserFeedbackSchema>;
+
+export type InsightEngagement = typeof insightEngagement.$inferSelect;
+export type InsertInsightEngagement = z.infer<typeof insertInsightEngagementSchema>;
+
+export type AiCorrection = typeof aiCorrections.$inferSelect;
+export type InsertAiCorrection = z.infer<typeof insertAiCorrectionSchema>;
+
+export type AlertPreference = typeof alertPreferences.$inferSelect;
+export type InsertAlertPreference = z.infer<typeof insertAlertPreferenceSchema>;
+
+export type DashboardPreference = typeof dashboardPreferences.$inferSelect;
+export type InsertDashboardPreference = z.infer<typeof insertDashboardPreferenceSchema>;
+
+export type Experiment = typeof experiments.$inferSelect;
+export type InsertExperiment = z.infer<typeof insertExperimentSchema>;
+
+export type ExperimentAssignment = typeof experimentAssignments.$inferSelect;
+export type InsertExperimentAssignment = z.infer<typeof insertExperimentAssignmentSchema>;
+
+export type KnowledgeEntry = typeof knowledgeEntries.$inferSelect;
+export type InsertKnowledgeEntry = z.infer<typeof insertKnowledgeEntrySchema>;
+
+export type ValueReport = typeof valueReports.$inferSelect;
+export type InsertValueReport = z.infer<typeof insertValueReportSchema>;
 
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;

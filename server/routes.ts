@@ -16,6 +16,7 @@ import { promisify } from "util";
 import { startQueueProcessor, getQueueStats, logSystemError } from "./processing-queue";
 import { runAnalyticsComputation } from "./analytics-worker";
 import { runDataRetention, onSourceHardDeleted } from "./data-retention-worker";
+import { startLearningWorker } from "./learning-worker";
 
 const scryptAsync = promisify(scrypt);
 
@@ -1453,6 +1454,7 @@ export async function registerRoutes(
   await seed();
   startFeedWorker();
   startQueueProcessor();
+  startLearningWorker();
 
   setInterval(async () => {
     try {
@@ -1801,6 +1803,227 @@ export async function registerRoutes(
       alerts: [{ id: 1, type: "volume_spike", topic: "Climate Summit", severity: "high", explanation: "300% increase in coverage over 24 hours", acknowledged: false }, { id: 2, type: "sentiment_shift", topic: "Tech Regulation", severity: "medium", explanation: "Shift from neutral to negative coverage", acknowledged: false }],
       topEntities: [{ entityName: "United Nations", entityType: "organization", mentionCount: 45, avgSentiment: 8 }, { entityName: "European Union", entityType: "organization", mentionCount: 38, avgSentiment: 12 }],
       usage: { seats: { used: 5, max: 10 }, keywords: { used: 23, max: 50 }, sources: { used: 12, max: 20 }, articlesProcessed: 1247 },
+    });
+  });
+
+  // === PRODUCT INTELLIGENCE: USER FEEDBACK ===
+  app.post("/api/feedback", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const { feature, targetId, targetType, rating, comment } = req.body;
+    if (!feature || !rating) return res.status(400).json({ message: "Feature and rating required" });
+    const feedback = await storage.createUserFeedback({ userId: user.id, feature, targetId, targetType, rating, comment });
+    res.status(201).json(feedback);
+  });
+
+  app.get("/api/feedback", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const params: any = {};
+    if (user.role !== "admin") params.userId = user.id;
+    if (req.query.feature) params.feature = req.query.feature;
+    const feedback = await storage.getUserFeedback(params);
+    res.json(feedback);
+  });
+
+  // === PRODUCT INTELLIGENCE: INSIGHT ENGAGEMENT ===
+  app.post("/api/engagement", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const { insightType, insightId, opened, clicked, exported, dwellTimeSeconds } = req.body;
+    if (!insightType || !insightId) return res.status(400).json({ message: "Insight type and ID required" });
+    const engagement = await storage.upsertInsightEngagement({ userId: user.id, insightType, insightId, opened, clicked, exported, dwellTimeSeconds });
+    res.json(engagement);
+  });
+
+  app.get("/api/engagement", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const params: any = { userId: user.id };
+    if (req.query.insightType) params.insightType = req.query.insightType;
+    res.json(await storage.getInsightEngagement(params));
+  });
+
+  // === PRODUCT INTELLIGENCE: AI CORRECTIONS ===
+  app.post("/api/corrections", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const { articleId, field, oldValue, newValue } = req.body;
+    if (!field || !newValue) return res.status(400).json({ message: "Field and new value required" });
+    const correction = await storage.createAiCorrection({ articleId, userId: user.id, field, oldValue, newValue });
+    res.status(201).json(correction);
+  });
+
+  app.get("/api/corrections", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const params: any = {};
+    if (user.role !== "admin") params.userId = user.id;
+    if (req.query.status) params.status = req.query.status;
+    if (req.query.articleId) params.articleId = parseInt(req.query.articleId as string);
+    res.json(await storage.getAiCorrections(params));
+  });
+
+  app.patch("/api/corrections/:id/status", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const id = parseInt(req.params.id);
+    const { status } = req.body;
+    if (!status || !["pending", "accepted", "rejected"].includes(status)) return res.status(400).json({ message: "Valid status required" });
+    await storage.updateAiCorrectionStatus(id, status);
+    res.json({ success: true });
+  });
+
+  // === PRODUCT INTELLIGENCE: ALERT PREFERENCES ===
+  app.get("/api/alert-preferences", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = user.clientId || (user.role === "client" ? user.id : null);
+    if (!clientId) return res.json([]);
+    res.json(await storage.getAlertPreferences(clientId));
+  });
+
+  app.post("/api/alert-preferences", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = user.clientId || (user.role === "client" ? user.id : null);
+    if (!clientId) return res.status(400).json({ message: "Client context required" });
+    const { alertType, sensitivityScore, autoTuned } = req.body;
+    if (!alertType) return res.status(400).json({ message: "Alert type required" });
+    const pref = await storage.upsertAlertPreference({ clientId, alertType, sensitivityScore: sensitivityScore ?? 50, autoTuned });
+    res.json(pref);
+  });
+
+  // === PRODUCT INTELLIGENCE: DASHBOARD PREFERENCES ===
+  app.get("/api/dashboard-preferences", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const prefs = await storage.getDashboardPreferences(user.id);
+    res.json(prefs || null);
+  });
+
+  app.post("/api/dashboard-preferences", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const { pinnedTopics, favoriteEntities, preferredSources, recommendedPanels, frequentSearches } = req.body;
+    const prefs = await storage.upsertDashboardPreferences({ userId: user.id, pinnedTopics, favoriteEntities, preferredSources, recommendedPanels, frequentSearches });
+    res.json(prefs);
+  });
+
+  // === PRODUCT INTELLIGENCE: EXPERIMENTS (A/B TESTING) ===
+  app.get("/api/experiments", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const status = req.query.status as string | undefined;
+    res.json(await storage.getExperiments({ status }));
+  });
+
+  app.post("/api/experiments", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const { name, description, variants, targetPercentage, endDate } = req.body;
+    if (!name || !variants) return res.status(400).json({ message: "Name and variants required" });
+    const experiment = await storage.createExperiment({ name, description, variants, targetPercentage, endDate });
+    res.status(201).json(experiment);
+  });
+
+  app.patch("/api/experiments/:id", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const id = parseInt(req.params.id);
+    const updated = await storage.updateExperiment(id, req.body);
+    res.json(updated);
+  });
+
+  app.get("/api/experiments/my-assignments", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    res.json(await storage.getUserExperiments(user.id));
+  });
+
+  app.post("/api/experiments/:id/assign", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const experimentId = parseInt(req.params.id);
+    const existing = await storage.getExperimentAssignment(user.id, experimentId);
+    if (existing) return res.json(existing);
+    const experiment = await storage.getExperiments();
+    const exp = experiment.find(e => e.id === experimentId);
+    if (!exp || exp.status !== "active") return res.status(404).json({ message: "Active experiment not found" });
+    const variantList = exp.variants as string[];
+    const variant = variantList[Math.floor(Math.random() * variantList.length)];
+    const assignment = await storage.createExperimentAssignment({ userId: user.id, experimentId, variant });
+    res.status(201).json(assignment);
+  });
+
+  // === PRODUCT INTELLIGENCE: KNOWLEDGE BASE ===
+  app.get("/api/knowledge", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const search = req.query.search as string | undefined;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+    res.json(await storage.getKnowledgeEntries({ search, limit }));
+  });
+
+  app.post("/api/knowledge", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const { questionPattern, answerSummary } = req.body;
+    if (!questionPattern || !answerSummary) return res.status(400).json({ message: "Question pattern and answer required" });
+    const entry = await storage.upsertKnowledgeEntry({ questionPattern, answerSummary });
+    res.json(entry);
+  });
+
+  // === PRODUCT INTELLIGENCE: VALUE REPORTS ===
+  app.get("/api/value-reports", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = user.clientId || (user.role === "client" ? user.id : null);
+    if (!clientId) return res.json([]);
+    res.json(await storage.getValueReports(clientId));
+  });
+
+  app.post("/api/value-reports/generate", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const { clientId } = req.body;
+    if (!clientId) return res.status(400).json({ message: "Client ID required" });
+    const now = new Date();
+    const reportMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const articleResult = await storage.getArticles({});
+    const briefs = await storage.getDailyBriefs(30);
+    const events = await storage.getDetectedEvents({ limit: 100 });
+    const report = await storage.createValueReport({
+      clientId,
+      reportMonth,
+      alertsDetected: events.length,
+      emergingTopicsCaught: briefs.reduce((sum: number, b: any) => sum + ((b.emergingTopics as any[])?.length || 0), 0),
+      sentimentChanges: articleResult.items.filter((a: any) => a.sentimentLabel && a.sentimentLabel !== "neutral").length,
+      estimatedTimeSavedMinutes: Math.round(articleResult.total * 2.5),
+      articlesProcessed: articleResult.total,
+      briefsGenerated: briefs.length,
+      reportData: { generatedAt: now.toISOString(), period: reportMonth },
+    });
+    res.status(201).json(report);
+  });
+
+  // === PRODUCT INTELLIGENCE: ADMIN USAGE ANALYTICS ===
+  app.get("/api/admin/product-analytics", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const feedback = await storage.getUserFeedback({});
+    const corrections = await storage.getAiCorrections({});
+    const engagement = await storage.getInsightEngagement({});
+    const knowledgeBase = await storage.getKnowledgeEntries({});
+    const featureCounts: Record<string, number> = {};
+    feedback.forEach((f: any) => { featureCounts[f.feature] = (featureCounts[f.feature] || 0) + 1; });
+    const ratingDistribution: Record<string, number> = {};
+    feedback.forEach((f: any) => { ratingDistribution[f.rating] = (ratingDistribution[f.rating] || 0) + 1; });
+    const engagementStats = {
+      totalOpened: engagement.filter((e: any) => e.opened).length,
+      totalClicked: engagement.filter((e: any) => e.clicked).length,
+      totalExported: engagement.filter((e: any) => e.exported).length,
+      totalEvents: engagement.length,
+    };
+    const correctionsByField: Record<string, number> = {};
+    corrections.forEach((c: any) => { correctionsByField[c.field] = (correctionsByField[c.field] || 0) + 1; });
+    res.json({
+      feedback: { total: feedback.length, byFeature: featureCounts, byRating: ratingDistribution },
+      engagement: engagementStats,
+      corrections: { total: corrections.length, byField: correctionsByField, pendingCount: corrections.filter((c: any) => c.status === "pending").length },
+      knowledgeBase: { totalEntries: knowledgeBase.length, topQueries: knowledgeBase.slice(0, 10).map((k: any) => ({ pattern: k.questionPattern, count: k.queryCount })) },
     });
   });
 

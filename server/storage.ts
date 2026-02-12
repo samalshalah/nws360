@@ -28,6 +28,17 @@ import {
   type NotificationSetting, type InsertNotificationSetting,
   type WhiteLabelSetting, type InsertWhiteLabelSetting,
   type SupportTicket, type InsertSupportTicket,
+  userFeedback, insightEngagement, aiCorrections, alertPreferences, dashboardPreferences,
+  experiments, experimentAssignments, knowledgeEntries, valueReports,
+  type UserFeedback, type InsertUserFeedback,
+  type InsightEngagement, type InsertInsightEngagement,
+  type AiCorrection, type InsertAiCorrection,
+  type AlertPreference, type InsertAlertPreference,
+  type DashboardPreference, type InsertDashboardPreference,
+  type Experiment, type InsertExperiment,
+  type ExperimentAssignment, type InsertExperimentAssignment,
+  type KnowledgeEntry, type InsertKnowledgeEntry,
+  type ValueReport, type InsertValueReport,
 } from "@shared/schema";
 import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
@@ -270,6 +281,35 @@ export interface IStorage {
   getSupportTickets(params?: { userId?: number; clientId?: number; status?: string }): Promise<SupportTicket[]>;
   createSupportTicket(data: InsertSupportTicket): Promise<SupportTicket>;
   updateSupportTicketStatus(id: number, status: string): Promise<void>;
+
+  getUserFeedback(params?: { userId?: number; feature?: string; targetId?: number }): Promise<UserFeedback[]>;
+  createUserFeedback(data: InsertUserFeedback): Promise<UserFeedback>;
+
+  getInsightEngagement(params?: { userId?: number; insightType?: string; insightId?: number }): Promise<InsightEngagement[]>;
+  upsertInsightEngagement(data: InsertInsightEngagement): Promise<InsightEngagement>;
+
+  getAiCorrections(params?: { articleId?: number; userId?: number; status?: string }): Promise<AiCorrection[]>;
+  createAiCorrection(data: InsertAiCorrection): Promise<AiCorrection>;
+  updateAiCorrectionStatus(id: number, status: string): Promise<void>;
+
+  getAlertPreferences(clientId: number): Promise<AlertPreference[]>;
+  upsertAlertPreference(data: InsertAlertPreference): Promise<AlertPreference>;
+
+  getDashboardPreferences(userId: number): Promise<DashboardPreference | undefined>;
+  upsertDashboardPreferences(data: InsertDashboardPreference): Promise<DashboardPreference>;
+
+  getExperiments(params?: { status?: string }): Promise<Experiment[]>;
+  createExperiment(data: InsertExperiment): Promise<Experiment>;
+  updateExperiment(id: number, data: Partial<InsertExperiment>): Promise<Experiment | undefined>;
+  getExperimentAssignment(userId: number, experimentId: number): Promise<ExperimentAssignment | undefined>;
+  getUserExperiments(userId: number): Promise<ExperimentAssignment[]>;
+  createExperimentAssignment(data: InsertExperimentAssignment): Promise<ExperimentAssignment>;
+
+  getKnowledgeEntries(params?: { search?: string; limit?: number }): Promise<KnowledgeEntry[]>;
+  upsertKnowledgeEntry(data: InsertKnowledgeEntry): Promise<KnowledgeEntry>;
+
+  getValueReports(clientId: number): Promise<ValueReport[]>;
+  createValueReport(data: InsertValueReport): Promise<ValueReport>;
 
 }
 
@@ -1911,6 +1951,165 @@ export class DatabaseStorage implements IStorage {
 
   async updateSupportTicketStatus(id: number, status: string): Promise<void> {
     await db.update(supportTickets).set({ status, updatedAt: new Date() }).where(eq(supportTickets.id, id));
+  }
+
+  async getUserFeedback(params?: { userId?: number; feature?: string; targetId?: number }): Promise<UserFeedback[]> {
+    const conditions = [];
+    if (params?.userId) conditions.push(eq(userFeedback.userId, params.userId));
+    if (params?.feature) conditions.push(eq(userFeedback.feature, params.feature));
+    if (params?.targetId) conditions.push(eq(userFeedback.targetId, params.targetId));
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    return await db.select().from(userFeedback).where(whereClause).orderBy(desc(userFeedback.createdAt));
+  }
+
+  async createUserFeedback(data: InsertUserFeedback): Promise<UserFeedback> {
+    const [row] = await db.insert(userFeedback).values(data).returning();
+    return row;
+  }
+
+  async getInsightEngagement(params?: { userId?: number; insightType?: string; insightId?: number }): Promise<InsightEngagement[]> {
+    const conditions = [];
+    if (params?.userId) conditions.push(eq(insightEngagement.userId, params.userId));
+    if (params?.insightType) conditions.push(eq(insightEngagement.insightType, params.insightType));
+    if (params?.insightId) conditions.push(eq(insightEngagement.insightId, params.insightId));
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    return await db.select().from(insightEngagement).where(whereClause).orderBy(desc(insightEngagement.createdAt));
+  }
+
+  async upsertInsightEngagement(data: InsertInsightEngagement): Promise<InsightEngagement> {
+    const existing = await db.select().from(insightEngagement)
+      .where(and(
+        eq(insightEngagement.userId, data.userId),
+        eq(insightEngagement.insightType, data.insightType),
+        eq(insightEngagement.insightId, data.insightId),
+      ));
+    if (existing.length > 0) {
+      const [row] = await db.update(insightEngagement)
+        .set({ opened: data.opened || existing[0].opened, clicked: data.clicked || existing[0].clicked, exported: data.exported || existing[0].exported, dwellTimeSeconds: data.dwellTimeSeconds ?? existing[0].dwellTimeSeconds })
+        .where(eq(insightEngagement.id, existing[0].id))
+        .returning();
+      return row;
+    }
+    const [row] = await db.insert(insightEngagement).values(data).returning();
+    return row;
+  }
+
+  async getAiCorrections(params?: { articleId?: number; userId?: number; status?: string }): Promise<AiCorrection[]> {
+    const conditions = [];
+    if (params?.articleId) conditions.push(eq(aiCorrections.articleId, params.articleId));
+    if (params?.userId) conditions.push(eq(aiCorrections.userId, params.userId));
+    if (params?.status) conditions.push(eq(aiCorrections.status, params.status));
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    return await db.select().from(aiCorrections).where(whereClause).orderBy(desc(aiCorrections.createdAt));
+  }
+
+  async createAiCorrection(data: InsertAiCorrection): Promise<AiCorrection> {
+    const [row] = await db.insert(aiCorrections).values(data).returning();
+    return row;
+  }
+
+  async updateAiCorrectionStatus(id: number, status: string): Promise<void> {
+    await db.update(aiCorrections).set({ status }).where(eq(aiCorrections.id, id));
+  }
+
+  async getAlertPreferences(clientId: number): Promise<AlertPreference[]> {
+    return await db.select().from(alertPreferences).where(eq(alertPreferences.clientId, clientId));
+  }
+
+  async upsertAlertPreference(data: InsertAlertPreference): Promise<AlertPreference> {
+    const [row] = await db.insert(alertPreferences).values(data)
+      .onConflictDoUpdate({
+        target: [alertPreferences.clientId, alertPreferences.alertType],
+        set: { sensitivityScore: data.sensitivityScore, autoTuned: data.autoTuned, lastUpdated: new Date() },
+      })
+      .returning();
+    return row;
+  }
+
+  async getDashboardPreferences(userId: number): Promise<DashboardPreference | undefined> {
+    const [row] = await db.select().from(dashboardPreferences).where(eq(dashboardPreferences.userId, userId));
+    return row;
+  }
+
+  async upsertDashboardPreferences(data: InsertDashboardPreference): Promise<DashboardPreference> {
+    const [row] = await db.insert(dashboardPreferences).values(data)
+      .onConflictDoUpdate({
+        target: dashboardPreferences.userId,
+        set: { pinnedTopics: data.pinnedTopics, favoriteEntities: data.favoriteEntities, preferredSources: data.preferredSources, recommendedPanels: data.recommendedPanels, frequentSearches: data.frequentSearches, autoSuggested: data.autoSuggested, updatedAt: new Date() },
+      })
+      .returning();
+    return row;
+  }
+
+  async getExperiments(params?: { status?: string }): Promise<Experiment[]> {
+    if (params?.status) {
+      return await db.select().from(experiments).where(eq(experiments.status, params.status)).orderBy(desc(experiments.createdAt));
+    }
+    return await db.select().from(experiments).orderBy(desc(experiments.createdAt));
+  }
+
+  async createExperiment(data: InsertExperiment): Promise<Experiment> {
+    const [row] = await db.insert(experiments).values(data).returning();
+    return row;
+  }
+
+  async updateExperiment(id: number, data: Partial<InsertExperiment>): Promise<Experiment | undefined> {
+    const [row] = await db.update(experiments).set(data).where(eq(experiments.id, id)).returning();
+    return row;
+  }
+
+  async getExperimentAssignment(userId: number, experimentId: number): Promise<ExperimentAssignment | undefined> {
+    const [row] = await db.select().from(experimentAssignments)
+      .where(and(eq(experimentAssignments.userId, userId), eq(experimentAssignments.experimentId, experimentId)));
+    return row;
+  }
+
+  async getUserExperiments(userId: number): Promise<ExperimentAssignment[]> {
+    return await db.select().from(experimentAssignments).where(eq(experimentAssignments.userId, userId));
+  }
+
+  async createExperimentAssignment(data: InsertExperimentAssignment): Promise<ExperimentAssignment> {
+    const [row] = await db.insert(experimentAssignments).values(data).returning();
+    return row;
+  }
+
+  async getKnowledgeEntries(params?: { search?: string; limit?: number }): Promise<KnowledgeEntry[]> {
+    const limit = params?.limit || 50;
+    if (params?.search) {
+      return await db.select().from(knowledgeEntries)
+        .where(like(knowledgeEntries.questionPattern, `%${params.search}%`))
+        .orderBy(desc(knowledgeEntries.queryCount))
+        .limit(limit);
+    }
+    return await db.select().from(knowledgeEntries).orderBy(desc(knowledgeEntries.queryCount)).limit(limit);
+  }
+
+  async upsertKnowledgeEntry(data: InsertKnowledgeEntry): Promise<KnowledgeEntry> {
+    const existing = await db.select().from(knowledgeEntries)
+      .where(eq(knowledgeEntries.questionPattern, data.questionPattern));
+    if (existing.length > 0) {
+      const [row] = await db.update(knowledgeEntries)
+        .set({ answerSummary: data.answerSummary, queryCount: sql`${knowledgeEntries.queryCount} + 1`, lastUsed: new Date() })
+        .where(eq(knowledgeEntries.id, existing[0].id))
+        .returning();
+      return row;
+    }
+    const [row] = await db.insert(knowledgeEntries).values(data).returning();
+    return row;
+  }
+
+  async getValueReports(clientId: number): Promise<ValueReport[]> {
+    return await db.select().from(valueReports).where(eq(valueReports.clientId, clientId)).orderBy(desc(valueReports.createdAt));
+  }
+
+  async createValueReport(data: InsertValueReport): Promise<ValueReport> {
+    const [row] = await db.insert(valueReports).values(data)
+      .onConflictDoUpdate({
+        target: [valueReports.clientId, valueReports.reportMonth],
+        set: { ...data, createdAt: undefined },
+      })
+      .returning();
+    return row;
   }
 
 }

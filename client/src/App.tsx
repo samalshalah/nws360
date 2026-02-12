@@ -39,6 +39,7 @@ import UsageBilling from "@/pages/UsageBilling";
 import ExecutiveHome from "@/pages/ExecutiveHome";
 import DemoPage from "@/pages/DemoPage";
 import HelpCenter from "@/pages/HelpCenter";
+import ProductAnalytics from "@/pages/ProductAnalytics";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, ...rest }: { component: any, path?: string }) {
@@ -168,6 +169,9 @@ function Router() {
       </Route>
       <Route path="/help">
         <ProtectedRoute component={HelpCenter} />
+      </Route>
+      <Route path="/admin/product-analytics">
+        <ProtectedRoute component={ProductAnalytics} />
       </Route>
       <Route path="/demo" component={DemoPage} />
 

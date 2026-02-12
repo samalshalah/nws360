@@ -1,0 +1,186 @@
+Enable NWS360 to learn from real user behavior and feedback, measure value delivered, and continuously improve insights, UI, and analytics without relying only on manual decisions. The goal is product intelligence and adaptive evolution.
+
+1) In-Product Feedback Capture
+
+Add lightweight feedback tools across the platform:
+
+Users can:
+
+rate AI briefings (useful / unclear / wrong)
+
+flag misleading clustering
+
+mark alerts as helpful or noisy
+
+suggest missing keywords/topics
+
+Store:
+
+user_feedback(
+  user_id,
+  feature,
+  target_id,
+  rating,
+  comment,
+  timestamp
+)
+
+2) Insight Quality Tracking
+
+Track whether insights were actually valuable.
+
+For each alert or briefing:
+
+did user open it?
+
+did they click related articles?
+
+did they export/share it?
+
+Store:
+
+insight_engagement(
+  insight_id,
+  opened,
+  clicked,
+  exported,
+  timestamp
+)
+
+
+This allows the system to learn what matters.
+
+3) Adaptive Alert Tuning
+
+Automatically improve alerts:
+
+If users repeatedly ignore a type of alert:
+→ lower its priority.
+
+If users consistently engage:
+→ raise sensitivity for similar patterns.
+
+Store learned preferences per client:
+
+alert_preferences(client_id, alert_type, sensitivity_score)
+
+4) Personalized Dashboards
+
+Allow dashboards to evolve per user:
+
+System detects:
+
+most viewed topics
+
+preferred sources
+
+frequent searches
+
+Then auto-suggest:
+
+recommended panels
+
+pinned topics
+
+favorite entities
+
+Do not force changes — suggest them.
+
+5) A/B Testing Framework
+
+Introduce controlled experimentation.
+
+Example tests:
+
+different briefing formats
+
+alert wording
+
+chart layouts
+
+Store experiment assignment:
+
+experiments(user_id, experiment_name, variant)
+
+
+Measure impact using engagement metrics.
+
+6) Model Improvement Loop
+
+Use feedback to improve AI interpretation:
+
+When users correct:
+
+topic classification
+
+entity detection
+
+sentiment
+
+Store corrections:
+
+ai_corrections(article_id, field, old_value, new_value, user_id)
+
+
+Feed these corrections into future model tuning.
+
+7) Value Reporting (Proves ROI)
+
+Generate monthly client value report:
+
+Show:
+
+alerts detected
+
+emerging topics caught early
+
+sentiment changes identified
+
+time saved (estimated)
+
+Send automatically to client admins.
+
+8) Knowledge Base Growth
+
+Convert recurring explanations into reusable knowledge:
+
+If users repeatedly ask similar AI queries:
+→ store summarized answer.
+
+Create:
+
+knowledge_entries(question_pattern, answer_summary)
+
+
+Future queries respond faster and more consistently.
+
+9) Usage-Driven Feature Roadmap
+
+Admin panel should show:
+
+most used features
+
+least used features
+
+fastest growing topics
+
+common failure points
+
+This guides development decisions with evidence.
+
+10) Continuous Improvement Cycle
+
+Implement periodic evaluation job:
+
+learning-worker.ts
+
+
+Runs weekly:
+
+analyzes feedback
+
+updates preferences
+
+recalibrates alert thresholds
+
+refreshes recommendations

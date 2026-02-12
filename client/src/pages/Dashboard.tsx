@@ -6,6 +6,7 @@ import { Newspaper, Rss, TrendingUp, Activity } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "react-i18next";
 import { UpdatedAt } from "@/components/UpdatedAt";
+import { DashboardSuggestions } from "@/components/DashboardSuggestions";
 
 export default function Dashboard() {
   const { data: analytics, isLoading: isLoadingAnalytics, dataUpdatedAt: analyticsUpdatedAt } = useAnalytics();
@@ -66,6 +67,8 @@ export default function Dashboard() {
         </div>
         <p className="text-muted-foreground text-sm">{t("dashboard.subtitle")}</p>
       </div>
+
+      <DashboardSuggestions />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {stats.map((stat, index) => (
