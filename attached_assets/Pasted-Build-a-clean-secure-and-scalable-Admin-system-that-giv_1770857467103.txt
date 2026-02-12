@@ -1,0 +1,220 @@
+Build a clean, secure, and scalable Admin system that gives full operational control over NWS360 without overwhelming the user. The goal is clarity, reliability, and preventable mistakes.
+
+1) Dedicated Admin Dashboard (/admin)
+
+Create a protected admin area accessible only to users with the Admin role, structured into clear tabs:
+
+Tabs:
+
+Sources
+
+Clients
+
+Users & Permissions
+
+System Settings
+
+Logs & Health
+
+Navigation should be simple, consistent with the main UI, and usable on both desktop and mobile.
+
+2) Sources Management (Most Important Admin Feature)
+
+Under Sources, allow Admin to:
+
+Add a new source
+
+Fields:
+
+source_name
+
+source_type (TV / Social / Web / Influencer)
+
+feed_url or API endpoint
+
+country (if applicable)
+
+active (true/false)
+
+refresh_priority (high/medium/low)
+
+Edit existing sources
+
+Enable/disable sources without deleting them.
+
+Change refresh priority per source.
+
+View source health
+
+Last successful fetch
+
+Last failure (if any)
+
+Error reason (if failed)
+
+Average articles per run
+
+API endpoints:
+
+GET /admin/sources
+
+POST /admin/sources
+
+PUT /admin/sources/:id
+
+DELETE /admin/sources/:id (soft delete preferred)
+
+3) Clients Management
+
+Under Clients, allow Admin to:
+
+Create new client profiles:
+
+client_name
+
+organization_type (Media, Government, Corporate, Political)
+
+default_language
+
+active (true/false)
+
+Assign tracking keywords per client:
+
+Add/remove keywords dynamically.
+
+Mark keywords as:
+
+primary (high priority)
+
+secondary (optional tracking)
+
+Assign allowed sources or regions:
+
+Some clients may only care about specific countries or platforms.
+
+API endpoints:
+
+GET /admin/clients
+
+POST /admin/clients
+
+PUT /admin/clients/:id
+
+4) Users & Permissions (Granular Access Control)
+
+Define three roles clearly:
+
+Admin — full system control.
+
+Client — access only to their own dashboard and analytics.
+
+Viewer — read-only access to selected data.
+
+Admin can:
+
+Add new users.
+
+Assign roles.
+
+Link users to specific clients.
+
+Reset passwords.
+
+Disable accounts.
+
+API endpoints:
+
+GET /admin/users
+
+POST /admin/users
+
+PUT /admin/users/:id
+
+5) System Settings (One Clean Page, Not Chaos)
+
+Create a single Settings page where Admin can configure:
+
+Feed refresh interval (global default)
+
+FEED_REFRESH_MINUTES (default = 5)
+
+Data retention
+
+Raw articles: keep for 30 days
+
+Analytics trends: keep for 6–12 months
+
+Translation settings
+
+Default target languages (e.g., Arabic + English)
+
+Enable/disable auto-translation.
+
+Alert thresholds (global defaults)
+
+Keyword spike threshold (e.g., 150%)
+
+Sentiment shift sensitivity.
+
+API endpoint:
+
+GET /admin/settings
+
+PUT /admin/settings
+
+6) Logs & System Health (No Blind Spots)
+
+Create a Logs & Health tab that shows:
+
+Ingestion logs:
+
+source_name
+
+start_time
+
+success/failure
+
+articles_processed
+
+error_message (if any)
+
+System health metrics:
+
+Last worker run time
+
+Average processing time
+
+Failed sources count
+
+Storage usage
+
+API endpoints:
+
+GET /admin/ingestion-logs?from=&to=
+
+GET /admin/system-health
+
+7) Safety & Guardrails (Prevents Disaster)
+
+Implement:
+
+Confirmation dialogs before deleting anything.
+
+Soft deletes for sources and clients (recoverable).
+
+Activity audit log:
+
+who changed what and when.
+
+Store in table:
+admin_audit_logs (user_id, action, entity, entity_id, timestamp)
+
+8) Mobile-Friendly Admin
+
+Ensure the admin panel works on phones:
+
+Tabs instead of wide sidebars.
+
+Cards instead of wide tables.
+
+Large, touch-friendly buttons.

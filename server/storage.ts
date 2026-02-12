@@ -1,15 +1,20 @@
 import { db } from "./db";
 import {
   users, sources, articles, keywords, bookmarks, sourceFetchLogs,
+  clients, clientKeywords, systemSettings, adminAuditLogs,
   type User, type InsertUser,
   type Source, type InsertSource,
   type Article, type InsertArticle,
   type Keyword, type InsertKeyword,
   type Bookmark, type InsertBookmark,
   type SourceFetchLog, type InsertSourceFetchLog,
+  type Client, type InsertClient,
+  type ClientKeyword, type InsertClientKeyword,
+  type SystemSetting, type InsertSystemSetting,
+  type AdminAuditLog, type InsertAdminAuditLog,
   type ArticleQueryParams
 } from "@shared/schema";
-import { eq, like, and, gte, lte, desc, sql, inArray, asc } from "drizzle-orm";
+import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -137,6 +142,44 @@ export interface IStorage {
     topSources: { sourceName: string; count: number }[];
     sentiment: { positive: number; negative: number; neutral: number };
     headlines: { title: string; url: string; sourceName: string; publishedAt: string; sentiment: string }[];
+  }>;
+
+  // Clients
+  getClients(): Promise<Client[]>;
+  getClient(id: number): Promise<Client | undefined>;
+  createClient(client: InsertClient): Promise<Client>;
+  updateClient(id: number, updates: Partial<InsertClient>): Promise<Client | undefined>;
+  deleteClient(id: number): Promise<void>;
+
+  // Client Keywords
+  getClientKeywords(clientId: number): Promise<ClientKeyword[]>;
+  addClientKeyword(keyword: InsertClientKeyword): Promise<ClientKeyword>;
+  removeClientKeyword(id: number): Promise<void>;
+
+  // System Settings
+  getSystemSettings(): Promise<Record<string, string>>;
+  updateSystemSetting(key: string, value: string): Promise<SystemSetting>;
+
+  // Admin Audit Logs
+  createAuditLog(log: InsertAdminAuditLog): Promise<AdminAuditLog>;
+  getAuditLogs(params?: { limit?: number; offset?: number }): Promise<{ items: (AdminAuditLog & { username: string })[], total: number }>;
+
+  // Soft-delete sources
+  softDeleteSource(id: number): Promise<void>;
+  restoreSource(id: number): Promise<void>;
+  getActiveSources(): Promise<Source[]>;
+
+  // User management extensions
+  updateUser(id: number, updates: Partial<{ role: string; clientId: number | null; disabled: boolean; password: string }>): Promise<User | undefined>;
+
+  // System health
+  getSystemHealth(): Promise<{
+    lastWorkerRun: Date | null;
+    avgProcessingTime: number;
+    failedSourcesCount: number;
+    totalArticles: number;
+    totalSources: number;
+    totalUsers: number;
   }>;
 }
 
@@ -1141,6 +1184,149 @@ export class DatabaseStorage implements IStorage {
     }
 
     return totalDeleted;
+  }
+
+  // === CLIENTS ===
+  async getClients(): Promise<Client[]> {
+    return await db.select().from(clients).orderBy(desc(clients.createdAt));
+  }
+
+  async getClient(id: number): Promise<Client | undefined> {
+    const [client] = await db.select().from(clients).where(eq(clients.id, id));
+    return client;
+  }
+
+  async createClient(insertClient: InsertClient): Promise<Client> {
+    const [client] = await db.insert(clients).values(insertClient).returning();
+    return client;
+  }
+
+  async updateClient(id: number, updates: Partial<InsertClient>): Promise<Client | undefined> {
+    const [client] = await db.update(clients).set(updates).where(eq(clients.id, id)).returning();
+    return client;
+  }
+
+  async deleteClient(id: number): Promise<void> {
+    await db.update(clients).set({ active: false }).where(eq(clients.id, id));
+  }
+
+  // === CLIENT KEYWORDS ===
+  async getClientKeywords(clientId: number): Promise<ClientKeyword[]> {
+    return await db.select().from(clientKeywords).where(eq(clientKeywords.clientId, clientId)).orderBy(desc(clientKeywords.createdAt));
+  }
+
+  async addClientKeyword(keyword: InsertClientKeyword): Promise<ClientKeyword> {
+    const [kw] = await db.insert(clientKeywords).values(keyword).returning();
+    return kw;
+  }
+
+  async removeClientKeyword(id: number): Promise<void> {
+    await db.delete(clientKeywords).where(eq(clientKeywords.id, id));
+  }
+
+  // === SYSTEM SETTINGS ===
+  async getSystemSettings(): Promise<Record<string, string>> {
+    const rows = await db.select().from(systemSettings);
+    const settings: Record<string, string> = {};
+    for (const row of rows) {
+      settings[row.key] = row.value;
+    }
+    return settings;
+  }
+
+  async updateSystemSetting(key: string, value: string): Promise<SystemSetting> {
+    const [existing] = await db.select().from(systemSettings).where(eq(systemSettings.key, key));
+    if (existing) {
+      const [updated] = await db.update(systemSettings).set({ value, updatedAt: new Date() }).where(eq(systemSettings.key, key)).returning();
+      return updated;
+    }
+    const [created] = await db.insert(systemSettings).values({ key, value }).returning();
+    return created;
+  }
+
+  // === ADMIN AUDIT LOGS ===
+  async createAuditLog(log: InsertAdminAuditLog): Promise<AdminAuditLog> {
+    const [entry] = await db.insert(adminAuditLogs).values(log).returning();
+    return entry;
+  }
+
+  async getAuditLogs(params?: { limit?: number; offset?: number }): Promise<{ items: (AdminAuditLog & { username: string })[], total: number }> {
+    const limit = params?.limit || 50;
+    const offset = params?.offset || 0;
+
+    const [countResult] = await db.select({ count: sql<number>`count(*)::int` }).from(adminAuditLogs);
+
+    const rows = await db.select({
+      id: adminAuditLogs.id,
+      userId: adminAuditLogs.userId,
+      action: adminAuditLogs.action,
+      entity: adminAuditLogs.entity,
+      entityId: adminAuditLogs.entityId,
+      details: adminAuditLogs.details,
+      createdAt: adminAuditLogs.createdAt,
+      username: users.username,
+    })
+      .from(adminAuditLogs)
+      .leftJoin(users, eq(adminAuditLogs.userId, users.id))
+      .orderBy(desc(adminAuditLogs.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    return {
+      items: rows.map(r => ({ ...r, username: r.username || "Unknown" })),
+      total: countResult?.count || 0,
+    };
+  }
+
+  // === SOFT-DELETE SOURCES ===
+  async softDeleteSource(id: number): Promise<void> {
+    await db.update(sources).set({ deletedAt: new Date(), active: false }).where(eq(sources.id, id));
+  }
+
+  async restoreSource(id: number): Promise<void> {
+    await db.update(sources).set({ deletedAt: null, active: true }).where(eq(sources.id, id));
+  }
+
+  async getActiveSources(): Promise<Source[]> {
+    return await db.select().from(sources).where(isNull(sources.deletedAt));
+  }
+
+  // === USER MANAGEMENT EXTENSIONS ===
+  async updateUser(id: number, updates: Partial<{ role: string; clientId: number | null; disabled: boolean; password: string }>): Promise<User | undefined> {
+    const [user] = await db.update(users).set(updates).where(eq(users.id, id)).returning();
+    return user;
+  }
+
+  // === SYSTEM HEALTH ===
+  async getSystemHealth() {
+    const [lastWorkerRow] = await db.select({ fetchedAt: sourceFetchLogs.fetchedAt })
+      .from(sourceFetchLogs)
+      .orderBy(desc(sourceFetchLogs.fetchedAt))
+      .limit(1);
+
+    const [avgTimeRow] = await db.select({ avg: sql<number>`COALESCE(AVG(duration_ms), 0)::int` })
+      .from(sourceFetchLogs)
+      .where(gte(sourceFetchLogs.fetchedAt, sql`NOW() - INTERVAL '24 hours'`));
+
+    const [failedRow] = await db.select({ count: sql<number>`count(DISTINCT source_id)::int` })
+      .from(sourceFetchLogs)
+      .where(and(
+        eq(sourceFetchLogs.status, 'error'),
+        gte(sourceFetchLogs.fetchedAt, sql`NOW() - INTERVAL '24 hours'`)
+      ));
+
+    const [totalArticlesRow] = await db.select({ count: sql<number>`count(*)::int` }).from(articles);
+    const [totalSourcesRow] = await db.select({ count: sql<number>`count(*)::int` }).from(sources).where(isNull(sources.deletedAt));
+    const [totalUsersRow] = await db.select({ count: sql<number>`count(*)::int` }).from(users);
+
+    return {
+      lastWorkerRun: lastWorkerRow?.fetchedAt || null,
+      avgProcessingTime: Number(avgTimeRow?.avg || 0),
+      failedSourcesCount: Number(failedRow?.count || 0),
+      totalArticles: Number(totalArticlesRow?.count || 0),
+      totalSources: Number(totalSourcesRow?.count || 0),
+      totalUsers: Number(totalUsersRow?.count || 0),
+    };
   }
 }
 

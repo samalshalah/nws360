@@ -726,7 +726,7 @@ export async function registerRoutes(
     }
 
     const { role } = req.body;
-    if (!role || !["admin", "client"].includes(role)) return res.status(400).json({ message: "Invalid role" });
+    if (!role || !["admin", "client", "viewer"].includes(role)) return res.status(400).json({ message: "Invalid role" });
     const updated = await storage.updateUserRole(id, role);
     if (!updated) return res.status(404).json({ message: "User not found" });
     res.json({ id: updated.id, username: updated.username, role: updated.role, parentId: updated.parentId, createdAt: updated.createdAt });
@@ -804,6 +804,253 @@ export async function registerRoutes(
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=nws360-analytics.csv");
     res.send(csvHeader + csvRows + "\n" + overallRow);
+  });
+
+  // === ADMIN: SOURCES MANAGEMENT ===
+  function requireAdmin(req: any, res: any): boolean {
+    if (!req.isAuthenticated()) { res.sendStatus(401); return false; }
+    if ((req.user as any).role !== "admin") { res.status(403).json({ message: "Admin access required" }); return false; }
+    return true;
+  }
+
+  app.get("/api/admin/sources", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const allSources = await storage.getSources();
+    res.json(allSources);
+  });
+
+  app.post("/api/admin/sources", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    try {
+      const { name, url, type, active, intervalMinutes, maxArticlesPerFetch, retentionDays, country, refreshPriority } = req.body;
+      if (!name || !url || !type) return res.status(400).json({ message: "name, url, and type are required" });
+      const source = await storage.createSource({ name: sanitizeInput(name), url, type, active: active !== false, intervalMinutes: intervalMinutes || 15, maxArticlesPerFetch: maxArticlesPerFetch || 10, retentionDays: retentionDays || 30, country: country || null, refreshPriority: refreshPriority || "medium", userId: user.id });
+      await storage.createAuditLog({ userId: user.id, action: "create", entity: "source", entityId: source.id, details: `Created source: ${source.name}` });
+      setTimeout(async () => { try { await fetchSourceFeed(source.id); } catch {} }, 1000);
+      res.status(201).json(source);
+    } catch (err) {
+      res.status(400).json({ message: "Invalid input" });
+    }
+  });
+
+  app.put("/api/admin/sources/:id", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid source ID" });
+    const allowedFields = ['name', 'url', 'type', 'active', 'intervalMinutes', 'maxArticlesPerFetch', 'retentionDays', 'country', 'refreshPriority'] as const;
+    const cleanUpdates: Record<string, any> = {};
+    for (const key of allowedFields) {
+      if (key in req.body && req.body[key] !== undefined) cleanUpdates[key] = req.body[key];
+    }
+    if (Object.keys(cleanUpdates).length === 0) return res.status(400).json({ message: "No valid fields to update" });
+    const source = await storage.updateSource(id, cleanUpdates);
+    if (!source) return res.status(404).json({ message: "Source not found" });
+    await storage.createAuditLog({ userId: user.id, action: "update", entity: "source", entityId: id, details: `Updated source: ${JSON.stringify(cleanUpdates)}` });
+    res.json(source);
+  });
+
+  app.delete("/api/admin/sources/:id", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid source ID" });
+    await storage.softDeleteSource(id);
+    await storage.createAuditLog({ userId: user.id, action: "soft_delete", entity: "source", entityId: id, details: `Soft-deleted source #${id}` });
+    res.sendStatus(204);
+  });
+
+  app.post("/api/admin/sources/:id/restore", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid source ID" });
+    await storage.restoreSource(id);
+    await storage.createAuditLog({ userId: user.id, action: "restore", entity: "source", entityId: id, details: `Restored source #${id}` });
+    res.json({ success: true });
+  });
+
+  // === ADMIN: CLIENTS MANAGEMENT ===
+  app.get("/api/admin/clients", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const allClients = await storage.getClients();
+    res.json(allClients);
+  });
+
+  app.post("/api/admin/clients", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const { name, organizationType, defaultLanguage, active, allowedRegions } = req.body;
+    if (!name || typeof name !== "string" || name.trim().length === 0) return res.status(400).json({ message: "Client name is required" });
+    try {
+      const client = await storage.createClient({ name: sanitizeInput(name), organizationType: organizationType || "media", defaultLanguage: defaultLanguage || "en", active: active !== false, allowedRegions: allowedRegions || null });
+      await storage.createAuditLog({ userId: user.id, action: "create", entity: "client", entityId: client.id, details: `Created client: ${client.name}` });
+      res.status(201).json(client);
+    } catch (err) {
+      res.status(400).json({ message: "Invalid input" });
+    }
+  });
+
+  app.put("/api/admin/clients/:id", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid client ID" });
+    const allowedFields = ['name', 'organizationType', 'defaultLanguage', 'active', 'allowedRegions'] as const;
+    const cleanUpdates: Record<string, any> = {};
+    for (const key of allowedFields) {
+      if (key in req.body && req.body[key] !== undefined) cleanUpdates[key] = req.body[key];
+    }
+    const client = await storage.updateClient(id, cleanUpdates);
+    if (!client) return res.status(404).json({ message: "Client not found" });
+    await storage.createAuditLog({ userId: user.id, action: "update", entity: "client", entityId: id, details: `Updated client: ${JSON.stringify(cleanUpdates)}` });
+    res.json(client);
+  });
+
+  app.delete("/api/admin/clients/:id", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid client ID" });
+    await storage.deleteClient(id);
+    await storage.createAuditLog({ userId: user.id, action: "deactivate", entity: "client", entityId: id, details: `Deactivated client #${id}` });
+    res.sendStatus(204);
+  });
+
+  // === ADMIN: CLIENT KEYWORDS ===
+  app.get("/api/admin/clients/:id/keywords", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const clientId = parseInt(req.params.id);
+    if (isNaN(clientId)) return res.status(400).json({ message: "Invalid client ID" });
+    const kws = await storage.getClientKeywords(clientId);
+    res.json(kws);
+  });
+
+  app.post("/api/admin/clients/:id/keywords", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const clientId = parseInt(req.params.id);
+    if (isNaN(clientId)) return res.status(400).json({ message: "Invalid client ID" });
+    const { term, priority } = req.body;
+    if (!term || typeof term !== "string" || term.trim().length === 0) return res.status(400).json({ message: "Keyword term is required" });
+    const kw = await storage.addClientKeyword({ clientId, term: sanitizeInput(term), priority: priority || "primary" });
+    await storage.createAuditLog({ userId: user.id, action: "add_keyword", entity: "client_keyword", entityId: kw.id, details: `Added keyword "${term}" to client #${clientId}` });
+    res.status(201).json(kw);
+  });
+
+  app.delete("/api/admin/client-keywords/:id", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid keyword ID" });
+    await storage.removeClientKeyword(id);
+    await storage.createAuditLog({ userId: user.id, action: "remove_keyword", entity: "client_keyword", entityId: id, details: `Removed client keyword #${id}` });
+    res.sendStatus(204);
+  });
+
+  // === ADMIN: USERS MANAGEMENT ===
+  app.get("/api/admin/users", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const allUsers = await storage.getUsers();
+    const safeUsers = allUsers.map((u: any) => ({ id: u.id, username: u.username, role: u.role, parentId: u.parentId, clientId: u.clientId, disabled: u.disabled, createdAt: u.createdAt }));
+    res.json(safeUsers);
+  });
+
+  app.post("/api/admin/users", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const adminUser = req.user as any;
+    const { username, password, role, clientId } = req.body;
+    if (!username || !password) return res.status(400).json({ message: "Username and password required" });
+    if (!["admin", "client", "viewer"].includes(role || "client")) return res.status(400).json({ message: "Invalid role" });
+    const existingUser = await storage.getUserByUsername(username);
+    if (existingUser) return res.status(400).json({ message: "Username already exists" });
+    const salt = randomBytes(16).toString("hex");
+    const buf = (await scryptAsync(password, salt, 64)) as Buffer;
+    const hashedPassword = `${salt}:${buf.toString("hex")}`;
+    const newUser = await storage.createUser({ username: sanitizeInput(username), password: hashedPassword, role: role || "client", parentId: adminUser.id, clientId: clientId || null });
+    await storage.createAuditLog({ userId: adminUser.id, action: "create", entity: "user", entityId: newUser.id, details: `Created user: ${newUser.username} (${newUser.role})` });
+    res.status(201).json({ id: newUser.id, username: newUser.username, role: newUser.role, parentId: newUser.parentId, clientId: newUser.clientId, disabled: newUser.disabled, createdAt: newUser.createdAt });
+  });
+
+  app.put("/api/admin/users/:id", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const adminUser = req.user as any;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid user ID" });
+    if (id === adminUser.id) return res.status(400).json({ message: "Cannot modify your own account via admin" });
+    const allowedFields: Record<string, any> = {};
+    if (req.body.role && ["admin", "client", "viewer"].includes(req.body.role)) allowedFields.role = req.body.role;
+    if (req.body.clientId !== undefined) allowedFields.clientId = req.body.clientId;
+    if (typeof req.body.disabled === "boolean") allowedFields.disabled = req.body.disabled;
+    if (req.body.password && typeof req.body.password === "string" && req.body.password.length >= 4) {
+      const salt = randomBytes(16).toString("hex");
+      const buf = (await scryptAsync(req.body.password, salt, 64)) as Buffer;
+      allowedFields.password = `${salt}:${buf.toString("hex")}`;
+    }
+    if (Object.keys(allowedFields).length === 0) return res.status(400).json({ message: "No valid fields to update" });
+    const updated = await storage.updateUser(id, allowedFields);
+    if (!updated) return res.status(404).json({ message: "User not found" });
+    await storage.createAuditLog({ userId: adminUser.id, action: "update", entity: "user", entityId: id, details: `Updated user #${id}: ${Object.keys(allowedFields).join(", ")}` });
+    res.json({ id: updated.id, username: updated.username, role: updated.role, parentId: updated.parentId, clientId: updated.clientId, disabled: updated.disabled, createdAt: updated.createdAt });
+  });
+
+  app.delete("/api/admin/users/:id", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const adminUser = req.user as any;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid user ID" });
+    if (id === adminUser.id) return res.status(400).json({ message: "Cannot delete yourself" });
+    await storage.deleteUser(id);
+    await storage.createAuditLog({ userId: adminUser.id, action: "delete", entity: "user", entityId: id, details: `Deleted user #${id}` });
+    res.sendStatus(204);
+  });
+
+  // === ADMIN: SYSTEM SETTINGS ===
+  app.get("/api/admin/settings", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const settings = await storage.getSystemSettings();
+    const defaults: Record<string, string> = {
+      feedRefreshMinutes: "5",
+      rawArticleRetentionDays: "30",
+      analyticsRetentionMonths: "12",
+      defaultTargetLanguages: "en,ar",
+      autoTranslationEnabled: "true",
+      keywordSpikeThreshold: "150",
+      sentimentShiftSensitivity: "30",
+    };
+    res.json({ ...defaults, ...settings });
+  });
+
+  app.put("/api/admin/settings", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const updates = req.body;
+    if (!updates || typeof updates !== "object") return res.status(400).json({ message: "Settings object required" });
+    const allowedKeys = ["feedRefreshMinutes", "rawArticleRetentionDays", "analyticsRetentionMonths", "defaultTargetLanguages", "autoTranslationEnabled", "keywordSpikeThreshold", "sentimentShiftSensitivity"];
+    for (const [key, value] of Object.entries(updates)) {
+      if (allowedKeys.includes(key) && typeof value === "string") {
+        await storage.updateSystemSetting(key, value);
+      }
+    }
+    await storage.createAuditLog({ userId: user.id, action: "update", entity: "system_settings", details: `Updated settings: ${Object.keys(updates).join(", ")}` });
+    const settings = await storage.getSystemSettings();
+    res.json(settings);
+  });
+
+  // === ADMIN: LOGS & HEALTH ===
+  app.get("/api/admin/system-health", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const health = await storage.getSystemHealth();
+    res.json(health);
+  });
+
+  app.get("/api/admin/audit-logs", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+    const result = await storage.getAuditLogs({ limit, offset });
+    res.json(result);
   });
 
   // === SEED & START WORKER ===

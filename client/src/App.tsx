@@ -28,6 +28,7 @@ import NarrativeComparison from "@/pages/analytics/NarrativeComparison";
 import DailyBrief from "@/pages/analytics/DailyBrief";
 import KeywordDetail from "@/pages/analytics/KeywordDetail";
 import Admin from "@/pages/Admin";
+import AdminDashboard from "@/pages/AdminDashboard";
 import Saved from "@/pages/Saved";
 import UserManagement from "@/pages/UserManagement";
 import SourceHealth from "@/pages/SourceHealth";
@@ -132,6 +133,9 @@ function Router() {
       </Route>
       <Route path="/sources/health">
         <ProtectedRoute component={SourceHealth} />
+      </Route>
+      <Route path="/admin/dashboard">
+        <ProtectedRoute component={AdminDashboard} />
       </Route>
       <Route path="/admin">
         <ProtectedRoute component={Admin} />

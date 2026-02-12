@@ -82,6 +82,16 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - **Telegram**: Scrapes public channel preview pages via t.me/s/channel
 
 ## Recent Changes
+- 2026-02-12: Added Admin Dashboard page (/admin/dashboard) with 5 tabs: Sources, Clients, Users & Permissions, System Settings, Logs & Health
+- 2026-02-12: Added clients table for multi-tenant client profiles (name, orgType, language, regions)
+- 2026-02-12: Added client_keywords table for per-client keyword tracking with priority
+- 2026-02-12: Added system_settings table for key-value system configuration
+- 2026-02-12: Added admin_audit_logs table for tracking all admin mutations
+- 2026-02-12: Extended users with clientId FK, disabled boolean, viewer role support
+- 2026-02-12: Extended sources with country, refreshPriority, deletedAt (soft-delete pattern)
+- 2026-02-12: Added 11 admin-only API routes with requireAdmin guard and automatic audit logging
+- 2026-02-12: Sources now support soft-delete with restore capability
+- 2026-02-12: Admin sidebar link visible only to admin-role users
 - 2026-02-11: Google News articles show publisher favicon + name as visual fallback when article images are unavailable
 - 2026-02-11: Generic Google placeholder images (lh3.googleusercontent.com) are filtered out from articles
 - 2026-02-11: Background image backfill via Brave Search resolves real article URLs and fetches og:image (rate-limited, processes ~2 articles per cycle)

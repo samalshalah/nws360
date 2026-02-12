@@ -3,6 +3,19 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { relations } from "drizzle-orm";
 
+// === CLIENTS ===
+export const clients = pgTable("clients", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  organizationType: text("organization_type").notNull().default("media"),
+  defaultLanguage: text("default_language").default("en"),
+  active: boolean("active").default(true),
+  allowedRegions: text("allowed_regions").array(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true });
+
 // === USERS ===
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -10,6 +23,8 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   role: text("role").notNull().default("client"),
   parentId: integer("parent_id"),
+  clientId: integer("client_id"),
+  disabled: boolean("disabled").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -26,11 +41,25 @@ export const sources = pgTable("sources", {
   maxArticlesPerFetch: integer("max_articles_per_fetch").default(10),
   retentionDays: integer("retention_days").default(30),
   userId: integer("user_id"),
+  country: text("country"),
+  refreshPriority: text("refresh_priority").default("medium"),
+  deletedAt: timestamp("deleted_at"),
   lastFetchedAt: timestamp("last_fetched_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertSourceSchema = createInsertSchema(sources).omit({ id: true, createdAt: true, lastFetchedAt: true });
+export const insertSourceSchema = createInsertSchema(sources).omit({ id: true, createdAt: true, lastFetchedAt: true, deletedAt: true });
+
+// === CLIENT KEYWORDS ===
+export const clientKeywords = pgTable("client_keywords", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull(),
+  term: text("term").notNull(),
+  priority: text("priority").notNull().default("primary"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertClientKeywordSchema = createInsertSchema(clientKeywords).omit({ id: true, createdAt: true });
 
 // === ARTICLES ===
 export const articles = pgTable("articles", {
@@ -93,6 +122,29 @@ export const sourceFetchLogs = pgTable("source_fetch_logs", {
 
 export const insertSourceFetchLogSchema = createInsertSchema(sourceFetchLogs).omit({ id: true, fetchedAt: true });
 
+// === SYSTEM SETTINGS ===
+export const systemSettings = pgTable("system_settings", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertSystemSettingSchema = createInsertSchema(systemSettings).omit({ id: true, updatedAt: true });
+
+// === ADMIN AUDIT LOGS ===
+export const adminAuditLogs = pgTable("admin_audit_logs", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  action: text("action").notNull(),
+  entity: text("entity").notNull(),
+  entityId: integer("entity_id"),
+  details: text("details"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAdminAuditLogSchema = createInsertSchema(adminAuditLogs).omit({ id: true, createdAt: true });
+
 // === RELATIONS ===
 export const sourceRelations = relations(sources, ({ many }) => ({
   articles: many(articles),
@@ -123,6 +175,18 @@ export type InsertBookmark = z.infer<typeof insertBookmarkSchema>;
 
 export type SourceFetchLog = typeof sourceFetchLogs.$inferSelect;
 export type InsertSourceFetchLog = z.infer<typeof insertSourceFetchLogSchema>;
+
+export type Client = typeof clients.$inferSelect;
+export type InsertClient = z.infer<typeof insertClientSchema>;
+
+export type ClientKeyword = typeof clientKeywords.$inferSelect;
+export type InsertClientKeyword = z.infer<typeof insertClientKeywordSchema>;
+
+export type SystemSetting = typeof systemSettings.$inferSelect;
+export type InsertSystemSetting = z.infer<typeof insertSystemSettingSchema>;
+
+export type AdminAuditLog = typeof adminAuditLogs.$inferSelect;
+export type InsertAdminAuditLog = z.infer<typeof insertAdminAuditLogSchema>;
 
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;
