@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources, useUpdateSource } from "@/hooks/use-sources";
 import { useKeywords, useCreateKeyword, useDeleteKeyword } from "@/hooks/use-keywords";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -476,6 +477,14 @@ function SourcesManager() {
   const { mutate: fetchSource, isPending: isFetchingOne, variables: fetchingSourceId } = useFetchSource();
   const { mutate: fetchAll, isPending: isFetchingAll } = useFetchAllSources();
   const { mutate: updateSource } = useUpdateSource();
+  const { data: articleCounts } = useQuery<Record<number, number>>({
+    queryKey: ["/api/sources/article-counts"],
+    queryFn: async () => {
+      const res = await fetch("/api/sources/article-counts");
+      if (!res.ok) return {};
+      return res.json();
+    },
+  });
 
   const sourceTypeLabels: Record<string, string> = {
     rss: t("admin.rss"),
@@ -535,6 +544,7 @@ function SourcesManager() {
                   <TableRow>
                     <TableHead>{t("admin.sourceName")}</TableHead>
                     <TableHead>{t("admin.type")}</TableHead>
+                    <TableHead>Articles</TableHead>
                     <TableHead>{t("admin.postsPerFetch")}</TableHead>
                     <TableHead>{t("admin.retention")}</TableHead>
                     <TableHead>{t("admin.status")}</TableHead>
@@ -553,6 +563,11 @@ function SourcesManager() {
                             <Icon className={`w-3.5 h-3.5 ${getSourceColor(source.type)}`} />
                             <span className="text-muted-foreground">{sourceTypeLabels[source.type] || source.type}</span>
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          <span className="tabular-nums font-medium" data-testid={`text-article-count-${source.id}`}>
+                            {(articleCounts?.[source.id] ?? 0).toLocaleString()}
+                          </span>
                         </TableCell>
                         <TableCell>
                           <Input
@@ -653,6 +668,7 @@ function SourcesManager() {
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {sourceTypeLabels[source.type] || source.type}
+                      <span> &middot; {(articleCounts?.[source.id] ?? 0).toLocaleString()} articles</span>
                       {source.lastFetchedAt && (
                         <span> &middot; {formatDistanceToNow(new Date(source.lastFetchedAt), { addSuffix: true })}</span>
                       )}

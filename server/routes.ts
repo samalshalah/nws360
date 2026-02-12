@@ -841,6 +841,20 @@ export async function registerRoutes(
     res.json(allSources);
   });
 
+  app.get("/api/sources/article-counts", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    try {
+      const counts = await db.execute(sql`SELECT source_id, COUNT(*)::int as count FROM articles WHERE source_id IS NOT NULL GROUP BY source_id`);
+      const map: Record<number, number> = {};
+      for (const row of counts.rows) {
+        map[row.source_id as number] = row.count as number;
+      }
+      res.json(map);
+    } catch (err) {
+      res.json({});
+    }
+  });
+
   app.post("/api/admin/sources", async (req, res) => {
     if (!requireAdmin(req, res)) return;
     const user = req.user as any;
