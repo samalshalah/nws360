@@ -282,7 +282,7 @@ export interface IStorage {
   getStoryCluster(id: number): Promise<StoryCluster | undefined>;
   createStoryCluster(data: InsertStoryCluster): Promise<StoryCluster>;
   updateStoryCluster(id: number, data: Partial<InsertStoryCluster>): Promise<StoryCluster>;
-  getClusterArticles(clusterId: number): Promise<Article[]>;
+  getClusterArticles(clusterId: number): Promise<(Article & { sourceName?: string | null })[]>;
 
   getDailyBriefs(limit?: number): Promise<DailyBrief[]>;
   getDailyBrief(date: string): Promise<DailyBrief | undefined>;
@@ -1907,7 +1907,7 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async getClusterArticles(clusterId: number): Promise<Article[]> {
+  async getClusterArticles(clusterId: number): Promise<(Article & { sourceName?: string | null })[]> {
     const rows = await db.select({
       id: articles.id,
       title: articles.title,
@@ -1928,9 +1928,11 @@ export class DatabaseStorage implements IStorage {
       imageUrl: articles.imageUrl,
       subSource: articles.subSource,
       createdAt: articles.createdAt,
+      sourceName: sources.name,
     })
       .from(articles)
       .innerJoin(articleAiAnalysis, eq(articles.id, articleAiAnalysis.articleId))
+      .leftJoin(sources, eq(articles.sourceId, sources.id))
       .where(eq(articleAiAnalysis.clusterId, clusterId))
       .orderBy(desc(articles.publishedAt));
     return rows;

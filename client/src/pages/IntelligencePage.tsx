@@ -40,7 +40,7 @@ interface StoryCluster {
 interface StoryDetail {
   id: number;
   title: string;
-  articles: { id: number; title: string; sourceId: number; publishedAt: string; sentiment: string; url: string | null }[];
+  articles: { id: number; title: string; sourceId: number; sourceName?: string | null; publishedAt: string; sentiment: string; url: string | null }[];
   narrativeVariations?: StoryCluster["narrativeVariations"];
 }
 
@@ -211,8 +211,12 @@ function StoriesTab({ mode }: { mode: string }) {
                       {storyDetail.articles.map((article, idx) => (
                         <div key={article.id || idx} className="flex items-center justify-between gap-2 py-1.5 border-b last:border-b-0 text-xs">
                           <div className="flex-1 min-w-0">
-                            <p className="font-medium truncate">{article.title}</p>
-                            <p className="text-muted-foreground">Source {article.sourceId} &middot; {new Date(article.publishedAt).toLocaleDateString()}</p>
+                            {article.url ? (
+                              <a href={article.url} target="_blank" rel="noopener noreferrer" className="font-medium truncate block text-primary hover:underline" data-testid={`link-article-${article.id}`}>{article.title}</a>
+                            ) : (
+                              <p className="font-medium truncate">{article.title}</p>
+                            )}
+                            <p className="text-muted-foreground">{article.sourceName || `Source ${article.sourceId}`} &middot; {new Date(article.publishedAt).toLocaleDateString()}</p>
                           </div>
                           <Badge variant="secondary">{article.sentiment}</Badge>
                         </div>
