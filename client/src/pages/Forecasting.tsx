@@ -26,6 +26,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   TrendingUp,
   Zap,
   Shield,
@@ -40,7 +45,23 @@ import {
   Trash2,
   Loader2,
   AlertTriangle,
+  Info,
 } from "lucide-react";
+
+function TabInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-tab-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const stageColors: Record<string, string> = {
   emerging: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
@@ -82,6 +103,7 @@ function TopicForecastsTab() {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="Track how topics evolve over time. Monitor momentum, acceleration, and media amplification to estimate the probability of a topic trending in the next 24 hours or 7 days." />
       <Card>
         <CardContent className="py-4 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -197,6 +219,7 @@ function EarlySignalsTab() {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="Detect unusual patterns that may indicate developing stories. Flags include new actors appearing, sudden tone shifts, cross-region clustering, and unexpected volume surges." />
       <Card>
         <CardContent className="py-4 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -279,6 +302,7 @@ function ScenarioTab() {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="Run AI-powered what-if analysis. Model potential outcomes by exploring hypothetical situations and generate plausible scenarios based on current coverage and historical patterns." />
       <Card>
         <CardContent className="py-4 space-y-3">
           <div>
@@ -389,6 +413,7 @@ function RiskScoringTab() {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="Assign risk levels to topics and stories across operational, reputational, and escalation dimensions. Helps prioritize which developments need immediate attention." />
       <Card>
         <CardContent className="py-4 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -492,6 +517,7 @@ function InfluenceMapTab() {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="Track how stories spread from source to source. Identify which outlets are driving narratives and which are following, revealing the cascade of influence across the media landscape." />
       <Card>
         <CardContent className="py-4 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -590,6 +616,7 @@ function AttentionDecayTab() {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="Predict how long a story will stay in the news cycle. Estimates decay rate and remaining days of coverage, helping you gauge whether a story is fading or has staying power." />
       <Card>
         <CardContent className="py-4 space-y-3">
           <div>
@@ -671,6 +698,7 @@ function AlertPriorityTab() {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="Go beyond simple keyword alerts. Prioritize notifications by factoring in coverage acceleration, multi-region spread, and sentiment volatility to surface what truly matters." />
       <Card>
         <CardContent className="py-4 space-y-3">
           <div>
@@ -755,6 +783,7 @@ function ForecastEvalTab() {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="Measure how accurate past predictions were. Track forecast performance over time so the system continuously learns and improves its predictive capabilities." />
       {results && results.length > 0 && (
         <Card>
           <CardContent className="py-4">
@@ -864,6 +893,7 @@ function FutureBriefingTab() {
 
   return (
     <div className="space-y-4">
+      <TabInfo description="Forward-looking intelligence summaries. Preview possible escalations, emerging actors, and topics likely to fade — a briefing on what's coming rather than what already happened." />
       <div className="flex justify-between items-center flex-wrap gap-2">
         <p className="text-sm text-muted-foreground">Forward-looking intelligence reports: what to watch next</p>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
