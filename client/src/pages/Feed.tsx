@@ -341,72 +341,59 @@ export default function Feed() {
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          {sourceTypePills.map(pill => (
-            <Badge
-              key={pill.key}
-              variant={activeSourceType === pill.key ? "default" : "outline"}
-              className={cn(
-                "cursor-pointer select-none transition-colors",
-                activeSourceType === pill.key
-                  ? "toggle-elevate toggle-elevated"
-                  : "toggle-elevate"
-              )}
-              onClick={() => updateFilter("sourceType", pill.key === "all" ? undefined : pill.key)}
-              data-testid={`pill-source-type-${pill.key}`}
-            >
-              {pill.label}
-            </Badge>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          {timeRangePills.map(pill => (
-            <Badge
-              key={pill.key}
-              variant={filters.dateRange === pill.key ? "default" : "outline"}
-              className={cn(
-                "cursor-pointer select-none transition-colors",
-                filters.dateRange === pill.key
-                  ? "toggle-elevate toggle-elevated"
-                  : "toggle-elevate"
-              )}
-              onClick={() => updateFilter("dateRange", pill.key)}
-              data-testid={`pill-time-range-${pill.key}`}
-            >
-              {pill.label}
-            </Badge>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          {sentimentPills.map(pill => (
-            <Badge
-              key={pill.key}
-              variant={activeSentiment === pill.key ? "default" : "outline"}
-              className={cn(
-                "cursor-pointer select-none transition-colors",
-                activeSentiment === pill.key
-                  ? "toggle-elevate toggle-elevated"
-                  : "toggle-elevate"
-              )}
-              onClick={() => updateFilter("sentiment", pill.key === "all" ? undefined : pill.key)}
-              data-testid={`pill-sentiment-${pill.key}`}
-            >
-              {pill.dot && (
-                <span className={cn("w-2 h-2 rounded-full mr-1.5 inline-block", pill.dot)} />
-              )}
-              {pill.label}
-            </Badge>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <Select
-            value={filters.sourceId}
+            value={filters.sourceType || "all"}
+            onValueChange={(val) => updateFilter("sourceType", val === "all" ? undefined : val)}
+          >
+            <SelectTrigger className="w-full sm:w-[160px] bg-background" data-testid="select-filter-source-type">
+              <SelectValue placeholder={t("feed.allSourceTypes")} />
+            </SelectTrigger>
+            <SelectContent>
+              {sourceTypePills.map(pill => (
+                <SelectItem key={pill.key} value={pill.key}>{pill.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={filters.dateRange}
+            onValueChange={(val) => updateFilter("dateRange", val)}
+          >
+            <SelectTrigger className="w-full sm:w-[150px] bg-background" data-testid="select-filter-date-range">
+              <SelectValue placeholder={t("feed.allDates")} />
+            </SelectTrigger>
+            <SelectContent>
+              {timeRangePills.map(pill => (
+                <SelectItem key={pill.key} value={pill.key}>{pill.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={filters.sentiment || "all"}
+            onValueChange={(val) => updateFilter("sentiment", val === "all" ? undefined : val)}
+          >
+            <SelectTrigger className="w-full sm:w-[150px] bg-background" data-testid="select-filter-sentiment">
+              <SelectValue placeholder={t("feed.allSentiment")} />
+            </SelectTrigger>
+            <SelectContent>
+              {sentimentPills.map(pill => (
+                <SelectItem key={pill.key} value={pill.key}>
+                  <span className="flex items-center gap-1.5">
+                    {pill.dot && <span className={cn("w-2 h-2 rounded-full inline-block", pill.dot)} />}
+                    {pill.label}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={filters.sourceId || "all"}
             onValueChange={(val) => updateFilter("sourceId", val === "all" ? undefined : val)}
           >
-            <SelectTrigger className="w-full md:w-[180px] bg-background" data-testid="select-filter-source">
+            <SelectTrigger className="w-full sm:w-[180px] bg-background" data-testid="select-filter-source">
               <SelectValue placeholder={t("feed.allSources")} />
             </SelectTrigger>
             <SelectContent>
@@ -420,10 +407,10 @@ export default function Feed() {
           </Select>
 
           <Select
-            value={filters.category}
+            value={filters.category || "all"}
             onValueChange={(val) => updateFilter("category", val === "all" ? undefined : val)}
           >
-            <SelectTrigger className="w-full md:w-[180px] bg-background" data-testid="select-filter-category">
+            <SelectTrigger className="w-full sm:w-[170px] bg-background" data-testid="select-filter-category">
               <SelectValue placeholder={t("feed.allCategories")} />
             </SelectTrigger>
             <SelectContent>
@@ -438,6 +425,7 @@ export default function Feed() {
 
           {hasActiveFilters && (
             <Button variant="ghost" size="sm" onClick={clearFilters} data-testid="button-clear-filters">
+              <X className="w-3.5 h-3.5 mr-1" />
               {t("feed.clearFilters")}
             </Button>
           )}
