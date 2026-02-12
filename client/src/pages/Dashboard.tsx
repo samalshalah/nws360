@@ -2,37 +2,69 @@ import { useAnalytics } from "@/hooks/use-analytics";
 import { useArticles } from "@/hooks/use-articles";
 import { ArticleCard } from "@/components/articles/ArticleCard";
 import { Card, CardContent } from "@/components/ui/card";
-import { Newspaper, Rss, TrendingUp, Activity } from "lucide-react";
+import { Newspaper, Rss, TrendingUp, AlertTriangle, Landmark, Cpu, FlaskConical, HeartPulse, Briefcase, Gamepad2, Clapperboard, Layers } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "react-i18next";
 import { UpdatedAt } from "@/components/UpdatedAt";
 import { DashboardSuggestions } from "@/components/DashboardSuggestions";
 
-export default function Dashboard() {
-  const { data: analytics, isLoading: isLoadingAnalytics, dataUpdatedAt: analyticsUpdatedAt } = useAnalytics();
-  const { data: latestNews, isLoading: isLoadingNews, dataUpdatedAt: newsUpdatedAt } = useArticles({ limit: 4 });
-  const { t } = useTranslation();
+const categories = [
+  { key: "urgent", icon: AlertTriangle, color: "text-red-500 dark:text-red-400" },
+  { key: "political", icon: Landmark, color: "text-blue-500 dark:text-blue-400" },
+  { key: "business", icon: Briefcase, color: "text-emerald-500 dark:text-emerald-400" },
+  { key: "tech", icon: Cpu, color: "text-violet-500 dark:text-violet-400" },
+  { key: "entertainment", icon: Clapperboard, color: "text-pink-500 dark:text-pink-400" },
+  { key: "sports", icon: Gamepad2, color: "text-orange-500 dark:text-orange-400" },
+  { key: "health", icon: HeartPulse, color: "text-teal-500 dark:text-teal-400" },
+  { key: "science", icon: FlaskConical, color: "text-cyan-500 dark:text-cyan-400" },
+  { key: "general", icon: Layers, color: "text-muted-foreground" },
+];
 
-  if (isLoadingAnalytics || isLoadingNews) {
+function CategoryRow({ category, icon: Icon, color }: { category: string; icon: any; color: string }) {
+  const { data, isLoading } = useArticles({ category, limit: 4 });
+
+  if (isLoading) {
     return (
-      <div className="space-y-8 animate-fade-in">
-        <div className="space-y-2">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-5 w-96" />
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-5 w-5 rounded" />
+          <Skeleton className="h-5 w-32" />
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-28 w-full rounded-md" />
-          ))}
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((i) => (
-            <Skeleton key={i} className="h-64 w-full rounded-md" />
+            <Skeleton key={i} className="h-48 w-full rounded-md" />
           ))}
         </div>
       </div>
     );
   }
+
+  const articles = data?.items || [];
+  if (articles.length === 0) return null;
+
+  const label = category.charAt(0).toUpperCase() + category.slice(1);
+
+  return (
+    <div className="space-y-3" data-testid={`category-section-${category}`}>
+      <div className="flex items-center gap-2">
+        <Icon className={`w-5 h-5 ${color}`} />
+        <h2 className="text-lg font-semibold">{label}</h2>
+        <span className="text-xs text-muted-foreground">({articles.length})</span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {articles.map((article: any, index: number) => (
+          <div key={article.id} className="animate-slide-up" style={{ animationDelay: `${index * 60}ms` }}>
+            <ArticleCard article={article} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const { data: analytics, isLoading: isLoadingAnalytics, dataUpdatedAt: analyticsUpdatedAt } = useAnalytics();
+  const { t } = useTranslation();
 
   const stats = [
     {
@@ -70,38 +102,34 @@ export default function Dashboard() {
 
       <DashboardSuggestions />
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {stats.map((stat, index) => (
-          <Card key={stat.title} className="hover-elevate" style={{ animationDelay: `${index * 60}ms` }}>
-            <CardContent className="p-5 flex items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1">{stat.title}</p>
-                <h3 className="text-2xl font-bold tabular-nums" data-testid={`metric-${stat.title.toLowerCase().replace(/\s+/g, '-')}`}>{stat.value.toLocaleString()}</h3>
-              </div>
-              <div className={`p-3 rounded-md ${stat.bg} ${stat.color}`}>
-                <stat.icon className="w-5 h-5" />
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <div className="space-y-4">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-2">
-            <Activity className="w-4 h-4 text-primary" />
-            <h2 className="text-lg font-semibold">{t("dashboard.latestNews")}</h2>
-          </div>
-          <UpdatedAt timestamp={newsUpdatedAt ? new Date(newsUpdatedAt) : null} />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {latestNews?.items.map((article: any, index: number) => (
-            <div key={article.id} className="animate-slide-up" style={{ animationDelay: `${index * 80}ms` }}>
-              <ArticleCard article={article} />
-            </div>
+      {isLoadingAnalytics ? (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-28 w-full rounded-md" />
           ))}
         </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {stats.map((stat, index) => (
+            <Card key={stat.title} className="hover-elevate" style={{ animationDelay: `${index * 60}ms` }}>
+              <CardContent className="p-5 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">{stat.title}</p>
+                  <h3 className="text-2xl font-bold tabular-nums" data-testid={`metric-${stat.title.toLowerCase().replace(/\s+/g, '-')}`}>{stat.value.toLocaleString()}</h3>
+                </div>
+                <div className={`p-3 rounded-md ${stat.bg} ${stat.color}`}>
+                  <stat.icon className="w-5 h-5" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <div className="space-y-8">
+        {categories.map((cat) => (
+          <CategoryRow key={cat.key} category={cat.key} icon={cat.icon} color={cat.color} />
+        ))}
       </div>
     </div>
   );
