@@ -486,6 +486,16 @@ function SourcesManager() {
       return res.json();
     },
   });
+  const [viewingSource, setViewingSource] = useState<{ id: number; name: string } | null>(null);
+  const { data: sourceArticles, isLoading: isLoadingArticles } = useQuery<any[]>({
+    queryKey: ["/api/articles", { sourceId: viewingSource?.id }],
+    queryFn: async () => {
+      const res = await fetch(`/api/articles?sourceId=${viewingSource!.id}&limit=50`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!viewingSource,
+  });
 
   const sourceTypeLabels: Record<string, string> = {
     rss: t("admin.rss"),
@@ -566,9 +576,13 @@ function SourcesManager() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <span className="tabular-nums font-medium" data-testid={`text-article-count-${source.id}`}>
+                          <button
+                            className="tabular-nums font-medium text-primary underline-offset-4 hover:underline cursor-pointer"
+                            onClick={() => setViewingSource({ id: source.id, name: source.name })}
+                            data-testid={`button-article-count-${source.id}`}
+                          >
                             {(articleCounts?.[source.id] ?? 0).toLocaleString()}
-                          </span>
+                          </button>
                         </TableCell>
                         <TableCell>
                           <Input
@@ -673,7 +687,14 @@ function SourcesManager() {
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {sourceTypeLabels[source.type] || source.type}
-                      <span> &middot; {(articleCounts?.[source.id] ?? 0).toLocaleString()} articles</span>
+                      <span> &middot; </span>
+                      <button
+                        className="text-primary underline-offset-4 hover:underline cursor-pointer"
+                        onClick={() => setViewingSource({ id: source.id, name: source.name })}
+                        data-testid={`button-article-count-mobile-${source.id}`}
+                      >
+                        {(articleCounts?.[source.id] ?? 0).toLocaleString()} articles
+                      </button>
                       {source.lastFetchedAt && (
                         <span> &middot; {formatDistanceToNow(new Date(source.lastFetchedAt), { addSuffix: true })}</span>
                       )}
@@ -751,6 +772,71 @@ function SourcesManager() {
           </>
         )}
       </CardContent>
+
+      <Dialog open={!!viewingSource} onOpenChange={(open) => !open && setViewingSource(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{viewingSource?.name} — Articles</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto space-y-1">
+            {isLoadingArticles ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : !sourceArticles?.length ? (
+              <p className="text-sm text-muted-foreground text-center py-8">No articles found</p>
+            ) : (
+              sourceArticles.map((article: any) => (
+                <div
+                  key={article.id}
+                  className="flex items-start gap-3 p-3 rounded-md hover-elevate"
+                  data-testid={`article-row-${article.id}`}
+                >
+                  {article.imageUrl && (
+                    <img
+                      src={article.imageUrl}
+                      alt=""
+                      className="w-16 h-12 rounded object-cover shrink-0"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <a
+                      href={article.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm font-medium leading-tight hover:underline line-clamp-2"
+                    >
+                      {article.title}
+                    </a>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      {article.category && (
+                        <Badge variant="secondary" className="text-[10px]">{article.category}</Badge>
+                      )}
+                      {article.sentimentLabel && (
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${
+                            article.sentimentLabel === "positive" ? "text-green-600 border-green-600/30" :
+                            article.sentimentLabel === "negative" ? "text-red-500 border-red-500/30" :
+                            "text-muted-foreground"
+                          }`}
+                        >
+                          {article.sentimentLabel}
+                        </Badge>
+                      )}
+                      {article.publishedAt && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {formatDistanceToNow(new Date(article.publishedAt), { addSuffix: true })}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
