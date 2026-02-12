@@ -18,7 +18,7 @@ const scryptAsync = promisify(scrypt);
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Too many requests, please try again later." },
@@ -240,7 +240,7 @@ export async function registerRoutes(
       const scopedSourceIds = await getUserSourceIds(user);
       const params = {
         search: req.query.search as string,
-        sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
+        sourceId: req.query.sourceId && !isNaN(parseInt(req.query.sourceId as string)) ? parseInt(req.query.sourceId as string) : undefined,
         sourceIds: scopedSourceIds,
         sentiment: req.query.sentiment as string,
         category: req.query.category as string,

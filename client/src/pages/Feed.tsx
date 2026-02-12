@@ -33,6 +33,8 @@ export default function Feed() {
   const [hasMore, setHasMore] = useState(true);
   const [selectedArticles, setSelectedArticles] = useState<Set<number>>(new Set());
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   const [filters, setFilters] = useState(() => {
     const params = new URLSearchParams(searchString);
@@ -60,6 +62,7 @@ export default function Feed() {
     if (sourceTypeParam) updates.sourceType = sourceTypeParam;
     if (Object.keys(updates).length > 0) {
       setFilters(prev => ({ ...prev, ...updates }));
+      if (updates.search) setSearchInput(updates.search);
       resetScroll();
     }
     if (focusParam === "search") {
@@ -67,11 +70,15 @@ export default function Feed() {
     }
   }, [searchString]);
 
+  const isResettingRef = useRef(false);
+
   const resetScroll = useCallback(() => {
+    isResettingRef.current = true;
     setPage(1);
     setAllArticles([]);
     setHasMore(true);
     setSelectedArticles(new Set());
+    setTimeout(() => { isResettingRef.current = false; }, 500);
   }, []);
 
   const getDateRange = (range: string) => {
@@ -112,8 +119,8 @@ export default function Feed() {
   const { data: analytics } = useAnalytics();
 
   const suggestions = useMemo(() => {
-    if (!filters.search || filters.search.length < 2) return [];
-    const query = filters.search.toLowerCase();
+    if (!searchInput || searchInput.length < 2) return [];
+    const query = searchInput.toLowerCase();
     const results: { type: "trending" | "title"; text: string }[] = [];
     if (analytics?.trendingKeywords) {
       for (const kw of analytics.trendingKeywords) {
@@ -148,7 +155,7 @@ export default function Feed() {
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore && !isFetching && !isLoadingArticles) {
+        if (entries[0].isIntersecting && hasMore && !isFetching && !isLoadingArticles && !isResettingRef.current && allArticles.length > 0) {
           setPage(prev => prev + 1);
         }
       },
@@ -157,7 +164,7 @@ export default function Feed() {
     const el = observerRef.current;
     if (el) observer.observe(el);
     return () => { if (el) observer.unobserve(el); };
-  }, [hasMore, isFetching, isLoadingArticles]);
+  }, [hasMore, isFetching, isLoadingArticles, allArticles.length]);
 
   const reanalyzeMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/reanalyze"),
@@ -296,19 +303,24 @@ export default function Feed() {
             ref={searchInputRef}
             placeholder={t("feed.searchPlaceholder")}
             className="ltr:pl-11 rtl:pr-11 bg-background text-base"
-            value={filters.search}
+            value={searchInput}
             onChange={(e) => {
-              updateFilter("search", e.target.value);
+              const val = e.target.value;
+              setSearchInput(val);
               setShowSuggestions(true);
+              if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+              searchDebounceRef.current = setTimeout(() => {
+                updateFilter("search", val);
+              }, 400);
             }}
             onFocus={() => setShowSuggestions(true)}
             onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
             data-testid="input-search-articles"
             aria-label={t("feed.searchPlaceholder")}
           />
-          {filters.search && (
+          {searchInput && (
             <button
-              onClick={() => { updateFilter("search", ""); setShowSuggestions(false); }}
+              onClick={() => { setSearchInput(""); updateFilter("search", ""); setShowSuggestions(false); }}
               className="absolute right-3 rtl:right-auto rtl:left-3 top-1/2 -translate-y-1/2 z-10"
               data-testid="button-clear-search"
               aria-label="Clear search"
@@ -324,6 +336,7 @@ export default function Feed() {
                   className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-left hover:bg-muted transition-colors"
                   onMouseDown={(e) => {
                     e.preventDefault();
+                    setSearchInput(s.text);
                     updateFilter("search", s.text);
                     setShowSuggestions(false);
                   }}
