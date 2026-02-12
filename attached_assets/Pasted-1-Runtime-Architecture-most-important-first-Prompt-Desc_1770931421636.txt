@@ -1,0 +1,73 @@
+1️⃣ Runtime Architecture (most important first)
+
+Prompt:
+
+Describe exactly how background processing works in this project.
+Do feed ingestion, AI analysis, clustering, and analytics run inside HTTP request handlers or in independent worker processes?
+Show which files trigger scheduled tasks and how they are executed.
+
+2️⃣ Scheduler & Priority Logic
+
+Prompt:
+
+How is feed refresh scheduling implemented?
+Is there a real priority scheduler for 5/10/15 minute sources or a single cron/timer loop?
+Show the actual timing mechanism and execution flow.
+
+3️⃣ Data Flow Pipeline
+
+Prompt:
+
+For a single article, explain the full lifecycle step-by-step from fetching RSS to appearing in the dashboard.
+List all functions, database writes, and AI calls involved in order.
+
+4️⃣ Deduplication Logic
+
+Prompt:
+
+How does the system prevent duplicate articles?
+Is deduplication based on URL, title hash, content hash, or timestamp?
+Show the exact code logic responsible.
+
+5️⃣ Multi-Tenant Safety (CRITICAL)
+
+Prompt:
+
+Explain how client data isolation is enforced.
+Are all queries filtered by client_id?
+Identify any routes or queries that access shared data without tenant filtering.
+
+6️⃣ Analytics Calculation Method
+
+Prompt:
+
+Are analytics metrics computed live on each request or stored in cached tables?
+Show where volume trends, sentiment trends, and top topics are calculated.
+
+7️⃣ AI Processing
+
+Prompt:
+
+When AI analysis runs, is it synchronous during ingestion or queued?
+What happens if the AI call fails or times out?
+
+8️⃣ Source Deletion Behavior
+
+Prompt:
+
+When a source is deleted, what database records are removed or recalculated?
+Does the system recompute analytics after deletion?
+
+9️⃣ Performance Risk Detection
+
+Prompt:
+
+Identify the heaviest operations in this system.
+Which endpoints or functions could block the server under high article volume?
+
+🔟 Data Retention
+
+Prompt:
+
+Is there an automatic cleanup job for old articles and analytics data?
+If yes, where is it implemented and how often does it run?
