@@ -312,11 +312,67 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/articles/urgent", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    try {
+      const user = req.user as any;
+      const scopedSourceIds = await getUserSourceIds(user);
+      if (Array.isArray(scopedSourceIds) && scopedSourceIds.length === 0) {
+        return res.json([]);
+      }
+      const since = req.query.since as string;
+      const result = await storage.getArticles({
+        category: "urgent",
+        sourceIds: scopedSourceIds,
+        startDate: since || new Date(Date.now() - 3600000).toISOString(),
+        limit: 10,
+        page: 1,
+      });
+      res.json(result.items);
+    } catch (err) {
+      console.error("Error fetching urgent articles:", err);
+      res.json([]);
+    }
+  });
+
+  app.get("/api/articles/export", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
+    const params = {
+      search: req.query.search as string,
+      sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
+      sourceIds: scopedSourceIds,
+      sentiment: req.query.sentiment as string,
+      category: req.query.category as string,
+      sourceType: req.query.sourceType as string,
+      startDate: req.query.startDate as string,
+      endDate: req.query.endDate as string,
+      page: 1,
+      limit: 1000,
+    };
+    const result = await storage.getArticles(params);
+    const csvHeader = "ID,Title,Source,Category,Sentiment,Published,URL\n";
+    const csvRows = result.items.map(a => {
+      const title = `"${(a.title || "").replace(/"/g, '""')}"`;
+      const source = `"${(a.source?.name || "").replace(/"/g, '""')}"`;
+      const cat = a.category || "general";
+      const sentiment = a.sentimentLabel || "neutral";
+      const published = a.publishedAt ? new Date(a.publishedAt).toISOString() : "";
+      const url = a.url || "";
+      return `${a.id},${title},${source},${cat},${sentiment},${published},${url}`;
+    }).join("\n");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=nws360-articles.csv");
+    res.send(csvHeader + csvRows);
+  });
+
   app.get(api.articles.get.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
     const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid article ID" });
     const article = await storage.getArticle(id);
     if (!article) return res.status(404).json({ message: "Article not found" });
     if (scopedSourceIds && article.sourceId && !scopedSourceIds.includes(article.sourceId)) {
@@ -353,6 +409,7 @@ export async function registerRoutes(
   app.post("/api/articles/:id/translate", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid article ID" });
     const { targetLanguage } = req.body;
     
     if (!targetLanguage) {
@@ -621,62 +678,6 @@ export async function registerRoutes(
     if (!Array.isArray(ids) || ids.length === 0 || !category) return res.status(400).json({ message: "ids and category required" });
     const updated = await storage.updateArticlesCategory(ids, category);
     res.json({ updated });
-  });
-
-  // === EXPORT ARTICLES CSV ===
-  app.get("/api/articles/export", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
-    const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
-    const params = {
-      search: req.query.search as string,
-      sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
-      sourceIds: scopedSourceIds,
-      sentiment: req.query.sentiment as string,
-      category: req.query.category as string,
-      sourceType: req.query.sourceType as string,
-      startDate: req.query.startDate as string,
-      endDate: req.query.endDate as string,
-      page: 1,
-      limit: 1000,
-    };
-    const result = await storage.getArticles(params);
-    const csvHeader = "ID,Title,Source,Category,Sentiment,Published,URL\n";
-    const csvRows = result.items.map(a => {
-      const title = `"${(a.title || "").replace(/"/g, '""')}"`;
-      const source = `"${(a.source?.name || "").replace(/"/g, '""')}"`;
-      const cat = a.category || "general";
-      const sentiment = a.sentimentLabel || "neutral";
-      const published = a.publishedAt ? new Date(a.publishedAt).toISOString() : "";
-      const url = a.url || "";
-      return `${a.id},${title},${source},${cat},${sentiment},${published},${url}`;
-    }).join("\n");
-    res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", "attachment; filename=nws360-articles.csv");
-    res.send(csvHeader + csvRows);
-  });
-
-  app.get("/api/articles/urgent", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
-    try {
-      const user = req.user as any;
-      const scopedSourceIds = await getUserSourceIds(user);
-      if (Array.isArray(scopedSourceIds) && scopedSourceIds.length === 0) {
-        return res.json([]);
-      }
-      const since = req.query.since as string;
-      const result = await storage.getArticles({
-        category: "urgent",
-        sourceIds: scopedSourceIds,
-        startDate: since || new Date(Date.now() - 3600000).toISOString(),
-        limit: 10,
-        page: 1,
-      });
-      res.json(result.items);
-    } catch (err) {
-      console.error("Error fetching urgent articles:", err);
-      res.json([]);
-    }
   });
 
   // === USER MANAGEMENT ===
