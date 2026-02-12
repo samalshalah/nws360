@@ -446,12 +446,6 @@ export default function Feed() {
         </div>
       ) : (
         <>
-          <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-            <Button variant="ghost" size="sm" onClick={selectAllVisible} data-testid="button-select-all">
-              <CheckSquare className="w-3.5 h-3.5 mr-1.5" />
-              {selectedArticles.size === allArticles.length && allArticles.length > 0 ? t("feed.clearSelection") : t("feed.selectAll")}
-            </Button>
-          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {allArticles.map((article: any) => (
               <ArticleCard
