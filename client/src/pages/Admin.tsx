@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ArrowRight } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { formatDistanceToNow } from "date-fns";
@@ -613,9 +614,11 @@ function SourcesManager() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={source.active ? "default" : "secondary"}>
-                            {source.active ? t("common.active") : t("common.inactive")}
-                          </Badge>
+                          <Switch
+                            checked={source.active}
+                            onCheckedChange={(checked) => updateSource({ id: source.id, active: checked })}
+                            data-testid={`switch-source-active-${source.id}`}
+                          />
                         </TableCell>
                         <TableCell className="text-muted-foreground text-sm">
                           {source.lastFetchedAt
@@ -662,9 +665,11 @@ function SourcesManager() {
                         <Icon className={`w-4 h-4 shrink-0 ${getSourceColor(source.type)}`} />
                         <span className="font-medium truncate">{source.name}</span>
                       </div>
-                      <Badge variant={source.active ? "default" : "secondary"}>
-                        {source.active ? t("common.active") : t("common.inactive")}
-                      </Badge>
+                      <Switch
+                        checked={source.active}
+                        onCheckedChange={(checked) => updateSource({ id: source.id, active: checked })}
+                        data-testid={`switch-source-active-mobile-${source.id}`}
+                      />
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {sourceTypeLabels[source.type] || source.type}
