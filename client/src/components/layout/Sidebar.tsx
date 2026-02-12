@@ -40,9 +40,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const [sourcesOpen, setSourcesOpen] = useState(isSourcesActive);
 
   const topNavItems = [
+    { name: t("nav.dashboard"), href: '/', icon: LayoutDashboard },
     { name: t("nav.newsFeed"), href: '/feed', icon: Newspaper },
     { name: t("nav.saved"), href: '/saved', icon: Bookmark },
-    { name: t("nav.dashboard"), href: '/', icon: LayoutDashboard },
   ];
 
   return (
