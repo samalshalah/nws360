@@ -40,6 +40,8 @@ import ExecutiveHome from "@/pages/ExecutiveHome";
 import DemoPage from "@/pages/DemoPage";
 import HelpCenter from "@/pages/HelpCenter";
 import ProductAnalytics from "@/pages/ProductAnalytics";
+import Integrations from "@/pages/Integrations";
+import IntegrationMonitoring from "@/pages/IntegrationMonitoring";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, ...rest }: { component: any, path?: string }) {
@@ -172,6 +174,12 @@ function Router() {
       </Route>
       <Route path="/admin/product-analytics">
         <ProtectedRoute component={ProductAnalytics} />
+      </Route>
+      <Route path="/integrations">
+        <ProtectedRoute component={Integrations} />
+      </Route>
+      <Route path="/admin/integrations">
+        <ProtectedRoute component={IntegrationMonitoring} />
       </Route>
       <Route path="/demo" component={DemoPage} />
 

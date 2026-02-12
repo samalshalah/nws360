@@ -5,6 +5,8 @@ import {
   processingJobs, systemErrors, apiKeys, featureFlags, usageMetrics,
   storyClusters, articleAiAnalysis, dailyBriefs, detectedEvents, entityMentions, trendPredictions,
   subscriptions, onboardingState, notificationSettings, whiteLabelSettings, supportTickets,
+  integrationWebhooks, webhookDeliveries, emailSubscriptions, integrationConfigs,
+  embedTokens, exportJobs, ssoConfigs, importConnectors, mobileNotificationPrefs,
   type User, type InsertUser,
   type Source, type InsertSource,
   type Article, type InsertArticle,
@@ -39,6 +41,15 @@ import {
   type ExperimentAssignment, type InsertExperimentAssignment,
   type KnowledgeEntry, type InsertKnowledgeEntry,
   type ValueReport, type InsertValueReport,
+  type IntegrationWebhook, type InsertIntegrationWebhook,
+  type WebhookDelivery, type InsertWebhookDelivery,
+  type EmailSubscription, type InsertEmailSubscription,
+  type IntegrationConfig, type InsertIntegrationConfig,
+  type EmbedToken, type InsertEmbedToken,
+  type ExportJob, type InsertExportJob,
+  type SsoConfig, type InsertSsoConfig,
+  type ImportConnector, type InsertImportConnector,
+  type MobileNotificationPref, type InsertMobileNotificationPref,
 } from "@shared/schema";
 import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
@@ -311,6 +322,49 @@ export interface IStorage {
   getValueReports(clientId: number): Promise<ValueReport[]>;
   createValueReport(data: InsertValueReport): Promise<ValueReport>;
 
+  getWebhooks(clientId?: number): Promise<IntegrationWebhook[]>;
+  getWebhook(id: number): Promise<IntegrationWebhook | undefined>;
+  createWebhook(data: InsertIntegrationWebhook): Promise<IntegrationWebhook>;
+  updateWebhook(id: number, data: Partial<InsertIntegrationWebhook>): Promise<IntegrationWebhook | undefined>;
+  deleteWebhook(id: number): Promise<void>;
+  getWebhooksByEvent(eventType: string): Promise<IntegrationWebhook[]>;
+
+  getWebhookDeliveries(webhookId?: number, params?: { limit?: number }): Promise<WebhookDelivery[]>;
+  createWebhookDelivery(data: InsertWebhookDelivery): Promise<WebhookDelivery>;
+  updateWebhookDelivery(id: number, data: Partial<InsertWebhookDelivery>): Promise<void>;
+
+  getEmailSubscriptions(userId?: number): Promise<EmailSubscription[]>;
+  createEmailSubscription(data: InsertEmailSubscription): Promise<EmailSubscription>;
+  updateEmailSubscription(id: number, data: Partial<InsertEmailSubscription>): Promise<EmailSubscription | undefined>;
+  deleteEmailSubscription(id: number): Promise<void>;
+
+  getIntegrationConfigs(clientId?: number): Promise<IntegrationConfig[]>;
+  createIntegrationConfig(data: InsertIntegrationConfig): Promise<IntegrationConfig>;
+  updateIntegrationConfig(id: number, data: Partial<InsertIntegrationConfig>): Promise<IntegrationConfig | undefined>;
+  deleteIntegrationConfig(id: number): Promise<void>;
+
+  getEmbedTokens(clientId?: number): Promise<EmbedToken[]>;
+  getEmbedTokenByToken(token: string): Promise<EmbedToken | undefined>;
+  createEmbedToken(data: InsertEmbedToken): Promise<EmbedToken>;
+  updateEmbedToken(id: number, data: Partial<InsertEmbedToken>): Promise<EmbedToken | undefined>;
+  deleteEmbedToken(id: number): Promise<void>;
+
+  getExportJobs(userId?: number): Promise<ExportJob[]>;
+  createExportJob(data: InsertExportJob): Promise<ExportJob>;
+  updateExportJob(id: number, data: Partial<ExportJob>): Promise<void>;
+
+  getSsoConfigs(clientId?: number): Promise<SsoConfig[]>;
+  createSsoConfig(data: InsertSsoConfig): Promise<SsoConfig>;
+  updateSsoConfig(id: number, data: Partial<InsertSsoConfig>): Promise<SsoConfig | undefined>;
+  deleteSsoConfig(id: number): Promise<void>;
+
+  getImportConnectors(clientId?: number): Promise<ImportConnector[]>;
+  createImportConnector(data: InsertImportConnector): Promise<ImportConnector>;
+  updateImportConnector(id: number, data: Partial<InsertImportConnector>): Promise<ImportConnector | undefined>;
+  deleteImportConnector(id: number): Promise<void>;
+
+  getMobileNotificationPrefs(userId: number): Promise<MobileNotificationPref | undefined>;
+  upsertMobileNotificationPrefs(data: InsertMobileNotificationPref): Promise<MobileNotificationPref>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2109,6 +2163,179 @@ export class DatabaseStorage implements IStorage {
         set: { ...data, createdAt: undefined },
       })
       .returning();
+    return row;
+  }
+
+  async getWebhooks(clientId?: number): Promise<IntegrationWebhook[]> {
+    if (clientId) return db.select().from(integrationWebhooks).where(eq(integrationWebhooks.clientId, clientId)).orderBy(desc(integrationWebhooks.createdAt));
+    return db.select().from(integrationWebhooks).orderBy(desc(integrationWebhooks.createdAt));
+  }
+
+  async getWebhook(id: number): Promise<IntegrationWebhook | undefined> {
+    const [row] = await db.select().from(integrationWebhooks).where(eq(integrationWebhooks.id, id));
+    return row;
+  }
+
+  async createWebhook(data: InsertIntegrationWebhook): Promise<IntegrationWebhook> {
+    const [row] = await db.insert(integrationWebhooks).values(data).returning();
+    return row;
+  }
+
+  async updateWebhook(id: number, data: Partial<InsertIntegrationWebhook>): Promise<IntegrationWebhook | undefined> {
+    const [row] = await db.update(integrationWebhooks).set(data).where(eq(integrationWebhooks.id, id)).returning();
+    return row;
+  }
+
+  async deleteWebhook(id: number): Promise<void> {
+    await db.delete(integrationWebhooks).where(eq(integrationWebhooks.id, id));
+  }
+
+  async getWebhooksByEvent(eventType: string): Promise<IntegrationWebhook[]> {
+    const all = await db.select().from(integrationWebhooks).where(eq(integrationWebhooks.active, true));
+    return all.filter(w => w.eventTypes.includes(eventType));
+  }
+
+  async getWebhookDeliveries(webhookId?: number, params?: { limit?: number }): Promise<WebhookDelivery[]> {
+    const limit = params?.limit || 50;
+    if (webhookId) return db.select().from(webhookDeliveries).where(eq(webhookDeliveries.webhookId, webhookId)).orderBy(desc(webhookDeliveries.createdAt)).limit(limit);
+    return db.select().from(webhookDeliveries).orderBy(desc(webhookDeliveries.createdAt)).limit(limit);
+  }
+
+  async createWebhookDelivery(data: InsertWebhookDelivery): Promise<WebhookDelivery> {
+    const [row] = await db.insert(webhookDeliveries).values(data).returning();
+    return row;
+  }
+
+  async updateWebhookDelivery(id: number, data: Partial<InsertWebhookDelivery>): Promise<void> {
+    await db.update(webhookDeliveries).set(data).where(eq(webhookDeliveries.id, id));
+  }
+
+  async getEmailSubscriptions(userId?: number): Promise<EmailSubscription[]> {
+    if (userId) return db.select().from(emailSubscriptions).where(eq(emailSubscriptions.userId, userId)).orderBy(desc(emailSubscriptions.createdAt));
+    return db.select().from(emailSubscriptions).orderBy(desc(emailSubscriptions.createdAt));
+  }
+
+  async createEmailSubscription(data: InsertEmailSubscription): Promise<EmailSubscription> {
+    const [row] = await db.insert(emailSubscriptions).values(data).returning();
+    return row;
+  }
+
+  async updateEmailSubscription(id: number, data: Partial<InsertEmailSubscription>): Promise<EmailSubscription | undefined> {
+    const [row] = await db.update(emailSubscriptions).set(data).where(eq(emailSubscriptions.id, id)).returning();
+    return row;
+  }
+
+  async deleteEmailSubscription(id: number): Promise<void> {
+    await db.delete(emailSubscriptions).where(eq(emailSubscriptions.id, id));
+  }
+
+  async getIntegrationConfigs(clientId?: number): Promise<IntegrationConfig[]> {
+    if (clientId) return db.select().from(integrationConfigs).where(eq(integrationConfigs.clientId, clientId)).orderBy(desc(integrationConfigs.createdAt));
+    return db.select().from(integrationConfigs).orderBy(desc(integrationConfigs.createdAt));
+  }
+
+  async createIntegrationConfig(data: InsertIntegrationConfig): Promise<IntegrationConfig> {
+    const [row] = await db.insert(integrationConfigs).values(data).returning();
+    return row;
+  }
+
+  async updateIntegrationConfig(id: number, data: Partial<InsertIntegrationConfig>): Promise<IntegrationConfig | undefined> {
+    const [row] = await db.update(integrationConfigs).set(data).where(eq(integrationConfigs.id, id)).returning();
+    return row;
+  }
+
+  async deleteIntegrationConfig(id: number): Promise<void> {
+    await db.delete(integrationConfigs).where(eq(integrationConfigs.id, id));
+  }
+
+  async getEmbedTokens(clientId?: number): Promise<EmbedToken[]> {
+    if (clientId) return db.select().from(embedTokens).where(eq(embedTokens.clientId, clientId)).orderBy(desc(embedTokens.createdAt));
+    return db.select().from(embedTokens).orderBy(desc(embedTokens.createdAt));
+  }
+
+  async getEmbedTokenByToken(token: string): Promise<EmbedToken | undefined> {
+    const [row] = await db.select().from(embedTokens).where(eq(embedTokens.token, token));
+    return row;
+  }
+
+  async createEmbedToken(data: InsertEmbedToken): Promise<EmbedToken> {
+    const [row] = await db.insert(embedTokens).values(data).returning();
+    return row;
+  }
+
+  async updateEmbedToken(id: number, data: Partial<InsertEmbedToken>): Promise<EmbedToken | undefined> {
+    const [row] = await db.update(embedTokens).set(data).where(eq(embedTokens.id, id)).returning();
+    return row;
+  }
+
+  async deleteEmbedToken(id: number): Promise<void> {
+    await db.delete(embedTokens).where(eq(embedTokens.id, id));
+  }
+
+  async getExportJobs(userId?: number): Promise<ExportJob[]> {
+    if (userId) return db.select().from(exportJobs).where(eq(exportJobs.userId, userId)).orderBy(desc(exportJobs.createdAt));
+    return db.select().from(exportJobs).orderBy(desc(exportJobs.createdAt));
+  }
+
+  async createExportJob(data: InsertExportJob): Promise<ExportJob> {
+    const [row] = await db.insert(exportJobs).values(data).returning();
+    return row;
+  }
+
+  async updateExportJob(id: number, data: Partial<ExportJob>): Promise<void> {
+    await db.update(exportJobs).set(data).where(eq(exportJobs.id, id));
+  }
+
+  async getSsoConfigs(clientId?: number): Promise<SsoConfig[]> {
+    if (clientId) return db.select().from(ssoConfigs).where(eq(ssoConfigs.clientId, clientId)).orderBy(desc(ssoConfigs.createdAt));
+    return db.select().from(ssoConfigs).orderBy(desc(ssoConfigs.createdAt));
+  }
+
+  async createSsoConfig(data: InsertSsoConfig): Promise<SsoConfig> {
+    const [row] = await db.insert(ssoConfigs).values(data).returning();
+    return row;
+  }
+
+  async updateSsoConfig(id: number, data: Partial<InsertSsoConfig>): Promise<SsoConfig | undefined> {
+    const [row] = await db.update(ssoConfigs).set(data).where(eq(ssoConfigs.id, id)).returning();
+    return row;
+  }
+
+  async deleteSsoConfig(id: number): Promise<void> {
+    await db.delete(ssoConfigs).where(eq(ssoConfigs.id, id));
+  }
+
+  async getImportConnectors(clientId?: number): Promise<ImportConnector[]> {
+    if (clientId) return db.select().from(importConnectors).where(eq(importConnectors.clientId, clientId)).orderBy(desc(importConnectors.createdAt));
+    return db.select().from(importConnectors).orderBy(desc(importConnectors.createdAt));
+  }
+
+  async createImportConnector(data: InsertImportConnector): Promise<ImportConnector> {
+    const [row] = await db.insert(importConnectors).values(data).returning();
+    return row;
+  }
+
+  async updateImportConnector(id: number, data: Partial<InsertImportConnector>): Promise<ImportConnector | undefined> {
+    const [row] = await db.update(importConnectors).set(data).where(eq(importConnectors.id, id)).returning();
+    return row;
+  }
+
+  async deleteImportConnector(id: number): Promise<void> {
+    await db.delete(importConnectors).where(eq(importConnectors.id, id));
+  }
+
+  async getMobileNotificationPrefs(userId: number): Promise<MobileNotificationPref | undefined> {
+    const [row] = await db.select().from(mobileNotificationPrefs).where(eq(mobileNotificationPrefs.userId, userId));
+    return row;
+  }
+
+  async upsertMobileNotificationPrefs(data: InsertMobileNotificationPref): Promise<MobileNotificationPref> {
+    const existing = await this.getMobileNotificationPrefs(data.userId);
+    if (existing) {
+      const [row] = await db.update(mobileNotificationPrefs).set(data).where(eq(mobileNotificationPrefs.userId, data.userId)).returning();
+      return row;
+    }
+    const [row] = await db.insert(mobileNotificationPrefs).values(data).returning();
     return row;
   }
 

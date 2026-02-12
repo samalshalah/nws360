@@ -610,6 +610,168 @@ export const valueReports = pgTable("value_reports", {
 
 export const insertValueReportSchema = createInsertSchema(valueReports).omit({ id: true, createdAt: true });
 
+// === INTEGRATION WEBHOOKS ===
+export const integrationWebhooks = pgTable("integration_webhooks", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull(),
+  url: text("url").notNull(),
+  secret: text("secret").notNull(),
+  eventTypes: text("event_types").array().notNull(),
+  active: boolean("active").default(true),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_webhook_client").on(table.clientId),
+]);
+
+export const insertWebhookSchema = createInsertSchema(integrationWebhooks).omit({ id: true, createdAt: true });
+
+export const webhookDeliveries = pgTable("webhook_deliveries", {
+  id: serial("id").primaryKey(),
+  webhookId: integer("webhook_id").notNull(),
+  eventType: text("event_type").notNull(),
+  payload: jsonb("payload"),
+  statusCode: integer("status_code"),
+  responseBody: text("response_body"),
+  success: boolean("success").default(false),
+  attempts: integer("attempts").default(0),
+  lastAttemptAt: timestamp("last_attempt_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_delivery_webhook").on(table.webhookId),
+  index("idx_delivery_created").on(table.createdAt),
+]);
+
+export const insertWebhookDeliverySchema = createInsertSchema(webhookDeliveries).omit({ id: true, createdAt: true });
+
+// === EMAIL SUBSCRIPTIONS ===
+export const emailSubscriptions = pgTable("email_subscriptions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  email: text("email").notNull(),
+  topics: text("topics").array(),
+  frequency: text("frequency").notNull().default("daily"),
+  sendAlerts: boolean("send_alerts").default(true),
+  sendBriefing: boolean("send_briefing").default(true),
+  sendWeeklySummary: boolean("send_weekly_summary").default(false),
+  customSchedule: jsonb("custom_schedule"),
+  active: boolean("active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_email_sub_user").on(table.userId),
+]);
+
+export const insertEmailSubscriptionSchema = createInsertSchema(emailSubscriptions).omit({ id: true, createdAt: true });
+
+// === INTEGRATION CONFIGS (Slack, Teams, etc.) ===
+export const integrationConfigs = pgTable("integration_configs", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull(),
+  platform: text("platform").notNull(),
+  channelId: text("channel_id"),
+  channelName: text("channel_name"),
+  webhookUrl: text("webhook_url"),
+  sendAlerts: boolean("send_alerts").default(true),
+  sendBriefing: boolean("send_briefing").default(true),
+  sendWeeklySummary: boolean("send_weekly_summary").default(false),
+  active: boolean("active").default(true),
+  config: jsonb("config"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_integ_config_client").on(table.clientId),
+]);
+
+export const insertIntegrationConfigSchema = createInsertSchema(integrationConfigs).omit({ id: true, createdAt: true });
+
+// === EMBED TOKENS ===
+export const embedTokens = pgTable("embed_tokens", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull(),
+  token: text("token").notNull().unique(),
+  widgetType: text("widget_type").notNull(),
+  allowedDomains: text("allowed_domains").array(),
+  active: boolean("active").default(true),
+  config: jsonb("config"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_embed_token").on(table.token),
+  index("idx_embed_client").on(table.clientId),
+]);
+
+export const insertEmbedTokenSchema = createInsertSchema(embedTokens).omit({ id: true, createdAt: true });
+
+// === EXPORT JOBS ===
+export const exportJobs = pgTable("export_jobs", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  exportType: text("export_type").notNull(),
+  format: text("format").notNull().default("json"),
+  filters: jsonb("filters"),
+  status: text("status").notNull().default("pending"),
+  resultUrl: text("result_url"),
+  resultData: jsonb("result_data"),
+  createdAt: timestamp("created_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+}, (table) => [
+  index("idx_export_user").on(table.userId),
+]);
+
+export const insertExportJobSchema = createInsertSchema(exportJobs).omit({ id: true, createdAt: true, completedAt: true });
+
+// === SSO CONFIGS ===
+export const ssoConfigs = pgTable("sso_configs", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull(),
+  provider: text("provider").notNull(),
+  entityId: text("entity_id"),
+  ssoUrl: text("sso_url"),
+  certificate: text("certificate"),
+  metadataUrl: text("metadata_url"),
+  defaultRole: text("default_role").default("client"),
+  active: boolean("active").default(false),
+  config: jsonb("config"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_sso_client").on(table.clientId),
+]);
+
+export const insertSsoConfigSchema = createInsertSchema(ssoConfigs).omit({ id: true, createdAt: true });
+
+// === DATA IMPORT CONNECTORS ===
+export const importConnectors = pgTable("import_connectors", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull(),
+  connectorType: text("connector_type").notNull(),
+  name: text("name").notNull(),
+  url: text("url"),
+  config: jsonb("config"),
+  lastImportAt: timestamp("last_import_at"),
+  itemsImported: integer("items_imported").default(0),
+  active: boolean("active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_import_client").on(table.clientId),
+]);
+
+export const insertImportConnectorSchema = createInsertSchema(importConnectors).omit({ id: true, createdAt: true });
+
+// === MOBILE NOTIFICATION PREFERENCES ===
+export const mobileNotificationPrefs = pgTable("mobile_notification_prefs", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  criticalAlerts: boolean("critical_alerts").default(true),
+  briefingReady: boolean("briefing_ready").default(true),
+  entityChanges: boolean("entity_changes").default(false),
+  severityLevel: text("severity_level").default("high"),
+  quietHoursStart: text("quiet_hours_start"),
+  quietHoursEnd: text("quiet_hours_end"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_mobile_notif_user").on(table.userId),
+]);
+
+export const insertMobileNotificationPrefSchema = createInsertSchema(mobileNotificationPrefs).omit({ id: true, createdAt: true });
+
 // === RELATIONS ===
 export const sourceRelations = relations(sources, ({ many }) => ({
   articles: many(articles),
@@ -738,6 +900,33 @@ export type InsertKnowledgeEntry = z.infer<typeof insertKnowledgeEntrySchema>;
 
 export type ValueReport = typeof valueReports.$inferSelect;
 export type InsertValueReport = z.infer<typeof insertValueReportSchema>;
+
+export type IntegrationWebhook = typeof integrationWebhooks.$inferSelect;
+export type InsertIntegrationWebhook = z.infer<typeof insertWebhookSchema>;
+
+export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
+export type InsertWebhookDelivery = z.infer<typeof insertWebhookDeliverySchema>;
+
+export type EmailSubscription = typeof emailSubscriptions.$inferSelect;
+export type InsertEmailSubscription = z.infer<typeof insertEmailSubscriptionSchema>;
+
+export type IntegrationConfig = typeof integrationConfigs.$inferSelect;
+export type InsertIntegrationConfig = z.infer<typeof insertIntegrationConfigSchema>;
+
+export type EmbedToken = typeof embedTokens.$inferSelect;
+export type InsertEmbedToken = z.infer<typeof insertEmbedTokenSchema>;
+
+export type ExportJob = typeof exportJobs.$inferSelect;
+export type InsertExportJob = z.infer<typeof insertExportJobSchema>;
+
+export type SsoConfig = typeof ssoConfigs.$inferSelect;
+export type InsertSsoConfig = z.infer<typeof insertSsoConfigSchema>;
+
+export type ImportConnector = typeof importConnectors.$inferSelect;
+export type InsertImportConnector = z.infer<typeof insertImportConnectorSchema>;
+
+export type MobileNotificationPref = typeof mobileNotificationPrefs.$inferSelect;
+export type InsertMobileNotificationPref = z.infer<typeof insertMobileNotificationPrefSchema>;
 
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;

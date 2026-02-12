@@ -2027,7 +2027,383 @@ export async function registerRoutes(
     });
   });
 
+  // === INTEGRATION: WEBHOOKS ===
+  app.get("/api/integrations/webhooks", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const webhooks = await storage.getWebhooks(user.clientId || undefined);
+    res.json(webhooks);
+  });
+
+  app.post("/api/integrations/webhooks", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const { url, eventTypes, description } = req.body;
+    if (!url || !eventTypes || !eventTypes.length) return res.status(400).json({ message: "URL and event types required" });
+    const secret = randomBytes(32).toString("hex");
+    const webhook = await storage.createWebhook({
+      clientId: user.clientId || 0,
+      url,
+      secret,
+      eventTypes,
+      description,
+      active: true,
+    });
+    res.status(201).json(webhook);
+  });
+
+  app.patch("/api/integrations/webhooks/:id", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const webhook = await storage.updateWebhook(parseInt(req.params.id), req.body);
+    res.json(webhook);
+  });
+
+  app.delete("/api/integrations/webhooks/:id", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteWebhook(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  app.get("/api/integrations/webhooks/:id/deliveries", async (req, res) => {
+    const deliveries = await storage.getWebhookDeliveries(parseInt(req.params.id), { limit: 50 });
+    res.json(deliveries);
+  });
+
+  app.post("/api/integrations/webhooks/:id/test", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const webhook = await storage.getWebhook(parseInt(req.params.id));
+    if (!webhook) return res.status(404).json({ message: "Webhook not found" });
+    const { deliverWebhookEvent } = await import("./webhook-worker");
+    await deliverWebhookEvent(webhook, "test", { message: "Test delivery from NWS360", timestamp: new Date().toISOString() });
+    res.json({ success: true, message: "Test webhook delivered" });
+  });
+
+  // === INTEGRATION: EMAIL SUBSCRIPTIONS ===
+  app.get("/api/integrations/email-subscriptions", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const subs = await storage.getEmailSubscriptions(user.id);
+    res.json(subs);
+  });
+
+  app.post("/api/integrations/email-subscriptions", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const sub = await storage.createEmailSubscription({ ...req.body, userId: user.id });
+    res.status(201).json(sub);
+  });
+
+  app.patch("/api/integrations/email-subscriptions/:id", async (req, res) => {
+    const sub = await storage.updateEmailSubscription(parseInt(req.params.id), req.body);
+    res.json(sub);
+  });
+
+  app.delete("/api/integrations/email-subscriptions/:id", async (req, res) => {
+    await storage.deleteEmailSubscription(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === INTEGRATION: COMMUNICATION (Slack/Teams) ===
+  app.get("/api/integrations/communication", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const configs = await storage.getIntegrationConfigs(user.clientId || undefined);
+    res.json(configs);
+  });
+
+  app.post("/api/integrations/communication", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const config = await storage.createIntegrationConfig({ ...req.body, clientId: user.clientId || 0 });
+    res.status(201).json(config);
+  });
+
+  app.patch("/api/integrations/communication/:id", async (req, res) => {
+    const config = await storage.updateIntegrationConfig(parseInt(req.params.id), req.body);
+    res.json(config);
+  });
+
+  app.delete("/api/integrations/communication/:id", async (req, res) => {
+    await storage.deleteIntegrationConfig(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === INTEGRATION: EMBED WIDGETS ===
+  app.get("/api/integrations/embeds", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const tokens = await storage.getEmbedTokens(user.clientId || undefined);
+    res.json(tokens);
+  });
+
+  app.post("/api/integrations/embeds", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const token = randomBytes(24).toString("hex");
+    const embed = await storage.createEmbedToken({
+      clientId: user.clientId || 0,
+      token,
+      widgetType: req.body.widgetType,
+      allowedDomains: req.body.allowedDomains || [],
+      active: true,
+      config: req.body.config || {},
+    });
+    res.status(201).json(embed);
+  });
+
+  app.delete("/api/integrations/embeds/:id", async (req, res) => {
+    await storage.deleteEmbedToken(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === PUBLIC EMBED ROUTES (unauthenticated, token-based) ===
+  app.get("/embed/:token", async (req, res) => {
+    const embedToken = await storage.getEmbedTokenByToken(req.params.token);
+    if (!embedToken || !embedToken.active) return res.status(404).send("Widget not found");
+    const origin = req.headers.origin || req.headers.referer;
+    if (embedToken.allowedDomains && embedToken.allowedDomains.length > 0 && origin) {
+      const allowed = embedToken.allowedDomains.some(d => origin.includes(d));
+      if (!allowed) return res.status(403).send("Domain not allowed");
+    }
+    res.setHeader("X-Frame-Options", "ALLOWALL");
+    res.setHeader("Content-Security-Policy", "frame-ancestors *");
+    let widgetData: any = {};
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (embedToken.widgetType === "trending_topics") {
+      widgetData = await storage.getTrendingTopics(sevenDaysAgo.toISOString(), now.toISOString());
+    } else if (embedToken.widgetType === "sentiment_overview") {
+      widgetData = await storage.getSentimentReports(sevenDaysAgo.toISOString(), now.toISOString());
+    } else if (embedToken.widgetType === "entity_tracker") {
+      widgetData = await storage.getTopEntities({ limit: 10, days: 7 });
+    } else if (embedToken.widgetType === "daily_briefing") {
+      const today = now.toISOString().split("T")[0];
+      widgetData = await storage.getDailyBrief(today);
+    }
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NWS360 Widget</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#e2e8f0;padding:16px}.widget{border:1px solid #1e293b;border-radius:8px;padding:16px;background:#111827}.title{font-size:14px;font-weight:600;margin-bottom:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em}.item{padding:8px 0;border-bottom:1px solid #1e293b;font-size:13px}.item:last-child{border-bottom:none}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}.positive{background:#065f46;color:#6ee7b7}.negative{background:#7f1d1d;color:#fca5a5}.neutral{background:#1e293b;color:#94a3b8}.powered{text-align:center;margin-top:12px;font-size:10px;color:#475569}a{color:#60a5fa;text-decoration:none}</style></head><body><div class="widget"><div class="title">${embedToken.widgetType.replace(/_/g, " ")}</div><div id="content">${renderWidgetContent(embedToken.widgetType, widgetData)}</div></div><div class="powered">Powered by NWS360</div></body></html>`;
+    res.type("html").send(html);
+  });
+
+  // === INTEGRATION: EXPORTS ===
+  app.post("/api/integrations/export", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const { exportType, format, filters } = req.body;
+    if (!exportType || !format) return res.status(400).json({ message: "Export type and format required" });
+    let resultData: any = null;
+    if (exportType === "articles") {
+      const result = await storage.getArticles(filters || {});
+      resultData = result.items.map(a => ({
+        id: a.id, title: a.title, url: a.url, summary: a.summary,
+        source: a.source?.name, category: a.category,
+        sentiment: a.sentimentLabel, score: a.sentimentScore,
+        keywords: a.keywords, topics: a.topics, country: a.country,
+        publishedAt: a.publishedAt,
+      }));
+    } else if (exportType === "entities") {
+      resultData = await storage.getTopEntities({ limit: 100, days: 30 });
+    } else if (exportType === "stories") {
+      resultData = await storage.getStoryClusters({ limit: 100 });
+    } else if (exportType === "trends") {
+      const now = new Date();
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      resultData = await storage.getTrendingTopics(thirtyDaysAgo.toISOString(), now.toISOString());
+    } else if (exportType === "briefings") {
+      resultData = await storage.getDailyBriefs(30);
+    }
+    const job = await storage.createExportJob({
+      userId: user.id,
+      exportType,
+      format,
+      filters,
+      status: "completed",
+      resultData,
+    });
+    if (format === "csv" && Array.isArray(resultData) && resultData.length > 0) {
+      const headers = Object.keys(resultData[0]);
+      const csvRows = [headers.join(",")];
+      resultData.forEach((row: any) => {
+        csvRows.push(headers.map(h => {
+          const val = row[h];
+          if (val === null || val === undefined) return "";
+          const str = typeof val === "object" ? JSON.stringify(val) : String(val);
+          return `"${str.replace(/"/g, '""')}"`;
+        }).join(","));
+      });
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename=nws360-${exportType}-${Date.now()}.csv`);
+      return res.send(csvRows.join("\n"));
+    }
+    res.json({ job, data: resultData });
+  });
+
+  app.get("/api/integrations/exports", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const jobs = await storage.getExportJobs(user.id);
+    res.json(jobs);
+  });
+
+  // === INTEGRATION: SSO CONFIG ===
+  app.get("/api/integrations/sso", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const configs = await storage.getSsoConfigs(user.clientId || undefined);
+    res.json(configs);
+  });
+
+  app.post("/api/integrations/sso", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const config = await storage.createSsoConfig({ ...req.body, clientId: user.clientId || 0 });
+    res.status(201).json(config);
+  });
+
+  app.patch("/api/integrations/sso/:id", async (req, res) => {
+    const config = await storage.updateSsoConfig(parseInt(req.params.id), req.body);
+    res.json(config);
+  });
+
+  app.delete("/api/integrations/sso/:id", async (req, res) => {
+    await storage.deleteSsoConfig(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === INTEGRATION: DATA IMPORT CONNECTORS ===
+  app.get("/api/integrations/import-connectors", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const connectors = await storage.getImportConnectors(user.clientId || undefined);
+    res.json(connectors);
+  });
+
+  app.post("/api/integrations/import-connectors", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const connector = await storage.createImportConnector({ ...req.body, clientId: user.clientId || 0 });
+    if (connector.connectorType === "private_rss" && connector.url) {
+      await storage.createSource({
+        name: connector.name,
+        url: connector.url,
+        type: "rss",
+        active: true,
+        intervalMinutes: 30,
+        userId: user.id,
+      });
+    }
+    res.status(201).json(connector);
+  });
+
+  app.patch("/api/integrations/import-connectors/:id", async (req, res) => {
+    const connector = await storage.updateImportConnector(parseInt(req.params.id), req.body);
+    res.json(connector);
+  });
+
+  app.delete("/api/integrations/import-connectors/:id", async (req, res) => {
+    await storage.deleteImportConnector(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === INTEGRATION: MOBILE NOTIFICATION PREFS ===
+  app.get("/api/integrations/mobile-notifications", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const prefs = await storage.getMobileNotificationPrefs(user.id);
+    res.json(prefs || { criticalAlerts: true, briefingReady: true, entityChanges: false, severityLevel: "high" });
+  });
+
+  app.put("/api/integrations/mobile-notifications", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const prefs = await storage.upsertMobileNotificationPrefs({ ...req.body, userId: user.id });
+    res.json(prefs);
+  });
+
+  // === EXTENDED PARTNER API: stories, entities, briefings ===
+  app.get("/api/v1/stories", async (req, res) => {
+    const scopes = (req as any).apiKeyScopes as string[];
+    if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const limit = req.query.limit ? Math.min(50, parseInt(req.query.limit as string)) : 20;
+    const clusters = await storage.getStoryClusters({ limit });
+    res.json({ items: clusters, total: clusters.length });
+  });
+
+  app.get("/api/v1/entities", async (req, res) => {
+    const scopes = (req as any).apiKeyScopes as string[];
+    if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const limit = req.query.limit ? Math.min(100, parseInt(req.query.limit as string)) : 20;
+    const days = req.query.days ? parseInt(req.query.days as string) : 7;
+    const entities = await storage.getTopEntities({ limit, days });
+    res.json({ items: entities, total: entities.length });
+  });
+
+  app.get("/api/v1/briefings", async (req, res) => {
+    const scopes = (req as any).apiKeyScopes as string[];
+    if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const limit = req.query.limit ? Math.min(30, parseInt(req.query.limit as string)) : 7;
+    const briefs = await storage.getDailyBriefs(limit);
+    res.json({ items: briefs, total: briefs.length });
+  });
+
+  app.get("/api/v1/trends", async (req, res) => {
+    const scopes = (req as any).apiKeyScopes as string[];
+    if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const now = new Date();
+    const days = req.query.days ? parseInt(req.query.days as string) : 7;
+    const startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    const data = await storage.getTrendingTopics(startDate.toISOString(), now.toISOString());
+    res.json(data);
+  });
+
+  // === ADMIN: INTEGRATION MONITORING ===
+  app.get("/api/admin/integration-monitoring", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const webhooks = await storage.getWebhooks();
+    const deliveries = await storage.getWebhookDeliveries(undefined, { limit: 100 });
+    const configs = await storage.getIntegrationConfigs();
+    const embedTokens = await storage.getEmbedTokens();
+    const exportJobs = await storage.getExportJobs();
+    const importConnectors = await storage.getImportConnectors();
+    const apiKeysAll = await storage.getApiKeys();
+    const totalDeliveries = deliveries.length;
+    const successfulDeliveries = deliveries.filter((d: any) => d.success).length;
+    const failedDeliveries = deliveries.filter((d: any) => !d.success).length;
+    const recentFailures = deliveries.filter((d: any) => !d.success && d.createdAt && (Date.now() - new Date(d.createdAt).getTime()) < 24 * 60 * 60 * 1000);
+    res.json({
+      webhooks: { total: webhooks.length, active: webhooks.filter((w: any) => w.active).length },
+      deliveries: { total: totalDeliveries, successful: successfulDeliveries, failed: failedDeliveries, recentFailures: recentFailures.length },
+      communication: { total: configs.length, active: configs.filter((c: any) => c.active).length, platforms: configs.reduce((acc: Record<string, number>, c: any) => { acc[c.platform] = (acc[c.platform] || 0) + 1; return acc; }, {}) },
+      embeds: { total: embedTokens.length, active: embedTokens.filter((e: any) => e.active).length },
+      exports: { total: exportJobs.length, recent: exportJobs.filter((j: any) => j.createdAt && (Date.now() - new Date(j.createdAt).getTime()) < 7 * 24 * 60 * 60 * 1000).length },
+      importConnectors: { total: importConnectors.length, active: importConnectors.filter((c: any) => c.active).length },
+      apiKeys: { total: apiKeysAll.length, active: apiKeysAll.filter((k: any) => k.active).length },
+      recentDeliveries: deliveries.slice(0, 20),
+    });
+  });
+
   return httpServer;
+}
+
+function renderWidgetContent(widgetType: string, data: any): string {
+  if (!data) return '<div class="item">No data available</div>';
+  if (widgetType === "trending_topics" && Array.isArray(data)) {
+    return data.slice(0, 10).map((t: any) => `<div class="item">${t.topic || t.keyword || "—"} <span class="badge neutral">${t.count || t.frequency || 0}</span></div>`).join("");
+  }
+  if (widgetType === "sentiment_overview" && data) {
+    const s = data;
+    return `<div class="item">Positive: <span class="badge positive">${s.positive || 0}</span></div><div class="item">Negative: <span class="badge negative">${s.negative || 0}</span></div><div class="item">Neutral: <span class="badge neutral">${s.neutral || 0}</span></div>`;
+  }
+  if (widgetType === "entity_tracker" && Array.isArray(data)) {
+    return data.slice(0, 10).map((e: any) => `<div class="item">${e.entityName} <span class="badge neutral">${e.mentionCount} mentions</span></div>`).join("");
+  }
+  if (widgetType === "daily_briefing" && data) {
+    const brief = data;
+    return `<div class="item"><strong>${brief.briefDate || "Today"}</strong></div>` + ((brief.topStories as any[]) || []).slice(0, 5).map((s: any) => `<div class="item"><a href="${s.url}" target="_blank">${s.title}</a></div>`).join("");
+  }
+  return '<div class="item">Widget data loaded</div>';
 }
 
 async function seed() {
