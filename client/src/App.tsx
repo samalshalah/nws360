@@ -42,6 +42,7 @@ import HelpCenter from "@/pages/HelpCenter";
 import ProductAnalytics from "@/pages/ProductAnalytics";
 import Integrations from "@/pages/Integrations";
 import IntegrationMonitoring from "@/pages/IntegrationMonitoring";
+import Collaboration from "@/pages/Collaboration";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, ...rest }: { component: any, path?: string }) {
@@ -180,6 +181,9 @@ function Router() {
       </Route>
       <Route path="/admin/integrations">
         <ProtectedRoute component={IntegrationMonitoring} />
+      </Route>
+      <Route path="/collaboration">
+        <ProtectedRoute component={Collaboration} />
       </Route>
       <Route path="/demo" component={DemoPage} />
 

@@ -1,0 +1,207 @@
+Enable teams to collaborate, discuss, annotate, and build shared understanding directly inside NWS360. The goal is collective intelligence rather than individual consumption.
+
+1) Story Discussions (Internal Conversation Layer)
+
+Each story cluster and article should support discussion threads.
+
+Users can:
+
+comment on an article
+
+discuss a story
+
+reply to others
+
+mention teammates
+
+Store:
+
+comments(
+  id,
+  user_id,
+  target_type (article | story | entity),
+  target_id,
+  message,
+  parent_comment_id,
+  timestamp
+)
+
+
+Display comments in a side panel.
+
+2) Annotations & Analyst Notes
+
+Allow users to attach structured notes to any item:
+
+article notes
+
+story notes
+
+entity notes
+
+Types:
+
+observation
+
+warning
+
+hypothesis
+
+conclusion
+
+Store:
+
+annotations(
+  id,
+  user_id,
+  target_type,
+  target_id,
+  note_type,
+  content,
+  timestamp
+)
+
+3) Shared Briefings (Collaborative Reports)
+
+Users can build custom reports from inside the platform:
+
+Add:
+
+selected stories
+
+charts
+
+written commentary
+
+Export as:
+
+PDF
+
+shareable link
+
+Store:
+
+shared_reports(
+  id,
+  client_id,
+  title,
+  created_by,
+  last_updated
+)
+
+4) Team Workspaces
+
+Allow organizations to create internal groups:
+
+Examples:
+
+Political Monitoring Team
+
+Corporate Risk Team
+
+Regional Desk
+
+Each workspace can have:
+
+its own pinned topics
+
+its own dashboards
+
+its own alerts
+
+Store:
+
+workspaces(id, client_id, name)
+workspace_members(workspace_id, user_id)
+
+5) Tagging & Internal Classification
+
+Users can create internal tags:
+
+Examples:
+
+misinformation
+
+competitor activity
+
+reputational risk
+
+Tags are separate from AI topics.
+
+Store:
+
+custom_tags(tag_id, client_id, name)
+tag_assignments(tag_id, target_type, target_id)
+
+6) Task & Follow-Up Tracking
+
+Allow teams to turn insights into actions:
+
+Users can:
+
+create tasks from stories
+
+assign to teammate
+
+mark resolved
+
+Store:
+
+tasks(
+  id,
+  created_by,
+  assigned_to,
+  related_target_type,
+  related_target_id,
+  status,
+  due_date
+)
+
+7) Watchlists (Persistent Monitoring)
+
+Users can “follow” entities or topics.
+
+Example:
+Follow: “Ministry of Finance”
+
+System highlights all future related content.
+
+Store:
+
+watchlists(user_id, entity_or_topic)
+
+8) Internal Alerts Between Team Members
+
+Allow sending internal alerts:
+
+“Check this — may affect our policy briefing.”
+
+Store:
+
+internal_alerts(sender_id, receiver_id, target_id, message, timestamp)
+
+9) Version History (Trust & Accountability)
+
+Track changes to shared reports and annotations.
+
+Store:
+
+change_history(user_id, entity, entity_id, change_type, timestamp)
+
+10) Activity Feed (Collective Awareness)
+
+Create a team activity stream:
+
+Shows:
+
+comments added
+
+reports created
+
+tasks resolved
+
+alerts triggered
+
+Endpoint:
+
+GET /activity-feed

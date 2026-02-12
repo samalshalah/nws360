@@ -2384,6 +2384,329 @@ export async function registerRoutes(
     });
   });
 
+  // === TEAM COLLABORATION: WORKSPACES ===
+  app.get("/api/collaboration/workspaces", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const ws = await storage.getWorkspaces(user.clientId || undefined);
+    res.json(ws);
+  });
+
+  app.post("/api/collaboration/workspaces", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ name: z.string().min(1).max(200), description: z.string().optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const ws = await storage.createWorkspace({ ...parsed.data, clientId: user.clientId, createdBy: user.id });
+    await storage.addWorkspaceMember({ workspaceId: ws.id, userId: user.id, role: "owner" });
+    await storage.createActivityEvent({ workspaceId: ws.id, actorId: user.id, verb: "created_workspace", targetType: "workspace", targetId: ws.id });
+    res.status(201).json(ws);
+  });
+
+  app.delete("/api/collaboration/workspaces/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteWorkspace(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  app.get("/api/collaboration/workspaces/:id/members", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const members = await storage.getWorkspaceMembers(parseInt(req.params.id));
+    res.json(members);
+  });
+
+  app.post("/api/collaboration/workspaces/:id/members", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const member = await storage.addWorkspaceMember({ workspaceId: parseInt(req.params.id), userId: req.body.userId, role: req.body.role || "member" });
+    res.status(201).json(member);
+  });
+
+  app.delete("/api/collaboration/workspaces/:wsId/members/:userId", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.removeWorkspaceMember(parseInt(req.params.wsId), parseInt(req.params.userId));
+    res.json({ success: true });
+  });
+
+  // === DISCUSSION COMMENTS ===
+  app.get("/api/collaboration/comments/:targetType/:targetId", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const cmts = await storage.getComments(req.params.targetType, parseInt(req.params.targetId));
+    res.json(cmts);
+  });
+
+  app.post("/api/collaboration/comments", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ targetType: z.string().min(1), targetId: z.number().int(), message: z.string().min(1), parentId: z.number().int().optional(), workspaceId: z.number().int().optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const cmt = await storage.createComment({ ...parsed.data, userId: user.id });
+    await storage.createActivityEvent({ workspaceId: parsed.data.workspaceId, actorId: user.id, verb: "commented", targetType: parsed.data.targetType, targetId: parsed.data.targetId });
+    res.status(201).json(cmt);
+  });
+
+  app.delete("/api/collaboration/comments/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteComment(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === ANNOTATIONS & ANALYST NOTES ===
+  app.get("/api/collaboration/annotations/:targetType/:targetId", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const notes = await storage.getAnnotations(req.params.targetType, parseInt(req.params.targetId));
+    res.json(notes);
+  });
+
+  app.post("/api/collaboration/annotations", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ targetType: z.string().min(1), targetId: z.number().int(), noteType: z.enum(["observation", "warning", "hypothesis", "conclusion"]), content: z.string().min(1), workspaceId: z.number().int().optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const note = await storage.createAnnotation({ ...parsed.data, userId: user.id });
+    await storage.createActivityEvent({ workspaceId: parsed.data.workspaceId, actorId: user.id, verb: "annotated", targetType: parsed.data.targetType, targetId: parsed.data.targetId, metadata: { noteType: parsed.data.noteType } });
+    res.status(201).json(note);
+  });
+
+  app.delete("/api/collaboration/annotations/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteAnnotation(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === SHARED REPORTS / BRIEFINGS ===
+  app.get("/api/collaboration/reports", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const wId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
+    const reports = await storage.getSharedReports({ clientId: user.clientId || undefined, workspaceId: wId });
+    res.json(reports);
+  });
+
+  app.post("/api/collaboration/reports", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const crypto = await import("crypto");
+    const shareToken = crypto.randomBytes(24).toString("hex");
+    const report = await storage.createSharedReport({ ...req.body, createdBy: user.id, clientId: user.clientId, shareToken });
+    await storage.createActivityEvent({ workspaceId: req.body.workspaceId, actorId: user.id, verb: "created_report", targetType: "report", targetId: report.id });
+    res.status(201).json(report);
+  });
+
+  app.patch("/api/collaboration/reports/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const report = await storage.updateSharedReport(parseInt(req.params.id), req.body);
+    if (!report) return res.status(404).json({ message: "Not found" });
+    await storage.createChangeHistory({ userId: user.id, entityType: "report", entityId: report.id, changeType: "updated", details: req.body });
+    res.json(report);
+  });
+
+  app.delete("/api/collaboration/reports/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteSharedReport(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  app.get("/api/collaboration/reports/:id/items", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const items = await storage.getBriefingItems(parseInt(req.params.id));
+    res.json(items);
+  });
+
+  app.post("/api/collaboration/reports/:id/items", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const item = await storage.createBriefingItem({ ...req.body, reportId: parseInt(req.params.id) });
+    res.status(201).json(item);
+  });
+
+  app.delete("/api/collaboration/reports/items/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteBriefingItem(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  app.get("/api/shared-report/:token", async (req, res) => {
+    const report = await storage.getSharedReportByToken(req.params.token);
+    if (!report) return res.status(404).json({ message: "Not found" });
+    const items = await storage.getBriefingItems(report.id);
+    res.json({ report, items });
+  });
+
+  // === CUSTOM TAGS ===
+  app.get("/api/collaboration/tags", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const wId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
+    const tags = await storage.getCustomTags({ clientId: user.clientId || undefined, workspaceId: wId });
+    res.json(tags);
+  });
+
+  app.post("/api/collaboration/tags", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const tag = await storage.createCustomTag({ ...req.body, clientId: user.clientId, createdBy: user.id });
+    res.status(201).json(tag);
+  });
+
+  app.delete("/api/collaboration/tags/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteCustomTag(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  app.get("/api/collaboration/tag-assignments/:targetType/:targetId", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const assignments = await storage.getTagAssignments(req.params.targetType, parseInt(req.params.targetId));
+    res.json(assignments);
+  });
+
+  app.post("/api/collaboration/tag-assignments", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const assignment = await storage.createTagAssignment({ ...req.body, createdBy: user.id });
+    res.status(201).json(assignment);
+  });
+
+  app.delete("/api/collaboration/tag-assignments/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteTagAssignment(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === TASKS & FOLLOW-UP TRACKING ===
+  app.get("/api/collaboration/tasks", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const wsId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
+    const assignedTo = req.query.assignedTo ? parseInt(req.query.assignedTo as string) : undefined;
+    const status = req.query.status as string | undefined;
+    const taskList = await storage.getTasks({ workspaceId: wsId, assignedTo, status });
+    res.json(taskList);
+  });
+
+  app.post("/api/collaboration/tasks", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({ title: z.string().min(1), description: z.string().optional(), assignedTo: z.number().int().optional(), priority: z.enum(["low", "medium", "high", "critical"]).optional(), dueDate: z.string().optional(), workspaceId: z.number().int().optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const task = await storage.createTask({ ...parsed.data, createdBy: user.id });
+    await storage.createActivityEvent({ workspaceId: parsed.data.workspaceId, actorId: user.id, verb: "created_task", targetType: "task", targetId: task.id });
+    res.status(201).json(task);
+  });
+
+  app.patch("/api/collaboration/tasks/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const task = await storage.updateTask(parseInt(req.params.id), req.body);
+    if (!task) return res.status(404).json({ message: "Not found" });
+    if (req.body.status === "resolved") {
+      await storage.createActivityEvent({ workspaceId: task.workspaceId || undefined, actorId: user.id, verb: "resolved_task", targetType: "task", targetId: task.id });
+    }
+    res.json(task);
+  });
+
+  app.delete("/api/collaboration/tasks/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteTask(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === WATCHLISTS ===
+  app.get("/api/collaboration/watchlists", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const items = await storage.getWatchlists(user.id);
+    res.json(items);
+  });
+
+  app.post("/api/collaboration/watchlists", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const item = await storage.createWatchlist({ ...req.body, userId: user.id });
+    res.status(201).json(item);
+  });
+
+  app.delete("/api/collaboration/watchlists/:id", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteWatchlist(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === INTERNAL ALERTS ===
+  app.get("/api/collaboration/alerts", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const alerts = await storage.getInternalAlerts(user.id);
+    res.json(alerts);
+  });
+
+  app.post("/api/collaboration/alerts", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const alert = await storage.createInternalAlert({ ...req.body, senderId: user.id });
+    await storage.createActivityEvent({ workspaceId: req.body.workspaceId, actorId: user.id, verb: "sent_alert", targetType: "alert", targetId: alert.id });
+    res.status(201).json(alert);
+  });
+
+  app.patch("/api/collaboration/alerts/:id/read", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.markAlertRead(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // === CHANGE HISTORY ===
+  app.get("/api/collaboration/history/:entityType/:entityId", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const history = await storage.getChangeHistory(req.params.entityType, parseInt(req.params.entityId));
+    res.json(history);
+  });
+
+  // === ACTIVITY FEED ===
+  app.get("/api/collaboration/activity-feed", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const wsId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+    const events = await storage.getActivityFeed({ workspaceId: wsId, limit });
+    res.json(events);
+  });
+
+  // === TEAM MEMBERS LIST (for assigning tasks, sending alerts) ===
+  app.get("/api/collaboration/team-members", async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    let members: any[] = [];
+    if (user.clientId) {
+      members = await storage.getUsersByClientId(user.clientId);
+    } else {
+      members = await storage.getUsers();
+    }
+    res.json(members.map(m => ({ id: m.id, username: m.username, role: m.role })));
+  });
+
   return httpServer;
 }
 

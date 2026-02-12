@@ -901,6 +901,194 @@ export type InsertKnowledgeEntry = z.infer<typeof insertKnowledgeEntrySchema>;
 export type ValueReport = typeof valueReports.$inferSelect;
 export type InsertValueReport = z.infer<typeof insertValueReportSchema>;
 
+// === TEAM WORKSPACES ===
+export const workspaces = pgTable("workspaces", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id"),
+  name: text("name").notNull(),
+  description: text("description"),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertWorkspaceSchema = createInsertSchema(workspaces).omit({ id: true, createdAt: true });
+
+export const workspaceMembers = pgTable("workspace_members", {
+  id: serial("id").primaryKey(),
+  workspaceId: integer("workspace_id").notNull(),
+  userId: integer("user_id").notNull(),
+  role: text("role").notNull().default("member"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("ws_member_unique").on(table.workspaceId, table.userId),
+]);
+
+export const insertWorkspaceMemberSchema = createInsertSchema(workspaceMembers).omit({ id: true, createdAt: true });
+
+// === DISCUSSION COMMENTS ===
+export const comments = pgTable("comments", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  targetType: text("target_type").notNull(),
+  targetId: integer("target_id").notNull(),
+  message: text("message").notNull(),
+  parentCommentId: integer("parent_comment_id"),
+  workspaceId: integer("workspace_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("comments_target_idx").on(table.targetType, table.targetId),
+]);
+
+export const insertCommentSchema = createInsertSchema(comments).omit({ id: true, createdAt: true });
+
+// === ANNOTATIONS & ANALYST NOTES ===
+export const annotations = pgTable("annotations", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  targetType: text("target_type").notNull(),
+  targetId: integer("target_id").notNull(),
+  noteType: text("note_type").notNull().default("observation"),
+  content: text("content").notNull(),
+  workspaceId: integer("workspace_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("annotations_target_idx").on(table.targetType, table.targetId),
+]);
+
+export const insertAnnotationSchema = createInsertSchema(annotations).omit({ id: true, createdAt: true });
+
+// === SHARED BRIEFINGS / REPORTS ===
+export const sharedReports = pgTable("shared_reports", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id"),
+  workspaceId: integer("workspace_id"),
+  title: text("title").notNull(),
+  summary: text("summary"),
+  status: text("status").notNull().default("draft"),
+  createdBy: integer("created_by").notNull(),
+  shareToken: text("share_token"),
+  lastUpdated: timestamp("last_updated").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSharedReportSchema = createInsertSchema(sharedReports).omit({ id: true, createdAt: true, lastUpdated: true });
+
+export const briefingItems = pgTable("briefing_items", {
+  id: serial("id").primaryKey(),
+  reportId: integer("report_id").notNull(),
+  itemType: text("item_type").notNull(),
+  itemRefId: integer("item_ref_id"),
+  content: text("content"),
+  position: integer("position").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertBriefingItemSchema = createInsertSchema(briefingItems).omit({ id: true, createdAt: true });
+
+// === CUSTOM TAGS ===
+export const customTags = pgTable("custom_tags", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id"),
+  workspaceId: integer("workspace_id"),
+  name: text("name").notNull(),
+  color: text("color"),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCustomTagSchema = createInsertSchema(customTags).omit({ id: true, createdAt: true });
+
+export const tagAssignments = pgTable("tag_assignments", {
+  id: serial("id").primaryKey(),
+  tagId: integer("tag_id").notNull(),
+  targetType: text("target_type").notNull(),
+  targetId: integer("target_id").notNull(),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("tag_assign_target_idx").on(table.targetType, table.targetId),
+]);
+
+export const insertTagAssignmentSchema = createInsertSchema(tagAssignments).omit({ id: true, createdAt: true });
+
+// === TASKS & FOLLOW-UP TRACKING ===
+export const tasks = pgTable("tasks", {
+  id: serial("id").primaryKey(),
+  workspaceId: integer("workspace_id"),
+  title: text("title").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("open"),
+  priority: text("priority").default("medium"),
+  createdBy: integer("created_by").notNull(),
+  assignedTo: integer("assigned_to"),
+  relatedTargetType: text("related_target_type"),
+  relatedTargetId: integer("related_target_id"),
+  dueDate: timestamp("due_date"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertTaskSchema = createInsertSchema(tasks).omit({ id: true, createdAt: true });
+
+// === WATCHLISTS ===
+export const watchlists = pgTable("watchlists", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  entityOrTopic: text("entity_or_topic").notNull(),
+  targetType: text("target_type").notNull().default("entity"),
+  workspaceId: integer("workspace_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertWatchlistSchema = createInsertSchema(watchlists).omit({ id: true, createdAt: true });
+
+// === INTERNAL ALERTS ===
+export const internalAlerts = pgTable("internal_alerts", {
+  id: serial("id").primaryKey(),
+  senderId: integer("sender_id").notNull(),
+  receiverId: integer("receiver_id").notNull(),
+  targetType: text("target_type"),
+  targetId: integer("target_id"),
+  message: text("message").notNull(),
+  read: boolean("read").default(false),
+  workspaceId: integer("workspace_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("internal_alerts_receiver_idx").on(table.receiverId),
+]);
+
+export const insertInternalAlertSchema = createInsertSchema(internalAlerts).omit({ id: true, createdAt: true });
+
+// === CHANGE HISTORY ===
+export const changeHistory = pgTable("change_history", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: integer("entity_id").notNull(),
+  changeType: text("change_type").notNull(),
+  details: jsonb("details"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("change_history_entity_idx").on(table.entityType, table.entityId),
+]);
+
+export const insertChangeHistorySchema = createInsertSchema(changeHistory).omit({ id: true, createdAt: true });
+
+// === ACTIVITY FEED ===
+export const activityEvents = pgTable("activity_events", {
+  id: serial("id").primaryKey(),
+  workspaceId: integer("workspace_id"),
+  actorId: integer("actor_id").notNull(),
+  verb: text("verb").notNull(),
+  targetType: text("target_type"),
+  targetId: integer("target_id"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("activity_events_ws_idx").on(table.workspaceId, table.createdAt),
+]);
+
+export const insertActivityEventSchema = createInsertSchema(activityEvents).omit({ id: true, createdAt: true });
+
 export type IntegrationWebhook = typeof integrationWebhooks.$inferSelect;
 export type InsertIntegrationWebhook = z.infer<typeof insertWebhookSchema>;
 
@@ -927,6 +1115,45 @@ export type InsertImportConnector = z.infer<typeof insertImportConnectorSchema>;
 
 export type MobileNotificationPref = typeof mobileNotificationPrefs.$inferSelect;
 export type InsertMobileNotificationPref = z.infer<typeof insertMobileNotificationPrefSchema>;
+
+export type Workspace = typeof workspaces.$inferSelect;
+export type InsertWorkspace = z.infer<typeof insertWorkspaceSchema>;
+
+export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
+export type InsertWorkspaceMember = z.infer<typeof insertWorkspaceMemberSchema>;
+
+export type Comment = typeof comments.$inferSelect;
+export type InsertComment = z.infer<typeof insertCommentSchema>;
+
+export type Annotation = typeof annotations.$inferSelect;
+export type InsertAnnotation = z.infer<typeof insertAnnotationSchema>;
+
+export type SharedReport = typeof sharedReports.$inferSelect;
+export type InsertSharedReport = z.infer<typeof insertSharedReportSchema>;
+
+export type BriefingItem = typeof briefingItems.$inferSelect;
+export type InsertBriefingItem = z.infer<typeof insertBriefingItemSchema>;
+
+export type CustomTag = typeof customTags.$inferSelect;
+export type InsertCustomTag = z.infer<typeof insertCustomTagSchema>;
+
+export type TagAssignment = typeof tagAssignments.$inferSelect;
+export type InsertTagAssignment = z.infer<typeof insertTagAssignmentSchema>;
+
+export type Task = typeof tasks.$inferSelect;
+export type InsertTask = z.infer<typeof insertTaskSchema>;
+
+export type Watchlist = typeof watchlists.$inferSelect;
+export type InsertWatchlist = z.infer<typeof insertWatchlistSchema>;
+
+export type InternalAlert = typeof internalAlerts.$inferSelect;
+export type InsertInternalAlert = z.infer<typeof insertInternalAlertSchema>;
+
+export type ChangeHistoryEntry = typeof changeHistory.$inferSelect;
+export type InsertChangeHistory = z.infer<typeof insertChangeHistorySchema>;
+
+export type ActivityEvent = typeof activityEvents.$inferSelect;
+export type InsertActivityEvent = z.infer<typeof insertActivityEventSchema>;
 
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash, Menu, Bookmark, Users, Activity, GitCompare, Zap, Tag, Brain, Eye, CreditCard, HelpCircle, Lightbulb, Plug, Monitor } from "lucide-react";
+import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash, Menu, Bookmark, Users, Activity, GitCompare, Zap, Tag, Brain, Eye, CreditCard, HelpCircle, Lightbulb, Plug, Monitor, UsersRound } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
@@ -278,6 +278,22 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           >
             <Eye className={cn("w-5 h-5", location === "/executive" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
             {t("nav.executiveHome", "Executive Home")}
+          </div>
+        </Link>
+
+        <Link href="/collaboration">
+          <div
+            onClick={onNavigate}
+            data-testid="nav-collaboration"
+            className={cn(
+              "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
+              location === "/collaboration"
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
+            )}
+          >
+            <UsersRound className={cn("w-5 h-5", location === "/collaboration" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
+            {t("nav.collaboration", "Collaboration")}
           </div>
         </Link>
 

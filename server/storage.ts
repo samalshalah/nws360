@@ -7,6 +7,8 @@ import {
   subscriptions, onboardingState, notificationSettings, whiteLabelSettings, supportTickets,
   integrationWebhooks, webhookDeliveries, emailSubscriptions, integrationConfigs,
   embedTokens, exportJobs, ssoConfigs, importConnectors, mobileNotificationPrefs,
+  workspaces, workspaceMembers, comments, annotations, sharedReports, briefingItems,
+  customTags, tagAssignments, tasks, watchlists, internalAlerts, changeHistory, activityEvents,
   type User, type InsertUser,
   type Source, type InsertSource,
   type Article, type InsertArticle,
@@ -50,6 +52,19 @@ import {
   type SsoConfig, type InsertSsoConfig,
   type ImportConnector, type InsertImportConnector,
   type MobileNotificationPref, type InsertMobileNotificationPref,
+  type Workspace, type InsertWorkspace,
+  type WorkspaceMember, type InsertWorkspaceMember,
+  type Comment, type InsertComment,
+  type Annotation, type InsertAnnotation,
+  type SharedReport, type InsertSharedReport,
+  type BriefingItem, type InsertBriefingItem,
+  type CustomTag, type InsertCustomTag,
+  type TagAssignment, type InsertTagAssignment,
+  type Task, type InsertTask,
+  type Watchlist, type InsertWatchlist,
+  type InternalAlert, type InsertInternalAlert,
+  type ChangeHistoryEntry, type InsertChangeHistory,
+  type ActivityEvent, type InsertActivityEvent,
 } from "@shared/schema";
 import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
@@ -365,6 +380,71 @@ export interface IStorage {
 
   getMobileNotificationPrefs(userId: number): Promise<MobileNotificationPref | undefined>;
   upsertMobileNotificationPrefs(data: InsertMobileNotificationPref): Promise<MobileNotificationPref>;
+
+  // Workspaces
+  getWorkspaces(clientId?: number): Promise<Workspace[]>;
+  getWorkspace(id: number): Promise<Workspace | undefined>;
+  createWorkspace(data: InsertWorkspace): Promise<Workspace>;
+  updateWorkspace(id: number, data: Partial<InsertWorkspace>): Promise<Workspace | undefined>;
+  deleteWorkspace(id: number): Promise<void>;
+  getWorkspaceMembers(workspaceId: number): Promise<WorkspaceMember[]>;
+  addWorkspaceMember(data: InsertWorkspaceMember): Promise<WorkspaceMember>;
+  removeWorkspaceMember(workspaceId: number, userId: number): Promise<void>;
+
+  // Comments / Discussions
+  getComments(targetType: string, targetId: number): Promise<Comment[]>;
+  getComment(id: number): Promise<Comment | undefined>;
+  createComment(data: InsertComment): Promise<Comment>;
+  deleteComment(id: number): Promise<void>;
+
+  // Annotations
+  getAnnotations(targetType: string, targetId: number): Promise<Annotation[]>;
+  createAnnotation(data: InsertAnnotation): Promise<Annotation>;
+  deleteAnnotation(id: number): Promise<void>;
+
+  // Shared Reports / Briefings
+  getSharedReports(params?: { clientId?: number; workspaceId?: number; createdBy?: number }): Promise<SharedReport[]>;
+  getSharedReport(id: number): Promise<SharedReport | undefined>;
+  getSharedReportByToken(token: string): Promise<SharedReport | undefined>;
+  createSharedReport(data: InsertSharedReport): Promise<SharedReport>;
+  updateSharedReport(id: number, data: Partial<InsertSharedReport>): Promise<SharedReport | undefined>;
+  deleteSharedReport(id: number): Promise<void>;
+  getBriefingItems(reportId: number): Promise<BriefingItem[]>;
+  createBriefingItem(data: InsertBriefingItem): Promise<BriefingItem>;
+  deleteBriefingItem(id: number): Promise<void>;
+
+  // Custom Tags
+  getCustomTags(params?: { clientId?: number; workspaceId?: number }): Promise<CustomTag[]>;
+  createCustomTag(data: InsertCustomTag): Promise<CustomTag>;
+  deleteCustomTag(id: number): Promise<void>;
+  getTagAssignments(targetType: string, targetId: number): Promise<TagAssignment[]>;
+  createTagAssignment(data: InsertTagAssignment): Promise<TagAssignment>;
+  deleteTagAssignment(id: number): Promise<void>;
+
+  // Tasks
+  getTasks(params?: { workspaceId?: number; assignedTo?: number; createdBy?: number; status?: string }): Promise<Task[]>;
+  getTask(id: number): Promise<Task | undefined>;
+  createTask(data: InsertTask): Promise<Task>;
+  updateTask(id: number, data: Partial<InsertTask>): Promise<Task | undefined>;
+  deleteTask(id: number): Promise<void>;
+
+  // Watchlists
+  getWatchlists(userId: number): Promise<Watchlist[]>;
+  createWatchlist(data: InsertWatchlist): Promise<Watchlist>;
+  deleteWatchlist(id: number): Promise<void>;
+
+  // Internal Alerts
+  getInternalAlerts(receiverId: number): Promise<InternalAlert[]>;
+  createInternalAlert(data: InsertInternalAlert): Promise<InternalAlert>;
+  markAlertRead(id: number): Promise<void>;
+
+  // Change History
+  getChangeHistory(entityType: string, entityId: number): Promise<ChangeHistoryEntry[]>;
+  createChangeHistory(data: InsertChangeHistory): Promise<ChangeHistoryEntry>;
+
+  // Activity Feed
+  getActivityFeed(params?: { workspaceId?: number; limit?: number }): Promise<ActivityEvent[]>;
+  createActivityEvent(data: InsertActivityEvent): Promise<ActivityEvent>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2336,6 +2416,227 @@ export class DatabaseStorage implements IStorage {
       return row;
     }
     const [row] = await db.insert(mobileNotificationPrefs).values(data).returning();
+    return row;
+  }
+
+  async getWorkspaces(clientId?: number): Promise<Workspace[]> {
+    if (clientId) return db.select().from(workspaces).where(eq(workspaces.clientId, clientId)).orderBy(desc(workspaces.createdAt));
+    return db.select().from(workspaces).orderBy(desc(workspaces.createdAt));
+  }
+
+  async getWorkspace(id: number): Promise<Workspace | undefined> {
+    const [row] = await db.select().from(workspaces).where(eq(workspaces.id, id));
+    return row;
+  }
+
+  async createWorkspace(data: InsertWorkspace): Promise<Workspace> {
+    const [row] = await db.insert(workspaces).values(data).returning();
+    return row;
+  }
+
+  async updateWorkspace(id: number, data: Partial<InsertWorkspace>): Promise<Workspace | undefined> {
+    const [row] = await db.update(workspaces).set(data).where(eq(workspaces.id, id)).returning();
+    return row;
+  }
+
+  async deleteWorkspace(id: number): Promise<void> {
+    await db.delete(workspaces).where(eq(workspaces.id, id));
+  }
+
+  async getWorkspaceMembers(workspaceId: number): Promise<WorkspaceMember[]> {
+    return db.select().from(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId));
+  }
+
+  async addWorkspaceMember(data: InsertWorkspaceMember): Promise<WorkspaceMember> {
+    const [row] = await db.insert(workspaceMembers).values(data).returning();
+    return row;
+  }
+
+  async removeWorkspaceMember(workspaceId: number, userId: number): Promise<void> {
+    await db.delete(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)));
+  }
+
+  async getComments(targetType: string, targetId: number): Promise<Comment[]> {
+    return db.select().from(comments).where(and(eq(comments.targetType, targetType), eq(comments.targetId, targetId))).orderBy(asc(comments.createdAt));
+  }
+
+  async getComment(id: number): Promise<Comment | undefined> {
+    const [row] = await db.select().from(comments).where(eq(comments.id, id));
+    return row;
+  }
+
+  async createComment(data: InsertComment): Promise<Comment> {
+    const [row] = await db.insert(comments).values(data).returning();
+    return row;
+  }
+
+  async deleteComment(id: number): Promise<void> {
+    await db.delete(comments).where(eq(comments.id, id));
+  }
+
+  async getAnnotations(targetType: string, targetId: number): Promise<Annotation[]> {
+    return db.select().from(annotations).where(and(eq(annotations.targetType, targetType), eq(annotations.targetId, targetId))).orderBy(desc(annotations.createdAt));
+  }
+
+  async createAnnotation(data: InsertAnnotation): Promise<Annotation> {
+    const [row] = await db.insert(annotations).values(data).returning();
+    return row;
+  }
+
+  async deleteAnnotation(id: number): Promise<void> {
+    await db.delete(annotations).where(eq(annotations.id, id));
+  }
+
+  async getSharedReports(params?: { clientId?: number; workspaceId?: number; createdBy?: number }): Promise<SharedReport[]> {
+    const conditions = [];
+    if (params?.clientId) conditions.push(eq(sharedReports.clientId, params.clientId));
+    if (params?.workspaceId) conditions.push(eq(sharedReports.workspaceId, params.workspaceId));
+    if (params?.createdBy) conditions.push(eq(sharedReports.createdBy, params.createdBy));
+    if (conditions.length > 0) return db.select().from(sharedReports).where(and(...conditions)).orderBy(desc(sharedReports.createdAt));
+    return db.select().from(sharedReports).orderBy(desc(sharedReports.createdAt));
+  }
+
+  async getSharedReport(id: number): Promise<SharedReport | undefined> {
+    const [row] = await db.select().from(sharedReports).where(eq(sharedReports.id, id));
+    return row;
+  }
+
+  async getSharedReportByToken(token: string): Promise<SharedReport | undefined> {
+    const [row] = await db.select().from(sharedReports).where(eq(sharedReports.shareToken, token));
+    return row;
+  }
+
+  async createSharedReport(data: InsertSharedReport): Promise<SharedReport> {
+    const [row] = await db.insert(sharedReports).values(data).returning();
+    return row;
+  }
+
+  async updateSharedReport(id: number, data: Partial<InsertSharedReport>): Promise<SharedReport | undefined> {
+    const [row] = await db.update(sharedReports).set(data).where(eq(sharedReports.id, id)).returning();
+    return row;
+  }
+
+  async deleteSharedReport(id: number): Promise<void> {
+    await db.delete(sharedReports).where(eq(sharedReports.id, id));
+  }
+
+  async getBriefingItems(reportId: number): Promise<BriefingItem[]> {
+    return db.select().from(briefingItems).where(eq(briefingItems.reportId, reportId)).orderBy(asc(briefingItems.position));
+  }
+
+  async createBriefingItem(data: InsertBriefingItem): Promise<BriefingItem> {
+    const [row] = await db.insert(briefingItems).values(data).returning();
+    return row;
+  }
+
+  async deleteBriefingItem(id: number): Promise<void> {
+    await db.delete(briefingItems).where(eq(briefingItems.id, id));
+  }
+
+  async getCustomTags(params?: { clientId?: number; workspaceId?: number }): Promise<CustomTag[]> {
+    const conditions = [];
+    if (params?.clientId) conditions.push(eq(customTags.clientId, params.clientId));
+    if (params?.workspaceId) conditions.push(eq(customTags.workspaceId, params.workspaceId));
+    if (conditions.length > 0) return db.select().from(customTags).where(and(...conditions)).orderBy(desc(customTags.createdAt));
+    return db.select().from(customTags).orderBy(desc(customTags.createdAt));
+  }
+
+  async createCustomTag(data: InsertCustomTag): Promise<CustomTag> {
+    const [row] = await db.insert(customTags).values(data).returning();
+    return row;
+  }
+
+  async deleteCustomTag(id: number): Promise<void> {
+    await db.delete(customTags).where(eq(customTags.id, id));
+  }
+
+  async getTagAssignments(targetType: string, targetId: number): Promise<TagAssignment[]> {
+    return db.select().from(tagAssignments).where(and(eq(tagAssignments.targetType, targetType), eq(tagAssignments.targetId, targetId)));
+  }
+
+  async createTagAssignment(data: InsertTagAssignment): Promise<TagAssignment> {
+    const [row] = await db.insert(tagAssignments).values(data).returning();
+    return row;
+  }
+
+  async deleteTagAssignment(id: number): Promise<void> {
+    await db.delete(tagAssignments).where(eq(tagAssignments.id, id));
+  }
+
+  async getTasks(params?: { workspaceId?: number; assignedTo?: number; createdBy?: number; status?: string }): Promise<Task[]> {
+    const conditions = [];
+    if (params?.workspaceId) conditions.push(eq(tasks.workspaceId, params.workspaceId));
+    if (params?.assignedTo) conditions.push(eq(tasks.assignedTo, params.assignedTo));
+    if (params?.createdBy) conditions.push(eq(tasks.createdBy, params.createdBy));
+    if (params?.status) conditions.push(eq(tasks.status, params.status));
+    if (conditions.length > 0) return db.select().from(tasks).where(and(...conditions)).orderBy(desc(tasks.createdAt));
+    return db.select().from(tasks).orderBy(desc(tasks.createdAt));
+  }
+
+  async getTask(id: number): Promise<Task | undefined> {
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, id));
+    return row;
+  }
+
+  async createTask(data: InsertTask): Promise<Task> {
+    const [row] = await db.insert(tasks).values(data).returning();
+    return row;
+  }
+
+  async updateTask(id: number, data: Partial<InsertTask>): Promise<Task | undefined> {
+    const [row] = await db.update(tasks).set(data).where(eq(tasks.id, id)).returning();
+    return row;
+  }
+
+  async deleteTask(id: number): Promise<void> {
+    await db.delete(tasks).where(eq(tasks.id, id));
+  }
+
+  async getWatchlists(userId: number): Promise<Watchlist[]> {
+    return db.select().from(watchlists).where(eq(watchlists.userId, userId)).orderBy(desc(watchlists.createdAt));
+  }
+
+  async createWatchlist(data: InsertWatchlist): Promise<Watchlist> {
+    const [row] = await db.insert(watchlists).values(data).returning();
+    return row;
+  }
+
+  async deleteWatchlist(id: number): Promise<void> {
+    await db.delete(watchlists).where(eq(watchlists.id, id));
+  }
+
+  async getInternalAlerts(receiverId: number): Promise<InternalAlert[]> {
+    return db.select().from(internalAlerts).where(eq(internalAlerts.receiverId, receiverId)).orderBy(desc(internalAlerts.createdAt));
+  }
+
+  async createInternalAlert(data: InsertInternalAlert): Promise<InternalAlert> {
+    const [row] = await db.insert(internalAlerts).values(data).returning();
+    return row;
+  }
+
+  async markAlertRead(id: number): Promise<void> {
+    await db.update(internalAlerts).set({ read: true }).where(eq(internalAlerts.id, id));
+  }
+
+  async getChangeHistory(entityType: string, entityId: number): Promise<ChangeHistoryEntry[]> {
+    return db.select().from(changeHistory).where(and(eq(changeHistory.entityType, entityType), eq(changeHistory.entityId, entityId))).orderBy(desc(changeHistory.createdAt));
+  }
+
+  async createChangeHistory(data: InsertChangeHistory): Promise<ChangeHistoryEntry> {
+    const [row] = await db.insert(changeHistory).values(data).returning();
+    return row;
+  }
+
+  async getActivityFeed(params?: { workspaceId?: number; limit?: number }): Promise<ActivityEvent[]> {
+    const limit = params?.limit || 50;
+    if (params?.workspaceId) {
+      return db.select().from(activityEvents).where(eq(activityEvents.workspaceId, params.workspaceId)).orderBy(desc(activityEvents.createdAt)).limit(limit);
+    }
+    return db.select().from(activityEvents).orderBy(desc(activityEvents.createdAt)).limit(limit);
+  }
+
+  async createActivityEvent(data: InsertActivityEvent): Promise<ActivityEvent> {
+    const [row] = await db.insert(activityEvents).values(data).returning();
     return row;
   }
 

@@ -32,6 +32,8 @@ AI capabilities, including sentiment analysis, keyword/topic extraction, and cou
 - **Executive Home**: A simplified "morning intelligence snapshot" dashboard showing top story, coverage tone, emerging topics, alerts, latest brief preview, and top entities.
 - **Demo Environment**: Public /demo page with sample data for prospective customers (no auth required).
 - **Help Center**: Built-in glossary of platform terms, quick help guides, and support ticket submission form.
+- **External Integrations**: Webhooks (HMAC SHA-256 signed), Slack/Teams communication channels, email subscriptions, embeddable widgets, JSON/CSV data exports, SSO (Google/Microsoft/SAML), data import connectors, mobile notification preferences. Admin integration monitoring dashboard.
+- **Team Collaboration**: Threaded discussions on articles/stories/entities, analyst annotations (observation/warning/hypothesis/conclusion), shared briefings with shareable links, team workspaces, custom tagging system, task tracking with assignments, persistent watchlists, internal team alerts, version history, and activity feed.
 - **UI/UX**: Features a unified design token system, refined color palette (with dark mode as default), professional typography, human-readable labels, trust indicators ("Updated X min ago"), and accessibility considerations (skip-to-content, ARIA labels).
 
 ## External Dependencies
