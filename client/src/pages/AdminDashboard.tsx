@@ -81,6 +81,38 @@ interface AuditLog {
   details: string;
 }
 
+interface QueueStats {
+  pending: number;
+  processing: number;
+  completed: number;
+  failed: number;
+  total: number;
+}
+
+interface SystemError {
+  id: number;
+  severity: string;
+  component: string;
+  errorMessage: string;
+  stackTrace: string | null;
+  sourceId: number | null;
+  resolved: boolean;
+  createdAt: string;
+}
+
+interface ApiKey {
+  id: number;
+  name: string;
+  keyPrefix: string;
+  clientId: number | null;
+  scopes: string[];
+  rateLimit: number;
+  active: boolean;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
 function SourcesTab() {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -971,12 +1003,22 @@ function SettingsTab() {
 
 function LogsHealthTab() {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const { data: health, isLoading: healthLoading } = useQuery<SystemHealth>({ queryKey: ["/api/admin/system-health"] });
+  const { data: queueStats } = useQuery<QueueStats>({ queryKey: ["/api/admin/queue-stats"] });
+  const { data: systemErrors } = useQuery<{ items: SystemError[]; total: number }>({ queryKey: ["/api/admin/system-errors"] });
+  const { data: apiKeys } = useQuery<ApiKey[]>({ queryKey: ["/api/admin/api-keys"] });
   const [page, setPage] = useState(0);
   const limit = 50;
   const { data: logsData, isLoading: logsLoading } = useQuery<{ items: AuditLog[]; total: number }>({
     queryKey: ["/api/admin/audit-logs", `?limit=${limit}&offset=${page * limit}`],
   });
+  const [subTab, setSubTab] = useState<"health" | "errors" | "apikeys" | "logs">("health");
+  const [showCreateKey, setShowCreateKey] = useState(false);
+  const [keyForm, setKeyForm] = useState({ name: "", scopes: "articles:read,analytics:read", rateLimit: "100" });
+  const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
+  const [computingAnalytics, setComputingAnalytics] = useState(false);
+  const [runningRetention, setRunningRetention] = useState(false);
 
   const healthCards = [
     { label: t("Total Articles"), value: health?.totalArticles ?? 0, icon: Database, color: "text-blue-500" },
@@ -987,115 +1029,342 @@ function LogsHealthTab() {
     { label: t("Last Worker Run"), value: health?.lastWorkerRun ? new Date(health.lastWorkerRun).toLocaleString() : t("Never"), icon: Activity, color: "text-teal-500" },
   ];
 
+  const handleComputeAnalytics = async () => {
+    setComputingAnalytics(true);
+    try {
+      await apiRequest("POST", "/api/admin/compute-analytics");
+      toast({ title: t("Analytics computation triggered") });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/system-health"] });
+    } catch (err: any) {
+      toast({ title: t("Error"), description: err.message, variant: "destructive" });
+    } finally {
+      setComputingAnalytics(false);
+    }
+  };
+
+  const handleRunRetention = async () => {
+    setRunningRetention(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/run-retention");
+      const data = await res.json();
+      toast({ title: t("Data retention completed"), description: `Removed ${data.articlesRemoved || 0} articles` });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/system-health"] });
+    } catch (err: any) {
+      toast({ title: t("Error"), description: err.message, variant: "destructive" });
+    } finally {
+      setRunningRetention(false);
+    }
+  };
+
+  const handleCreateApiKey = async () => {
+    try {
+      const res = await apiRequest("POST", "/api/admin/api-keys", {
+        name: keyForm.name,
+        scopes: keyForm.scopes.split(",").map(s => s.trim()),
+        rateLimit: parseInt(keyForm.rateLimit) || 100,
+      });
+      const data = await res.json();
+      setNewlyCreatedKey(data.rawKey);
+      setShowCreateKey(false);
+      setKeyForm({ name: "", scopes: "articles:read,analytics:read", rateLimit: "100" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/api-keys"] });
+      toast({ title: t("API key created") });
+    } catch (err: any) {
+      toast({ title: t("Error"), description: err.message, variant: "destructive" });
+    }
+  };
+
+  const handleDeactivateKey = async (id: number) => {
+    try {
+      await apiRequest("DELETE", `/api/admin/api-keys/${id}`);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/api-keys"] });
+      toast({ title: t("API key deactivated") });
+    } catch (err: any) {
+      toast({ title: t("Error"), description: err.message, variant: "destructive" });
+    }
+  };
+
+  const subTabs = [
+    { key: "health" as const, label: t("System Health"), icon: Activity },
+    { key: "errors" as const, label: t("System Errors"), icon: AlertTriangle },
+    { key: "apikeys" as const, label: t("API Keys"), icon: Key },
+    { key: "logs" as const, label: t("Audit Logs"), icon: Clock },
+  ];
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h3 className="text-lg font-semibold mb-3">{t("System Health")}</h3>
-        {healthLoading ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {[1, 2, 3, 4, 5, 6].map(i => <Skeleton key={i} className="h-24 w-full" />)}
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {healthCards.map(card => (
-              <Card key={card.label} data-testid={`card-health-${card.label.toLowerCase().replace(/\s+/g, "-")}`}>
-                <CardContent className="p-4 flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-muted">
-                    <card.icon className={`w-5 h-5 ${card.color}`} />
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold" data-testid={`text-health-${card.label.toLowerCase().replace(/\s+/g, "-")}`}>{card.value}</p>
-                    <p className="text-xs text-muted-foreground">{card.label}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        {subTabs.map(st => (
+          <Button
+            key={st.key}
+            variant={subTab === st.key ? "default" : "outline"}
+            size="sm"
+            onClick={() => setSubTab(st.key)}
+            data-testid={`button-subtab-${st.key}`}
+          >
+            <st.icon className="w-4 h-4 mr-1" />
+            {st.label}
+          </Button>
+        ))}
       </div>
 
-      <div>
-        <h3 className="text-lg font-semibold mb-3">{t("Audit Logs")}</h3>
-        {logsLoading ? (
-          <div className="space-y-2">
-            {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-12 w-full" />)}
-          </div>
-        ) : (
-          <>
-            <div className="hidden md:block">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t("Timestamp")}</TableHead>
-                    <TableHead>{t("User")}</TableHead>
-                    <TableHead>{t("Action")}</TableHead>
-                    <TableHead>{t("Entity")}</TableHead>
-                    <TableHead>{t("Details")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {logsData?.items?.map(log => (
-                    <TableRow key={log.id} data-testid={`row-log-${log.id}`}>
-                      <TableCell className="text-sm text-muted-foreground">{new Date(log.createdAt).toLocaleString()}</TableCell>
-                      <TableCell className="font-medium">{log.username}</TableCell>
-                      <TableCell><Badge variant="secondary">{log.action}</Badge></TableCell>
-                      <TableCell>{log.entity}</TableCell>
-                      <TableCell className="max-w-[300px] truncate text-sm text-muted-foreground">{log.details}</TableCell>
-                    </TableRow>
-                  ))}
-                  {(!logsData?.items || logsData.items.length === 0) && (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground py-8">{t("No audit logs found")}</TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+      {subTab === "health" && (
+        <div className="space-y-6">
+          {healthLoading ? (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {[1, 2, 3, 4, 5, 6].map(i => <Skeleton key={i} className="h-24 w-full" />)}
             </div>
-
-            <div className="md:hidden space-y-3">
-              {logsData?.items?.map(log => (
-                <Card key={log.id} data-testid={`card-log-${log.id}`}>
-                  <CardContent className="p-3 space-y-1">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <span className="font-medium text-sm">{log.username}</span>
-                      <Badge variant="secondary">{log.action}</Badge>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {healthCards.map(card => (
+                <Card key={card.label} data-testid={`card-health-${card.label.toLowerCase().replace(/\s+/g, "-")}`}>
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-muted">
+                      <card.icon className={`w-5 h-5 ${card.color}`} />
                     </div>
-                    <p className="text-xs text-muted-foreground">{log.entity}</p>
-                    <p className="text-xs text-muted-foreground truncate">{log.details}</p>
-                    <p className="text-xs text-muted-foreground">{new Date(log.createdAt).toLocaleString()}</p>
+                    <div>
+                      <p className="text-2xl font-bold">{card.value}</p>
+                      <p className="text-xs text-muted-foreground">{card.label}</p>
+                    </div>
                   </CardContent>
                 </Card>
               ))}
             </div>
+          )}
 
-            <div className="flex items-center justify-between gap-2 mt-4 flex-wrap">
-              <p className="text-sm text-muted-foreground">
-                {t("Page")} {page + 1} {logsData?.total ? `/ ${Math.ceil(logsData.total / limit)}` : ""}
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page === 0}
-                  onClick={() => setPage(p => p - 1)}
-                  data-testid="button-logs-prev"
-                >
-                  {t("Previous")}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!logsData?.items || logsData.items.length < limit}
-                  onClick={() => setPage(p => p + 1)}
-                  data-testid="button-logs-next"
-                >
-                  {t("Next")}
-                </Button>
+          {queueStats && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t("Processing Queue")}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-amber-500">{queueStats.pending}</p>
+                    <p className="text-xs text-muted-foreground">{t("Pending")}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-blue-500">{queueStats.processing}</p>
+                    <p className="text-xs text-muted-foreground">{t("Processing")}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-green-500">{queueStats.completed}</p>
+                    <p className="text-xs text-muted-foreground">{t("Completed")}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-red-500">{queueStats.failed}</p>
+                    <p className="text-xs text-muted-foreground">{t("Failed")}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button variant="outline" size="sm" onClick={handleComputeAnalytics} disabled={computingAnalytics} data-testid="button-compute-analytics">
+              <RefreshCw className={`w-4 h-4 mr-1 ${computingAnalytics ? "animate-spin" : ""}`} />
+              {t("Compute Analytics")}
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleRunRetention} disabled={runningRetention} data-testid="button-run-retention">
+              <Trash2 className={`w-4 h-4 mr-1 ${runningRetention ? "animate-spin" : ""}`} />
+              {t("Run Data Retention")}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {subTab === "errors" && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t("Recent System Errors")}</CardTitle>
+            <CardDescription>{t("Errors logged by background workers and system components")}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {!systemErrors?.items?.length ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <CheckCircle className="w-8 h-8 mx-auto mb-2 text-green-500" />
+                <p>{t("No system errors")}</p>
               </div>
+            ) : (
+              <div className="space-y-3">
+                {systemErrors.items.map(err => (
+                  <div key={err.id} className="border rounded-md p-3 space-y-1" data-testid={`error-${err.id}`}>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <Badge variant={err.severity === "critical" ? "destructive" : "secondary"}>
+                        {err.severity}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">{new Date(err.createdAt).toLocaleString()}</span>
+                    </div>
+                    <p className="text-sm font-medium">[{err.component}] {err.errorMessage}</p>
+                    {err.stackTrace && (
+                      <pre className="text-xs text-muted-foreground bg-muted p-2 rounded overflow-x-auto max-h-24">{err.stackTrace}</pre>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {subTab === "apikeys" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <h3 className="text-lg font-semibold">{t("Partner API Keys")}</h3>
+            <Button size="sm" onClick={() => setShowCreateKey(true)} data-testid="button-create-api-key">
+              <Plus className="w-4 h-4 mr-1" /> {t("Create Key")}
+            </Button>
+          </div>
+
+          {newlyCreatedKey && (
+            <Card className="border-green-500/50 bg-green-50 dark:bg-green-950/20">
+              <CardContent className="p-4 space-y-2">
+                <p className="text-sm font-medium text-green-700 dark:text-green-400">{t("New API key created! Copy it now - it won't be shown again.")}</p>
+                <code className="block p-2 bg-muted rounded text-xs break-all" data-testid="text-new-api-key">{newlyCreatedKey}</code>
+                <Button size="sm" variant="outline" onClick={() => {
+                  navigator.clipboard.writeText(newlyCreatedKey);
+                  toast({ title: t("Copied to clipboard") });
+                }} data-testid="button-copy-api-key">{t("Copy")}</Button>
+                <Button size="sm" variant="ghost" onClick={() => setNewlyCreatedKey(null)} data-testid="button-dismiss-api-key">{t("Dismiss")}</Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {!apiKeys?.length ? (
+            <Card>
+              <CardContent className="p-8 text-center text-muted-foreground">
+                <Key className="w-8 h-8 mx-auto mb-2" />
+                <p>{t("No API keys created yet")}</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {apiKeys.map(key => (
+                <Card key={key.id} data-testid={`card-apikey-${key.id}`}>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="space-y-1">
+                        <p className="font-medium">{key.name}</p>
+                        <p className="text-xs text-muted-foreground font-mono">{key.keyPrefix}...</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={key.active ? "secondary" : "outline"}>
+                          {key.active ? t("Active") : t("Inactive")}
+                        </Badge>
+                        {key.active && (
+                          <Button size="icon" variant="ghost" onClick={() => handleDeactivateKey(key.id)} data-testid={`button-deactivate-key-${key.id}`}>
+                            <XCircle className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground flex-wrap">
+                      <span>{t("Scopes")}: {key.scopes?.join(", ") || "none"}</span>
+                      <span>{t("Rate")}: {key.rateLimit}/min</span>
+                      {key.lastUsedAt && <span>{t("Last used")}: {new Date(key.lastUsedAt).toLocaleDateString()}</span>}
+                      {key.expiresAt && <span>{t("Expires")}: {new Date(key.expiresAt).toLocaleDateString()}</span>}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
-          </>
-        )}
-      </div>
+          )}
+
+          <Dialog open={showCreateKey} onOpenChange={setShowCreateKey}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{t("Create API Key")}</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>{t("Name")}</Label>
+                  <Input value={keyForm.name} onChange={e => setKeyForm(f => ({ ...f, name: e.target.value }))} placeholder="Partner name" data-testid="input-apikey-name" />
+                </div>
+                <div className="space-y-2">
+                  <Label>{t("Scopes")} ({t("comma-separated")})</Label>
+                  <Input value={keyForm.scopes} onChange={e => setKeyForm(f => ({ ...f, scopes: e.target.value }))} data-testid="input-apikey-scopes" />
+                </div>
+                <div className="space-y-2">
+                  <Label>{t("Rate Limit")} ({t("per minute")})</Label>
+                  <Input type="number" value={keyForm.rateLimit} onChange={e => setKeyForm(f => ({ ...f, rateLimit: e.target.value }))} data-testid="input-apikey-rate-limit" />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowCreateKey(false)}>{t("Cancel")}</Button>
+                <Button onClick={handleCreateApiKey} disabled={!keyForm.name} data-testid="button-save-apikey">{t("Create")}</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+      )}
+
+      {subTab === "logs" && (
+        <div>
+          {logsLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-12 w-full" />)}
+            </div>
+          ) : (
+            <>
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t("Timestamp")}</TableHead>
+                      <TableHead>{t("User")}</TableHead>
+                      <TableHead>{t("Action")}</TableHead>
+                      <TableHead>{t("Entity")}</TableHead>
+                      <TableHead>{t("Details")}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {logsData?.items?.map(log => (
+                      <TableRow key={log.id} data-testid={`row-log-${log.id}`}>
+                        <TableCell className="text-sm text-muted-foreground">{new Date(log.createdAt).toLocaleString()}</TableCell>
+                        <TableCell className="font-medium">{log.username}</TableCell>
+                        <TableCell><Badge variant="secondary">{log.action}</Badge></TableCell>
+                        <TableCell>{log.entity}</TableCell>
+                        <TableCell className="max-w-[300px] truncate text-sm text-muted-foreground">{log.details}</TableCell>
+                      </TableRow>
+                    ))}
+                    {(!logsData?.items || logsData.items.length === 0) && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-8">{t("No audit logs found")}</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="md:hidden space-y-3">
+                {logsData?.items?.map(log => (
+                  <Card key={log.id} data-testid={`card-log-${log.id}`}>
+                    <CardContent className="p-3 space-y-1">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="font-medium text-sm">{log.username}</span>
+                        <Badge variant="secondary">{log.action}</Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">{log.entity}</p>
+                      <p className="text-xs text-muted-foreground truncate">{log.details}</p>
+                      <p className="text-xs text-muted-foreground">{new Date(log.createdAt).toLocaleString()}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between gap-2 mt-4 flex-wrap">
+                <p className="text-sm text-muted-foreground">
+                  {t("Page")} {page + 1} {logsData?.total ? `/ ${Math.ceil(logsData.total / limit)}` : ""}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)} data-testid="button-logs-prev">{t("Previous")}</Button>
+                  <Button variant="outline" size="sm" disabled={!logsData?.items || logsData.items.length < limit} onClick={() => setPage(p => p + 1)} data-testid="button-logs-next">{t("Next")}</Button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

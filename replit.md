@@ -37,29 +37,56 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - Input sanitization with sanitize-html
 
 ## Database Schema
-- `users`: id, username, password, role (admin/client), parentId, createdAt
-- `sources`: id, name, url, type, active, intervalMinutes, retentionDays, userId, lastFetchedAt, createdAt
+- `users`: id, username, password, role (admin/client), parentId, clientId, disabled, createdAt
+- `sources`: id, name, url, type, active, intervalMinutes, retentionDays, userId, lastFetchedAt, refreshPriority, country, deletedAt, createdAt
 - `articles`: id, title, content, contentClean, summary, url, sourceId, publishedAt, ingestedAt, language, country, sentimentScore, sentimentLabel, keywords[], topics[], category, imageUrl, subSource, createdAt
 - `keywords`: id, term, createdAt
 - `bookmarks`: id, userId, articleId, createdAt (unique on userId+articleId)
 - `source_fetch_logs`: id, sourceId, status, articlesFound, errorMessage, retryCount, durationMs, pipelineStep, fetchedAt
+- `processing_jobs`: id, type, status, priority, payload, result, attempts, maxAttempts, runAt, startedAt, completedAt, createdAt
+- `system_errors`: id, severity, component, message, stack, metadata, createdAt, resolvedAt
+- `api_keys`: id, name, keyHash, keyPrefix, clientId, scopes[], rateLimit, active, lastUsedAt, expiresAt, createdAt
+- `analytics_cache`: id, metricType, period, data, computedAt, expiresAt
+- `clients`: id, name, organizationType, defaultLanguage, active, allowedRegions[], createdAt
+- `client_keywords`: id, clientId, keyword, priority, createdAt
+- `system_settings`: id, key, value, updatedAt
+- `admin_audit_logs`: id, userId, action, entity, entityId, details, createdAt
 
 ## API Routes
 - Auth: POST /api/login, POST /api/register, POST /api/logout, GET /api/user
 - Users: GET /api/users, POST /api/users, PATCH /api/users/:id/role, DELETE /api/users/:id
 - Sources: GET /api/sources, POST /api/sources, PATCH /api/sources/:id, DELETE /api/sources/:id
 - Manual Fetch: POST /api/sources/:id/fetch, POST /api/fetch-all
-- Articles: GET /api/articles (with search, filters, pagination), GET /api/articles/:id
+- Articles: GET /api/articles (with search, filters, pagination, max 100/page), GET /api/articles/:id
 - Bookmarks: GET /api/bookmarks, POST /api/bookmarks, DELETE /api/bookmarks/:articleId
 - Bulk: POST /api/articles/bulk-delete, POST /api/articles/bulk-categorize
 - Export: GET /api/articles/export (CSV)
 - Urgent: GET /api/articles/urgent (breaking news)
-- Users (admin): GET /api/users, PATCH /api/users/:id/role, DELETE /api/users/:id
 - Source Health: GET /api/source-health, GET /api/source-health/:sourceId/logs
 - Ingestion Logs: GET /api/ingestion-logs?from=&to=&limit=&offset=
 - Keywords: GET /api/keywords, POST /api/keywords, DELETE /api/keywords/:id
 - Analytics: GET /api/analytics/stats
 - Translation: Auto-translates articles based on `lang` query param in GET /api/articles
+- Admin: GET/PUT /api/admin/settings, GET /api/admin/system-health, GET /api/admin/audit-logs
+- Admin: GET /api/admin/system-errors, GET /api/admin/queue-stats
+- Admin: POST /api/admin/compute-analytics, POST /api/admin/run-retention
+- Admin: GET/POST /api/admin/api-keys, DELETE /api/admin/api-keys/:id
+- Partner API v1: GET /api/v1/articles, GET /api/v1/trending-topics, GET /api/v1/sentiment, GET /api/v1/keywords
+
+## Performance & Scalability
+- **Background Job Queue**: In-process job queue (server/processing-queue.ts) with claim/complete/fail cycle, 5-sec polling, exponential backoff retry (max 3 attempts)
+- **Smart Scheduling**: Priority-based feed refresh (high=5min, medium=10min, low=15min) via refreshPriority field on sources
+- **Analytics Caching**: Pre-computed metrics (volume, topics, sentiment, keywords) for 7-day and 30-day periods, refreshed every 15 minutes (server/analytics-worker.ts)
+- **Data Retention**: Automated cleanup respecting per-source retentionDays, removes orphaned articles, cleans fetch logs >30d and errors >90d (server/data-retention-worker.ts)
+- **Database Indexes**: 12+ indexes on articles (sourceId, publishedAt, sentimentLabel, category, country), sources (userId, active), users (username)
+
+## Partner API
+- Endpoint prefix: /api/v1/
+- Authentication: Bearer token with SHA-256 hashed API keys (nws_ prefix + 32-byte hex)
+- Scopes: articles:read, analytics:read
+- Rate limiting: per-key, configurable (default 100/min)
+- Pagination: max 50 items per request, lean responses (no raw content)
+- Key management via Admin Dashboard
 
 ## Feed Worker
 - Located in `server/feed-worker.ts`
@@ -82,6 +109,15 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - **Telegram**: Scrapes public channel preview pages via t.me/s/channel
 
 ## Recent Changes
+- 2026-02-12: Added Partner API v1 with Bearer token authentication, SHA-256 hashed API keys, scope-based authorization
+- 2026-02-12: Added API key management UI in Admin Dashboard (create, deactivate, copy key)
+- 2026-02-12: Added background processing queue with claim/complete/fail cycle and exponential backoff
+- 2026-02-12: Added analytics caching worker (7-day and 30-day metrics, refreshed every 15min)
+- 2026-02-12: Added data retention worker (per-source cleanup, orphan removal, log cleanup)
+- 2026-02-12: Enhanced Admin Logs & Health tab with sub-tabs: System Health, System Errors, API Keys, Audit Logs
+- 2026-02-12: Added queue stats, compute analytics, and run retention admin actions
+- 2026-02-12: Added 12+ database indexes for query optimization
+- 2026-02-12: Added processing_jobs, system_errors, api_keys, analytics_cache tables
 - 2026-02-12: Added Admin Dashboard page (/admin/dashboard) with 5 tabs: Sources, Clients, Users & Permissions, System Settings, Logs & Health
 - 2026-02-12: Added clients table for multi-tenant client profiles (name, orgType, language, regions)
 - 2026-02-12: Added client_keywords table for per-client keyword tracking with priority

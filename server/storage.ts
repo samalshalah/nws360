@@ -2,6 +2,7 @@ import { db } from "./db";
 import {
   users, sources, articles, keywords, bookmarks, sourceFetchLogs,
   clients, clientKeywords, systemSettings, adminAuditLogs,
+  processingJobs, systemErrors, apiKeys,
   type User, type InsertUser,
   type Source, type InsertSource,
   type Article, type InsertArticle,
@@ -172,7 +173,7 @@ export interface IStorage {
   // User management extensions
   updateUser(id: number, updates: Partial<{ role: string; clientId: number | null; disabled: boolean; password: string }>): Promise<User | undefined>;
 
-  // System health
+  // System health (enhanced)
   getSystemHealth(): Promise<{
     lastWorkerRun: Date | null;
     avgProcessingTime: number;
@@ -180,7 +181,21 @@ export interface IStorage {
     totalArticles: number;
     totalSources: number;
     totalUsers: number;
+    queueStats?: { pending: number; running: number; completed: number; failed: number };
+    recentErrors?: number;
+    storageEstimate?: { articlesSize: number; logsSize: number };
   }>;
+
+  // System Errors
+  getSystemErrors(params?: { severity?: string; component?: string; limit?: number; offset?: number }): Promise<{ items: any[]; total: number }>;
+
+  // API Keys
+  getApiKeys(): Promise<any[]>;
+  getApiKeyByHash(keyHash: string): Promise<any | undefined>;
+  createApiKey(data: any): Promise<any>;
+  updateApiKeyLastUsed(id: number): Promise<void>;
+  deactivateApiKey(id: number): Promise<void>;
+
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1297,7 +1312,7 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  // === SYSTEM HEALTH ===
+  // === SYSTEM HEALTH (Enhanced) ===
   async getSystemHealth() {
     const [lastWorkerRow] = await db.select({ fetchedAt: sourceFetchLogs.fetchedAt })
       .from(sourceFetchLogs)
@@ -1319,6 +1334,25 @@ export class DatabaseStorage implements IStorage {
     const [totalSourcesRow] = await db.select({ count: sql<number>`count(*)::int` }).from(sources).where(isNull(sources.deletedAt));
     const [totalUsersRow] = await db.select({ count: sql<number>`count(*)::int` }).from(users);
 
+    const [queueStats] = await db.select({
+      pending: sql<number>`count(*) filter (where ${processingJobs.status} = 'pending')`,
+      running: sql<number>`count(*) filter (where ${processingJobs.status} = 'running')`,
+      completed: sql<number>`count(*) filter (where ${processingJobs.status} = 'completed')`,
+      failed: sql<number>`count(*) filter (where ${processingJobs.status} = 'failed')`,
+    }).from(processingJobs);
+
+    const [recentErrorsRow] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(systemErrors)
+      .where(gte(systemErrors.createdAt, sql`NOW() - INTERVAL '24 hours'`));
+
+    const [articlesSize] = await db.select({
+      size: sql<number>`COALESCE(pg_total_relation_size('articles'), 0)`,
+    }).from(sql`(SELECT 1) AS t`);
+
+    const [logsSize] = await db.select({
+      size: sql<number>`COALESCE(pg_total_relation_size('source_fetch_logs'), 0)`,
+    }).from(sql`(SELECT 1) AS t`);
+
     return {
       lastWorkerRun: lastWorkerRow?.fetchedAt || null,
       avgProcessingTime: Number(avgTimeRow?.avg || 0),
@@ -1326,8 +1360,74 @@ export class DatabaseStorage implements IStorage {
       totalArticles: Number(totalArticlesRow?.count || 0),
       totalSources: Number(totalSourcesRow?.count || 0),
       totalUsers: Number(totalUsersRow?.count || 0),
+      queueStats: {
+        pending: Number(queueStats?.pending ?? 0),
+        running: Number(queueStats?.running ?? 0),
+        completed: Number(queueStats?.completed ?? 0),
+        failed: Number(queueStats?.failed ?? 0),
+      },
+      recentErrors: Number(recentErrorsRow?.count ?? 0),
+      storageEstimate: {
+        articlesSize: Number(articlesSize?.size ?? 0),
+        logsSize: Number(logsSize?.size ?? 0),
+      },
     };
   }
+
+  // === SYSTEM ERRORS ===
+  async getSystemErrors(params?: { severity?: string; component?: string; limit?: number; offset?: number }) {
+    const conditions = [];
+    if (params?.severity) conditions.push(eq(systemErrors.severity, params.severity));
+    if (params?.component) conditions.push(eq(systemErrors.component, params.component));
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    const limit = params?.limit || 50;
+    const offset = params?.offset || 0;
+
+    const [countResult] = await db.select({ count: sql<number>`count(*)::int` }).from(systemErrors).where(whereClause);
+    const items = await db.select().from(systemErrors)
+      .where(whereClause)
+      .orderBy(desc(systemErrors.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    return { items, total: Number(countResult?.count || 0) };
+  }
+
+  // === API KEYS ===
+  async getApiKeys() {
+    return await db.select({
+      id: apiKeys.id,
+      name: apiKeys.name,
+      keyPrefix: apiKeys.keyPrefix,
+      clientId: apiKeys.clientId,
+      scopes: apiKeys.scopes,
+      rateLimit: apiKeys.rateLimit,
+      active: apiKeys.active,
+      lastUsedAt: apiKeys.lastUsedAt,
+      expiresAt: apiKeys.expiresAt,
+      createdAt: apiKeys.createdAt,
+    }).from(apiKeys).orderBy(desc(apiKeys.createdAt));
+  }
+
+  async getApiKeyByHash(keyHash: string) {
+    const [key] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, keyHash));
+    return key;
+  }
+
+  async createApiKey(data: any) {
+    const [key] = await db.insert(apiKeys).values(data).returning();
+    return key;
+  }
+
+  async updateApiKeyLastUsed(id: number) {
+    await db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, id));
+  }
+
+  async deactivateApiKey(id: number) {
+    await db.update(apiKeys).set({ active: false }).where(eq(apiKeys.id, id));
+  }
+
 }
 
 export const storage = new DatabaseStorage();

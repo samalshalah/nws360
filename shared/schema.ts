@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { relations } from "drizzle-orm";
@@ -145,6 +145,82 @@ export const adminAuditLogs = pgTable("admin_audit_logs", {
 
 export const insertAdminAuditLogSchema = createInsertSchema(adminAuditLogs).omit({ id: true, createdAt: true });
 
+// === PROCESSING JOBS (Background Queue) ===
+export const processingJobs = pgTable("processing_jobs", {
+  id: serial("id").primaryKey(),
+  type: text("type").notNull(),
+  status: text("status").notNull().default("pending"),
+  priority: integer("priority").default(5),
+  payload: jsonb("payload"),
+  result: jsonb("result"),
+  attempts: integer("attempts").default(0),
+  maxAttempts: integer("max_attempts").default(3),
+  lastError: text("last_error"),
+  runAt: timestamp("run_at").defaultNow(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_jobs_status_runat").on(table.status, table.runAt),
+  index("idx_jobs_type").on(table.type),
+]);
+
+export const insertProcessingJobSchema = createInsertSchema(processingJobs).omit({ id: true, createdAt: true, startedAt: true, completedAt: true });
+
+// === SYSTEM ERRORS ===
+export const systemErrors = pgTable("system_errors", {
+  id: serial("id").primaryKey(),
+  component: text("component").notNull(),
+  errorMessage: text("error_message").notNull(),
+  stackTrace: text("stack_trace"),
+  severity: text("severity").notNull().default("error"),
+  sourceId: integer("source_id"),
+  resolved: boolean("resolved").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_errors_component").on(table.component),
+  index("idx_errors_severity").on(table.severity),
+  index("idx_errors_created").on(table.createdAt),
+]);
+
+export const insertSystemErrorSchema = createInsertSchema(systemErrors).omit({ id: true, createdAt: true });
+
+// === API KEYS (Partner API) ===
+export const apiKeys = pgTable("api_keys", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  keyHash: text("key_hash").notNull().unique(),
+  keyPrefix: text("key_prefix").notNull(),
+  clientId: integer("client_id"),
+  scopes: text("scopes").array().default([]),
+  rateLimit: integer("rate_limit").default(100),
+  active: boolean("active").default(true),
+  lastUsedAt: timestamp("last_used_at"),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertApiKeySchema = createInsertSchema(apiKeys).omit({ id: true, createdAt: true, lastUsedAt: true });
+
+// === ANALYTICS CACHE ===
+export const analyticsCache = pgTable("analytics_cache", {
+  id: serial("id").primaryKey(),
+  metricType: text("metric_type").notNull(),
+  metricKey: text("metric_key").notNull().default("global"),
+  data: jsonb("data").notNull(),
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  computedAt: timestamp("computed_at").defaultNow(),
+}, (table) => [
+  index("idx_cache_type_key").on(table.metricType, table.metricKey),
+  index("idx_cache_period").on(table.periodStart, table.periodEnd),
+]);
+
+export const insertAnalyticsCacheSchema = createInsertSchema(analyticsCache).omit({ id: true, computedAt: true });
+
+// === INDEXES for existing tables ===
+// These are added via SQL migration since Drizzle doesn't support adding indexes to existing table definitions inline
+
 // === RELATIONS ===
 export const sourceRelations = relations(sources, ({ many }) => ({
   articles: many(articles),
@@ -187,6 +263,18 @@ export type InsertSystemSetting = z.infer<typeof insertSystemSettingSchema>;
 
 export type AdminAuditLog = typeof adminAuditLogs.$inferSelect;
 export type InsertAdminAuditLog = z.infer<typeof insertAdminAuditLogSchema>;
+
+export type ProcessingJob = typeof processingJobs.$inferSelect;
+export type InsertProcessingJob = z.infer<typeof insertProcessingJobSchema>;
+
+export type SystemError = typeof systemErrors.$inferSelect;
+export type InsertSystemError = z.infer<typeof insertSystemErrorSchema>;
+
+export type ApiKey = typeof apiKeys.$inferSelect;
+export type InsertApiKey = z.infer<typeof insertApiKeySchema>;
+
+export type AnalyticsCache = typeof analyticsCache.$inferSelect;
+export type InsertAnalyticsCache = z.infer<typeof insertAnalyticsCacheSchema>;
 
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;

@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { setupAuth } from "./auth";
 import { storage } from "./storage";
@@ -11,8 +11,11 @@ import { articles } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
 import sanitizeHtml from "sanitize-html";
-import { scrypt, randomBytes } from "crypto";
+import { scrypt, randomBytes, createHash } from "crypto";
 import { promisify } from "util";
+import { startQueueProcessor, getQueueStats, logSystemError } from "./processing-queue";
+import { runAnalyticsComputation } from "./analytics-worker";
+import { runDataRetention, onSourceHardDeleted } from "./data-retention-worker";
 
 const scryptAsync = promisify(scrypt);
 
@@ -250,8 +253,8 @@ export async function registerRoutes(
         lang: req.query.lang as string,
         startDate: req.query.startDate as string,
         endDate: req.query.endDate as string,
-        page: req.query.page ? parseInt(req.query.page as string) : 1,
-        limit: req.query.limit ? parseInt(req.query.limit as string) : 20,
+        page: req.query.page ? Math.max(1, parseInt(req.query.page as string)) : 1,
+        limit: req.query.limit ? Math.min(100, Math.max(1, parseInt(req.query.limit as string))) : 20,
       };
 
       const result = await storage.getArticles(params);
@@ -1053,9 +1056,215 @@ export async function registerRoutes(
     res.json(result);
   });
 
-  // === SEED & START WORKER ===
+  // === ADMIN: SYSTEM ERRORS ===
+  app.get("/api/admin/system-errors", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const severity = req.query.severity as string;
+    const component = req.query.component as string;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+    const result = await storage.getSystemErrors({ severity, component, limit, offset });
+    res.json(result);
+  });
+
+  // === ADMIN: QUEUE STATS ===
+  app.get("/api/admin/queue-stats", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const stats = await getQueueStats();
+    res.json(stats);
+  });
+
+  // === ADMIN: TRIGGER ANALYTICS COMPUTATION ===
+  app.post("/api/admin/compute-analytics", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const result = await runAnalyticsComputation();
+    await storage.createAuditLog({ userId: user.id, action: "compute_analytics", entity: "analytics_cache", details: `Triggered analytics computation: ${result.success ? "success" : "failed"}` });
+    res.json(result);
+  });
+
+  // === ADMIN: TRIGGER DATA RETENTION ===
+  app.post("/api/admin/run-retention", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const result = await runDataRetention();
+    await storage.createAuditLog({ userId: user.id, action: "run_retention", entity: "data_retention", details: `Triggered data retention: ${result.success ? `removed ${result.articlesRemoved} articles` : "failed"}` });
+    res.json(result);
+  });
+
+  // === ADMIN: API KEYS MANAGEMENT ===
+  app.get("/api/admin/api-keys", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const keys = await storage.getApiKeys();
+    res.json(keys);
+  });
+
+  app.post("/api/admin/api-keys", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const { name, clientId, scopes, rateLimit: rl, expiresAt } = req.body;
+    if (!name) return res.status(400).json({ message: "API key name is required" });
+
+    const rawKey = `nws_${randomBytes(32).toString("hex")}`;
+    const keyHash = createHash("sha256").update(rawKey).digest("hex");
+    const keyPrefix = rawKey.substring(0, 12);
+
+    const apiKey = await storage.createApiKey({
+      name: sanitizeInput(name),
+      keyHash,
+      keyPrefix,
+      clientId: clientId || null,
+      scopes: scopes || ["articles:read", "analytics:read"],
+      rateLimit: rl || 100,
+      active: true,
+      expiresAt: expiresAt ? new Date(expiresAt) : null,
+    });
+
+    await storage.createAuditLog({ userId: user.id, action: "create", entity: "api_key", entityId: apiKey.id, details: `Created API key: ${name}` });
+    res.status(201).json({ ...apiKey, rawKey });
+  });
+
+  app.delete("/api/admin/api-keys/:id", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid API key ID" });
+    await storage.deactivateApiKey(id);
+    await storage.createAuditLog({ userId: user.id, action: "deactivate", entity: "api_key", entityId: id, details: `Deactivated API key #${id}` });
+    res.sendStatus(204);
+  });
+
+  // === PARTNER API (v1) ===
+  async function authenticateApiKey(req: Request, res: Response, next: NextFunction) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ message: "API key required. Use: Authorization: Bearer <key>" });
+    }
+    const rawKey = authHeader.substring(7);
+    const keyHash = createHash("sha256").update(rawKey).digest("hex");
+    const apiKey = await storage.getApiKeyByHash(keyHash);
+    if (!apiKey) return res.status(401).json({ message: "Invalid API key" });
+    if (!apiKey.active) return res.status(403).json({ message: "API key is deactivated" });
+    if (apiKey.expiresAt && new Date(apiKey.expiresAt) < new Date()) {
+      return res.status(403).json({ message: "API key has expired" });
+    }
+    (req as any).apiKeyId = apiKey.id;
+    (req as any).apiKeyClientId = apiKey.clientId;
+    (req as any).apiKeyScopes = apiKey.scopes || [];
+    (req as any).apiKeyRateLimit = apiKey.rateLimit || 100;
+    await storage.updateApiKeyLastUsed(apiKey.id);
+    next();
+  }
+
+  const partnerKeyBuckets = new Map<string, { count: number; resetAt: number }>();
+  function partnerRateLimiter(req: Request, res: Response, next: NextFunction) {
+    const keyId = (req as any).apiKeyId?.toString();
+    if (!keyId) return res.status(401).json({ message: "Not authenticated" });
+    const limit = (req as any).apiKeyRateLimit || 100;
+    const now = Date.now();
+    let bucket = partnerKeyBuckets.get(keyId);
+    if (!bucket || now >= bucket.resetAt) {
+      bucket = { count: 0, resetAt: now + 60000 };
+      partnerKeyBuckets.set(keyId, bucket);
+    }
+    bucket.count++;
+    if (bucket.count > limit) {
+      return res.status(429).json({ message: "Rate limit exceeded" });
+    }
+    next();
+  }
+
+  app.use("/api/v1", authenticateApiKey, partnerRateLimiter);
+
+  app.get("/api/v1/articles", async (req, res) => {
+    const scopes = (req as any).apiKeyScopes as string[];
+    if (!scopes.includes("articles:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const params = {
+      search: req.query.search as string,
+      sentiment: req.query.sentiment as string,
+      category: req.query.category as string,
+      country: req.query.country as string,
+      topic: req.query.topic as string,
+      startDate: req.query.startDate as string,
+      endDate: req.query.endDate as string,
+      page: req.query.page ? Math.max(1, parseInt(req.query.page as string)) : 1,
+      limit: req.query.limit ? Math.min(50, Math.max(1, parseInt(req.query.limit as string))) : 20,
+    };
+    const result = await storage.getArticles(params);
+    res.json({
+      items: result.items.map(a => ({
+        id: a.id,
+        title: a.title,
+        summary: a.summary,
+        url: a.url,
+        source: a.source?.name || null,
+        sourceType: a.source?.type || null,
+        category: a.category,
+        sentimentLabel: a.sentimentLabel,
+        sentimentScore: a.sentimentScore,
+        keywords: a.keywords,
+        topics: a.topics,
+        country: a.country,
+        publishedAt: a.publishedAt,
+        imageUrl: a.imageUrl,
+      })),
+      total: result.total,
+      page: params.page,
+      limit: params.limit,
+    });
+  });
+
+  app.get("/api/v1/trending-topics", async (req, res) => {
+    const scopes = (req as any).apiKeyScopes as string[];
+    if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const data = await storage.getTrendingTopics(sevenDaysAgo.toISOString(), now.toISOString());
+    res.json(data);
+  });
+
+  app.get("/api/v1/sentiment", async (req, res) => {
+    const scopes = (req as any).apiKeyScopes as string[];
+    if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const data = await storage.getSentimentReports(sevenDaysAgo.toISOString(), now.toISOString());
+    res.json(data);
+  });
+
+  app.get("/api/v1/keywords", async (req, res) => {
+    const scopes = (req as any).apiKeyScopes as string[];
+    if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const data = await storage.getKeywordAnalysis(sevenDaysAgo.toISOString(), now.toISOString());
+    res.json(data);
+  });
+
+  // === SEED & START WORKERS ===
   await seed();
   startFeedWorker();
+  startQueueProcessor();
+
+  setInterval(async () => {
+    try {
+      await runAnalyticsComputation();
+    } catch (e) {
+      console.error("[Analytics Worker] Error:", e);
+    }
+  }, 15 * 60 * 1000);
+
+  setTimeout(() => {
+    runAnalyticsComputation().catch(e => console.error("[Analytics] Initial computation error:", e));
+  }, 30000);
+
+  setInterval(async () => {
+    try {
+      await runDataRetention();
+    } catch (e) {
+      console.error("[Retention Worker] Error:", e);
+    }
+  }, 24 * 60 * 60 * 1000);
 
   return httpServer;
 }

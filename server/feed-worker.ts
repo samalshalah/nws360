@@ -659,19 +659,59 @@ export async function backfillGoogleNewsImages(): Promise<number> {
   return updated;
 }
 
-let workerInterval: ReturnType<typeof setInterval> | null = null;
+const PRIORITY_INTERVALS: Record<string, number> = {
+  high: 5,
+  medium: 10,
+  low: 15,
+};
+
+let workerIntervals: ReturnType<typeof setInterval>[] = [];
+let lastWorkerRun: Date | null = null;
+
+export function getLastWorkerRun() {
+  return lastWorkerRun;
+}
+
+async function fetchByPriority(priority: string) {
+  const allSources = await storage.getSources();
+  const activeSources = allSources.filter(
+    (s) => s.active && !s.deletedAt && (s.refreshPriority || "medium") === priority
+  );
+
+  if (activeSources.length === 0) return;
+
+  console.log(`[Worker] Fetching ${priority}-priority sources (${activeSources.length})`);
+  const results: { sourceName: string; newArticles: number; error?: string }[] = [];
+  const batchStart = Date.now();
+
+  for (const source of activeSources) {
+    try {
+      const newArticles = await fetchSourceFeed(source.id);
+      results.push({ sourceName: source.name, newArticles });
+    } catch (e) {
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      results.push({ sourceName: source.name, newArticles: 0, error: errorMsg });
+    }
+  }
+
+  const totalArticles = results.reduce((sum, r) => sum + r.newArticles, 0);
+  const failures = results.filter(r => r.error).length;
+  lastWorkerRun = new Date();
+  console.log(`[Worker] ${priority}-priority complete | articles=${totalArticles} | success=${results.length - failures} | failed=${failures} | duration=${Date.now() - batchStart}ms`);
+}
 
 export function startFeedWorker(intervalMinutes?: number) {
-  const interval = intervalMinutes ?? parseInt(process.env.FEED_REFRESH_MINUTES || "5", 10);
-  if (workerInterval) clearInterval(workerInterval);
+  stopFeedWorker();
 
-  console.log(`[Worker] Starting feed worker, interval: ${interval} minutes`);
+  console.log(`[Worker] Starting smart feed worker with priority-based scheduling`);
+  console.log(`[Worker] High: every ${PRIORITY_INTERVALS.high}min | Medium: every ${PRIORITY_INTERVALS.medium}min | Low: every ${PRIORITY_INTERVALS.low}min`);
 
   setTimeout(async () => {
-    console.log("[Worker] Initial feed fetch...");
+    console.log("[Worker] Initial feed fetch (all priorities)...");
     try {
       const results = await fetchAllFeeds();
       const total = results.reduce((sum, r) => sum + r.newArticles, 0);
+      lastWorkerRun = new Date();
       console.log(`[Worker] Initial fetch complete: ${total} new articles from ${results.length} sources`);
     } catch (e) {
       console.error("[Worker] Initial fetch error:", e);
@@ -689,27 +729,31 @@ export function startFeedWorker(intervalMinutes?: number) {
     }
   }, 5000);
 
-  workerInterval = setInterval(async () => {
-    console.log("[Worker] Scheduled feed fetch...");
-    try {
-      const results = await fetchAllFeeds();
-      const total = results.reduce((sum, r) => sum + r.newArticles, 0);
-      console.log(`[Worker] Scheduled fetch complete: ${total} new articles`);
-    } catch (e) {
-      console.error("[Worker] Scheduled fetch error:", e);
-    }
+  for (const [priority, minutes] of Object.entries(PRIORITY_INTERVALS)) {
+    const interval = setInterval(async () => {
+      try {
+        await fetchByPriority(priority);
+      } catch (e) {
+        console.error(`[Worker] ${priority}-priority fetch error:`, e);
+      }
+    }, minutes * 60 * 1000);
+    workerIntervals.push(interval);
+  }
+
+  const retentionInterval = setInterval(async () => {
     try {
       const deleted = await storage.deleteExpiredArticles();
-      if (deleted > 0) console.log(`[Worker] Cleaned up ${deleted} expired articles`);
+      if (deleted > 0) console.log(`[Worker] Cleanup: removed ${deleted} expired articles`);
     } catch (e) {
       console.error("[Worker] Cleanup error:", e);
     }
-  }, interval * 60 * 1000);
+  }, 60 * 60 * 1000);
+  workerIntervals.push(retentionInterval);
 }
 
 export function stopFeedWorker() {
-  if (workerInterval) {
-    clearInterval(workerInterval);
-    workerInterval = null;
+  for (const interval of workerIntervals) {
+    clearInterval(interval);
   }
+  workerIntervals = [];
 }

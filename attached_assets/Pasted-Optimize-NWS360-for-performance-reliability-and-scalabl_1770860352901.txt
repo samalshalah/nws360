@@ -1,0 +1,242 @@
+Optimize NWS360 for performance, reliability, and scalable growth while keeping operations simple, observable, and resilient. The system should remain fast as data, sources, and users increase.
+
+1) Background Processing Queue (No More Monolithic Processing)
+
+Refactor data processing into a job queue instead of doing everything in one pass.
+
+Create:
+
+processing-queue.ts
+
+
+Supported job types:
+
+INGEST_ARTICLES
+
+CLEAN_TEXT
+
+EXTRACT_KEYWORDS
+
+CLASSIFY_TOPICS
+
+ANALYZE_SENTIMENT
+
+GENERATE_SUMMARY
+
+Each job must:
+
+run independently,
+
+retry on failure,
+
+log success/failure,
+
+never block other jobs.
+
+New flow:
+
+FETCH → enqueue → process in parallel → store results
+
+2) Smart Scheduling (Keep Your 5 / 10 / 15 Priorities)
+
+Keep your preferred refresh strategy:
+
+High priority → every 5 minutes
+
+Medium priority → every 10 minutes
+
+Low priority → every 15 minutes
+
+Store in:
+
+sources.refresh_priority = high | medium | low
+
+
+Worker behavior:
+
+schedule runs based on priority,
+
+do not process all sources in every cycle,
+
+skip inactive sources automatically.
+
+3) Analytics Caching (Instant Dashboards)
+
+Do not compute analytics on every page load.
+
+Create:
+
+analytics-worker.ts
+
+
+which runs every 15 minutes and precomputes:
+
+news volume trends
+
+top sources
+
+trending topics
+
+sentiment distribution
+
+keyword statistics
+
+Store results in dedicated tables:
+
+cached_volume_metrics
+
+cached_trending_topics
+
+cached_sentiment_metrics
+
+cached_keyword_metrics
+
+Frontend must read from cached tables, not raw articles.
+
+4) Data Retention Strategy (Your Updated Rule)
+
+Create / update:
+
+data-retention-worker.ts
+
+
+Runs once per day and enforces:
+
+A. Default article retention
+
+Keep raw articles 30 days by default.
+
+After 30 days:
+
+archive content_raw if supported, or
+
+delete raw content while keeping minimal metadata
+(id, title, source_name, published_at).
+
+B. Source-aware cleanup
+
+If a source is SOFT-deleted (disabled):
+
+stop fetching it,
+
+stop including it in future analytics,
+
+keep its historical analytics.
+
+If a source is HARD-deleted:
+
+delete all analytics tied to that source from:
+
+cached_volume_metrics
+
+cached_trending_topics
+
+cached_sentiment_metrics
+
+cached_keyword_metrics
+
+ingestion_logs
+
+system_errors (if source-related)
+
+delete its raw articles older than 30 days immediately,
+
+trigger:
+
+analytics-worker.ts --recompute
+
+
+Hook:
+
+onSourceDeleted(source_id, hard = true)
+
+5) API Performance (Fast, Lean, Predictable)
+
+Enforce pagination everywhere:
+
+GET /articles?limit=20&offset=0
+
+
+Add database indexes on:
+
+published_at
+
+source_name
+
+country
+
+topics
+
+keywords
+
+Default API responses should not include full raw content unless explicitly requested.
+
+6) Rate Limiting & Load Protection
+
+Add API rate limits:
+
+default: 100 requests per minute per user,
+
+prevent any single client from overwhelming the system.
+
+7) Reliability & Fault Tolerance
+
+Ensure:
+
+one failing source does not crash the worker,
+
+analytics worker retries automatically,
+
+if database is slow → queue jobs instead of blocking.
+
+Store failures in:
+
+system_errors(
+  component,
+  error_message,
+  timestamp,
+  severity
+)
+
+8) Monitoring & Observability (You Must See the System)
+
+Expose:
+
+GET /admin/system-health
+
+
+Return:
+
+last successful feed run,
+
+average processing time,
+
+number of failed sources,
+
+current queue size,
+
+storage usage.
+
+Display this in the Admin → Logs & Health panel.
+
+9) Partner API (Future Business Value)
+
+Create read-only endpoints with API keys:
+
+GET /api/v1/articles
+GET /api/v1/trending-topics
+GET /api/v1/sentiment
+GET /api/v1/keywords
+
+
+Require authentication via API key.
+
+10) Migration Readiness (Optional but Smart)
+
+Design so that, if you ever move off Replit:
+
+workers can run on cloud services,
+
+database can be migrated without rewriting everything,
+
+frontend remains mostly unchanged.
