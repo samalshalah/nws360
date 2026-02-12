@@ -26,6 +26,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Clock,
   RefreshCw,
   Brain,
@@ -40,7 +45,23 @@ import {
   Trash2,
   Loader2,
   Check,
+  Info,
 } from "lucide-react";
+
+function TabInfo({ description }: { description: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-tab-info">
+          <Info className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="text-sm max-w-sm">
+        {description}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function TimelinesTab() {
   const { toast } = useToast();
@@ -81,9 +102,12 @@ function TimelinesTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-timelines-title">Story Timelines</h3>
-        <p className="text-sm text-muted-foreground">Track story timelines and their lifecycle status</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-timelines-title">Story Timelines</h3>
+          <p className="text-sm text-muted-foreground">Track story timelines and their lifecycle status</p>
+        </div>
+        <TabInfo description="Maintain persistent story timelines that track how major stories evolve. Mark stories as active, dormant, or recurring to build a living archive of narrative progression over days, weeks, or months." />
       </div>
 
       <Card>
@@ -182,9 +206,12 @@ function PatternsTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-patterns-title">Recurring Patterns</h3>
-        <p className="text-sm text-muted-foreground">Identify and track recurring patterns in your data</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-patterns-title">Recurring Patterns</h3>
+          <p className="text-sm text-muted-foreground">Identify and track recurring patterns in your data</p>
+        </div>
+        <TabInfo description="Detect and log recurring event patterns with confidence scoring. Track topics that repeat on weekly, monthly, or seasonal cycles so you can anticipate the next occurrence before it hits the news." />
       </div>
 
       <Card>
@@ -287,9 +314,12 @@ function EntityMemoryTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-entity-memory-title">Entity Memory</h3>
-        <p className="text-sm text-muted-foreground">Maintain biography records and associated topics for entities</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-entity-memory-title">Entity Memory</h3>
+          <p className="text-sm text-muted-foreground">Maintain biography records and associated topics for entities</p>
+        </div>
+        <TabInfo description="Build persistent memory for key people, organizations, and locations. Store biographies, track tone evolution over time, and associate entities with topics so the platform remembers context across sessions." />
       </div>
 
       <Card>
@@ -397,9 +427,12 @@ function NarrativesTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-narratives-title">Narrative Shifts</h3>
-        <p className="text-sm text-muted-foreground">Track how narratives evolve over time with framing and sentiment changes</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-narratives-title">Narrative Shifts</h3>
+          <p className="text-sm text-muted-foreground">Track how narratives evolve over time with framing and sentiment changes</p>
+        </div>
+        <TabInfo description="Monitor how the language and framing around a topic changes over time. Track shifts in sentiment, identify new framing terms, and document when media coverage pivots from one angle to another." />
       </div>
 
       <Card>
@@ -504,9 +537,12 @@ function OrgNotesTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-org-notes-title">Institutional Knowledge Notes</h3>
-        <p className="text-sm text-muted-foreground">Capture context, policies, decisions, and references for your organization</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-org-notes-title">Institutional Knowledge Notes</h3>
+          <p className="text-sm text-muted-foreground">Capture context, policies, decisions, and references for your organization</p>
+        </div>
+        <TabInfo description="Store your organization's institutional knowledge — internal context, policy decisions, reference materials, and expert notes. These notes feed into AI answers so the platform understands your unique perspective." />
       </div>
 
       <Card>
@@ -588,9 +624,12 @@ function AlertsTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-alerts-title">Historical Match Alerts</h3>
-        <p className="text-sm text-muted-foreground">Review alerts when current events match historical patterns</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-alerts-title">Historical Match Alerts</h3>
+          <p className="text-sm text-muted-foreground">Review alerts when current events match historical patterns</p>
+        </div>
+        <TabInfo description="Get notified when current events closely resemble past situations. The system compares new developments against your historical archive and flags matches with a similarity score so you can learn from precedent." />
       </div>
 
       {(!matches || matches.length === 0) ? (
@@ -682,9 +721,12 @@ function TrendsTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-trends-title">Trend Lifecycle</h3>
-        <p className="text-sm text-muted-foreground">Track trends through their lifecycle stages</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-trends-title">Trend Lifecycle</h3>
+          <p className="text-sm text-muted-foreground">Track trends through their lifecycle stages</p>
+        </div>
+        <TabInfo description="Follow topics through their full lifecycle — from emergence and growth through peak coverage, decline, dormancy, and potential reactivation. Understand where each trend sits in its natural cycle." />
       </div>
 
       <Card>
@@ -785,9 +827,12 @@ function BriefingsTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-briefings-title">Long-Range Briefings</h3>
-        <p className="text-sm text-muted-foreground">Create periodic briefing summaries for long-term intelligence</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-briefings-title">Long-Range Briefings</h3>
+          <p className="text-sm text-muted-foreground">Create periodic briefing summaries for long-term intelligence</p>
+        </div>
+        <TabInfo description="Generate monthly, quarterly, or yearly intelligence summaries. These long-range briefings distill patterns, key developments, and strategic insights over extended time periods for leadership review." />
       </div>
 
       <Card>
@@ -867,9 +912,12 @@ function AIMemoryTab() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-ai-memory-title">Memory-Enhanced AI Q&A</h3>
-        <p className="text-sm text-muted-foreground">Ask questions and get answers informed by historical knowledge</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-ai-memory-title">Memory-Enhanced AI Q&A</h3>
+          <p className="text-sm text-muted-foreground">Ask questions and get answers informed by historical knowledge</p>
+        </div>
+        <TabInfo description="Ask questions and receive AI-powered answers that draw on your stored institutional knowledge, entity memories, and historical patterns. The AI uses your organization's context for more relevant, informed responses." />
       </div>
 
       <Card>
@@ -912,9 +960,12 @@ function AIMemoryTab() {
 function ComparisonsTab() {
   return (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold" data-testid="text-comparisons-title">Historical Comparisons</h3>
-        <p className="text-sm text-muted-foreground">Compare current events against historical data to find patterns and insights</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold" data-testid="text-comparisons-title">Historical Comparisons</h3>
+          <p className="text-sm text-muted-foreground">Compare current events against historical data to find patterns and insights</p>
+        </div>
+        <TabInfo description="Compare current events side-by-side with historical data. Analyze today vs. last week, this event vs. similar past events, or this quarter vs. the same quarter last year to uncover trends and recurring dynamics." />
       </div>
 
       <Card>
