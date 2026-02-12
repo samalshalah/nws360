@@ -78,6 +78,16 @@ import {
   type TrendLifecycle, type InsertTrendLifecycle,
   type LongRangeBriefing, type InsertLongRangeBriefing,
   type AiMemoryAnswer, type InsertAiMemoryAnswer,
+  topicForecasts, earlySignals, riskScores, influenceGraph,
+  attentionDecay, alertPriorityScores, forecastResults, futureBriefings,
+  type TopicForecast, type InsertTopicForecast,
+  type EarlySignal, type InsertEarlySignal,
+  type RiskScore, type InsertRiskScore,
+  type InfluenceGraphEntry, type InsertInfluenceGraphEntry,
+  type AttentionDecayEntry, type InsertAttentionDecayEntry,
+  type AlertPriorityScore, type InsertAlertPriorityScore,
+  type ForecastResult, type InsertForecastResult,
+  type FutureBriefing, type InsertFutureBriefing,
 } from "@shared/schema";
 import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
@@ -513,6 +523,45 @@ export interface IStorage {
   // Knowledge Memory - AI Memory Answers
   getAiMemoryAnswers(clientId?: number, limit?: number): Promise<AiMemoryAnswer[]>;
   createAiMemoryAnswer(data: InsertAiMemoryAnswer): Promise<AiMemoryAnswer>;
+
+  // Predictive Intelligence - Topic Forecasts
+  getTopicForecasts(clientId?: number): Promise<TopicForecast[]>;
+  createTopicForecast(data: InsertTopicForecast): Promise<TopicForecast>;
+  deleteTopicForecast(id: number): Promise<void>;
+
+  // Predictive Intelligence - Early Signals
+  getEarlySignals(clientId?: number): Promise<EarlySignal[]>;
+  createEarlySignal(data: InsertEarlySignal): Promise<EarlySignal>;
+  deleteEarlySignal(id: number): Promise<void>;
+
+  // Predictive Intelligence - Risk Scores
+  getRiskScores(clientId?: number): Promise<RiskScore[]>;
+  createRiskScore(data: InsertRiskScore): Promise<RiskScore>;
+  updateRiskScore(id: number, data: Partial<InsertRiskScore>): Promise<RiskScore>;
+  deleteRiskScore(id: number): Promise<void>;
+
+  // Predictive Intelligence - Influence Graph
+  getInfluenceGraph(clientId?: number): Promise<InfluenceGraphEntry[]>;
+  createInfluenceGraphEntry(data: InsertInfluenceGraphEntry): Promise<InfluenceGraphEntry>;
+  deleteInfluenceGraphEntry(id: number): Promise<void>;
+
+  // Predictive Intelligence - Attention Decay
+  getAttentionDecay(clientId?: number): Promise<AttentionDecayEntry[]>;
+  createAttentionDecay(data: InsertAttentionDecayEntry): Promise<AttentionDecayEntry>;
+  deleteAttentionDecay(id: number): Promise<void>;
+
+  // Predictive Intelligence - Alert Priority Scores
+  getAlertPriorityScores(clientId?: number): Promise<AlertPriorityScore[]>;
+  createAlertPriorityScore(data: InsertAlertPriorityScore): Promise<AlertPriorityScore>;
+
+  // Predictive Intelligence - Forecast Results
+  getForecastResults(clientId?: number): Promise<ForecastResult[]>;
+  createForecastResult(data: InsertForecastResult): Promise<ForecastResult>;
+
+  // Predictive Intelligence - Future Briefings
+  getFutureBriefings(clientId?: number, limit?: number): Promise<FutureBriefing[]>;
+  createFutureBriefing(data: InsertFutureBriefing): Promise<FutureBriefing>;
+  deleteFutureBriefing(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2894,6 +2943,124 @@ export class DatabaseStorage implements IStorage {
   async createAiMemoryAnswer(data: InsertAiMemoryAnswer): Promise<AiMemoryAnswer> {
     const [row] = await db.insert(aiMemoryAnswers).values(data).returning();
     return row;
+  }
+
+  // === PREDICTIVE INTELLIGENCE - Topic Forecasts ===
+  async getTopicForecasts(clientId?: number): Promise<TopicForecast[]> {
+    if (clientId) return db.select().from(topicForecasts).where(eq(topicForecasts.clientId, clientId)).orderBy(desc(topicForecasts.createdAt));
+    return db.select().from(topicForecasts).orderBy(desc(topicForecasts.createdAt));
+  }
+
+  async createTopicForecast(data: InsertTopicForecast): Promise<TopicForecast> {
+    const [row] = await db.insert(topicForecasts).values(data).returning();
+    return row;
+  }
+
+  async deleteTopicForecast(id: number): Promise<void> {
+    await db.delete(topicForecasts).where(eq(topicForecasts.id, id));
+  }
+
+  // === PREDICTIVE INTELLIGENCE - Early Signals ===
+  async getEarlySignals(clientId?: number): Promise<EarlySignal[]> {
+    if (clientId) return db.select().from(earlySignals).where(eq(earlySignals.clientId, clientId)).orderBy(desc(earlySignals.detectedAt));
+    return db.select().from(earlySignals).orderBy(desc(earlySignals.detectedAt));
+  }
+
+  async createEarlySignal(data: InsertEarlySignal): Promise<EarlySignal> {
+    const [row] = await db.insert(earlySignals).values(data).returning();
+    return row;
+  }
+
+  async deleteEarlySignal(id: number): Promise<void> {
+    await db.delete(earlySignals).where(eq(earlySignals.id, id));
+  }
+
+  // === PREDICTIVE INTELLIGENCE - Risk Scores ===
+  async getRiskScores(clientId?: number): Promise<RiskScore[]> {
+    if (clientId) return db.select().from(riskScores).where(eq(riskScores.clientId, clientId)).orderBy(desc(riskScores.createdAt));
+    return db.select().from(riskScores).orderBy(desc(riskScores.createdAt));
+  }
+
+  async createRiskScore(data: InsertRiskScore): Promise<RiskScore> {
+    const [row] = await db.insert(riskScores).values(data).returning();
+    return row;
+  }
+
+  async updateRiskScore(id: number, data: Partial<InsertRiskScore>): Promise<RiskScore> {
+    const [row] = await db.update(riskScores).set(data).where(eq(riskScores.id, id)).returning();
+    return row;
+  }
+
+  async deleteRiskScore(id: number): Promise<void> {
+    await db.delete(riskScores).where(eq(riskScores.id, id));
+  }
+
+  // === PREDICTIVE INTELLIGENCE - Influence Graph ===
+  async getInfluenceGraph(clientId?: number): Promise<InfluenceGraphEntry[]> {
+    if (clientId) return db.select().from(influenceGraph).where(eq(influenceGraph.clientId, clientId)).orderBy(desc(influenceGraph.createdAt));
+    return db.select().from(influenceGraph).orderBy(desc(influenceGraph.createdAt));
+  }
+
+  async createInfluenceGraphEntry(data: InsertInfluenceGraphEntry): Promise<InfluenceGraphEntry> {
+    const [row] = await db.insert(influenceGraph).values(data).returning();
+    return row;
+  }
+
+  async deleteInfluenceGraphEntry(id: number): Promise<void> {
+    await db.delete(influenceGraph).where(eq(influenceGraph.id, id));
+  }
+
+  // === PREDICTIVE INTELLIGENCE - Attention Decay ===
+  async getAttentionDecay(clientId?: number): Promise<AttentionDecayEntry[]> {
+    if (clientId) return db.select().from(attentionDecay).where(eq(attentionDecay.clientId, clientId)).orderBy(desc(attentionDecay.createdAt));
+    return db.select().from(attentionDecay).orderBy(desc(attentionDecay.createdAt));
+  }
+
+  async createAttentionDecay(data: InsertAttentionDecayEntry): Promise<AttentionDecayEntry> {
+    const [row] = await db.insert(attentionDecay).values(data).returning();
+    return row;
+  }
+
+  async deleteAttentionDecay(id: number): Promise<void> {
+    await db.delete(attentionDecay).where(eq(attentionDecay.id, id));
+  }
+
+  // === PREDICTIVE INTELLIGENCE - Alert Priority Scores ===
+  async getAlertPriorityScores(clientId?: number): Promise<AlertPriorityScore[]> {
+    if (clientId) return db.select().from(alertPriorityScores).where(eq(alertPriorityScores.clientId, clientId)).orderBy(desc(alertPriorityScores.createdAt));
+    return db.select().from(alertPriorityScores).orderBy(desc(alertPriorityScores.createdAt));
+  }
+
+  async createAlertPriorityScore(data: InsertAlertPriorityScore): Promise<AlertPriorityScore> {
+    const [row] = await db.insert(alertPriorityScores).values(data).returning();
+    return row;
+  }
+
+  // === PREDICTIVE INTELLIGENCE - Forecast Results ===
+  async getForecastResults(clientId?: number): Promise<ForecastResult[]> {
+    if (clientId) return db.select().from(forecastResults).where(eq(forecastResults.clientId, clientId)).orderBy(desc(forecastResults.evaluatedAt));
+    return db.select().from(forecastResults).orderBy(desc(forecastResults.evaluatedAt));
+  }
+
+  async createForecastResult(data: InsertForecastResult): Promise<ForecastResult> {
+    const [row] = await db.insert(forecastResults).values(data).returning();
+    return row;
+  }
+
+  // === PREDICTIVE INTELLIGENCE - Future Briefings ===
+  async getFutureBriefings(clientId?: number, limit?: number): Promise<FutureBriefing[]> {
+    const lim = limit || 30;
+    if (clientId) return db.select().from(futureBriefings).where(eq(futureBriefings.clientId, clientId)).orderBy(desc(futureBriefings.createdAt)).limit(lim);
+    return db.select().from(futureBriefings).orderBy(desc(futureBriefings.createdAt)).limit(lim);
+  }
+
+  async createFutureBriefing(data: InsertFutureBriefing): Promise<FutureBriefing> {
+    const [row] = await db.insert(futureBriefings).values(data).returning();
+    return row;
+  }
+
+  async deleteFutureBriefing(id: number): Promise<void> {
+    await db.delete(futureBriefings).where(eq(futureBriefings.id, id));
   }
 
 }

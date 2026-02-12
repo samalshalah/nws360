@@ -1,0 +1,169 @@
+Add forecasting capabilities to NWS360 that estimate possible future developments using historical patterns, trend velocity, and signal changes. The goal is probabilistic foresight, not certainty.
+
+1) Topic Trajectory Prediction
+
+Estimate where a topic is heading:
+
+For each topic calculate:
+
+momentum (rate of growth)
+
+acceleration (change in growth rate)
+
+media amplification level
+
+actor expansion
+
+Generate:
+
+topic_forecasts(
+  topic,
+  next_24h_probability,
+  next_7d_probability,
+  predicted_stage (emerging | escalating | peaking | declining),
+  confidence_score
+)
+
+
+Display as:
+“Escalation likely within 48 hours (72% confidence)”
+
+2) Early Warning Signals
+
+Detect precursors before major events:
+
+Examples:
+
+sudden appearance of new actors
+
+tone shift before volume spike
+
+clustering across regions
+
+Store:
+
+early_signals(
+  signal_type,
+  related_topic,
+  strength,
+  explanation,
+  detected_at
+)
+
+3) Scenario Modeling (What If Analysis)
+
+Allow users to simulate changes.
+
+User selects:
+
+topic or entity
+
+hypothetical event (policy decision, incident, announcement)
+
+System estimates:
+
+coverage increase likelihood
+
+sentiment impact
+
+related topics activation
+
+Endpoint:
+
+POST /forecast/simulate
+
+4) Risk Scoring
+
+Provide operational risk indicators.
+
+For tracked entities/topics:
+
+risk_scores(
+  subject,
+  operational_risk,
+  reputational_risk,
+  escalation_risk,
+  confidence
+)
+
+
+This is not prediction — it is probability weighting.
+
+5) Influence Mapping
+
+Identify which sources amplify stories.
+
+Calculate:
+
+which outlets trigger cascades
+
+delay between publication waves
+
+origin vs amplification nodes
+
+Store:
+
+influence_graph(source_a, source_b, influence_strength)
+
+6) Attention Lifespan Estimation
+
+Estimate how long a topic will remain relevant:
+
+attention_decay(topic, estimated_days_remaining)
+
+
+Display:
+“Media attention likely to fade within 3–5 days”
+
+7) Alert Priority Intelligence
+
+Improve alert importance ranking automatically:
+
+High priority if:
+
+accelerating coverage
+
+multi-region spread
+
+rising sentiment volatility
+
+Store:
+
+alert_priority_score(alert_id, score)
+
+8) Forecast Explanation (Transparency Layer)
+
+Every prediction must include reasoning:
+
+Example output:
+“Probability increased due to rapid actor expansion and cross-regional pickup.”
+
+Store explanation text with prediction.
+
+9) Forecast Evaluation (Learning Accuracy)
+
+Track prediction outcomes:
+
+forecast_results(
+  forecast_id,
+  outcome,
+  accuracy_score
+)
+
+
+System learns which signals are reliable.
+
+10) Future Briefing
+
+Add a forward-looking report:
+
+Daily section:
+What to watch next
+
+Includes:
+
+possible escalations
+
+emerging actors
+
+fading topics

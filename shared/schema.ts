@@ -1319,6 +1319,144 @@ export type InsertLongRangeBriefing = z.infer<typeof insertLongRangeBriefingSche
 export type AiMemoryAnswer = typeof aiMemoryAnswers.$inferSelect;
 export type InsertAiMemoryAnswer = z.infer<typeof insertAiMemoryAnswerSchema>;
 
+// === PREDICTIVE INTELLIGENCE & FORECASTING ===
+
+export const topicForecasts = pgTable("topic_forecasts", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id"),
+  topic: text("topic").notNull(),
+  momentum: integer("momentum").default(0),
+  acceleration: integer("acceleration").default(0),
+  mediaAmplification: integer("media_amplification").default(0),
+  actorExpansion: integer("actor_expansion").default(0),
+  next24hProbability: integer("next_24h_probability").default(50),
+  next7dProbability: integer("next_7d_probability").default(50),
+  predictedStage: text("predicted_stage").default("emerging"),
+  confidenceScore: integer("confidence_score").default(50),
+  explanation: text("explanation"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertTopicForecastSchema = createInsertSchema(topicForecasts).omit({ id: true, createdAt: true });
+
+export const earlySignals = pgTable("early_signals", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id"),
+  signalType: text("signal_type").notNull(),
+  relatedTopic: text("related_topic").notNull(),
+  strength: integer("strength").default(50),
+  explanation: text("explanation"),
+  detectedAt: timestamp("detected_at").defaultNow(),
+});
+
+export const insertEarlySignalSchema = createInsertSchema(earlySignals).omit({ id: true, detectedAt: true });
+
+export const riskScores = pgTable("risk_scores", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id"),
+  subject: text("subject").notNull(),
+  subjectType: text("subject_type").default("topic"),
+  operationalRisk: integer("operational_risk").default(0),
+  reputationalRisk: integer("reputational_risk").default(0),
+  escalationRisk: integer("escalation_risk").default(0),
+  confidence: integer("confidence").default(50),
+  explanation: text("explanation"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRiskScoreSchema = createInsertSchema(riskScores).omit({ id: true, createdAt: true });
+
+export const influenceGraph = pgTable("influence_graph", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id"),
+  sourceA: text("source_a").notNull(),
+  sourceB: text("source_b").notNull(),
+  influenceStrength: integer("influence_strength").default(50),
+  cascadeDelay: integer("cascade_delay"),
+  relationship: text("relationship").default("amplifies"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertInfluenceGraphSchema = createInsertSchema(influenceGraph).omit({ id: true, createdAt: true });
+
+export const attentionDecay = pgTable("attention_decay", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id"),
+  topic: text("topic").notNull(),
+  estimatedDaysRemaining: integer("estimated_days_remaining").default(7),
+  peakDate: timestamp("peak_date"),
+  decayRate: integer("decay_rate").default(50),
+  explanation: text("explanation"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAttentionDecaySchema = createInsertSchema(attentionDecay).omit({ id: true, createdAt: true });
+
+export const alertPriorityScores = pgTable("alert_priority_scores", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id"),
+  alertId: integer("alert_id"),
+  topic: text("topic"),
+  score: integer("score").default(50),
+  acceleratingCoverage: boolean("accelerating_coverage").default(false),
+  multiRegionSpread: boolean("multi_region_spread").default(false),
+  sentimentVolatility: boolean("sentiment_volatility").default(false),
+  explanation: text("explanation"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAlertPriorityScoreSchema = createInsertSchema(alertPriorityScores).omit({ id: true, createdAt: true });
+
+export const forecastResults = pgTable("forecast_results", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id"),
+  forecastId: integer("forecast_id"),
+  forecastType: text("forecast_type").notNull(),
+  originalPrediction: text("original_prediction"),
+  outcome: text("outcome"),
+  accuracyScore: integer("accuracy_score"),
+  evaluatedAt: timestamp("evaluated_at").defaultNow(),
+});
+
+export const insertForecastResultSchema = createInsertSchema(forecastResults).omit({ id: true, evaluatedAt: true });
+
+export const futureBriefings = pgTable("future_briefings", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id"),
+  date: text("date").notNull(),
+  possibleEscalations: jsonb("possible_escalations").$type<{ topic: string; probability: number; explanation: string }[]>().default([]),
+  emergingActors: jsonb("emerging_actors").$type<{ name: string; context: string }[]>().default([]),
+  fadingTopics: jsonb("fading_topics").$type<{ topic: string; estimatedDaysLeft: number }[]>().default([]),
+  summary: text("summary"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertFutureBriefingSchema = createInsertSchema(futureBriefings).omit({ id: true, createdAt: true });
+
+export type TopicForecast = typeof topicForecasts.$inferSelect;
+export type InsertTopicForecast = z.infer<typeof insertTopicForecastSchema>;
+
+export type EarlySignal = typeof earlySignals.$inferSelect;
+export type InsertEarlySignal = z.infer<typeof insertEarlySignalSchema>;
+
+export type RiskScore = typeof riskScores.$inferSelect;
+export type InsertRiskScore = z.infer<typeof insertRiskScoreSchema>;
+
+export type InfluenceGraphEntry = typeof influenceGraph.$inferSelect;
+export type InsertInfluenceGraphEntry = z.infer<typeof insertInfluenceGraphSchema>;
+
+export type AttentionDecayEntry = typeof attentionDecay.$inferSelect;
+export type InsertAttentionDecayEntry = z.infer<typeof insertAttentionDecaySchema>;
+
+export type AlertPriorityScore = typeof alertPriorityScores.$inferSelect;
+export type InsertAlertPriorityScore = z.infer<typeof insertAlertPriorityScoreSchema>;
+
+export type ForecastResult = typeof forecastResults.$inferSelect;
+export type InsertForecastResult = z.infer<typeof insertForecastResultSchema>;
+
+export type FutureBriefing = typeof futureBriefings.$inferSelect;
+export type InsertFutureBriefing = z.infer<typeof insertFutureBriefingSchema>;
+
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;
 export type RegisterRequest = InsertUser;

@@ -1794,6 +1794,315 @@ export async function registerRoutes(
     }
   });
 
+  // === PREDICTIVE INTELLIGENCE & FORECASTING ===
+
+  // Topic Forecasts
+  app.get("/api/forecast/topics", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const forecasts = await storage.getTopicForecasts(user.clientId || undefined);
+    res.json(forecasts);
+  });
+
+  app.post("/api/forecast/topics", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const schema = z.object({
+      topic: z.string().min(1),
+      momentum: z.number().int().optional(),
+      acceleration: z.number().int().optional(),
+      mediaAmplification: z.number().int().optional(),
+      actorExpansion: z.number().int().optional(),
+      next24hProbability: z.number().int().min(0).max(100).optional(),
+      next7dProbability: z.number().int().min(0).max(100).optional(),
+      predictedStage: z.enum(["emerging", "escalating", "peaking", "declining"]).optional(),
+      confidenceScore: z.number().int().min(0).max(100).optional(),
+      explanation: z.string().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const forecast = await storage.createTopicForecast({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(forecast);
+  });
+
+  app.delete("/api/forecast/topics/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    const forecasts = await storage.getTopicForecasts(user.clientId || undefined);
+    if (!forecasts.find(f => f.id === id)) return res.sendStatus(403);
+    await storage.deleteTopicForecast(id);
+    res.sendStatus(204);
+  });
+
+  // Early Signals
+  app.get("/api/forecast/signals", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const signals = await storage.getEarlySignals(user.clientId || undefined);
+    res.json(signals);
+  });
+
+  app.post("/api/forecast/signals", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const schema = z.object({
+      signalType: z.string().min(1),
+      relatedTopic: z.string().min(1),
+      strength: z.number().int().min(0).max(100).optional(),
+      explanation: z.string().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const signal = await storage.createEarlySignal({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(signal);
+  });
+
+  app.delete("/api/forecast/signals/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    const signals = await storage.getEarlySignals(user.clientId || undefined);
+    if (!signals.find(s => s.id === id)) return res.sendStatus(403);
+    await storage.deleteEarlySignal(id);
+    res.sendStatus(204);
+  });
+
+  // Risk Scores
+  app.get("/api/forecast/risks", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const risks = await storage.getRiskScores(user.clientId || undefined);
+    res.json(risks);
+  });
+
+  app.post("/api/forecast/risks", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const schema = z.object({
+      subject: z.string().min(1),
+      subjectType: z.enum(["topic", "entity", "region"]).optional(),
+      operationalRisk: z.number().int().min(0).max(100).optional(),
+      reputationalRisk: z.number().int().min(0).max(100).optional(),
+      escalationRisk: z.number().int().min(0).max(100).optional(),
+      confidence: z.number().int().min(0).max(100).optional(),
+      explanation: z.string().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const risk = await storage.createRiskScore({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(risk);
+  });
+
+  app.delete("/api/forecast/risks/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    const risks = await storage.getRiskScores(user.clientId || undefined);
+    if (!risks.find(r => r.id === id)) return res.sendStatus(403);
+    await storage.deleteRiskScore(id);
+    res.sendStatus(204);
+  });
+
+  // Influence Graph
+  app.get("/api/forecast/influence", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const graph = await storage.getInfluenceGraph(user.clientId || undefined);
+    res.json(graph);
+  });
+
+  app.post("/api/forecast/influence", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const schema = z.object({
+      sourceA: z.string().min(1),
+      sourceB: z.string().min(1),
+      influenceStrength: z.number().int().min(0).max(100).optional(),
+      cascadeDelay: z.number().int().optional(),
+      relationship: z.enum(["amplifies", "contradicts", "delays", "originates"]).optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const entry = await storage.createInfluenceGraphEntry({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(entry);
+  });
+
+  app.delete("/api/forecast/influence/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    const entries = await storage.getInfluenceGraph(user.clientId || undefined);
+    if (!entries.find(e => e.id === id)) return res.sendStatus(403);
+    await storage.deleteInfluenceGraphEntry(id);
+    res.sendStatus(204);
+  });
+
+  // Attention Decay
+  app.get("/api/forecast/attention", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const decay = await storage.getAttentionDecay(user.clientId || undefined);
+    res.json(decay);
+  });
+
+  app.post("/api/forecast/attention", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const schema = z.object({
+      topic: z.string().min(1),
+      estimatedDaysRemaining: z.number().int().min(0).optional(),
+      decayRate: z.number().int().min(0).max(100).optional(),
+      explanation: z.string().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const entry = await storage.createAttentionDecay({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(entry);
+  });
+
+  app.delete("/api/forecast/attention/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    const entries = await storage.getAttentionDecay(user.clientId || undefined);
+    if (!entries.find(e => e.id === id)) return res.sendStatus(403);
+    await storage.deleteAttentionDecay(id);
+    res.sendStatus(204);
+  });
+
+  // Alert Priority Scores
+  app.get("/api/forecast/alert-priority", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scores = await storage.getAlertPriorityScores(user.clientId || undefined);
+    res.json(scores);
+  });
+
+  app.post("/api/forecast/alert-priority", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const schema = z.object({
+      alertId: z.number().int().optional(),
+      topic: z.string().optional(),
+      score: z.number().int().min(0).max(100).optional(),
+      acceleratingCoverage: z.boolean().optional(),
+      multiRegionSpread: z.boolean().optional(),
+      sentimentVolatility: z.boolean().optional(),
+      explanation: z.string().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const score = await storage.createAlertPriorityScore({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(score);
+  });
+
+  // Forecast Results (Accuracy Tracking)
+  app.get("/api/forecast/results", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const results = await storage.getForecastResults(user.clientId || undefined);
+    res.json(results);
+  });
+
+  app.post("/api/forecast/results", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const schema = z.object({
+      forecastId: z.number().int().optional(),
+      forecastType: z.string().min(1),
+      originalPrediction: z.string().optional(),
+      outcome: z.string().optional(),
+      accuracyScore: z.number().int().min(0).max(100).optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const result = await storage.createForecastResult({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(result);
+  });
+
+  // Future Briefings
+  app.get("/api/forecast/future-briefings", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const briefings = await storage.getFutureBriefings(user.clientId || undefined);
+    res.json(briefings);
+  });
+
+  app.post("/api/forecast/future-briefings", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const schema = z.object({
+      date: z.string().min(1),
+      possibleEscalations: z.array(z.object({ topic: z.string(), probability: z.number(), explanation: z.string() })).optional(),
+      emergingActors: z.array(z.object({ name: z.string(), context: z.string() })).optional(),
+      fadingTopics: z.array(z.object({ topic: z.string(), estimatedDaysLeft: z.number() })).optional(),
+      summary: z.string().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const briefing = await storage.createFutureBriefing({ ...parsed.data, clientId: user.clientId });
+    res.status(201).json(briefing);
+  });
+
+  app.delete("/api/forecast/future-briefings/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    const briefings = await storage.getFutureBriefings(user.clientId || undefined);
+    if (!briefings.find(b => b.id === id)) return res.sendStatus(403);
+    await storage.deleteFutureBriefing(id);
+    res.sendStatus(204);
+  });
+
+  // Scenario Simulation (AI-powered What-If Analysis)
+  app.post("/api/forecast/simulate", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const schema = z.object({
+      topic: z.string().min(1),
+      hypotheticalEvent: z.string().min(1),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    try {
+      const forecasts = await storage.getTopicForecasts(user.clientId || undefined);
+      const risks = await storage.getRiskScores(user.clientId || undefined);
+      const signals = await storage.getEarlySignals(user.clientId || undefined);
+
+      const context = [
+        forecasts.length > 0 ? `Current forecasts: ${forecasts.slice(0, 5).map(f => `${f.topic} (${f.predictedStage}, momentum: ${f.momentum})`).join(", ")}` : "",
+        risks.length > 0 ? `Risk scores: ${risks.slice(0, 5).map(r => `${r.subject} (op: ${r.operationalRisk}%, rep: ${r.reputationalRisk}%, esc: ${r.escalationRisk}%)`).join(", ")}` : "",
+        signals.length > 0 ? `Active signals: ${signals.slice(0, 5).map(s => `${s.signalType} on ${s.relatedTopic} (strength: ${s.strength}%)`).join(", ")}` : "",
+      ].filter(Boolean).join("\n");
+
+      const OpenAI = (await import("openai")).default;
+      const openai = new OpenAI();
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: `You are a predictive intelligence analyst for a news monitoring platform. Given a topic and a hypothetical event, estimate the likely outcomes. Provide your analysis as JSON with these fields: coverageIncreaseLikelihood (0-100), sentimentImpact (string describing direction and magnitude), relatedTopicsActivation (array of topic strings), riskAssessment (string), timeframe (string), explanation (string). Be specific and data-driven.\n\nContext:\n${context || "No existing forecast data."}` },
+          { role: "user", content: `Topic: ${parsed.data.topic}\nHypothetical Event: ${parsed.data.hypotheticalEvent}` },
+        ],
+        max_tokens: 800,
+        response_format: { type: "json_object" },
+      });
+
+      const result = JSON.parse(completion.choices[0]?.message?.content || "{}");
+      res.json(result);
+    } catch (err: any) {
+      console.error("Simulation error:", err.message);
+      res.json({
+        coverageIncreaseLikelihood: 50,
+        sentimentImpact: "Unable to determine - AI analysis temporarily unavailable",
+        relatedTopicsActivation: [],
+        riskAssessment: "Analysis pending",
+        timeframe: "Unknown",
+        explanation: "AI simulation is temporarily unavailable. Please try again later.",
+      });
+    }
+  });
+
   // === SEED & START WORKERS ===
   await seed();
   startFeedWorker();
