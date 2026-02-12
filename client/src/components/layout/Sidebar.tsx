@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash, Menu, Bookmark, Users, Activity, GitCompare, Zap, Tag, Brain } from "lucide-react";
+import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash, Menu, Bookmark, Users, Activity, GitCompare, Zap, Tag, Brain, Eye, CreditCard, HelpCircle } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
@@ -234,6 +234,54 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             </Link>
           </>
         )}
+
+        <Link href="/executive">
+          <div
+            onClick={onNavigate}
+            data-testid="nav-executive"
+            className={cn(
+              "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
+              location === "/executive"
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
+            )}
+          >
+            <Eye className={cn("w-5 h-5", location === "/executive" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
+            {t("nav.executiveHome", "Executive Home")}
+          </div>
+        </Link>
+
+        <Link href="/usage-billing">
+          <div
+            onClick={onNavigate}
+            data-testid="nav-usage-billing"
+            className={cn(
+              "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
+              location === "/usage-billing"
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
+            )}
+          >
+            <CreditCard className={cn("w-5 h-5", location === "/usage-billing" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
+            {t("nav.usageBilling", "Usage & Billing")}
+          </div>
+        </Link>
+
+        <Link href="/help">
+          <div
+            onClick={onNavigate}
+            data-testid="nav-help"
+            className={cn(
+              "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
+              location === "/help"
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
+            )}
+          >
+            <HelpCircle className={cn("w-5 h-5", location === "/help" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
+            {t("nav.helpCenter", "Help")}
+          </div>
+        </Link>
       </nav>
 
       <div className="p-4 border-t border-border/50 space-y-2">

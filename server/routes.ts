@@ -7,7 +7,7 @@ import { z } from "zod";
 import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI } from "./feed-worker";
 import { openai } from "./replit_integrations/image/client";
 import { db } from "./db";
-import { articles } from "@shared/schema";
+import { articles, PLAN_LIMITS } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
 import sanitizeHtml from "sanitize-html";
@@ -698,6 +698,17 @@ export async function registerRoutes(
     const { username, password, role } = req.body;
     if (!username || !password) return res.status(400).json({ message: "Username and password required" });
 
+    const resolvedClientId = currentUser.clientId || (currentUser.role === "client" ? currentUser.id : null);
+    if (resolvedClientId) {
+      const sub = await storage.getSubscription(resolvedClientId);
+      if (sub) {
+        const activeCount = await storage.getActiveUserCount(resolvedClientId);
+        if (sub.maxUsers > 0 && activeCount >= sub.maxUsers) {
+          return res.status(403).json({ message: `Seat limit reached (${activeCount}/${sub.maxUsers}). Upgrade your plan to add more users.` });
+        }
+      }
+    }
+
     const existingUser = await storage.getUserByUsername(username);
     if (existingUser) return res.status(400).json({ message: "Username already exists" });
 
@@ -715,6 +726,7 @@ export async function registerRoutes(
       password: hashedPassword,
       role: assignedRole,
       parentId: currentUser.id,
+      clientId: resolvedClientId,
     });
 
     res.status(201).json({ id: newUser.id, username: newUser.username, role: newUser.role, parentId: newUser.parentId, createdAt: newUser.createdAt });
@@ -970,6 +982,16 @@ export async function registerRoutes(
     const adminUser = req.user as any;
     const { username, password, role, clientId } = req.body;
     if (!username || !password) return res.status(400).json({ message: "Username and password required" });
+    const resolvedClientId = clientId || null;
+    if (resolvedClientId) {
+      const sub = await storage.getSubscription(resolvedClientId);
+      if (sub) {
+        const activeCount = await storage.getActiveUserCount(resolvedClientId);
+        if (sub.maxUsers > 0 && activeCount >= sub.maxUsers) {
+          return res.status(403).json({ message: `Seat limit reached (${activeCount}/${sub.maxUsers}). Upgrade plan to add more users.` });
+        }
+      }
+    }
     if (!["admin", "client", "viewer"].includes(role || "client")) return res.status(400).json({ message: "Invalid role" });
     const existingUser = await storage.getUserByUsername(username);
     if (existingUser) return res.status(400).json({ message: "Username already exists" });
@@ -1584,6 +1606,203 @@ export async function registerRoutes(
       console.error("[Intelligence Pipeline] Initial run error:", e);
     }
   }, 60 * 1000);
+
+  app.get("/api/subscription", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (!user.clientId) return res.json(null);
+    const sub = await storage.getSubscription(user.clientId);
+    const activeUsers = await storage.getActiveUserCount(user.clientId);
+    res.json({ subscription: sub, activeUsers, planLimits: sub ? PLAN_LIMITS[sub.plan as keyof typeof PLAN_LIMITS] : PLAN_LIMITS.basic });
+  });
+
+  app.get("/api/subscription/usage", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const resolvedClientId = user.clientId || (user.role === "client" ? user.id : null);
+    if (!resolvedClientId) return res.json({ plan: "basic", seats: { used: 0, max: 0 }, keywords: { used: 0, max: 0 }, sources: { used: 0, max: 0 } });
+    const sub = await storage.getSubscription(resolvedClientId);
+    const limits = sub ? PLAN_LIMITS[sub.plan as keyof typeof PLAN_LIMITS] : PLAN_LIMITS.basic;
+    const activeUsers = await storage.getActiveUserCount(resolvedClientId);
+    const clientKws = await storage.getClientKeywords(resolvedClientId);
+    const allSources = await storage.getSources();
+    const clientUsers = await storage.getUsersByClientId(resolvedClientId);
+    const clientUserIds = new Set(clientUsers.map((u: any) => u.id));
+    clientUserIds.add(resolvedClientId);
+    const userSources = allSources.filter((s: any) => clientUserIds.has(s.userId));
+    res.json({
+      plan: sub?.plan || "basic",
+      status: sub?.status || "trial",
+      seats: { used: activeUsers, max: limits.maxUsers },
+      keywords: { used: clientKws.length, max: limits.maxKeywords },
+      sources: { used: userSources.length, max: limits.maxSources },
+      analyticsLevel: limits.analyticsLevel,
+      aiBriefLevel: limits.aiBriefLevel,
+      apiAccess: limits.apiAccess,
+    });
+  });
+
+  app.post("/api/billing/activate", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const { clientId, plan } = req.body;
+    if (!clientId || !plan) return res.status(400).json({ message: "Client ID and plan required" });
+    if (!["basic", "pro", "enterprise"].includes(plan)) return res.status(400).json({ message: "Invalid plan" });
+    const limits = PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS];
+    const existing = await storage.getSubscription(clientId);
+    if (existing) {
+      const updated = await storage.updateSubscription(clientId, { plan, status: "active", maxUsers: limits.maxUsers === -1 ? 999 : limits.maxUsers, maxKeywords: limits.maxKeywords === -1 ? 999 : limits.maxKeywords, maxSources: limits.maxSources === -1 ? 999 : limits.maxSources, analyticsLevel: limits.analyticsLevel, aiBriefLevel: limits.aiBriefLevel, apiAccess: limits.apiAccess });
+      return res.json(updated);
+    }
+    const sub = await storage.createSubscription({ clientId, plan, status: "active", maxUsers: limits.maxUsers === -1 ? 999 : limits.maxUsers, maxKeywords: limits.maxKeywords === -1 ? 999 : limits.maxKeywords, maxSources: limits.maxSources === -1 ? 999 : limits.maxSources, analyticsLevel: limits.analyticsLevel, aiBriefLevel: limits.aiBriefLevel, apiAccess: limits.apiAccess });
+    res.status(201).json(sub);
+  });
+
+  app.post("/api/billing/change-plan", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const { clientId, plan } = req.body;
+    if (!clientId || !plan) return res.status(400).json({ message: "Client ID and plan required" });
+    if (!["basic", "pro", "enterprise"].includes(plan)) return res.status(400).json({ message: "Invalid plan" });
+    const limits = PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS];
+    const updated = await storage.updateSubscription(clientId, { plan, maxUsers: limits.maxUsers === -1 ? 999 : limits.maxUsers, maxKeywords: limits.maxKeywords === -1 ? 999 : limits.maxKeywords, maxSources: limits.maxSources === -1 ? 999 : limits.maxSources, analyticsLevel: limits.analyticsLevel, aiBriefLevel: limits.aiBriefLevel, apiAccess: limits.apiAccess });
+    if (!updated) return res.status(404).json({ message: "Subscription not found" });
+    res.json(updated);
+  });
+
+  app.post("/api/billing/cancel", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const { clientId } = req.body;
+    if (!clientId) return res.status(400).json({ message: "Client ID required" });
+    const updated = await storage.updateSubscription(clientId, { status: "suspended" });
+    if (!updated) return res.status(404).json({ message: "Subscription not found" });
+    res.json(updated);
+  });
+
+  app.get("/api/onboarding", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (!user.clientId) return res.json(null);
+    const state = await storage.getOnboardingState(user.clientId);
+    res.json(state);
+  });
+
+  app.post("/api/onboarding", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (!user.clientId) return res.status(400).json({ message: "No client association" });
+    const { currentStep, industry, countries, selectedKeywords, selectedSources, notificationPreferences, completed } = req.body;
+    const state = await storage.upsertOnboardingState({
+      clientId: user.clientId,
+      currentStep: currentStep || 1,
+      industry: industry ? sanitizeInput(industry) : undefined,
+      countries: countries || undefined,
+      selectedKeywords: selectedKeywords || undefined,
+      selectedSources: selectedSources || undefined,
+      notificationPreferences: notificationPreferences || undefined,
+      completed: completed || false,
+      completedAt: completed ? new Date() : undefined,
+    });
+    res.json(state);
+  });
+
+  app.get("/api/notifications/settings", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const settings = await storage.getNotificationSettings(user.id);
+    res.json(settings);
+  });
+
+  app.post("/api/notifications/settings", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const { channel, frequency, type, enabled, config } = req.body;
+    if (!channel) return res.status(400).json({ message: "Channel required" });
+    const setting = await storage.upsertNotificationSetting({ userId: user.id, channel: sanitizeInput(channel), frequency: frequency || "daily", type: type || "briefing", enabled: enabled !== false, config: config || null });
+    res.json(setting);
+  });
+
+  app.delete("/api/notifications/settings/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    await storage.deleteNotificationSetting(id);
+    res.sendStatus(204);
+  });
+
+  app.get("/api/white-label", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (!user.clientId) return res.json(null);
+    const settings = await storage.getWhiteLabelSettings(user.clientId);
+    res.json(settings);
+  });
+
+  app.put("/api/white-label", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (!user.clientId) return res.status(400).json({ message: "No client association" });
+    const { logoUrl, organizationName, customReportTitle, primaryColor } = req.body;
+    const settings = await storage.upsertWhiteLabelSettings({ clientId: user.clientId, logoUrl: logoUrl || null, organizationName: organizationName ? sanitizeInput(organizationName) : null, customReportTitle: customReportTitle ? sanitizeInput(customReportTitle) : null, primaryColor: primaryColor || null });
+    res.json(settings);
+  });
+
+  app.get("/api/support/tickets", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const params: any = {};
+    if (user.role !== "admin") params.userId = user.id;
+    if (req.query.status) params.status = req.query.status as string;
+    const tickets = await storage.getSupportTickets(params);
+    res.json(tickets);
+  });
+
+  app.post("/api/support/tickets", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const { subject, message, priority } = req.body;
+    if (!subject || !message) return res.status(400).json({ message: "Subject and message required" });
+    const ticket = await storage.createSupportTicket({ userId: user.id, clientId: user.clientId || null, subject: sanitizeInput(subject), message: sanitizeInput(message), priority: priority || "normal" });
+    res.status(201).json(ticket);
+  });
+
+  app.put("/api/support/tickets/:id/status", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const { status } = req.body;
+    if (!status) return res.status(400).json({ message: "Status required" });
+    await storage.updateSupportTicketStatus(id, status);
+    res.sendStatus(204);
+  });
+
+  app.get("/api/executive/snapshot", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user);
+    const articles = await storage.getArticles({ limit: 5, sourceIds: scopedSourceIds });
+    const events = await storage.getDetectedEvents({ limit: 5 });
+    const briefs = await storage.getDailyBriefs(1);
+    const entities = await storage.getTopEntities({ limit: 5, days: 1 });
+    const clusters = await storage.getStoryClusters({ limit: 3 });
+    res.json({
+      topStory: clusters[0] || null,
+      latestBrief: briefs[0] || null,
+      alerts: events,
+      topEntities: entities,
+      recentArticles: articles.items.slice(0, 5),
+      storyClusters: clusters,
+    });
+  });
+
+  app.get("/api/demo/snapshot", async (_req, res) => {
+    res.json({
+      plan: "pro",
+      topStory: { title: "Global Climate Summit 2026", mainTopic: "Climate Policy", articleCount: 24, sourceCount: 8, importanceScore: 92, avgSentiment: -15 },
+      latestBrief: { date: new Date().toISOString().split("T")[0], content: "Today's intelligence overview highlights continued developments in climate policy discussions, with multiple world leaders announcing new commitments. Market volatility persists as central banks signal cautious approaches to monetary policy.", majorDevelopments: [{ title: "Climate Summit Progress", summary: "New emissions targets proposed by G20 nations" }, { title: "Market Watch", summary: "Tech sector leads recovery amid cautious optimism" }], emergingTopics: ["AI Regulation", "Supply Chain Resilience", "Digital Currency"], confidenceScore: 85 },
+      alerts: [{ id: 1, type: "volume_spike", topic: "Climate Summit", severity: "high", explanation: "300% increase in coverage over 24 hours", acknowledged: false }, { id: 2, type: "sentiment_shift", topic: "Tech Regulation", severity: "medium", explanation: "Shift from neutral to negative coverage", acknowledged: false }],
+      topEntities: [{ entityName: "United Nations", entityType: "organization", mentionCount: 45, avgSentiment: 8 }, { entityName: "European Union", entityType: "organization", mentionCount: 38, avgSentiment: 12 }],
+      usage: { seats: { used: 5, max: 10 }, keywords: { used: 23, max: 50 }, sources: { used: 12, max: 20 }, articlesProcessed: 1247 },
+    });
+  });
 
   return httpServer;
 }

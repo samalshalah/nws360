@@ -1,0 +1,177 @@
+Transform NWS360 into a commercial SaaS platform with clear plans, seat-based users, onboarding, and client-facing experience. The goal is to make the system easy to purchase, activate, and scale inside organizations.
+
+1) Subscription Plans With Seats (Core Business Model)
+
+Implement subscription tiers:
+
+Basic
+Pro
+Enterprise
+
+
+Each plan controls both features and number of users (seats).
+
+Plan	Users	Keywords	Sources	Analytics	AI Brief	API
+Basic	3 users	10	limited	standard	summary	no
+Pro	10 users	50	extended	advanced	full	limited
+Enterprise	unlimited	unlimited	unlimited	full	custom	full
+
+Configuration:
+
+plan_limits = {
+  basic: { users: 3, keywords: 10, sources: limited },
+  pro: { users: 10, keywords: 50, sources: extended },
+  enterprise: { users: -1, keywords: -1, sources: unlimited }
+}
+
+
+-1 means unlimited.
+
+Store plan in:
+
+subscriptions(client_id, plan, max_users, renewal_date, status)
+
+2) Seat Enforcement (User Limits)
+
+Each user must belong to a client:
+
+users.client_id
+
+
+When creating a user:
+
+IF active_users >= plan.max_users
+  → block creation
+  → show upgrade message
+
+
+Admin panel must display:
+
+Team Usage: 7 / 10 seats used
+
+
+Admin actions:
+
+invite user
+
+deactivate user (frees seat)
+
+change role
+
+resend invite
+
+Roles per seat:
+
+Admin | Analyst | Editor | Viewer
+
+3) Guided Client Onboarding
+
+First login wizard:
+
+Choose industry
+
+Select countries
+
+Add keywords
+
+Select preferred sources
+
+Choose notifications
+
+After completion:
+
+auto-generate dashboard
+
+generate first briefing
+
+4) Executive Client Home
+
+Create a simplified landing dashboard:
+
+Today’s main story
+
+Coverage tone summary
+
+Top emerging topics
+
+Key alerts
+
+Latest briefing
+
+This becomes the “morning intelligence snapshot”.
+
+5) Notification Delivery
+
+Allow delivery outside the platform:
+
+email briefings
+
+scheduled PDF reports
+
+alert notifications
+
+webhook/API delivery (Enterprise)
+
+Store:
+
+notification_settings(user_id, channel, frequency, type)
+
+6) Billing-Ready Architecture (No Payment Yet)
+
+Prepare billing without activating payments:
+
+Endpoints:
+
+POST /billing/activate
+POST /billing/change-plan
+POST /billing/cancel
+
+
+Store:
+
+subscriptions.status = active | trial | suspended
+
+7) Usage Transparency
+
+Add usage dashboard:
+
+articles processed
+
+keywords used
+
+API calls
+
+alerts triggered
+
+Clients must always understand consumption.
+
+8) White-Label Options (Enterprise)
+
+Allow customization:
+
+client logo
+
+custom report title
+
+organization name in briefings
+
+9) Demo Environment
+
+Create public demo:
+
+/demo
+
+
+Uses sample data only.
+
+No real client data exposed.
+
+10) Built-in Help & Support
+
+Add help center:
+
+tooltips explaining analytics
+
+glossary
+
+support request form

@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Shield, ShieldOff, Trash2, UserPlus } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Shield, ShieldOff, Trash2, UserPlus, Users, Crown } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { User } from "@shared/schema";
 
@@ -27,6 +28,10 @@ export default function UserManagement() {
 
   const { data: users, isLoading } = useQuery<(User & { parentId?: number | null })[]>({
     queryKey: ["/api/users"],
+  });
+
+  const { data: usage } = useQuery<{ plan: string; seats: { used: number; max: number } }>({
+    queryKey: ["/api/subscription/usage"],
   });
 
   const createUserMutation = useMutation({
@@ -96,6 +101,41 @@ export default function UserManagement() {
         </h1>
         <p className="text-muted-foreground">{t("userManagement.subtitle")}</p>
       </div>
+
+      {usage && usage.seats && (
+        <Card className="border-border/50 shadow-md" data-testid="card-seat-usage">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-3">
+                <Users className="w-5 h-5 text-primary" />
+                <div>
+                  <p className="text-sm font-semibold" data-testid="text-seat-usage">
+                    Team Usage: {usage.seats.used} / {usage.seats.max === -1 || usage.seats.max >= 999 ? "Unlimited" : usage.seats.max} seats used
+                  </p>
+                  <p className="text-xs text-muted-foreground capitalize">
+                    {usage.plan} plan
+                  </p>
+                </div>
+              </div>
+              <div className="flex-1 max-w-xs">
+                {usage.seats.max > 0 && usage.seats.max < 999 && (
+                  <Progress
+                    value={(usage.seats.used / usage.seats.max) * 100}
+                    className={`h-2 ${usage.seats.used / usage.seats.max > 0.9 ? "[&>div]:bg-destructive" : usage.seats.used / usage.seats.max > 0.7 ? "[&>div]:bg-amber-500" : ""}`}
+                    data-testid="progress-seat-usage"
+                  />
+                )}
+              </div>
+              {usage.seats.max > 0 && usage.seats.max < 999 && usage.seats.used >= usage.seats.max && (
+                <Badge variant="destructive" className="no-default-hover-elevate no-default-active-elevate">
+                  <Crown className="w-3 h-3 mr-1" />
+                  Upgrade needed
+                </Badge>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="border-border/50 shadow-md">
         <CardHeader>

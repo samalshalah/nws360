@@ -4,6 +4,7 @@ import {
   clients, clientKeywords, systemSettings, adminAuditLogs,
   processingJobs, systemErrors, apiKeys, featureFlags, usageMetrics,
   storyClusters, articleAiAnalysis, dailyBriefs, detectedEvents, entityMentions, trendPredictions,
+  subscriptions, onboardingState, notificationSettings, whiteLabelSettings, supportTickets,
   type User, type InsertUser,
   type Source, type InsertSource,
   type Article, type InsertArticle,
@@ -22,6 +23,11 @@ import {
   type DetectedEvent, type InsertDetectedEvent,
   type EntityMention, type InsertEntityMention,
   type TrendPrediction, type InsertTrendPrediction,
+  type Subscription, type InsertSubscription,
+  type OnboardingState, type InsertOnboardingState,
+  type NotificationSetting, type InsertNotificationSetting,
+  type WhiteLabelSetting, type InsertWhiteLabelSetting,
+  type SupportTicket, type InsertSupportTicket,
 } from "@shared/schema";
 import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
@@ -244,6 +250,26 @@ export interface IStorage {
 
   getTrendPredictions(params?: { topic?: string; limit?: number }): Promise<TrendPrediction[]>;
   createTrendPrediction(data: InsertTrendPrediction): Promise<TrendPrediction>;
+
+  getSubscription(clientId: number): Promise<Subscription | undefined>;
+  createSubscription(data: InsertSubscription): Promise<Subscription>;
+  updateSubscription(clientId: number, data: Partial<InsertSubscription>): Promise<Subscription | undefined>;
+  getActiveUserCount(clientId: number): Promise<number>;
+  getUsersByClientId(clientId: number): Promise<User[]>;
+
+  getOnboardingState(clientId: number): Promise<OnboardingState | undefined>;
+  upsertOnboardingState(data: InsertOnboardingState): Promise<OnboardingState>;
+
+  getNotificationSettings(userId: number): Promise<NotificationSetting[]>;
+  upsertNotificationSetting(data: InsertNotificationSetting): Promise<NotificationSetting>;
+  deleteNotificationSetting(id: number): Promise<void>;
+
+  getWhiteLabelSettings(clientId: number): Promise<WhiteLabelSetting | undefined>;
+  upsertWhiteLabelSettings(data: InsertWhiteLabelSetting): Promise<WhiteLabelSetting>;
+
+  getSupportTickets(params?: { userId?: number; clientId?: number; status?: string }): Promise<SupportTicket[]>;
+  createSupportTicket(data: InsertSupportTicket): Promise<SupportTicket>;
+  updateSupportTicketStatus(id: number, status: string): Promise<void>;
 
 }
 
@@ -1792,6 +1818,99 @@ export class DatabaseStorage implements IStorage {
   async createTrendPrediction(data: InsertTrendPrediction): Promise<TrendPrediction> {
     const [row] = await db.insert(trendPredictions).values(data).returning();
     return row;
+  }
+
+  async getSubscription(clientId: number): Promise<Subscription | undefined> {
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.clientId, clientId));
+    return row;
+  }
+
+  async createSubscription(data: InsertSubscription): Promise<Subscription> {
+    const [row] = await db.insert(subscriptions).values(data).returning();
+    return row;
+  }
+
+  async updateSubscription(clientId: number, data: Partial<InsertSubscription>): Promise<Subscription | undefined> {
+    const [row] = await db.update(subscriptions).set({ ...data, updatedAt: new Date() }).where(eq(subscriptions.clientId, clientId)).returning();
+    return row;
+  }
+
+  async getActiveUserCount(clientId: number): Promise<number> {
+    const [result] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(users)
+      .where(and(eq(users.clientId, clientId), sql`(${users.disabled} = false OR ${users.disabled} IS NULL)`));
+    return result?.count || 0;
+  }
+
+  async getUsersByClientId(clientId: number): Promise<User[]> {
+    return await db.select().from(users).where(eq(users.clientId, clientId));
+  }
+
+  async getOnboardingState(clientId: number): Promise<OnboardingState | undefined> {
+    const [row] = await db.select().from(onboardingState).where(eq(onboardingState.clientId, clientId));
+    return row;
+  }
+
+  async upsertOnboardingState(data: InsertOnboardingState): Promise<OnboardingState> {
+    const [row] = await db.insert(onboardingState).values(data)
+      .onConflictDoUpdate({
+        target: onboardingState.clientId,
+        set: data,
+      })
+      .returning();
+    return row;
+  }
+
+  async getNotificationSettings(userId: number): Promise<NotificationSetting[]> {
+    return await db.select().from(notificationSettings).where(eq(notificationSettings.userId, userId));
+  }
+
+  async upsertNotificationSetting(data: InsertNotificationSetting): Promise<NotificationSetting> {
+    const [row] = await db.insert(notificationSettings).values(data).returning();
+    return row;
+  }
+
+  async deleteNotificationSetting(id: number): Promise<void> {
+    await db.delete(notificationSettings).where(eq(notificationSettings.id, id));
+  }
+
+  async getWhiteLabelSettings(clientId: number): Promise<WhiteLabelSetting | undefined> {
+    const [row] = await db.select().from(whiteLabelSettings).where(eq(whiteLabelSettings.clientId, clientId));
+    return row;
+  }
+
+  async upsertWhiteLabelSettings(data: InsertWhiteLabelSetting): Promise<WhiteLabelSetting> {
+    const [row] = await db.insert(whiteLabelSettings).values(data)
+      .onConflictDoUpdate({
+        target: whiteLabelSettings.clientId,
+        set: {
+          logoUrl: data.logoUrl,
+          organizationName: data.organizationName,
+          customReportTitle: data.customReportTitle,
+          primaryColor: data.primaryColor,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return row;
+  }
+
+  async getSupportTickets(params?: { userId?: number; clientId?: number; status?: string }): Promise<SupportTicket[]> {
+    const conditions = [];
+    if (params?.userId) conditions.push(eq(supportTickets.userId, params.userId));
+    if (params?.clientId) conditions.push(eq(supportTickets.clientId, params.clientId));
+    if (params?.status) conditions.push(eq(supportTickets.status, params.status));
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    return await db.select().from(supportTickets).where(whereClause).orderBy(desc(supportTickets.createdAt));
+  }
+
+  async createSupportTicket(data: InsertSupportTicket): Promise<SupportTicket> {
+    const [row] = await db.insert(supportTickets).values(data).returning();
+    return row;
+  }
+
+  async updateSupportTicketStatus(id: number, status: string): Promise<void> {
+    await db.update(supportTickets).set({ status, updatedAt: new Date() }).where(eq(supportTickets.id, id));
   }
 
 }

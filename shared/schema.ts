@@ -375,6 +375,94 @@ export const insertTrendPredictionSchema = createInsertSchema(trendPredictions).
 // === INDEXES for existing tables ===
 // These are added via SQL migration since Drizzle doesn't support adding indexes to existing table definitions inline
 
+export const subscriptions = pgTable("subscriptions", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  plan: text("plan").notNull().default("basic"),
+  maxUsers: integer("max_users").notNull().default(3),
+  maxKeywords: integer("max_keywords").notNull().default(10),
+  maxSources: integer("max_sources").notNull().default(5),
+  analyticsLevel: text("analytics_level").notNull().default("standard"),
+  aiBriefLevel: text("ai_brief_level").notNull().default("summary"),
+  apiAccess: boolean("api_access").default(false),
+  status: text("status").notNull().default("trial"),
+  trialEndsAt: timestamp("trial_ends_at"),
+  currentPeriodStart: timestamp("current_period_start").defaultNow(),
+  currentPeriodEnd: timestamp("current_period_end"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_subscription_client").on(table.clientId),
+  index("idx_subscription_status").on(table.status),
+]);
+
+export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({ id: true, createdAt: true, updatedAt: true });
+
+export const onboardingState = pgTable("onboarding_state", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  completed: boolean("completed").default(false),
+  currentStep: integer("current_step").default(1),
+  industry: text("industry"),
+  countries: text("countries").array(),
+  selectedKeywords: text("selected_keywords").array(),
+  selectedSources: text("selected_sources").array(),
+  notificationPreferences: jsonb("notification_preferences"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_onboarding_client").on(table.clientId),
+]);
+
+export const insertOnboardingStateSchema = createInsertSchema(onboardingState).omit({ id: true, createdAt: true });
+
+export const notificationSettings = pgTable("notification_settings", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  channel: text("channel").notNull(),
+  frequency: text("frequency").notNull().default("daily"),
+  type: text("type").notNull().default("briefing"),
+  enabled: boolean("enabled").default(true),
+  config: jsonb("config"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_notification_user").on(table.userId),
+]);
+
+export const insertNotificationSettingSchema = createInsertSchema(notificationSettings).omit({ id: true, createdAt: true });
+
+export const whiteLabelSettings = pgTable("white_label_settings", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  logoUrl: text("logo_url"),
+  organizationName: text("organization_name"),
+  customReportTitle: text("custom_report_title"),
+  primaryColor: text("primary_color"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_whitelabel_client").on(table.clientId),
+]);
+
+export const insertWhiteLabelSettingSchema = createInsertSchema(whiteLabelSettings).omit({ id: true, createdAt: true, updatedAt: true });
+
+export const supportTickets = pgTable("support_tickets", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  clientId: integer("client_id"),
+  subject: text("subject").notNull(),
+  message: text("message").notNull(),
+  status: text("status").notNull().default("open"),
+  priority: text("priority").notNull().default("normal"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_ticket_user").on(table.userId),
+  index("idx_ticket_status").on(table.status),
+]);
+
+export const insertSupportTicketSchema = createInsertSchema(supportTickets).omit({ id: true, createdAt: true, updatedAt: true });
+
 // === RELATIONS ===
 export const sourceRelations = relations(sources, ({ many }) => ({
   articles: many(articles),
@@ -453,6 +541,29 @@ export type InsertEntityMention = z.infer<typeof insertEntityMentionSchema>;
 
 export type TrendPrediction = typeof trendPredictions.$inferSelect;
 export type InsertTrendPrediction = z.infer<typeof insertTrendPredictionSchema>;
+
+export type Subscription = typeof subscriptions.$inferSelect;
+export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
+
+export type OnboardingState = typeof onboardingState.$inferSelect;
+export type InsertOnboardingState = z.infer<typeof insertOnboardingStateSchema>;
+
+export type NotificationSetting = typeof notificationSettings.$inferSelect;
+export type InsertNotificationSetting = z.infer<typeof insertNotificationSettingSchema>;
+
+export type WhiteLabelSetting = typeof whiteLabelSettings.$inferSelect;
+export type InsertWhiteLabelSetting = z.infer<typeof insertWhiteLabelSettingSchema>;
+
+export type SupportTicket = typeof supportTickets.$inferSelect;
+export type InsertSupportTicket = z.infer<typeof insertSupportTicketSchema>;
+
+export const PLAN_LIMITS = {
+  basic: { maxUsers: 3, maxKeywords: 10, maxSources: 5, analyticsLevel: "standard", aiBriefLevel: "summary", apiAccess: false },
+  pro: { maxUsers: 10, maxKeywords: 50, maxSources: 20, analyticsLevel: "advanced", aiBriefLevel: "full", apiAccess: true },
+  enterprise: { maxUsers: -1, maxKeywords: -1, maxSources: -1, analyticsLevel: "full", aiBriefLevel: "custom", apiAccess: true },
+} as const;
+
+export type PlanType = keyof typeof PLAN_LIMITS;
 
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;

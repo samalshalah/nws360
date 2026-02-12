@@ -28,6 +28,10 @@ AI capabilities, including sentiment analysis, keyword/topic extraction, and cou
 - **Performance & Scalability**: Features an in-process background job queue for asynchronous tasks, smart scheduling for priority-based feed refreshes, pre-computed analytics caching, and automated data retention policies. Extensive database indexing optimizes query performance.
 - **Admin & Ops Dashboards**: Comprehensive admin panels for source, user, and client management, system settings, and audit logging. An operations dashboard provides insights into system health, feature flags, usage metrics, and recovery options.
 - **Partner API**: A versioned API (`/api/v1/`) with Bearer token authentication, SHA-256 hashed API keys, and scope-based authorization for external integrations.
+- **SaaS Platform**: Subscription-based model with three tiers (Basic/Pro/Enterprise), seat-based user limits with enforcement, guided client onboarding wizard, billing-ready architecture (activate/change-plan/cancel endpoints), usage transparency dashboard, and white-label customization for Enterprise clients.
+- **Executive Home**: A simplified "morning intelligence snapshot" dashboard showing top story, coverage tone, emerging topics, alerts, latest brief preview, and top entities.
+- **Demo Environment**: Public /demo page with sample data for prospective customers (no auth required).
+- **Help Center**: Built-in glossary of platform terms, quick help guides, and support ticket submission form.
 - **UI/UX**: Features a unified design token system, refined color palette (with dark mode as default), professional typography, human-readable labels, trust indicators ("Updated X min ago"), and accessibility considerations (skip-to-content, ARIA labels).
 
 ## External Dependencies

@@ -34,6 +34,11 @@ import UserManagement from "@/pages/UserManagement";
 import SourceHealth from "@/pages/SourceHealth";
 import OpsDashboard from "@/pages/OpsDashboard";
 import IntelligencePage from "@/pages/IntelligencePage";
+import OnboardingWizard from "@/pages/OnboardingWizard";
+import UsageBilling from "@/pages/UsageBilling";
+import ExecutiveHome from "@/pages/ExecutiveHome";
+import DemoPage from "@/pages/DemoPage";
+import HelpCenter from "@/pages/HelpCenter";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, ...rest }: { component: any, path?: string }) {
@@ -84,6 +89,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/login" component={Login} />
+      <Route path="/onboarding" component={OnboardingWizard} />
       
       <Route path="/">
         <ProtectedRoute component={Dashboard} />
@@ -154,6 +160,16 @@ function Router() {
       <Route path="/users">
         <ProtectedRoute component={UserManagement} />
       </Route>
+      <Route path="/usage-billing">
+        <ProtectedRoute component={UsageBilling} />
+      </Route>
+      <Route path="/executive">
+        <ProtectedRoute component={ExecutiveHome} />
+      </Route>
+      <Route path="/help">
+        <ProtectedRoute component={HelpCenter} />
+      </Route>
+      <Route path="/demo" component={DemoPage} />
 
       <Route component={NotFound} />
     </Switch>
