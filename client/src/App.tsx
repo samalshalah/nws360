@@ -55,20 +55,23 @@ function ProtectedRoute({ component: Component, ...rest }: { component: any, pat
 
   return (
     <div className="flex h-screen bg-background">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:bg-primary focus:text-primary-foreground focus:px-4 focus:py-2 focus:rounded-md" data-testid="link-skip-to-content">
+        Skip to content
+      </a>
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0 h-screen">
         <MobileHeader />
         <BreakingNewsBanner />
-        <main className="flex-1 overflow-y-auto min-h-0 pb-16 md:pb-0">
+        <main id="main-content" className="flex-1 overflow-y-auto min-h-0 pb-16 md:pb-0" role="main" aria-label="Main content">
           <div className="max-w-7xl mx-auto p-4 md:p-6">
             <Component />
           </div>
         </main>
       </div>
       {showRightPanel && (
-        <div className="hidden lg:flex flex-col w-72 border-l border-border bg-card h-screen sticky top-0 overflow-y-auto rtl:border-l-0 rtl:border-r">
+        <aside className="hidden lg:flex flex-col w-72 border-l border-border bg-card h-screen sticky top-0 overflow-y-auto rtl:border-l-0 rtl:border-r" role="complementary" aria-label="Insights panel">
           <RightPanel />
-        </div>
+        </aside>
       )}
       <MobileBottomNav />
     </div>

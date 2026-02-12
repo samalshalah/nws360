@@ -195,16 +195,26 @@ export function ArticleCard({ article, selected, onToggleSelect }: ArticleCardPr
           
           <div className="flex items-center gap-1.5 flex-wrap">
             {articleCategory && articleCategory !== "general" && (
-              <Badge variant="outline" className={cn("text-xs capitalize", categoryColors[articleCategory] || categoryColors.general)} data-testid={`badge-category-${article.id}`}>
-                {t(`feed.categories.${articleCategory}`)}
-              </Badge>
+              <button
+                onClick={(e) => { e.stopPropagation(); setLocation(`/feed?category=${articleCategory}`); }}
+                data-testid={`badge-category-${article.id}`}
+              >
+                <Badge variant="outline" className={cn("text-xs capitalize cursor-pointer", categoryColors[articleCategory] || categoryColors.general)}>
+                  {t(`feed.categories.${articleCategory}`)}
+                </Badge>
+              </button>
             )}
             {article.sentimentLabel && (
-              <Badge variant="outline" className={cn("capitalize text-xs", sentimentColor)} data-testid={`badge-sentiment-${article.id}`}>
-                {article.sentimentLabel === "positive" ? t("feed.positive") : 
-                 article.sentimentLabel === "negative" ? t("feed.negative") : 
-                 t("feed.neutral")}
-              </Badge>
+              <button
+                onClick={(e) => { e.stopPropagation(); setLocation(`/feed?sentiment=${article.sentimentLabel}`); }}
+                data-testid={`badge-sentiment-${article.id}`}
+              >
+                <Badge variant="outline" className={cn("capitalize text-xs cursor-pointer", sentimentColor)}>
+                  {article.sentimentLabel === "positive" ? t("feed.positive") : 
+                   article.sentimentLabel === "negative" ? t("feed.negative") : 
+                   t("feed.neutral")}
+                </Badge>
+              </button>
             )}
           </div>
         </div>

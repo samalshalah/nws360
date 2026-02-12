@@ -16,6 +16,8 @@ import {
   Newspaper, TrendingUp, BarChart3, AlertTriangle,
   ArrowRight, Flame, Zap
 } from "lucide-react";
+import { UpdatedAt } from "@/components/UpdatedAt";
+import { ExportButton } from "@/components/ExportButton";
 
 const SENTIMENT_COLORS: Record<string, string> = {
   positive: '#22c55e',
@@ -26,7 +28,7 @@ const SENTIMENT_COLORS: Record<string, string> = {
 const SOURCE_COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#14b8a6', '#ef4444', '#22c55e', '#f97316', '#6366f1', '#84cc16'];
 
 export default function Analytics() {
-  const { data: analytics, isLoading: statsLoading } = useAnalytics();
+  const { data: analytics, isLoading: statsLoading, dataUpdatedAt } = useAnalytics();
   const { t } = useTranslation();
   const [, setLocation] = useLocation();
   const [timeRange, setTimeRange] = useTimeRange("7d");
@@ -104,14 +106,15 @@ export default function Analytics() {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-analytics-title">
+          <h1 className="text-2xl md:text-3xl font-bold text-foreground" data-testid="text-analytics-title">
             {t("analytics.title")}
           </h1>
-          <p className="text-muted-foreground">{t("analytics.subtitle")}</p>
+          <p className="text-muted-foreground text-sm">{t("analytics.subtitle")}</p>
         </div>
+        <UpdatedAt timestamp={dataUpdatedAt ? new Date(dataUpdatedAt) : null} />
       </div>
 
       <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
@@ -185,13 +188,16 @@ export default function Analytics() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="font-display text-base">{t("analytics.newsVolumeOverTime")}</CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => setLocation("/analytics/content-volume")} data-testid="link-volume-detail">
-              {t("analytics.viewDetails")} <ArrowRight className="w-3 h-3 ltr:ml-1 rtl:mr-1" />
-            </Button>
+            <CardTitle className="text-base font-semibold">{t("analytics.newsVolumeOverTime")}</CardTitle>
+            <div className="flex items-center gap-1">
+              <ExportButton chartContainerId="chart-volume" csvData={volumeTimeline.map(d => ({ date: d.dateLabel, articles: d.count }))} filename="nws360-volume" />
+              <Button variant="ghost" size="sm" onClick={() => setLocation("/analytics/content-volume")} data-testid="link-volume-detail">
+                {t("analytics.viewDetails")} <ArrowRight className="w-3 h-3 ltr:ml-1 rtl:mr-1" />
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="h-[280px] w-full">
+            <div className="h-[280px] w-full" id="chart-volume">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={volumeTimeline}>
                   <defs>
@@ -213,10 +219,13 @@ export default function Analytics() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="font-display text-base">{t("analytics.topSourcesRanking")}</CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => setLocation("/analytics/source-behavior")} data-testid="link-sources-detail">
-              {t("analytics.viewDetails")} <ArrowRight className="w-3 h-3 ltr:ml-1 rtl:mr-1" />
-            </Button>
+            <CardTitle className="text-base font-semibold">{t("analytics.topSourcesRanking")}</CardTitle>
+            <div className="flex items-center gap-1">
+              <ExportButton csvData={topSources.map((s: any) => ({ source: s.sourceName, articles: s.count }))} filename="nws360-sources" />
+              <Button variant="ghost" size="sm" onClick={() => setLocation("/analytics/source-behavior")} data-testid="link-sources-detail">
+                {t("analytics.viewDetails")} <ArrowRight className="w-3 h-3 ltr:ml-1 rtl:mr-1" />
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="h-[280px] w-full">
@@ -252,10 +261,13 @@ export default function Analytics() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="font-display text-base">{t("analytics.trendingKeywords")}</CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => setLocation("/analytics/trending-topics")} data-testid="link-topics-detail">
-              {t("analytics.viewDetails")} <ArrowRight className="w-3 h-3 ltr:ml-1 rtl:mr-1" />
-            </Button>
+            <CardTitle className="text-base font-semibold">{t("analytics.trendingKeywords")}</CardTitle>
+            <div className="flex items-center gap-1">
+              <ExportButton csvData={topTopics.map(t => ({ topic: t.topic, count: t.count, sentiment: t.sentiment }))} filename="nws360-topics" />
+              <Button variant="ghost" size="sm" onClick={() => setLocation("/analytics/trending-topics")} data-testid="link-topics-detail">
+                {t("analytics.viewDetails")} <ArrowRight className="w-3 h-3 ltr:ml-1 rtl:mr-1" />
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="h-[280px] w-full overflow-y-auto">
@@ -296,10 +308,13 @@ export default function Analytics() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="font-display text-base">{t("analytics.sentimentDistribution")}</CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => setLocation("/analytics/sentiment-reports")} data-testid="link-sentiment-detail">
-              {t("analytics.viewDetails")} <ArrowRight className="w-3 h-3 ltr:ml-1 rtl:mr-1" />
-            </Button>
+            <CardTitle className="text-base font-semibold">{t("analytics.sentimentDistribution")}</CardTitle>
+            <div className="flex items-center gap-1">
+              <ExportButton csvData={sentimentData.map(d => ({ tone: d.label, count: d.value, percentage: Math.round((d.value / totalSentiment) * 100) + "%" }))} filename="nws360-tone" />
+              <Button variant="ghost" size="sm" onClick={() => setLocation("/analytics/sentiment-reports")} data-testid="link-sentiment-detail">
+                {t("analytics.viewDetails")} <ArrowRight className="w-3 h-3 ltr:ml-1 rtl:mr-1" />
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="h-[220px] w-full">

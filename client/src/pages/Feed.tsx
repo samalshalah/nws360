@@ -54,12 +54,14 @@ export default function Feed() {
     const sentimentParam = params.get("sentiment");
     const sourceIdParam = params.get("sourceId");
     const sourceTypeParam = params.get("sourceType");
+    const categoryParam = params.get("category");
     const focusParam = params.get("focus");
     const updates: Record<string, string> = {};
     if (searchParam) updates.search = searchParam;
     if (sentimentParam) updates.sentiment = sentimentParam;
     if (sourceIdParam) updates.sourceId = sourceIdParam;
     if (sourceTypeParam) updates.sourceType = sourceTypeParam;
+    if (categoryParam) updates.category = categoryParam;
     if (Object.keys(updates).length > 0) {
       setFilters(prev => ({ ...prev, ...updates }));
       if (updates.search) setSearchInput(updates.search);

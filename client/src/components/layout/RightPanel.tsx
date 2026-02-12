@@ -6,11 +6,12 @@ import { TrendingUp, Newspaper, Rss } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AreaChart, Area, ResponsiveContainer, XAxis, Tooltip } from "recharts";
+import { UpdatedAt } from "@/components/UpdatedAt";
 
 export function RightPanel() {
   const { t } = useTranslation();
   const [, setLocation] = useLocation();
-  const { data: analytics, isLoading } = useAnalytics();
+  const { data: analytics, isLoading, dataUpdatedAt } = useAnalytics();
 
   const { data: sentimentTrend } = useQuery<{ date: string; positive: number; negative: number; neutral: number }[]>({
     queryKey: ["/api/analytics/sentiment-trend"],
@@ -30,14 +31,14 @@ export function RightPanel() {
   if (isLoading) {
     return (
       <div className="p-4 space-y-6">
-        <Skeleton className="h-6 w-24" />
-        <div className="space-y-3">
+        <Skeleton className="h-5 w-20" />
+        <div className="space-y-2">
           {[1, 2, 3, 4, 5].map((i) => (
             <Skeleton key={i} className="h-8 w-full" />
           ))}
         </div>
-        <Skeleton className="h-32 w-full" />
-        <div className="space-y-3">
+        <Skeleton className="h-24 w-full" />
+        <div className="space-y-2">
           {[1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-8 w-full" />
           ))}
@@ -48,23 +49,26 @@ export function RightPanel() {
 
   return (
     <div className="p-4 space-y-6">
-      <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider" data-testid="right-panel-header">
-        {t("rightPanel.insights")}
-      </h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider" data-testid="right-panel-header">
+          {t("rightPanel.insights")}
+        </h2>
+        <UpdatedAt timestamp={dataUpdatedAt ? new Date(dataUpdatedAt) : null} className="text-[10px]" prefix="" />
+      </div>
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
           <TrendingUp className="w-3.5 h-3.5" />
           {t("rightPanel.trendingTopics")}
         </div>
         {trendingTopics.length > 0 ? (
-          <div className="space-y-1.5">
+          <div className="space-y-0.5">
             {trendingTopics.map((topic: { text: string; value: number }, index: number) => (
               <button
                 key={topic.text}
                 data-testid={`right-panel-trending-${index}`}
                 onClick={() => setLocation(`/feed?search=${encodeURIComponent(topic.text)}`)}
-                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-lg hover:bg-muted transition-colors text-left"
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-md hover-elevate transition-colors text-left"
               >
                 <span className="truncate text-foreground">{topic.text}</span>
                 <Badge variant="secondary" className="text-[10px] shrink-0">
@@ -78,7 +82,7 @@ export function RightPanel() {
         )}
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <Newspaper className="w-3.5 h-3.5" />
@@ -120,19 +124,19 @@ export function RightPanel() {
         )}
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
           <Rss className="w-3.5 h-3.5" />
           {t("rightPanel.topSources")}
         </div>
         {topSources.length > 0 ? (
-          <div className="space-y-2">
+          <div className="space-y-0.5">
             {topSources.map((source: { name: string; count: number }, index: number) => (
               <button
                 key={source.name}
                 data-testid={`right-panel-source-${index}`}
                 onClick={() => setLocation(`/feed?search=${encodeURIComponent(source.name)}`)}
-                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-lg hover:bg-muted transition-colors text-left"
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-md hover-elevate transition-colors text-left"
               >
                 <span className="truncate text-foreground">{source.name}</span>
                 <span className="text-xs text-muted-foreground shrink-0">

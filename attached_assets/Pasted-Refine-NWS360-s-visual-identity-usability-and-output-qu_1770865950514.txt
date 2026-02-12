@@ -1,0 +1,159 @@
+Refine NWS360’s visual identity, usability, and output quality so the platform feels consistent, credible, and effortless for professional users on both desktop and mobile.
+
+1) Unified Visual Language
+
+Establish a single, system-wide design standard:
+
+Create a shared design token file for:
+
+primary and secondary colors (NWS360 brand palette),
+
+typography (headings, body, labels, code),
+
+spacing scale,
+
+card styles,
+
+button styles,
+
+chart styling.
+
+Ensure every page uses these standards — no one-off styles.
+
+2) Dark Mode as a First-Class Citizen
+
+Implement a proper light/dark toggle that:
+
+persists per user preference,
+
+applies consistently across:
+
+dashboards,
+
+charts,
+
+tables,
+
+admin panels,
+
+login screens.
+
+Default to dark mode for logged-in users (newsrooms and analysts tend to live there).
+
+3) Micro-Interactions That Guide the Mind
+
+Add subtle but meaningful feedback:
+
+Loading skeletons for cards and charts instead of spinners.
+
+Smooth transitions when filters change.
+
+Highlight active filters clearly.
+
+Brief “data updated X minutes ago” indicator on analytics pages.
+
+No flashy animation — just calm, intelligent motion.
+
+4) Click-to-Explore Intelligence
+
+Make every element feel like a doorway:
+
+Clicking a topic:
+
+filters the feed,
+
+updates all analytics panels to that topic.
+
+Clicking a source:
+
+opens a dedicated source view with:
+
+recent articles,
+
+sentiment trend,
+
+publishing frequency.
+
+Clicking a keyword:
+
+opens its dedicated analytics panel.
+
+5) Export Everything (Professional Outputs)
+
+Allow users to download:
+
+Charts as PNG or SVG.
+
+Data as CSV or Excel.
+
+Daily brief as a branded PDF with:
+
+NWS360 logo,
+
+date,
+
+top stories,
+
+trends,
+
+sentiment snapshot.
+
+6) Clear, Human Language Everywhere
+
+Replace technical labels with professional, readable terms:
+
+“Ingestion logs” → “Source Activity”
+
+“Sentiment distribution” → “Tone of Coverage”
+
+“Volume metrics” → “News Activity”
+
+“Cached data” → “Last Updated”
+
+7) Accessibility That Disappears Because It Works
+
+Ensure:
+
+WCAG-friendly contrast ratios.
+
+Keyboard navigation across the app.
+
+Screen-reader labels on all major components.
+
+Charts readable without relying on color alone.
+
+8) Trust Signals (Why Users Believe the Data)
+
+Add small credibility markers:
+
+Timestamp on every chart: “Updated at 09:15 AM.”
+
+Tooltip explaining how a metric is calculated.
+
+Source counts for analytics (“Based on 4,320 articles”).
+
+9) Performance Feel (Perceived Speed)
+
+Even when real processing takes time:
+
+show progressive loading,
+
+avoid blank screens,
+
+keep interactions responsive under 100ms.
+
+10) Final Brand Alignment
+
+Add consistent branding across:
+
+login page,
+
+email notifications,
+
+PDFs,
+
+admin pages,
+
+error screens.
+
+Same logo, same tone, same typography.

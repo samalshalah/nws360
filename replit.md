@@ -137,6 +137,16 @@ NWS360 is a full-stack news aggregation and intelligence platform that fetches a
 - 2026-02-11: ArticleCard shows sub-source with "via" label for Google News articles
 - 2026-02-11: Restructured sidebar navigation with collapsible Sources sub-menu (Add Source, Manage Sources, Keywords)
 - 2026-02-11: Fixed AI sentiment analysis - switched from gpt-5-nano to gpt-4o-mini model
+- 2026-02-12: Comprehensive visual identity overhaul: unified design tokens, refined color palette (light/dark), professional typography
+- 2026-02-12: Dark mode as default theme for new users; theme persists via localStorage
+- 2026-02-12: Human-readable labels across the app (Sentiment → Tone of Coverage, Ingestion → Source Activity, etc.)
+- 2026-02-12: Trust signals: "Updated X min ago" indicators on Dashboard, Analytics, and Right Panel
+- 2026-02-12: Click-to-explore: category badges, sentiment badges, topics, sources all navigate to filtered feed views
+- 2026-02-12: Export capabilities: chart PNG export, CSV data export buttons on all analytics charts
+- 2026-02-12: Daily brief PDF export utility with branded NWS360 template
+- 2026-02-12: Accessibility: skip-to-content link, ARIA labels on main regions, semantic aside/main roles, keyboard-friendly theme toggle
+- 2026-02-12: Reusable components: UpdatedAt (relative timestamps), ExportButton (PNG/CSV dropdown)
+- 2026-02-12: Smooth animations: animate-fade-in, animate-slide-up with prefers-reduced-motion support
 - 2026-02-11: Added /api/reanalyze endpoint and UI button to re-analyze articles with AI
 - 2026-02-11: Improved News Feed page with pagination (24 per page), article count, clear filters
 - 2026-02-11: Added sentiment validation to only accept positive/negative/neutral values
