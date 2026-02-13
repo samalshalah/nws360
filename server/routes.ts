@@ -48,6 +48,21 @@ function resolveClientId(user: any): number | null {
   return null;
 }
 
+function getSourceLogoUrl(sourceUrl: string, sourceName?: string): string | null {
+  try {
+    const hostname = new URL(sourceUrl).hostname.replace(/^www\./, "");
+    const socialPlatforms = ["youtube.com", "facebook.com", "instagram.com", "x.com", "twitter.com", "t.me", "telegram.org", "reddit.com", "linkedin.com", "tiktok.com"];
+    const isSocial = socialPlatforms.some(p => hostname.includes(p));
+    if (isSocial && sourceName) {
+      const brandDomain = sourceName.toLowerCase().replace(/[^a-z0-9]/g, "") + ".com";
+      return `https://www.google.com/s2/favicons?sz=128&domain=${brandDomain}`;
+    }
+    return `https://www.google.com/s2/favicons?sz=128&domain=${hostname}`;
+  } catch {
+    return null;
+  }
+}
+
 function requireClientId(user: any): number {
   const cid = resolveClientId(user);
   if (cid === null && user.role !== "admin") {
@@ -121,9 +136,9 @@ export async function registerRoutes(
       const user = req.user as any;
       const input = api.sources.create.input.parse(req.body);
       const clientId = resolveClientId(user);
-      const source = await storage.createSource({...input, userId: user.id, clientId: clientId || undefined});
+      const logoUrl = getSourceLogoUrl(input.url, input.name);
+      const source = await storage.createSource({...input, userId: user.id, clientId: clientId || undefined, logoUrl});
 
-      // Immediately fetch articles from the new source
       setTimeout(async () => {
         try {
           await fetchSourceFeed(source.id);
@@ -163,6 +178,12 @@ export async function registerRoutes(
       }
       if (Object.keys(cleanUpdates).length === 0) {
         return res.status(400).json({ message: "No valid fields to update" });
+      }
+      if (cleanUpdates.url || cleanUpdates.name) {
+        const existing = await storage.getSource(id);
+        if (existing) {
+          cleanUpdates.logoUrl = getSourceLogoUrl(cleanUpdates.url || existing.url, cleanUpdates.name || existing.name);
+        }
       }
       const source = await storage.updateSource(id, cleanUpdates);
       if (!source) return res.status(404).json({ message: "Source not found" });
@@ -1137,7 +1158,8 @@ export async function registerRoutes(
       const { name, url, type, active, intervalMinutes, maxArticlesPerFetch, retentionDays, country, refreshPriority } = req.body;
       if (!name || !url || !type) return res.status(400).json({ message: "name, url, and type are required" });
       const adminClientId = req.body.clientId || resolveClientId(user);
-      const source = await storage.createSource({ name: sanitizeInput(name), url, type, active: active !== false, intervalMinutes: intervalMinutes || 15, maxArticlesPerFetch: maxArticlesPerFetch || 10, retentionDays: retentionDays || 30, country: country || null, refreshPriority: refreshPriority || "medium", userId: user.id, clientId: adminClientId || undefined });
+      const logoUrl = getSourceLogoUrl(url, name);
+      const source = await storage.createSource({ name: sanitizeInput(name), url, type, active: active !== false, intervalMinutes: intervalMinutes || 15, maxArticlesPerFetch: maxArticlesPerFetch || 10, retentionDays: retentionDays || 30, country: country || null, refreshPriority: refreshPriority || "medium", userId: user.id, clientId: adminClientId || undefined, logoUrl });
       await storage.createAuditLog({ userId: user.id, action: "create", entity: "source", entityId: source.id, details: `Created source: ${source.name}` });
       setTimeout(async () => { try { await fetchSourceFeed(source.id); } catch {} }, 1000);
       res.status(201).json(source);
