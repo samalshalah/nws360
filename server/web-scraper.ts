@@ -169,6 +169,7 @@ export async function scrapeWebsite(url: string): Promise<ScrapedArticle[]> {
     });
   }
 
+  articles.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   return articles.slice(0, 20);
 }
 

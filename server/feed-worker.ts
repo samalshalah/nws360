@@ -210,13 +210,15 @@ async function fetchRssArticles(source: { id: number; name: string; url: string;
 
   console.log(`[Worker] Fetching RSS: ${feedUrl} for source: ${source.name}`);
   const feed = await parser.parseURL(feedUrl);
-  return await processItems(source, feed.items.slice(0, limit).map(item => ({
+  const mapped = (feed.items || []).map(item => ({
     title: stripHtml(item.title || "Untitled"),
     url: item.link || "",
     content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || ""),
     publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
     image: extractImageFromRssItem(item),
-  })));
+  }));
+  mapped.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+  return await processItems(source, mapped.slice(0, limit));
 }
 
 async function fetchWebsiteArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
@@ -228,17 +230,20 @@ async function fetchWebsiteArticles(source: { id: number; name: string; url: str
   if (discovered) {
     console.log(`[Worker] Found RSS feed for ${source.name}: ${discovered}`);
     const feed = await parser.parseURL(discovered);
-    return await processItems(source, feed.items.slice(0, limit).map(item => ({
+    const mapped = (feed.items || []).map(item => ({
       title: stripHtml(item.title || "Untitled"),
       url: item.link || "",
       content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || ""),
       publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
       image: extractImageFromRssItem(item),
-    })));
+    }));
+    mapped.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+    return await processItems(source, mapped.slice(0, limit));
   }
 
   const scraped = await scrapeWebsite(url);
   console.log(`[Worker] Scraped ${scraped.length} articles from ${source.name}`);
+  scraped.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   return await processItems(source, scraped.slice(0, limit));
 }
 
@@ -246,6 +251,7 @@ async function fetchTwitterArticles(source: { id: number; name: string; url: str
   const limit = source.maxArticlesPerFetch || 10;
   console.log(`[Worker] Fetching Twitter/X: ${source.url} for source: ${source.name}`);
   const tweets = await fetchTwitterFeed(source.url);
+  tweets.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${tweets.length} tweets from ${source.name}`);
   return await processItems(source, tweets.slice(0, limit));
 }
@@ -254,6 +260,7 @@ async function fetchYouTubeArticles(source: { id: number; name: string; url: str
   const limit = source.maxArticlesPerFetch || 10;
   console.log(`[Worker] Fetching YouTube: ${source.url} for source: ${source.name}`);
   const videos = await fetchYouTubeFeed(source.url);
+  videos.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${videos.length} videos from ${source.name}`);
   return await processItems(source, videos.slice(0, limit));
 }
@@ -262,6 +269,7 @@ async function fetchFacebookArticles(source: { id: number; name: string; url: st
   const limit = source.maxArticlesPerFetch || 10;
   console.log(`[Worker] Fetching Facebook: ${source.url} for source: ${source.name}`);
   const posts = await fetchFacebookFeed(source.url);
+  posts.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${posts.length} Facebook posts from ${source.name}`);
   return await processItems(source, posts.slice(0, limit));
 }
@@ -270,6 +278,7 @@ async function fetchInstagramArticles(source: { id: number; name: string; url: s
   const limit = source.maxArticlesPerFetch || 10;
   console.log(`[Worker] Fetching Instagram: ${source.url} for source: ${source.name}`);
   const posts = await fetchInstagramFeed(source.url);
+  posts.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${posts.length} Instagram posts from ${source.name}`);
   return await processItems(source, posts.slice(0, limit));
 }
@@ -278,6 +287,7 @@ async function fetchTelegramArticles(source: { id: number; name: string; url: st
   const limit = source.maxArticlesPerFetch || 10;
   console.log(`[Worker] Fetching Telegram: ${source.url} for source: ${source.name}`);
   const posts = await fetchTelegramFeed(source.url);
+  posts.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${posts.length} Telegram posts from ${source.name}`);
   return await processItems(source, posts.slice(0, limit));
 }
@@ -502,6 +512,12 @@ async function processItems(
   items: { title: string; url: string; content: string; publishedAt: Date; image?: string; subSource?: string; engagementLikes?: number; engagementComments?: number; engagementShares?: number }[]
 ): Promise<number> {
   let newArticles = 0;
+
+  items.sort((a, b) => {
+    const dateA = a.publishedAt instanceof Date ? a.publishedAt.getTime() : 0;
+    const dateB = b.publishedAt instanceof Date ? b.publishedAt.getTime() : 0;
+    return dateB - dateA;
+  });
 
   for (const item of items) {
     if (!item.url) continue;
