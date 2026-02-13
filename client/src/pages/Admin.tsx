@@ -152,6 +152,14 @@ type ChannelState = {
   discovered?: boolean;
 };
 
+type DiscoveredFeed = {
+  title: string;
+  url: string;
+  type: "rss" | "atom";
+  articleCount?: number;
+  selected?: boolean;
+};
+
 function AddSourceView() {
   const { t } = useTranslation();
   const { mutate: createSource, isPending: isCreating } = useCreateSource();
@@ -180,6 +188,8 @@ function AddSourceView() {
   const [isImporting, setIsImporting] = useState(false);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveryDone, setDiscoveryDone] = useState(false);
+  const [discoveredFeeds, setDiscoveredFeeds] = useState<DiscoveredFeed[]>([]);
+  const [isDiscoveringFeeds, setIsDiscoveringFeeds] = useState(false);
 
   const searchWebsites = useCallback(async (query: string) => {
     if (query.length < 2) return;
@@ -197,6 +207,32 @@ function AddSourceView() {
     setIsSearching(false);
   }, []);
 
+  const discoverFeeds = async (url: string) => {
+    setIsDiscoveringFeeds(true);
+    setDiscoveredFeeds([]);
+    try {
+      let targetUrl = url.trim();
+      if (!targetUrl.startsWith("http")) targetUrl = `https://${targetUrl}`;
+      const res = await fetch("/api/sources/discover-feeds", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: targetUrl }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const feeds = (data.feeds || []).map((f: DiscoveredFeed) => ({ ...f, selected: true }));
+        setDiscoveredFeeds(feeds);
+        if (feeds.length > 0) {
+          setChannels(prev => ({
+            ...prev,
+            rss: { ...prev.rss, enabled: true, status: "idle" },
+          }));
+        }
+      }
+    } catch {}
+    setIsDiscoveringFeeds(false);
+  };
+
   const openChannelDialog = (name: string, url: string) => {
     setSourceName(name);
     setSourceUrl(url);
@@ -207,10 +243,12 @@ function AddSourceView() {
     setChannels(init);
     setStep("channels");
     setDiscoveryDone(false);
+    setDiscoveredFeeds([]);
     setShowChannelDialog(true);
 
     if (url && (url.includes(".") || url.startsWith("http"))) {
       discoverChannels(url, init);
+      discoverFeeds(url);
     }
   };
 
@@ -302,17 +340,25 @@ function AddSourceView() {
 
   const enabledChannels = CHANNEL_OPTIONS.filter(ch => channels[ch.type]?.enabled);
 
+  const selectedFeeds = discoveredFeeds.filter(f => f.selected);
+
+  const toggleFeed = (idx: number) => {
+    setDiscoveredFeeds(prev => prev.map((f, i) => i === idx ? { ...f, selected: !f.selected } : f));
+  };
+
   const handleTestAll = async () => {
     if (!sourceName.trim()) return;
     setIsTesting(true);
 
     const updated = { ...channels };
-    for (const ch of enabledChannels) {
+    const nonRssChannels = enabledChannels.filter(ch => ch.type !== "rss");
+
+    for (const ch of nonRssChannels) {
       updated[ch.type] = { ...updated[ch.type], status: "testing" };
     }
     setChannels({ ...updated });
 
-    for (const ch of enabledChannels) {
+    for (const ch of nonRssChannels) {
       const testUrl = ch.needsUrl ? channels[ch.type].url : sourceUrl;
       if (!testUrl.trim()) {
         updated[ch.type] = { ...updated[ch.type], status: "failed", previewResult: { success: false, method: "none", articles: [], error: "No URL provided" } };
@@ -337,6 +383,27 @@ function AddSourceView() {
       setChannels({ ...updated });
     }
 
+    if (channels.rss?.enabled && selectedFeeds.length > 0) {
+      updated.rss = { ...updated.rss, status: "success", previewResult: { success: true, method: "rss", articles: selectedFeeds.map(f => ({ title: f.title, url: f.url, content: `${f.articleCount || 0} articles available`, publishedAt: "" })) } };
+      setChannels({ ...updated });
+    } else if (channels.rss?.enabled) {
+      const testUrl = channels.rss.url || sourceUrl;
+      if (testUrl.trim()) {
+        try {
+          const res = await fetch("/api/sources/preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: testUrl, type: "rss", maxArticles: settings.maxArticlesPerFetch }),
+          });
+          const data: PreviewResult = await res.json();
+          updated.rss = { ...updated.rss, status: data.success ? "success" : "failed", previewResult: data };
+        } catch {
+          updated.rss = { ...updated.rss, status: "failed", previewResult: { success: false, method: "none", articles: [], error: "Connection failed" } };
+        }
+        setChannels({ ...updated });
+      }
+    }
+
     setIsTesting(false);
     setStep("preview");
   };
@@ -344,12 +411,16 @@ function AddSourceView() {
   const successfulChannels = enabledChannels.filter(ch => channels[ch.type]?.status === "success");
 
   const handleConfirmImport = async () => {
-    if (successfulChannels.length === 0) return;
+    const hasRssFeeds = channels.rss?.enabled && selectedFeeds.length > 0;
+    const nonRssSuccessful = successfulChannels.filter(ch => ch.type !== "rss");
+    if (nonRssSuccessful.length === 0 && !hasRssFeeds) return;
     setIsImporting(true);
 
-    for (const ch of successfulChannels) {
+    const totalSources = nonRssSuccessful.length + (hasRssFeeds ? selectedFeeds.length : 0);
+
+    for (const ch of nonRssSuccessful) {
       const preview = channels[ch.type].previewResult;
-      const suffix = successfulChannels.length > 1 ? ch.suffix : "";
+      const suffix = totalSources > 1 ? ch.suffix : "";
       const finalName = `${sourceName.trim()}${suffix}`;
       let finalUrl = ch.needsUrl ? channels[ch.type].url : sourceUrl;
       let finalType = ch.type;
@@ -378,6 +449,24 @@ function AddSourceView() {
           { onSuccess: () => resolve(), onError: () => resolve() }
         );
       });
+    }
+
+    if (hasRssFeeds) {
+      for (const feed of selectedFeeds) {
+        await new Promise<void>((resolve) => {
+          createSource(
+            {
+              name: sourceName.trim(),
+              url: feed.url,
+              type: "rss",
+              intervalMinutes: settings.intervalMinutes,
+              maxArticlesPerFetch: settings.maxArticlesPerFetch,
+              retentionDays: settings.retentionDays,
+            },
+            { onSuccess: () => resolve(), onError: () => resolve() }
+          );
+        });
+      }
     }
 
     setIsImporting(false);
@@ -606,7 +695,7 @@ function AddSourceView() {
                               </Badge>
                             )}
                           </div>
-                          {state.enabled && ch.needsUrl && (
+                          {state.enabled && ch.needsUrl && ch.type !== "rss" && (
                             <div className="ml-10">
                               <Input
                                 value={state.url}
@@ -619,6 +708,81 @@ function AddSourceView() {
                                 <p className="text-xs text-green-600 dark:text-green-400 mt-1" data-testid={`text-discovered-hint-${ch.type}`}>
                                   Auto-detected from website. You can edit if needed.
                                 </p>
+                              )}
+                            </div>
+                          )}
+                          {ch.type === "rss" && state.enabled && (
+                            <div className="ml-10 space-y-2">
+                              {isDiscoveringFeeds && (
+                                <div className="flex items-center gap-2 text-sm text-muted-foreground py-2" data-testid="feeds-loading">
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                  Discovering RSS feeds...
+                                </div>
+                              )}
+                              {!isDiscoveringFeeds && discoveredFeeds.length > 0 && (
+                                <div className="space-y-1" data-testid="discovered-feeds-list">
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                    <p className="text-xs text-muted-foreground">
+                                      {discoveredFeeds.length} feed{discoveredFeeds.length !== 1 ? "s" : ""} found - {selectedFeeds.length} selected
+                                    </p>
+                                    <div className="flex gap-1">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => setDiscoveredFeeds(prev => prev.map(f => ({ ...f, selected: true })))}
+                                        data-testid="button-select-all-feeds"
+                                      >
+                                        All
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => setDiscoveredFeeds(prev => prev.map(f => ({ ...f, selected: false })))}
+                                        data-testid="button-deselect-all-feeds"
+                                      >
+                                        None
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  <div className="max-h-48 overflow-y-auto rounded-md border divide-y">
+                                    {discoveredFeeds.map((feed, idx) => (
+                                      <label
+                                        key={idx}
+                                        className="flex items-center gap-2 px-3 py-2 cursor-pointer hover-elevate"
+                                        data-testid={`feed-item-${idx}`}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={feed.selected || false}
+                                          onChange={() => toggleFeed(idx)}
+                                          className="rounded border-border"
+                                          data-testid={`feed-checkbox-${idx}`}
+                                        />
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-sm truncate">{feed.title || feed.url}</p>
+                                          <p className="text-xs text-muted-foreground truncate">{feed.url}</p>
+                                        </div>
+                                        {feed.articleCount != null && feed.articleCount > 0 && (
+                                          <Badge variant="secondary" className="shrink-0">
+                                            {feed.articleCount}
+                                          </Badge>
+                                        )}
+                                      </label>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {!isDiscoveringFeeds && discoveredFeeds.length === 0 && (
+                                <div className="space-y-1">
+                                  <Input
+                                    value={channels.rss?.url || ""}
+                                    onChange={e => setChannelUrl("rss", e.target.value)}
+                                    placeholder="Paste RSS feed URL directly"
+                                    className="text-sm"
+                                    data-testid="input-channel-url-rss"
+                                  />
+                                  <p className="text-xs text-muted-foreground">No feeds auto-discovered. You can paste a feed URL manually.</p>
+                                </div>
                               )}
                             </div>
                           )}

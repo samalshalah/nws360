@@ -152,6 +152,87 @@ export async function discoverRssFeedPublic(url: string): Promise<string | null>
   return discoverRssFeed(url);
 }
 
+export type DiscoveredFeed = {
+  title: string;
+  url: string;
+  type: "rss" | "atom";
+  articleCount?: number;
+};
+
+export async function discoverAllRssFeeds(url: string): Promise<DiscoveredFeed[]> {
+  const normalized = normalizeUrl(url);
+  const feeds: DiscoveredFeed[] = [];
+  const seenUrls = new Set<string>();
+
+  const addFeed = async (feedUrl: string, fallbackTitle?: string) => {
+    const key = feedUrl.replace(/\/+$/, "").toLowerCase();
+    if (seenUrls.has(key)) return;
+    seenUrls.add(key);
+    try {
+      const feed = await parser.parseURL(feedUrl);
+      const title = feed.title || fallbackTitle || feedUrl;
+      feeds.push({
+        title,
+        url: feedUrl,
+        type: feedUrl.includes("atom") ? "atom" : "rss",
+        articleCount: feed.items?.length || 0,
+      });
+    } catch {}
+  };
+
+  try {
+    const response = await fetch(normalized, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      signal: AbortSignal.timeout(15000),
+      redirect: "follow",
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const html = await response.text();
+
+    const linkRegex = /<link[^>]*type=["']application\/(rss|atom)\+xml["'][^>]*>/gi;
+    let match;
+    while ((match = linkRegex.exec(html)) !== null) {
+      const tag = match[0];
+      const hrefMatch = tag.match(/href=["']([^"']+)["']/i);
+      const titleMatch = tag.match(/title=["']([^"']+)["']/i);
+      if (hrefMatch?.[1]) {
+        const feedUrl = hrefMatch[1].startsWith("http") ? hrefMatch[1] : new URL(hrefMatch[1], normalized).href;
+        await addFeed(feedUrl, titleMatch?.[1]);
+      }
+    }
+
+    const cheerio = await import("cheerio");
+    const $ = cheerio.load(html);
+    const anchorPromises: Promise<void>[] = [];
+    $('a[href*="rss"], a[href*="feed"], a[href*=".xml"], a[href*="atom"]').each((_, el) => {
+      const href = $(el).attr("href");
+      const text = $(el).text().trim();
+      if (href && (href.includes("rss") || href.includes("feed") || href.match(/\.xml$/i) || href.includes("atom"))) {
+        try {
+          const feedUrl = href.startsWith("http") ? href : new URL(href, normalized).href;
+          if (!feedUrl.includes("javascript:") && !feedUrl.includes("#")) {
+            anchorPromises.push(addFeed(feedUrl, text || undefined));
+          }
+        } catch {}
+      }
+    });
+    await Promise.allSettled(anchorPromises);
+  } catch (e) {
+    console.log(`[Discovery] Failed to fetch page for RSS discovery: ${e instanceof Error ? e.message : e}`);
+  }
+
+  const commonPaths = ["/feed", "/rss", "/feed.xml", "/rss.xml", "/atom.xml", "/index.xml", "/feeds/posts/default", "/?feed=rss2"];
+  const base = normalized.replace(/\/$/, "");
+  for (const path of commonPaths) {
+    await addFeed(`${base}${path}`);
+  }
+
+  return feeds;
+}
+
 async function discoverRssFeed(url: string): Promise<string | null> {
   const normalized = normalizeUrl(url);
   
