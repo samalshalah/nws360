@@ -357,7 +357,7 @@ function AddSourceView() {
       if (preview?.method === "rss" && preview?.feedUrl) {
         finalType = "rss";
         finalUrl = preview.feedUrl;
-      } else if (preview?.method === "google_news_fallback") {
+      } else if (preview?.method === "google_news_fallback" && ch.type === "website") {
         finalType = "google_news";
         try {
           const domain = new URL(finalUrl.startsWith("http") ? finalUrl : `https://${finalUrl}`).hostname.replace("www.", "");
