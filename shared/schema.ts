@@ -1511,6 +1511,7 @@ export interface ArticleQueryParams {
   search?: string;
   sourceId?: number;
   sourceIds?: number[];
+  sourceName?: string;
   sentiment?: string;
   category?: string;
   sourceType?: string;

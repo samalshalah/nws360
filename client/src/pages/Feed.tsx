@@ -42,6 +42,7 @@ export default function Feed() {
     return {
       search: params.get("search") || "",
       sourceId: undefined as string | undefined,
+      sourceName: undefined as string | undefined,
       sentiment: undefined as string | undefined,
       category: undefined as string | undefined,
       sourceType: undefined as string | undefined,
@@ -106,6 +107,7 @@ export default function Feed() {
   const { data: articlesData, isLoading: isLoadingArticles, isFetching } = useArticles({
     search: filters.search,
     sourceId: filters.sourceId ? parseInt(filters.sourceId) : undefined,
+    sourceName: filters.sourceName,
     sentiment: filters.sentiment,
     category: filters.category,
     sourceType: filters.sourceType,
@@ -213,6 +215,7 @@ export default function Feed() {
     const params = new URLSearchParams();
     if (filters.search) params.set("search", filters.search);
     if (filters.sourceId) params.set("sourceId", filters.sourceId);
+    if (filters.sourceName) params.set("sourceName", filters.sourceName);
     if (filters.sentiment) params.set("sentiment", filters.sentiment);
     if (filters.category) params.set("category", filters.category);
     if (filters.sourceType) params.set("sourceType", filters.sourceType);
@@ -224,10 +227,11 @@ export default function Feed() {
     resetScroll();
   };
 
-  const hasActiveFilters = filters.search || filters.sourceId || filters.sentiment || filters.category || filters.sourceType || filters.dateRange !== "all";
+  const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sentiment || filters.category || filters.sourceType || filters.dateRange !== "all";
 
   const clearFilters = () => {
-    setFilters({ search: "", sourceId: undefined, sentiment: undefined, category: undefined, sourceType: undefined, dateRange: "all" });
+    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sentiment: undefined, category: undefined, sourceType: undefined, dateRange: "all" });
+    setSearchInput("");
     resetScroll();
   };
 
@@ -251,6 +255,12 @@ export default function Feed() {
   const visibleChannels = CHANNEL_CONFIG.filter(
     ch => ch.key === "all" || activeChannelTypes.has(ch.key)
   );
+
+  const uniqueSourceNames = useMemo(() => {
+    if (!sources) return [];
+    const names = new Set(sources.map((s: any) => s.name));
+    return Array.from(names).sort();
+  }, [sources]);
 
   const timeRangePills = [
     { key: "today", label: t("feed.today") },
@@ -429,17 +439,17 @@ export default function Feed() {
           </Select>
 
           <Select
-            value={filters.sourceId || "all"}
-            onValueChange={(val) => updateFilter("sourceId", val === "all" ? undefined : val)}
+            value={filters.sourceName || "all"}
+            onValueChange={(val) => updateFilter("sourceName", val === "all" ? undefined : val)}
           >
             <SelectTrigger className="w-full sm:w-[180px] bg-background" data-testid="select-filter-source">
               <SelectValue placeholder={t("feed.allSources")} />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">{t("feed.allSources")}</SelectItem>
-              {sources?.map(source => (
-                <SelectItem key={source.id} value={source.id.toString()}>
-                  {source.name}
+              {uniqueSourceNames.map(name => (
+                <SelectItem key={name} value={name}>
+                  {name}
                 </SelectItem>
               ))}
             </SelectContent>

@@ -473,10 +473,19 @@ export async function registerRoutes(
       const user = req.user as any;
       const clientId = resolveClientId(user);
       const scopedSourceIds = await getUserSourceIds(user);
+      let filteredSourceIds = scopedSourceIds;
+      const sourceNameFilter = req.query.sourceName as string;
+      if (sourceNameFilter) {
+        const allSources = await storage.getSources();
+        const matchingIds = allSources
+          .filter(s => s.name === sourceNameFilter && (!scopedSourceIds || scopedSourceIds.includes(s.id)))
+          .map(s => s.id);
+        filteredSourceIds = matchingIds.length > 0 ? matchingIds : [-1];
+      }
       const params = {
         search: req.query.search as string,
         sourceId: req.query.sourceId && !isNaN(parseInt(req.query.sourceId as string)) ? parseInt(req.query.sourceId as string) : undefined,
-        sourceIds: scopedSourceIds,
+        sourceIds: filteredSourceIds,
         clientId: clientId || undefined,
         sentiment: req.query.sentiment as string,
         category: req.query.category as string,
