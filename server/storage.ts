@@ -1280,6 +1280,7 @@ export class DatabaseStorage implements IStorage {
         bySource: [],
         timeline: [],
         byCategory: [],
+        confidence: { totalCount: 0, analyzedCount: 0, failedCount: 0, pendingRetryCount: 0 },
       };
     }
     const start = new Date(startDate);
