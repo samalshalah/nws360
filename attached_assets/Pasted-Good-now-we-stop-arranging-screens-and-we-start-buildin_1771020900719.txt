@@ -1,0 +1,176 @@
+Good — now we stop “arranging screens” and we start building a real multi-tenant platform.
+Think Microsoft 365: the menu is not UI… it is a projection of authority.
+
+Below are the two prompts in the correct order.
+
+🧠 PROMPT 1 — ENTERPRISE PERMISSION SYSTEM (RUN FIRST)
+
+Paste this into Replit.
+
+Prompt:
+
+Implement a full enterprise-grade Role-Based Access Control (RBAC) and Tenant Isolation permission system across the entire application.
+
+This is a multi-tenant SaaS platform. Every object in the system belongs to a client organization (tenant). The system must behave similar to Microsoft 365 admin + organization + members.
+
+1. Roles Hierarchy
+
+Create system roles:
+
+SYSTEM_ADMIN
+CLIENT_ADMIN
+CLIENT_USER
+READONLY_USER
+
+Rules:
+
+SYSTEM_ADMIN
+
+Can access all tenants
+
+Can impersonate any client or user
+
+Can switch active tenant from a dropdown
+
+clientId = NULL (global)
+
+CLIENT_ADMIN
+
+Belongs to one tenant
+
+Can manage users inside their tenant
+
+Can manage sources, integrations, keywords, and settings for their tenant
+
+Cannot access other tenants
+
+CLIENT_USER
+
+Normal operational user
+
+Can view feeds, analytics, intelligence, collaboration
+
+Cannot manage users or billing
+
+READONLY_USER
+
+Can only view dashboards and reports
+
+Cannot modify anything
+
+2. Tenant Context Resolver
+
+Create a central function:
+
+resolveTenantContext(user, session)
+
+Behavior priority:
+
+If SYSTEM_ADMIN impersonating → return impersonated tenantId
+
+Else if SYSTEM_ADMIN selected tenant from dropdown → return selected tenantId
+
+Else return user.clientId
+
+All routes must use this function.
+Never directly use user.clientId again anywhere.
+
+3. Route Protection Middleware
+
+Create middleware:
+
+requireRole(role)
+requireTenantAccess()
+requireSystemAdmin()
+
+Rules:
+Every API route must enforce permission BEFORE database access.
+
+Examples:
+
+/api/admin/* → SYSTEM_ADMIN only
+/api/client/users → CLIENT_ADMIN only
+/api/feeds → CLIENT_USER+
+/api/analytics → CLIENT_USER+
+/api/billing → CLIENT_ADMIN only
+/api/system-health → SYSTEM_ADMIN only
+
+4. Database Enforcement
+
+Every tenant table must be filtered by tenantId:
+
+WHERE clientId = resolvedTenantId
+
+SYSTEM_ADMIN without impersonation:
+
+Can query across tenants only in admin dashboards
+
+Never in normal product endpoints
+
+No cross-tenant joins allowed.
+
+5. Impersonation
+
+Add admin impersonation:
+
+POST /api/admin/impersonate/client/:id
+POST /api/admin/impersonate/user/:id
+POST /api/admin/impersonate/exit
+
+Store in session:
+impersonation: {
+active: true,
+tenantId,
+userId
+}
+
+Log every impersonation to:
+impersonation_logs table with adminUserId, targetUserId, targetTenantId, ip, timestamp
+
+6. Tenant-Scoped Workers
+
+Background workers must process per-tenant:
+
+getDistinctClientIds()
+for each tenant:
+processFeeds(tenantId)
+runAI(tenantId)
+computeAnalytics(tenantId)
+
+Never aggregate across tenants.
+
+7. UI Capability Endpoint
+
+Create endpoint:
+
+GET /api/auth/capabilities
+
+Returns allowed capabilities based on role:
+
+{
+role,
+tenantId,
+permissions: {
+feeds: true,
+analytics: true,
+intelligence: true,
+sources: true/false,
+users: true/false,
+billing: true/false,
+systemAdmin: true/false
+}
+}
+
+Frontend will use this later to build menu dynamically.
+
+After implementation, verify:
+
+No route accesses user.clientId directly
+
+All DB queries scoped
+
+Admin impersonation changes visible data
+
+Client admin cannot see other tenants
+
+END PROMPT

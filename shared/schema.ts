@@ -1648,6 +1648,15 @@ export const PERMISSION_CODES = {
 
 export type PermissionCode = (typeof PERMISSION_CODES)[keyof typeof PERMISSION_CODES];
 
+export const SYSTEM_ROLES = {
+  SYSTEM_ADMIN: "admin",
+  CLIENT_ADMIN: "client_admin",
+  CLIENT_USER: "client",
+  READONLY_USER: "viewer",
+} as const;
+
+export type SystemRole = (typeof SYSTEM_ROLES)[keyof typeof SYSTEM_ROLES];
+
 // Default Permission Groups (roles)
 export const DEFAULT_PERMISSION_GROUPS = {
   PLATFORM_ADMIN: "platform_admin",

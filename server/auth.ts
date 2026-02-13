@@ -6,7 +6,7 @@ import createMemoryStore from "memorystore";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { storage } from "./storage";
-import { User } from "@shared/schema";
+import { User, SYSTEM_ROLES } from "@shared/schema";
 import { fetchAllFeeds } from "./feed-worker";
 
 declare module "express-session" {
@@ -17,6 +17,7 @@ declare module "express-session" {
       originalUserId: number;
       isImpersonating: boolean;
     };
+    selectedTenantId?: number;
   }
 }
 
@@ -100,8 +101,9 @@ export function setupAuth(app: Express) {
       });
 
       try {
-        const defaultGroupName = user.role === "admin" ? "Platform Admin" :
-          user.role === "client" ? "Organization Admin" : "Viewer";
+        const defaultGroupName = user.role === SYSTEM_ROLES.SYSTEM_ADMIN ? "Platform Admin" :
+          user.role === SYSTEM_ROLES.CLIENT_ADMIN ? "Organization Admin" :
+          user.role === SYSTEM_ROLES.CLIENT_USER ? "Analyst" : "Viewer";
         const group = await storage.getPermissionGroupByName(defaultGroupName);
         if (group) {
           await storage.assignUserToGroup(user.id, group.id);
@@ -158,7 +160,7 @@ export function requirePermission(...permissionCodes: string[]) {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
 
-    if (user.role === "admin") return next();
+    if (user.role === SYSTEM_ROLES.SYSTEM_ADMIN) return next();
 
     try {
       const userPerms = await storage.getEffectivePermissions(user.id);
@@ -179,7 +181,7 @@ export function requireAnyPermission(...permissionCodes: string[]) {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
 
-    if (user.role === "admin") return next();
+    if (user.role === SYSTEM_ROLES.SYSTEM_ADMIN) return next();
 
     try {
       const userPerms = await storage.getEffectivePermissions(user.id);

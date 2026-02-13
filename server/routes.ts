@@ -7,7 +7,7 @@ import { z } from "zod";
 import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler, previewSource } from "./feed-worker";
 import { openai } from "./replit_integrations/image/client";
 import { db } from "./db";
-import { articles, PLAN_LIMITS } from "@shared/schema";
+import { articles, PLAN_LIMITS, SYSTEM_ROLES } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
 import sanitizeHtml from "sanitize-html";
@@ -41,13 +41,125 @@ function sanitizeInput(text: string | undefined): string {
   return sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} }).trim();
 }
 
-function resolveClientId(user: any, req?: any): number | null {
-  if (req?.session?.impersonation?.isImpersonating && req.session.impersonation.activeOrganizationId) {
-    return req.session.impersonation.activeOrganizationId;
+const ROLE_HIERARCHY: Record<string, number> = {
+  [SYSTEM_ROLES.SYSTEM_ADMIN]: 100,
+  [SYSTEM_ROLES.CLIENT_ADMIN]: 50,
+  [SYSTEM_ROLES.CLIENT_USER]: 20,
+  [SYSTEM_ROLES.READONLY_USER]: 10,
+};
+
+function getRoleLevel(role: string): number {
+  return ROLE_HIERARCHY[role] ?? 0;
+}
+
+function isSystemAdmin(user: any): boolean {
+  return user.role === SYSTEM_ROLES.SYSTEM_ADMIN;
+}
+
+function isClientAdmin(user: any): boolean {
+  return user.role === SYSTEM_ROLES.CLIENT_ADMIN;
+}
+
+function isReadonly(user: any): boolean {
+  return user.role === SYSTEM_ROLES.READONLY_USER;
+}
+
+interface TenantContext {
+  tenantId: number | null;
+  effectiveUser: any;
+  isImpersonating: boolean;
+  originalUserId: number | null;
+}
+
+function resolveTenantContext(user: any, req: any): TenantContext {
+  const impersonation = req.session?.impersonation;
+
+  if (isSystemAdmin(user) && impersonation?.isImpersonating && impersonation.activeOrganizationId) {
+    return {
+      tenantId: impersonation.activeOrganizationId,
+      effectiveUser: user,
+      isImpersonating: true,
+      originalUserId: impersonation.originalUserId || user.id,
+    };
   }
-  if (user.role === "admin") return null;
-  if (user.clientId) return user.clientId;
-  return null;
+
+  if (isSystemAdmin(user) && req.session?.selectedTenantId) {
+    return {
+      tenantId: req.session.selectedTenantId,
+      effectiveUser: user,
+      isImpersonating: false,
+      originalUserId: null,
+    };
+  }
+
+  if (isSystemAdmin(user)) {
+    return {
+      tenantId: null,
+      effectiveUser: user,
+      isImpersonating: false,
+      originalUserId: null,
+    };
+  }
+
+  return {
+    tenantId: user.clientId || null,
+    effectiveUser: user,
+    isImpersonating: false,
+    originalUserId: null,
+  };
+}
+
+function resolveClientId(user: any, req?: any): number | null {
+  const ctx = resolveTenantContext(user, req || {});
+  return ctx.tenantId;
+}
+
+function requireRole(minRole: string) {
+  return (req: any, res: any, next: any) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const userLevel = getRoleLevel(user.role);
+    const requiredLevel = getRoleLevel(minRole);
+    if (userLevel < requiredLevel) {
+      return res.status(403).json({ message: "Insufficient role permissions" });
+    }
+    next();
+  };
+}
+
+function requireSystemAdmin() {
+  return (req: any, res: any, next: any) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (!isSystemAdmin(user)) {
+      return res.status(403).json({ message: "Platform admin access required" });
+    }
+    next();
+  };
+}
+
+function requireTenantAccess() {
+  return (req: any, res: any, next: any) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const ctx = resolveTenantContext(user, req);
+    if (ctx.tenantId === null && !isSystemAdmin(user)) {
+      return res.status(403).json({ message: "No organization assigned" });
+    }
+    (req as any).tenantContext = ctx;
+    next();
+  };
+}
+
+function requireWriteAccess() {
+  return (req: any, res: any, next: any) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (isReadonly(user)) {
+      return res.status(403).json({ message: "Read-only users cannot modify data" });
+    }
+    next();
+  };
 }
 
 function getSourceLogoUrl(sourceUrl: string, sourceName?: string): string | null {
@@ -67,7 +179,7 @@ function getSourceLogoUrl(sourceUrl: string, sourceName?: string): string | null
 
 function requireClientId(user: any, req: any, res: any): number | false {
   const cid = resolveClientId(user, req);
-  if (cid === null && user.role !== "admin") {
+  if (cid === null && !isSystemAdmin(user)) {
     res.status(403).json({ message: "No organization assigned" });
     return false;
   }
@@ -75,7 +187,7 @@ function requireClientId(user: any, req: any, res: any): number | false {
 }
 
 async function getUserSourceIds(user: any): Promise<number[] | undefined> {
-  if (user.role === "admin") return undefined;
+  if (isSystemAdmin(user)) return undefined;
   const userIds = [user.id];
   const children = await storage.getUserChildren(user.id);
   for (const child of children) {
@@ -103,6 +215,7 @@ export async function registerRoutes(
     const user = req.user as any;
 
     try {
+      const ctx = resolveTenantContext(user, req);
       const impersonation = req.session?.impersonation || null;
 
       let effectiveUser = user;
@@ -113,9 +226,8 @@ export async function registerRoutes(
       const effectivePermissions = await storage.getEffectivePermissions(effectiveUser.id);
 
       let organization = null;
-      const orgId = impersonation?.activeOrganizationId || user.clientId || null;
-      if (orgId) {
-        organization = await storage.getClient(orgId);
+      if (ctx.tenantId) {
+        organization = await storage.getClient(ctx.tenantId);
       }
 
       res.json({
@@ -127,7 +239,7 @@ export async function registerRoutes(
           disabled: effectiveUser.disabled,
           createdAt: effectiveUser.createdAt,
         },
-        originalUser: impersonation?.isImpersonating ? {
+        originalUser: ctx.isImpersonating ? {
           id: user.id,
           username: user.username,
           role: user.role,
@@ -146,6 +258,7 @@ export async function registerRoutes(
           activeUserId: impersonation.activeUserId,
           originalUserId: impersonation.originalUserId,
         } : { isImpersonating: false, activeOrganizationId: null, activeUserId: null, originalUserId: null },
+        tenantId: ctx.tenantId,
       });
     } catch (err: any) {
       console.error("[auth/me] Error:", err.message);
@@ -157,7 +270,7 @@ export async function registerRoutes(
   app.post("/api/admin/impersonate/organization/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    if (user.role !== "admin") return res.status(403).json({ message: "Platform admin access required" });
+    if (!isSystemAdmin(user)) return res.status(403).json({ message: "Platform admin access required" });
 
     const orgId = parseInt(req.params.id);
     const org = await storage.getClient(orgId);
@@ -193,7 +306,7 @@ export async function registerRoutes(
   app.post("/api/admin/impersonate/user/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    if (user.role !== "admin") return res.status(403).json({ message: "Platform admin access required" });
+    if (!isSystemAdmin(user)) return res.status(403).json({ message: "Platform admin access required" });
 
     const targetUserId = parseInt(req.params.id);
     const targetUser = await storage.getUser(targetUserId);
@@ -254,18 +367,64 @@ export async function registerRoutes(
   app.get("/api/admin/impersonation-logs", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    if (user.role !== "admin") return res.status(403).json({ message: "Platform admin access required" });
+    if (!isSystemAdmin(user)) return res.status(403).json({ message: "Platform admin access required" });
 
     const limit = parseInt(req.query.limit as string) || 50;
     const logs = await storage.getImpersonationLogs({ limit });
     res.json(logs);
   });
 
+  // === TENANT SELECTION (SYSTEM_ADMIN only) ===
+  app.post("/api/admin/select-tenant", requireSystemAdmin(), async (req, res) => {
+    const { tenantId } = req.body;
+    if (tenantId !== null && tenantId !== undefined) {
+      const org = await storage.getClient(tenantId);
+      if (!org) return res.status(404).json({ message: "Organization not found" });
+      req.session.selectedTenantId = tenantId;
+      res.json({ message: "Tenant selected", tenantId, organization: { id: org.id, name: org.name } });
+    } else {
+      req.session.selectedTenantId = undefined;
+      res.json({ message: "Tenant selection cleared", tenantId: null });
+    }
+  });
+
+  // === CAPABILITIES ENDPOINT ===
+  app.get("/api/auth/capabilities", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const ctx = resolveTenantContext(user, req);
+
+    const role = user.role;
+    const sysAdmin = isSystemAdmin(user);
+    const clientAdmin = isClientAdmin(user) || sysAdmin;
+    const readonlyUser = isReadonly(user);
+
+    res.json({
+      role,
+      tenantId: ctx.tenantId,
+      isImpersonating: ctx.isImpersonating,
+      permissions: {
+        feeds: !readonlyUser,
+        analytics: true,
+        intelligence: true,
+        sources: clientAdmin,
+        users: clientAdmin,
+        billing: clientAdmin,
+        systemAdmin: sysAdmin,
+        collaboration: !readonlyUser,
+        integrations: clientAdmin,
+        settings: clientAdmin,
+        exports: !readonlyUser,
+        readOnly: readonlyUser,
+      },
+    });
+  });
+
   // === SOURCES ===
   app.get(api.sources.list.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    if (user.role === "admin") {
+    if (isSystemAdmin(user)) {
       const allSources = await storage.getSources();
       return res.json(allSources);
     }
@@ -330,7 +489,7 @@ export async function registerRoutes(
       const user = req.user as any;
       const id = parseInt(req.params.id);
       const clientId = resolveClientId(user, req);
-      if (user.role !== "admin") {
+      if (!isSystemAdmin(user)) {
         const existingSource = await storage.getSource(id, clientId || undefined);
         if (!existingSource || existingSource.userId !== user.id) {
           return res.status(403).json({ message: "Access denied" });
@@ -366,7 +525,7 @@ export async function registerRoutes(
     const user = req.user as any;
     const id = parseInt(req.params.id);
     const clientId = resolveClientId(user, req);
-    if (user.role !== "admin") {
+    if (!isSystemAdmin(user)) {
       const existingSource = await storage.getSource(id, clientId || undefined);
       if (!existingSource || existingSource.userId !== user.id) {
         return res.status(403).json({ message: "Access denied" });
@@ -631,7 +790,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const source = await storage.getSource(id, clientId || undefined);
     if (!source) return res.status(404).json({ message: "Source not found" });
-    if (user.role !== "admin" && source.userId !== user.id) {
+    if (!isSystemAdmin(user) && source.userId !== user.id) {
       return res.status(403).json({ message: "Access denied" });
     }
     try {
@@ -1129,7 +1288,7 @@ export async function registerRoutes(
   app.post("/api/articles/bulk-delete", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    if (user.role !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!isSystemAdmin(user)) return res.status(403).json({ message: "Admin access required" });
     const clientId = resolveClientId(user, req);
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids array required" });
@@ -1143,7 +1302,7 @@ export async function registerRoutes(
   app.post("/api/articles/bulk-categorize", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    if (user.role !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!isSystemAdmin(user)) return res.status(403).json({ message: "Admin access required" });
     const clientId = resolveClientId(user, req);
     const { ids, category } = req.body;
     if (!Array.isArray(ids) || ids.length === 0 || !category) return res.status(400).json({ message: "ids and category required" });
@@ -1156,7 +1315,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     let allUsers;
-    if (user.role === "admin") {
+    if (isSystemAdmin(user)) {
       allUsers = await storage.getUsers();
     } else {
       allUsers = await storage.getUsers(user.id);
@@ -1186,7 +1345,7 @@ export async function registerRoutes(
     if (existingUser) return res.status(400).json({ message: "Username already exists" });
 
     let assignedRole = "client";
-    if (currentUser.role === "admin" && role && ["admin", "client"].includes(role)) {
+    if (isSystemAdmin(currentUser) && role && [SYSTEM_ROLES.SYSTEM_ADMIN, SYSTEM_ROLES.CLIENT_ADMIN, SYSTEM_ROLES.CLIENT_USER, SYSTEM_ROLES.READONLY_USER].includes(role)) {
       assignedRole = role;
     }
 
@@ -1211,7 +1370,7 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (id === currentUser.id) return res.status(400).json({ message: "Cannot change your own role" });
 
-    if (currentUser.role !== "admin") {
+    if (!isSystemAdmin(currentUser)) {
       const targetUser = await storage.getUser(id);
       if (!targetUser || targetUser.parentId !== currentUser.id) {
         return res.status(403).json({ message: "Access denied" });
@@ -1219,7 +1378,8 @@ export async function registerRoutes(
     }
 
     const { role } = req.body;
-    if (!role || !["admin", "client", "viewer"].includes(role)) return res.status(400).json({ message: "Invalid role" });
+    const validRoles = Object.values(SYSTEM_ROLES);
+    if (!role || !validRoles.includes(role)) return res.status(400).json({ message: "Invalid role" });
     const updated = await storage.updateUserRole(id, role);
     if (!updated) return res.status(404).json({ message: "User not found" });
     res.json({ id: updated.id, username: updated.username, role: updated.role, parentId: updated.parentId, createdAt: updated.createdAt });
@@ -1231,7 +1391,7 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (id === currentUser.id) return res.status(400).json({ message: "Cannot delete yourself" });
 
-    if (currentUser.role !== "admin") {
+    if (!isSystemAdmin(currentUser)) {
       const targetUser = await storage.getUser(id);
       if (!targetUser || targetUser.parentId !== currentUser.id) {
         return res.status(403).json({ message: "Access denied" });
@@ -1303,7 +1463,7 @@ export async function registerRoutes(
   // === ADMIN: SOURCES MANAGEMENT ===
   function requireAdmin(req: any, res: any): boolean {
     if (!req.isAuthenticated()) { res.sendStatus(401); return false; }
-    if ((req.user as any).role !== "admin") { res.status(403).json({ message: "Admin access required" }); return false; }
+    if (!isSystemAdmin(req.user as any)) { res.status(403).json({ message: "Admin access required" }); return false; }
     return true;
   }
 
@@ -3013,7 +3173,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const params: any = {};
-    if (user.role !== "admin") params.userId = user.id;
+    if (!isSystemAdmin(user)) params.userId = user.id;
     if (req.query.status) params.status = req.query.status as string;
     const tickets = await storage.getSupportTickets(params);
     res.json(tickets);
@@ -3084,7 +3244,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const params: any = {};
-    if (user.role !== "admin") params.userId = user.id;
+    if (!isSystemAdmin(user)) params.userId = user.id;
     if (req.query.feature) params.feature = req.query.feature;
     const feedback = await storage.getUserFeedback(params);
     res.json(feedback);
@@ -3122,7 +3282,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const params: any = {};
-    if (user.role !== "admin") params.userId = user.id;
+    if (!isSystemAdmin(user)) params.userId = user.id;
     if (req.query.status) params.status = req.query.status;
     if (req.query.articleId) params.articleId = parseInt(req.query.articleId as string);
     res.json(await storage.getAiCorrections(params));
