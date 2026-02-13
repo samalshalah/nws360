@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { formatDistanceToNow } from "date-fns";
 import { ExternalLink, Calendar, Newspaper, Rss, Globe, Send, Youtube, Facebook, Instagram, Twitter, Bookmark, Share2, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { type Article, type Source } from "@shared/schema";
 import { cn } from "@/lib/utils";
@@ -218,16 +219,23 @@ export function ArticleCard({ article, selected, onToggleSelect }: ArticleCardPr
               </button>
             )}
             {article.sentimentLabel && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setLocation(`/feed?sentiment=${article.sentimentLabel}`); }}
-                data-testid={`badge-sentiment-${article.id}`}
-              >
-                <Badge variant="outline" className={cn("capitalize text-xs cursor-pointer", sentimentColor)}>
-                  {article.sentimentLabel === "positive" ? t("feed.positive") : 
-                   article.sentimentLabel === "negative" ? t("feed.negative") : 
-                   t("feed.neutral")}
-                </Badge>
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setLocation(`/feed?sentiment=${article.sentimentLabel}`); }}
+                    data-testid={`badge-sentiment-${article.id}`}
+                  >
+                    <Badge variant="outline" className={cn("capitalize text-xs cursor-pointer", sentimentColor)}>
+                      {article.sentimentLabel === "positive" ? t("feed.positive") : 
+                       article.sentimentLabel === "negative" ? t("feed.negative") : 
+                       t("feed.neutral")}
+                    </Badge>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-[220px] text-center text-xs">
+                  {t("feed.sentimentTooltip")}
+                </TooltipContent>
+              </Tooltip>
             )}
           </div>
         </div>

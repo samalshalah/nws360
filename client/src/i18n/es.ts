@@ -103,6 +103,7 @@ export default {
     noMoreArticles: "No hay más artículos",
     allTypes: "Todos",
     allChannels: "Todos los canales",
+    sentimentTooltip: "Basado en el análisis de IA del lenguaje y tono del artículo, no del evento en sí",
     news: "Noticias",
     social: "Social",
     allDates: "Todas las fechas",

@@ -103,6 +103,7 @@ export default {
     noMoreArticles: "لا توجد مقالات أخرى",
     allTypes: "الكل",
     allChannels: "كل القنوات",
+    sentimentTooltip: "بناءً على تحليل الذكاء الاصطناعي للغة المقال ونبرته، وليس الحدث نفسه",
     news: "أخبار",
     social: "اجتماعي",
     allDates: "كل التواريخ",

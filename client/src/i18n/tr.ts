@@ -103,6 +103,7 @@ export default {
     noMoreArticles: "Yüklenecek başka makale yok",
     allTypes: "Tümü",
     allChannels: "Tüm Kanallar",
+    sentimentTooltip: "Makalenin dili ve tonuna dayalı yapay zeka analizi, olayın kendisine değil",
     news: "Haberler",
     social: "Sosyal",
     allDates: "Tüm Tarihler",

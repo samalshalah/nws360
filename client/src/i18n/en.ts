@@ -103,6 +103,7 @@ export default {
     noMoreArticles: "No more articles to load",
     allTypes: "All",
     allChannels: "All Channels",
+    sentimentTooltip: "Based on AI analysis of the article's language and tone, not the event itself",
     news: "News",
     social: "Social",
     allDates: "All Dates",
