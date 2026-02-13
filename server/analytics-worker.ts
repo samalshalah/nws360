@@ -179,8 +179,6 @@ export async function runAnalyticsComputation() {
   const startTime = Date.now();
 
   try {
-    await computeMetricsForClient(sevenDaysAgo, thirtyDaysAgo, now);
-
     const clientIds = await storage.getDistinctClientIds();
     for (const cId of clientIds) {
       await computeMetricsForClient(sevenDaysAgo, thirtyDaysAgo, now, cId);
@@ -199,14 +197,16 @@ export async function runAnalyticsComputation() {
   }
 }
 
-export async function getCachedAnalytics(metricType: string, metricKey = "global") {
+export async function getCachedAnalytics(metricType: string, clientId: number) {
+  const metricKey = `client_${clientId}`;
   const results = await db
     .select()
     .from(analyticsCache)
     .where(
       and(
         eq(analyticsCache.metricType, metricType),
-        eq(analyticsCache.metricKey, metricKey)
+        eq(analyticsCache.metricKey, metricKey),
+        eq(analyticsCache.clientId, clientId)
       )
     )
     .orderBy(desc(analyticsCache.computedAt))
