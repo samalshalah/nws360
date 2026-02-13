@@ -103,7 +103,7 @@ export default {
     noMoreArticles: "Plus d'articles à charger",
     allTypes: "Tous",
     allChannels: "Toutes les chaînes",
-    sentimentTooltip: "Basé sur l'analyse IA du langage et du ton de l'article, pas de l'événement lui-même",
+    sentimentTooltip: "Ton de l'article détecté par l'IA",
     news: "Actualités",
     social: "Réseaux sociaux",
     allDates: "Toutes les dates",
