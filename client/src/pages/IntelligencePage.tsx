@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   Brain, Layers, BookOpen, AlertTriangle, Users, TrendingUp,
   MessageSquare, BarChart3, Eye, Shield, Clock, ChevronDown,
-  ChevronUp, Send, Sparkles, Info
+  ChevronUp, Send, Sparkles, Info, RefreshCw
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer
@@ -806,7 +806,44 @@ function AiAssistantTab() {
 
 export default function IntelligencePage() {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const [mode, setMode] = useViewMode();
+
+  const refreshIntelligence = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/run-intelligence");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Intelligence pipeline started", description: "Story clusters, briefs, and events are being rebuilt. This may take a minute." });
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/briefs"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/entities"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/predictions"] });
+      }, 5000);
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const refreshAnalytics = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/compute-analytics");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Analytics refresh started", description: "Dashboard stats and trends are being recalculated." });
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/analytics"] });
+      }, 3000);
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -817,7 +854,26 @@ export default function IntelligencePage() {
           </h1>
           <p className="text-muted-foreground text-sm">AI-powered news intelligence and analysis</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refreshAnalytics.mutate()}
+            disabled={refreshAnalytics.isPending}
+            data-testid="button-refresh-analytics"
+          >
+            <RefreshCw className={`w-4 h-4 mr-1 ${refreshAnalytics.isPending ? "animate-spin" : ""}`} />
+            {refreshAnalytics.isPending ? "Refreshing..." : "Refresh Analytics"}
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => refreshIntelligence.mutate()}
+            disabled={refreshIntelligence.isPending}
+            data-testid="button-build-intelligence"
+          >
+            <Brain className={`w-4 h-4 mr-1 ${refreshIntelligence.isPending ? "animate-spin" : ""}`} />
+            {refreshIntelligence.isPending ? "Building..." : "Build Intelligence"}
+          </Button>
           <div className="flex items-center gap-2" data-testid="toggle-view-mode">
             <Eye className="w-4 h-4 text-muted-foreground" />
             <span className="text-xs font-medium text-muted-foreground">Executive</span>
