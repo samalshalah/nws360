@@ -507,6 +507,20 @@ function cleanText(raw: string): string {
     .trim();
 }
 
+function detectPlatform(url: string): string | null {
+  if (!url) return null;
+  const u = url.toLowerCase();
+  if (u.includes("facebook.com") || u.includes("fb.com")) return "facebook";
+  if (u.includes("twitter.com") || u.includes("x.com")) return "twitter";
+  if (u.includes("youtube.com") || u.includes("youtu.be")) return "youtube";
+  if (u.includes("instagram.com")) return "instagram";
+  if (u.includes("t.me") || u.includes("telegram")) return "telegram";
+  if (u.includes("reddit.com")) return "reddit";
+  if (u.includes("linkedin.com")) return "linkedin";
+  if (u.includes("news.google.com")) return "google_news";
+  return null;
+}
+
 async function processItems(
   source: { id: number; name: string; clientId?: number | null },
   items: { title: string; url: string; content: string; publishedAt: Date; image?: string; subSource?: string; engagementLikes?: number; engagementComments?: number; engagementShares?: number }[]
@@ -527,10 +541,17 @@ async function processItems(
 
     const title = item.title || "Untitled";
 
-    if (title.length >= 15) {
+    if (title.length >= 10) {
       const titleDup = await storage.getArticleByTitle(title, source.clientId ?? null);
       if (titleDup) {
-        console.log(`[Worker] Skipping duplicate by title: "${title.substring(0, 60)}..." (existing from source ${titleDup.sourceId})`);
+        const platform = detectPlatform(item.url) || "web";
+        const existingCrossPosts = Array.isArray(titleDup.crossPosts) ? titleDup.crossPosts as { platform: string; url: string; sourceId: number }[] : [];
+        const alreadyTracked = existingCrossPosts.some(cp => cp.url === item.url);
+        if (!alreadyTracked) {
+          const updated = [...existingCrossPosts, { platform, url: item.url, sourceId: source.id }];
+          await storage.updateArticle(titleDup.id, { crossPosts: updated });
+          console.log(`[Worker] Cross-post added: "${title.substring(0, 50)}..." on ${platform}`);
+        }
         continue;
       }
     }

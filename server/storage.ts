@@ -778,7 +778,7 @@ export class DatabaseStorage implements IStorage {
 
   async getArticleByTitle(title: string, clientId?: number | null): Promise<Article | undefined> {
     const normalizedTitle = title.toLowerCase().trim();
-    if (normalizedTitle.length < 15) return undefined;
+    if (normalizedTitle.length < 10) return undefined;
     const conditions = [sql`lower(trim(${articles.title})) = ${normalizedTitle}`];
     if (clientId !== undefined && clientId !== null) {
       conditions.push(eq(articles.clientId, clientId));

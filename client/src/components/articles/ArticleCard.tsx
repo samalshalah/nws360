@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { formatDistanceToNow } from "date-fns";
-import { ExternalLink, Calendar, Newspaper, Rss, Globe, Send, Youtube, Facebook, Instagram, Twitter, Bookmark, Share2 } from "lucide-react";
+import { ExternalLink, Calendar, Newspaper, Rss, Globe, Send, Youtube, Facebook, Instagram, Twitter, Bookmark, Share2, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type Article, type Source } from "@shared/schema";
@@ -26,6 +26,18 @@ const sourceTypeIcons: Record<string, typeof Rss> = {
   facebook: Facebook,
   instagram: Instagram,
   telegram: Send,
+};
+
+const platformIcons: Record<string, { icon: typeof Rss; label: string; color: string }> = {
+  facebook: { icon: Facebook, label: "Facebook", color: "text-blue-600 dark:text-blue-400" },
+  twitter: { icon: Twitter, label: "X / Twitter", color: "text-sky-500 dark:text-sky-400" },
+  youtube: { icon: Youtube, label: "YouTube", color: "text-red-600 dark:text-red-400" },
+  instagram: { icon: Instagram, label: "Instagram", color: "text-pink-600 dark:text-pink-400" },
+  telegram: { icon: Send, label: "Telegram", color: "text-blue-500 dark:text-blue-300" },
+  google_news: { icon: Search, label: "Google News", color: "text-green-600 dark:text-green-400" },
+  reddit: { icon: Globe, label: "Reddit", color: "text-orange-600 dark:text-orange-400" },
+  linkedin: { icon: Globe, label: "LinkedIn", color: "text-blue-700 dark:text-blue-300" },
+  web: { icon: Globe, label: "Web", color: "text-muted-foreground" },
 };
 
 const categoryColors: Record<string, string> = {
@@ -120,6 +132,7 @@ export function ArticleCard({ article, selected, onToggleSelect }: ArticleCardPr
   const hasImage = article.imageUrl && article.imageUrl !== "none" && !imgError;
   const publisherDomain = article.subSource ? getPublisherDomain(article.subSource) : null;
   const faviconUrl = publisherDomain ? `https://www.google.com/s2/favicons?sz=128&domain=${publisherDomain}` : null;
+  const crossPosts = (Array.isArray((article as any).crossPosts) ? (article as any).crossPosts : []) as { platform: string; url: string; sourceId: number }[];
 
   return (
     <motion.div
@@ -228,9 +241,35 @@ export function ArticleCard({ article, selected, onToggleSelect }: ArticleCardPr
         </p>
 
         <div className="flex items-center justify-between gap-2 pt-4 border-t border-border/50 flex-wrap">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Calendar className="w-3.5 h-3.5" />
-            {article.publishedAt ? formatDistanceToNow(new Date(article.publishedAt), { addSuffix: true }) : t("common.recently")}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Calendar className="w-3.5 h-3.5" />
+              {article.publishedAt ? formatDistanceToNow(new Date(article.publishedAt), { addSuffix: true }) : t("common.recently")}
+            </div>
+            {crossPosts.length > 0 && (
+              <div className="flex items-center gap-0.5" data-testid={`cross-posts-${article.id}`}>
+                <span className="text-[10px] text-muted-foreground/60 mr-0.5">{t("feed.alsoOn", "Also on")}</span>
+                {crossPosts.map((cp, idx) => {
+                  const pi = platformIcons[cp.platform];
+                  if (!pi) return null;
+                  const PIcon = pi.icon;
+                  return (
+                    <a
+                      key={idx}
+                      href={cp.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={pi.label}
+                      onClick={(e) => e.stopPropagation()}
+                      className={cn("p-1 rounded-md transition-colors hover-elevate", pi.color)}
+                      data-testid={`cross-post-${cp.platform}-${article.id}`}
+                    >
+                      <PIcon className="w-3.5 h-3.5" />
+                    </a>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-1">
