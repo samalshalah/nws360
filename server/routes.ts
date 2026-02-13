@@ -2155,7 +2155,7 @@ export async function registerRoutes(
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
-          { role: "system", content: `You are a predictive intelligence analyst for a news monitoring platform. Given a topic and a hypothetical event, estimate the likely outcomes. Provide your analysis as JSON with these fields: coverageIncreaseLikelihood (0-100), sentimentImpact (string describing direction and magnitude), relatedTopicsActivation (array of topic strings), riskAssessment (string), timeframe (string), explanation (string). Be specific and data-driven.\n\nContext:\n${context || "No existing forecast data."}` },
+          { role: "system", content: `You are a predictive intelligence analyst for a news monitoring platform. Given a topic and a hypothetical event, estimate the likely outcomes based on the hypothetical scenario itself and general domain reasoning. Provide your analysis as JSON with these fields: coverageIncreaseLikelihood (0-100), sentimentImpact (string describing direction and magnitude), relatedTopicsActivation (array of topic strings), riskAssessment (string), timeframe (string), explanation (string). Be specific and data-driven. IMPORTANT: The following context contains prior AI-generated estimates (not verified facts). Use them only as background reference, not as evidence. Base your analysis on the hypothetical event itself.\n\nPrior estimates (AI-generated, not verified):\n${context || "No prior estimates available."}` },
           { role: "user", content: `Topic: ${parsed.data.topic}\nHypothetical Event: ${parsed.data.hypotheticalEvent}` },
         ],
         max_tokens: 800,

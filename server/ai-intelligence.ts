@@ -518,7 +518,6 @@ export async function answerIntelligenceQuery(question: string, clientId?: numbe
   const topEntities = await storage.getTopEntities({ limit: 15, days: 7, clientId: clientId ?? undefined });
   const recentEvents = await storage.getDetectedEvents({ limit: 10, clientId: clientId ?? undefined });
   const latestBriefs = await storage.getDailyBriefs(3, clientId ?? undefined);
-  const predictions = await storage.getTrendPredictions({ limit: 10, clientId: clientId ?? undefined });
 
   const context = {
     recentArticles: recentArticles.items.slice(0, 20).map(a => ({
@@ -540,12 +539,6 @@ export async function answerIntelligenceQuery(question: string, clientId?: numbe
       explanation: e.explanation,
     })),
     latestBrief: latestBriefs[0]?.content || "",
-    predictions: predictions.map(p => ({
-      topic: p.topic,
-      type: p.predictionType,
-      probability: p.probability,
-      reasoning: p.reasoning,
-    })),
   };
 
   const uniqueSources = new Set(recentArticles.items.map(a => a.sourceId).filter(Boolean));
@@ -556,7 +549,7 @@ export async function answerIntelligenceQuery(question: string, clientId?: numbe
       messages: [
         {
           role: "system",
-          content: `You are an intelligence analyst assistant. Answer user questions using ONLY the provided analytics data and article information. Do NOT use external knowledge. If the data doesn't contain enough info to answer, say so honestly. Be specific, cite sources when possible, and give actionable insights. Return JSON with:
+          content: `You are an intelligence analyst assistant. Answer user questions using ONLY the provided ground-truth data (articles, entities, events). Do NOT use external knowledge. Do NOT speculate beyond what the data shows. If the data doesn't contain enough info to answer, say so honestly. Be specific, cite sources when possible, and give actionable insights. Return JSON with:
 "answer": your detailed answer (2-4 paragraphs),
 "sources": array of source names referenced,
 "confidence": 0-100 how confident you are in this answer based on available data`

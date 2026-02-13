@@ -197,13 +197,13 @@ export async function runAnalyticsComputation() {
   const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
   const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-  console.log("[Analytics] Computing cached metrics...");
+  console.log("[Analytics] Computing cached metrics (end boundary: today midnight, excludes partial current day)...");
   const startTime = Date.now();
 
   try {
     const clientIds = await storage.getDistinctClientIds();
     for (const cId of clientIds) {
-      await computeMetricsForClient(sevenDaysAgo, thirtyDaysAgo, now, cId);
+      await computeMetricsForClient(sevenDaysAgo, thirtyDaysAgo, today, cId);
     }
 
     const duration = Date.now() - startTime;

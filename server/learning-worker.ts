@@ -64,12 +64,19 @@ async function recalibrateAlertThresholds() {
     }
     const alertFeedback = clientFeedback.filter((f: any) => f.targetType === "alert");
 
+    const DAMPENING_FACTOR = 0.3;
+    const existingPrefs = await storage.getAlertPreferences(client.id);
+    const prefMap: Record<string, number> = {};
+    for (const p of existingPrefs) {
+      if (p.alertType) prefMap[p.alertType] = p.sensitivityScore ?? 50;
+    }
+
     for (const alertType of ALERT_TYPES) {
       const relevantFeedback = alertFeedback.filter((f: any) => {
         return f.comment?.includes(alertType) || f.targetType === alertType;
       });
 
-      if (relevantFeedback.length < 3) continue;
+      if (relevantFeedback.length < 5) continue;
 
       const helpfulCount = relevantFeedback.filter((f: any) => f.rating === "helpful" || f.rating === "useful").length;
       const noisyCount = relevantFeedback.filter((f: any) => f.rating === "noisy" || f.rating === "wrong").length;
@@ -77,20 +84,29 @@ async function recalibrateAlertThresholds() {
       if (total === 0) continue;
 
       const helpfulRatio = helpfulCount / total;
-      let newSensitivity = 50;
+      let targetSensitivity = 50;
       if (helpfulRatio > 0.7) {
-        newSensitivity = Math.min(80, 50 + Math.round((helpfulRatio - 0.5) * 60));
+        targetSensitivity = Math.min(80, 50 + Math.round((helpfulRatio - 0.5) * 60));
       } else if (helpfulRatio < 0.3) {
-        newSensitivity = Math.max(20, 50 - Math.round((0.5 - helpfulRatio) * 60));
+        targetSensitivity = Math.max(20, 50 - Math.round((0.5 - helpfulRatio) * 60));
+      }
+
+      const currentSensitivity = prefMap[alertType] ?? 50;
+      const newSensitivity = Math.round(currentSensitivity + DAMPENING_FACTOR * (targetSensitivity - currentSensitivity));
+      const clampedSensitivity = Math.max(20, Math.min(80, newSensitivity));
+
+      if (Math.abs(clampedSensitivity - currentSensitivity) < 2) {
+        console.log(`[Learning] ${alertType} sensitivity for client ${client.id} stable at ${currentSensitivity}, skipping`);
+        continue;
       }
 
       await storage.upsertAlertPreference({
         clientId: client.id,
         alertType,
-        sensitivityScore: newSensitivity,
+        sensitivityScore: clampedSensitivity,
         autoTuned: true,
       });
-      console.log(`[Learning] Updated ${alertType} sensitivity for client ${client.id}: ${newSensitivity}`);
+      console.log(`[Learning] Updated ${alertType} sensitivity for client ${client.id}: ${currentSensitivity} -> ${clampedSensitivity} (target: ${targetSensitivity}, dampened)`);
     }
   }
 }
@@ -178,28 +194,49 @@ async function generateMonthlyValueReports() {
   console.log("[Learning] Generating monthly value reports...");
   const clients = await storage.getClients();
   const now = new Date();
-  const reportMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const reportMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, "0")}`;
+  const monthStart = prevMonthDate;
+  const monthEnd = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  if (now.getDate() < 2) {
+    console.log("[Learning] Too early in the month to generate previous month report, skipping");
+    return;
+  }
 
   for (const client of clients) {
     const existing = await storage.getValueReports(client.id);
     if (existing.some((r: any) => r.reportMonth === reportMonth)) continue;
 
-    const articleResult = await storage.getArticles({ clientId: client.id });
-    const briefs = await storage.getDailyBriefs(30, client.id);
-    const events = await storage.getDetectedEvents({ limit: 100, clientId: client.id });
+    const articleResult = await storage.getArticles({
+      clientId: client.id,
+      startDate: monthStart.toISOString(),
+      endDate: monthEnd.toISOString(),
+    });
+    const briefs = await storage.getDailyBriefs(31, client.id);
+    const monthBriefs = briefs.filter((b: any) => {
+      const d = new Date(b.date);
+      return d >= monthStart && d < monthEnd;
+    });
+    const events = await storage.getDetectedEvents({ limit: 500, clientId: client.id });
+    const monthEvents = events.filter((e: any) => {
+      const d = new Date(e.detectedAt);
+      return d >= monthStart && d < monthEnd;
+    });
 
     await storage.createValueReport({
       clientId: client.id,
       reportMonth,
-      alertsDetected: events.length,
-      emergingTopicsCaught: briefs.reduce((sum: number, b: any) => sum + ((b.emergingTopics as any[])?.length || 0), 0),
+      alertsDetected: monthEvents.length,
+      emergingTopicsCaught: monthBriefs.reduce((sum: number, b: any) => sum + ((b.emergingTopics as any[])?.length || 0), 0),
       sentimentChanges: articleResult.items.filter((a: any) => a.sentimentLabel && a.sentimentLabel !== "neutral").length,
       estimatedTimeSavedMinutes: Math.round(articleResult.total * 2.5),
       articlesProcessed: articleResult.total,
-      briefsGenerated: briefs.length,
-      reportData: { generatedAt: now.toISOString(), period: reportMonth, automated: true },
+      briefsGenerated: monthBriefs.length,
+      reportData: { generatedAt: now.toISOString(), period: reportMonth, automated: true, finalized: true },
     });
-    console.log(`[Learning] Generated value report for client ${client.id}: ${reportMonth}`);
+    console.log(`[Learning] Generated value report for client ${client.id}: ${reportMonth} (finalized previous month)`);
   }
 }
 
