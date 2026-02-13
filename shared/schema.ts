@@ -44,6 +44,7 @@ export const sources = pgTable("sources", {
   clientId: integer("client_id"),
   country: text("country"),
   refreshPriority: text("refresh_priority").default("medium"),
+  logoUrl: text("logo_url"),
   deletedAt: timestamp("deleted_at"),
   lastFetchedAt: timestamp("last_fetched_at"),
   createdAt: timestamp("created_at").defaultNow(),
