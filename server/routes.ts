@@ -41,6 +41,21 @@ function sanitizeInput(text: string | undefined): string {
   return sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} }).trim();
 }
 
+function resolveClientId(user: any): number | null {
+  if (user.role === "admin") return null;
+  if (user.clientId) return user.clientId;
+  if (user.role === "client") return user.id;
+  return null;
+}
+
+function requireClientId(user: any): number {
+  const cid = resolveClientId(user);
+  if (cid === null && user.role !== "admin") {
+    throw new Error("User has no associated client");
+  }
+  return cid as number;
+}
+
 async function getUserSourceIds(user: any): Promise<number[] | undefined> {
   if (user.role === "admin") return undefined;
   const userIds = [user.id];
@@ -84,7 +99,8 @@ export async function registerRoutes(
       if (!req.isAuthenticated()) return res.sendStatus(401);
       const user = req.user as any;
       const input = api.sources.create.input.parse(req.body);
-      const source = await storage.createSource({...input, userId: user.id});
+      const clientId = resolveClientId(user);
+      const source = await storage.createSource({...input, userId: user.id, clientId: clientId || undefined});
 
       // Immediately fetch articles from the new source
       setTimeout(async () => {
@@ -241,11 +257,13 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     try {
       const user = req.user as any;
+      const clientId = resolveClientId(user);
       const scopedSourceIds = await getUserSourceIds(user);
       const params = {
         search: req.query.search as string,
         sourceId: req.query.sourceId && !isNaN(parseInt(req.query.sourceId as string)) ? parseInt(req.query.sourceId as string) : undefined,
         sourceIds: scopedSourceIds,
+        clientId: clientId || undefined,
         sentiment: req.query.sentiment as string,
         category: req.query.category as string,
         sourceType: req.query.sourceType as string,
@@ -518,10 +536,11 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
+    const clientId = resolveClientId(user);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getContentVolume(startDate, endDate, scopedSourceIds);
+    const data = await storage.getContentVolume(startDate, endDate, scopedSourceIds, clientId || undefined);
     res.json(data);
   });
 
@@ -529,10 +548,11 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
+    const clientId = resolveClientId(user);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getTrendingTopics(startDate, endDate, scopedSourceIds);
+    const data = await storage.getTrendingTopics(startDate, endDate, scopedSourceIds, clientId || undefined);
     res.json(data);
   });
 
@@ -540,10 +560,11 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
+    const clientId = resolveClientId(user);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getKeywordAnalysis(startDate, endDate, scopedSourceIds);
+    const data = await storage.getKeywordAnalysis(startDate, endDate, scopedSourceIds, clientId || undefined);
     res.json(data);
   });
 
@@ -551,10 +572,11 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
+    const clientId = resolveClientId(user);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getSentimentReports(startDate, endDate, scopedSourceIds);
+    const data = await storage.getSentimentReports(startDate, endDate, scopedSourceIds, clientId || undefined);
     res.json(data);
   });
 
@@ -562,10 +584,11 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
+    const clientId = resolveClientId(user);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getSourceBehavior(startDate, endDate, scopedSourceIds);
+    const data = await storage.getSourceBehavior(startDate, endDate, scopedSourceIds, clientId || undefined);
     res.json(data);
   });
 
@@ -573,13 +596,14 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
+    const clientId = resolveClientId(user);
     const topic = req.query.topic as string;
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!topic || typeof topic !== "string" || topic.trim().length === 0) return res.status(400).json({ message: "topic is required" });
     if (!startDate || !endDate || isNaN(Date.parse(startDate)) || isNaN(Date.parse(endDate))) return res.status(400).json({ message: "valid startDate and endDate required" });
     try {
-      const data = await storage.getNarrativeComparison(topic.trim(), startDate, endDate, scopedSourceIds);
+      const data = await storage.getNarrativeComparison(topic.trim(), startDate, endDate, scopedSourceIds, clientId || undefined);
       res.json(data);
     } catch (e: any) {
       console.error("Narrative comparison error:", e.message);
@@ -591,10 +615,11 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
+    const clientId = resolveClientId(user);
     const dateStr = (req.query.date as string) || new Date().toISOString().split("T")[0];
     if (isNaN(Date.parse(dateStr))) return res.status(400).json({ message: "valid date required" });
     try {
-      const data = await storage.getAnalyticsDailyBrief(dateStr, scopedSourceIds);
+      const data = await storage.getAnalyticsDailyBrief(dateStr, scopedSourceIds, clientId || undefined);
       res.json(data);
     } catch (e: any) {
       console.error("Daily brief error:", e.message);
@@ -606,13 +631,14 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
+    const clientId = resolveClientId(user);
     const keyword = req.query.keyword as string;
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!keyword || typeof keyword !== "string" || keyword.trim().length === 0) return res.status(400).json({ message: "keyword is required" });
     if (!startDate || !endDate || isNaN(Date.parse(startDate)) || isNaN(Date.parse(endDate))) return res.status(400).json({ message: "valid startDate and endDate required" });
     try {
-      const data = await storage.getKeywordDetail(keyword.trim(), startDate, endDate, scopedSourceIds);
+      const data = await storage.getKeywordDetail(keyword.trim(), startDate, endDate, scopedSourceIds, clientId || undefined);
       res.json(data);
     } catch (e: any) {
       console.error("Keyword detail error:", e.message);
@@ -861,7 +887,8 @@ export async function registerRoutes(
     try {
       const { name, url, type, active, intervalMinutes, maxArticlesPerFetch, retentionDays, country, refreshPriority } = req.body;
       if (!name || !url || !type) return res.status(400).json({ message: "name, url, and type are required" });
-      const source = await storage.createSource({ name: sanitizeInput(name), url, type, active: active !== false, intervalMinutes: intervalMinutes || 15, maxArticlesPerFetch: maxArticlesPerFetch || 10, retentionDays: retentionDays || 30, country: country || null, refreshPriority: refreshPriority || "medium", userId: user.id });
+      const adminClientId = req.body.clientId || resolveClientId(user);
+      const source = await storage.createSource({ name: sanitizeInput(name), url, type, active: active !== false, intervalMinutes: intervalMinutes || 15, maxArticlesPerFetch: maxArticlesPerFetch || 10, retentionDays: retentionDays || 30, country: country || null, refreshPriority: refreshPriority || "medium", userId: user.id, clientId: adminClientId || undefined });
       await storage.createAuditLog({ userId: user.id, action: "create", entity: "source", entityId: source.id, details: `Created source: ${source.name}` });
       setTimeout(async () => { try { await fetchSourceFeed(source.id); } catch {} }, 1000);
       res.status(201).json(source);
@@ -2149,9 +2176,11 @@ export async function registerRoutes(
 
   app.get("/api/stories", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
     const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
-    const clusters = await storage.getStoryClusters({ limit, offset });
+    const clusters = await storage.getStoryClusters({ limit, offset, clientId: clientId || undefined });
     res.json(clusters);
   });
 
@@ -2161,6 +2190,9 @@ export async function registerRoutes(
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
     const cluster = await storage.getStoryCluster(id);
     if (!cluster) return res.status(404).json({ message: "Story not found" });
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
+    if (clientId && cluster.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
     const clusterArticles = await storage.getClusterArticles(id);
     res.json({ ...cluster, articles: clusterArticles });
   });
@@ -2169,6 +2201,11 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const cluster = await storage.getStoryCluster(id);
+    if (!cluster) return res.status(404).json({ message: "Story not found" });
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
+    if (clientId && cluster.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
     const result = await analyzeNarratives(id);
     if (!result) return res.status(404).json({ message: "Not enough data for narrative analysis" });
     res.json(result);
@@ -2176,25 +2213,32 @@ export async function registerRoutes(
 
   app.get("/api/briefs", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
-    const briefs = await storage.getDailyBriefs(limit);
+    const briefs = await storage.getDailyBriefs(limit, clientId || undefined);
     res.json(briefs);
   });
 
   app.get("/api/briefs/:date", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    const brief = await storage.getDailyBrief(req.params.date);
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
+    const brief = await storage.getDailyBrief(req.params.date, clientId || undefined);
     if (!brief) return res.status(404).json({ message: "No brief for this date" });
     res.json(brief);
   });
 
   app.get("/api/events", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
     const events = await storage.getDetectedEvents({
       type: req.query.type as string,
       severity: req.query.severity as string,
       limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
       acknowledged: req.query.acknowledged === "true" ? true : req.query.acknowledged === "false" ? false : undefined,
+      clientId: clientId || undefined,
     });
     res.json(events);
   });
@@ -2209,40 +2253,51 @@ export async function registerRoutes(
 
   app.get("/api/entities", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
     const topEntities = await storage.getTopEntities({
       limit: req.query.limit ? parseInt(req.query.limit as string) : 30,
       days: req.query.days ? parseInt(req.query.days as string) : 7,
       entityType: req.query.type as string,
+      clientId: clientId || undefined,
     });
     res.json(topEntities);
   });
 
   app.get("/api/entities/:name", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
     const name = decodeURIComponent(req.params.name);
     const mentions = await storage.getEntityMentions(name, {
       limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
       startDate: req.query.startDate as string,
       endDate: req.query.endDate as string,
+      clientId: clientId || undefined,
     });
-    const timeline = await storage.getEntityTimeline(name, req.query.days ? parseInt(req.query.days as string) : 30);
+    const timeline = await storage.getEntityTimeline(name, req.query.days ? parseInt(req.query.days as string) : 30, clientId || undefined);
     res.json({ entityName: name, mentions, timeline });
   });
 
   app.get("/api/predictions", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
     const predictions = await storage.getTrendPredictions({
       topic: req.query.topic as string,
       limit: req.query.limit ? parseInt(req.query.limit as string) : 20,
+      clientId: clientId || undefined,
     });
     res.json(predictions);
   });
 
   app.post("/api/ai/query", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
     const { question } = req.body;
     if (!question || typeof question !== "string") return res.status(400).json({ message: "Question is required" });
-    const result = await answerIntelligenceQuery(sanitizeInput(question));
+    const result = await answerIntelligenceQuery(sanitizeInput(question), clientId || undefined);
     res.json(result);
   });
 

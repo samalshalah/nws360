@@ -41,6 +41,7 @@ export const sources = pgTable("sources", {
   maxArticlesPerFetch: integer("max_articles_per_fetch").default(10),
   retentionDays: integer("retention_days").default(30),
   userId: integer("user_id"),
+  clientId: integer("client_id"),
   country: text("country"),
   refreshPriority: text("refresh_priority").default("medium"),
   deletedAt: timestamp("deleted_at"),
@@ -84,8 +85,11 @@ export const articles = pgTable("articles", {
   engagementLikes: integer("engagement_likes"),
   engagementComments: integer("engagement_comments"),
   engagementShares: integer("engagement_shares"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_articles_client_id").on(table.clientId),
+]);
 
 export const insertArticleSchema = createInsertSchema(articles).omit({ id: true, createdAt: true });
 
@@ -213,10 +217,12 @@ export const analyticsCache = pgTable("analytics_cache", {
   data: jsonb("data").notNull(),
   periodStart: timestamp("period_start").notNull(),
   periodEnd: timestamp("period_end").notNull(),
+  clientId: integer("client_id"),
   computedAt: timestamp("computed_at").defaultNow(),
 }, (table) => [
   index("idx_cache_type_key").on(table.metricType, table.metricKey),
   index("idx_cache_period").on(table.periodStart, table.periodEnd),
+  index("idx_cache_client_id").on(table.clientId),
 ]);
 
 export const insertAnalyticsCacheSchema = createInsertSchema(analyticsCache).omit({ id: true, computedAt: true });
@@ -257,6 +263,7 @@ export const storyClusters = pgTable("story_clusters", {
   sourceCount: integer("source_count").default(0),
   avgSentiment: integer("avg_sentiment").default(0),
   narrativeVariations: jsonb("narrative_variations"),
+  clientId: integer("client_id"),
   firstSeen: timestamp("first_seen").defaultNow(),
   lastUpdated: timestamp("last_updated").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
@@ -264,6 +271,7 @@ export const storyClusters = pgTable("story_clusters", {
   index("idx_cluster_topic").on(table.mainTopic),
   index("idx_cluster_importance").on(table.importanceScore),
   index("idx_cluster_last_updated").on(table.lastUpdated),
+  index("idx_cluster_client_id").on(table.clientId),
 ]);
 
 export const insertStoryClusterSchema = createInsertSchema(storyClusters).omit({ id: true, createdAt: true });
@@ -293,7 +301,7 @@ export const insertArticleAiAnalysisSchema = createInsertSchema(articleAiAnalysi
 // === DAILY BRIEFS ===
 export const dailyBriefs = pgTable("daily_briefs", {
   id: serial("id").primaryKey(),
-  date: text("date").notNull().unique(),
+  date: text("date").notNull(),
   content: text("content").notNull(),
   keyStories: jsonb("key_stories"),
   majorDevelopments: jsonb("major_developments"),
@@ -302,9 +310,11 @@ export const dailyBriefs = pgTable("daily_briefs", {
   articleCount: integer("article_count").default(0),
   sourceCount: integer("source_count").default(0),
   confidenceScore: integer("confidence_score").default(70),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_brief_date").on(table.date),
+  index("idx_brief_client_id").on(table.clientId),
 ]);
 
 export const insertDailyBriefSchema = createInsertSchema(dailyBriefs).omit({ id: true, createdAt: true });
@@ -322,11 +332,13 @@ export const detectedEvents = pgTable("detected_events", {
   sourceCount: integer("source_count").default(0),
   confidenceScore: integer("confidence_score").default(70),
   acknowledged: boolean("acknowledged").default(false),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_event_type").on(table.type),
   index("idx_event_severity").on(table.severity),
   index("idx_event_created").on(table.createdAt),
+  index("idx_event_client_id").on(table.clientId),
 ]);
 
 export const insertDetectedEventSchema = createInsertSchema(detectedEvents).omit({ id: true, createdAt: true });
@@ -341,6 +353,7 @@ export const entityMentions = pgTable("entity_mentions", {
   sentiment: text("sentiment"),
   sentimentScore: integer("sentiment_score"),
   context: text("context"),
+  clientId: integer("client_id"),
   mentionDate: timestamp("mention_date").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
@@ -348,6 +361,7 @@ export const entityMentions = pgTable("entity_mentions", {
   index("idx_entity_type").on(table.entityType),
   index("idx_entity_date").on(table.mentionDate),
   index("idx_entity_article").on(table.articleId),
+  index("idx_entity_client_id").on(table.clientId),
 ]);
 
 export const insertEntityMentionSchema = createInsertSchema(entityMentions).omit({ id: true, createdAt: true });
@@ -365,12 +379,14 @@ export const trendPredictions = pgTable("trend_predictions", {
   confidenceScore: integer("confidence_score").default(70),
   basedOnArticleCount: integer("based_on_article_count").default(0),
   basedOnSourceDiversity: integer("based_on_source_diversity").default(0),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
   expiresAt: timestamp("expires_at"),
 }, (table) => [
   index("idx_prediction_topic").on(table.topic),
   index("idx_prediction_type").on(table.predictionType),
   index("idx_prediction_created").on(table.createdAt),
+  index("idx_prediction_client_id").on(table.clientId),
 ]);
 
 export const insertTrendPredictionSchema = createInsertSchema(trendPredictions).omit({ id: true, createdAt: true });
@@ -1483,4 +1499,5 @@ export interface ArticleQueryParams {
   endDate?: string;
   page?: number;
   limit?: number;
+  clientId?: number;
 }

@@ -1,0 +1,49 @@
+Goal: Make the system truly multi-tenant. Enforce client scoping at the DATABASE/Storage layer, not only in routes.
+
+Current problem: Tenant isolation relies on routes passing scopedSourceIds. Some endpoints (/api/stories, /api/briefs, /api/events, /api/entities, /api/predictions) query global data without tenant filtering, and storage.getArticles() has no built-in tenant enforcement. This can leak cross-client intelligence.
+
+Implement these changes:
+
+Add clientId scoping across all intelligence/derived tables and queries:
+
+Ensure sources belong to a client (or user group) and derive clientId consistently.
+
+Add clientId column to: articles, story_clusters, daily_briefs, detected_events, entities, trend_predictions, analyticsCache, and any other intelligence tables used by those routes.
+
+Write a migration to backfill clientId for existing data based on articles.sourceId -> sources.clientId.
+
+Storage layer enforcement:
+
+Update storage.getArticles(), storage.getAnalytics(), storage.getStories(), storage.getBriefs(), storage.getEvents(), storage.getEntities(), storage.getPredictions() to REQUIRE a clientId parameter and include WHERE clientId = ? in queries.
+
+If clientId is missing, throw an error (fail closed).
+
+Routes must pass clientId:
+
+Derive clientId from the authenticated user (e.g., user.clientId or from the user’s sources).
+
+Update all /api/* intelligence endpoints to pass clientId into storage methods.
+
+Admin routes may access multiple clients only if user.role === 'admin', but still must specify which client is being queried (no “global by default”).
+
+Soft vs hard delete behavior:
+
+For HARD delete source: delete its articles and also delete its analyticsCache entries for that clientId + source, then trigger analytics recompute for that client immediately.
+
+For SOFT delete source: keep history but exclude source from future ingestion and future analytics computations for that client.
+
+Add tests / assertions:
+
+Add a simple test or runtime assertion that a non-admin user cannot retrieve data belonging to another client.
+
+Output required:
+
+list all files changed
+
+schema/migration changes
+
+updated storage signatures
+
+updated routes
+
+any new helper to fetch clientId safely

@@ -471,7 +471,7 @@ function cleanText(raw: string): string {
 }
 
 async function processItems(
-  source: { id: number; name: string },
+  source: { id: number; name: string; clientId?: number | null },
   items: { title: string; url: string; content: string; publishedAt: Date; image?: string; subSource?: string; engagementLikes?: number; engagementComments?: number; engagementShares?: number }[]
 ): Promise<number> {
   let newArticles = 0;
@@ -510,6 +510,7 @@ async function processItems(
       engagementLikes: item.engagementLikes ?? null,
       engagementComments: item.engagementComments ?? null,
       engagementShares: item.engagementShares ?? null,
+      clientId: source.clientId ?? null,
     };
 
     try {

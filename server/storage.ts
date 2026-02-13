@@ -158,7 +158,7 @@ export interface IStorage {
   getSentimentTrend(sourceIds?: number[]): Promise<{ date: string; positive: number; negative: number; neutral: number }[]>;
 
   // Analytics - Content Volume
-  getContentVolume(startDate: string, endDate: string, sourceIds?: number[]): Promise<{
+  getContentVolume(startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
     timeline: { date: string; count: number }[];
     bySource: { sourceId: number; sourceName: string; count: number }[];
     byHour: { hour: number; count: number }[];
@@ -166,20 +166,20 @@ export interface IStorage {
   }>;
 
   // Analytics - Trending Topics
-  getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[]): Promise<{
+  getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
     topics: { topic: string; count: number; sentiment: string }[];
     topicTimeline: { date: string; topic: string; count: number }[];
     byCategory: { category: string; count: number }[];
   }>;
 
   // Analytics - Keyword Analysis
-  getKeywordAnalysis(startDate: string, endDate: string, sourceIds?: number[]): Promise<{
+  getKeywordAnalysis(startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
     topKeywords: { keyword: string; count: number; avgSentiment: number }[];
     keywordTimeline: { date: string; keyword: string; count: number }[];
   }>;
 
   // Analytics - Sentiment Reports
-  getSentimentReports(startDate: string, endDate: string, sourceIds?: number[]): Promise<{
+  getSentimentReports(startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
     overall: { positive: number; negative: number; neutral: number };
     bySource: { sourceId: number; sourceName: string; positive: number; negative: number; neutral: number }[];
     timeline: { date: string; positive: number; negative: number; neutral: number }[];
@@ -187,7 +187,7 @@ export interface IStorage {
   }>;
 
   // Analytics - Source Behavior
-  getSourceBehavior(startDate: string, endDate: string, sourceIds?: number[]): Promise<{
+  getSourceBehavior(startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
     sources: {
       sourceId: number;
       sourceName: string;
@@ -200,13 +200,13 @@ export interface IStorage {
     diversity: { sourceType: string; count: number }[];
   }>;
 
-  getNarrativeComparison(topic: string, startDate: string, endDate: string, sourceIds?: number[]): Promise<{
+  getNarrativeComparison(topic: string, startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
     topic: string;
     sources: { sourceId: number; sourceName: string; positive: number; negative: number; neutral: number; total: number }[];
     hasContrast: boolean;
   }>;
 
-  getAnalyticsDailyBrief(date: string, sourceIds?: number[]): Promise<{
+  getAnalyticsDailyBrief(date: string, sourceIds?: number[], clientId?: number): Promise<{
     date: string;
     topStories: { title: string; url: string; sourceName: string; sentiment: string }[];
     biggestTopic: string;
@@ -214,7 +214,7 @@ export interface IStorage {
     sourceSpike: { sourceName: string; count: number; avgCount: number } | null;
   }>;
 
-  getKeywordDetail(keyword: string, startDate: string, endDate: string, sourceIds?: number[]): Promise<{
+  getKeywordDetail(keyword: string, startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
     keyword: string;
     frequency: { date: string; count: number }[];
     topSources: { sourceName: string; count: number }[];
@@ -286,29 +286,29 @@ export interface IStorage {
 
   getArticleAiAnalysis(articleId: number): Promise<ArticleAiAnalysis | undefined>;
   upsertArticleAiAnalysis(data: InsertArticleAiAnalysis): Promise<ArticleAiAnalysis>;
-  getUnanalyzedArticleIds(limit?: number): Promise<number[]>;
+  getUnanalyzedArticleIds(limit?: number, clientId?: number): Promise<number[]>;
 
-  getStoryClusters(params?: { limit?: number; offset?: number }): Promise<StoryCluster[]>;
+  getStoryClusters(params?: { limit?: number; offset?: number; clientId?: number }): Promise<StoryCluster[]>;
   getStoryCluster(id: number): Promise<StoryCluster | undefined>;
   createStoryCluster(data: InsertStoryCluster): Promise<StoryCluster>;
   updateStoryCluster(id: number, data: Partial<InsertStoryCluster>): Promise<StoryCluster>;
   getClusterArticles(clusterId: number): Promise<(Article & { sourceName?: string | null })[]>;
 
-  getDailyBriefs(limit?: number): Promise<DailyBrief[]>;
-  getDailyBrief(date: string): Promise<DailyBrief | undefined>;
+  getDailyBriefs(limit?: number, clientId?: number): Promise<DailyBrief[]>;
+  getDailyBrief(date: string, clientId?: number): Promise<DailyBrief | undefined>;
   upsertDailyBrief(data: InsertDailyBrief): Promise<DailyBrief>;
 
-  getDetectedEvents(params?: { type?: string; severity?: string; limit?: number; acknowledged?: boolean }): Promise<DetectedEvent[]>;
+  getDetectedEvents(params?: { type?: string; severity?: string; limit?: number; acknowledged?: boolean; clientId?: number }): Promise<DetectedEvent[]>;
   createDetectedEvent(data: InsertDetectedEvent): Promise<DetectedEvent>;
   acknowledgeEvent(id: number): Promise<void>;
 
-  getEntityMentions(entityName: string, params?: { limit?: number; startDate?: string; endDate?: string }): Promise<EntityMention[]>;
+  getEntityMentions(entityName: string, params?: { limit?: number; startDate?: string; endDate?: string; clientId?: number }): Promise<EntityMention[]>;
   createEntityMention(data: InsertEntityMention): Promise<EntityMention>;
   createEntityMentionsBatch(data: InsertEntityMention[]): Promise<void>;
-  getTopEntities(params?: { limit?: number; days?: number; entityType?: string }): Promise<{ entityName: string; entityType: string; mentionCount: number; avgSentiment: number }[]>;
-  getEntityTimeline(entityName: string, days?: number): Promise<{ date: string; mentionCount: number; avgSentiment: number }[]>;
+  getTopEntities(params?: { limit?: number; days?: number; entityType?: string; clientId?: number }): Promise<{ entityName: string; entityType: string; mentionCount: number; avgSentiment: number }[]>;
+  getEntityTimeline(entityName: string, days?: number, clientId?: number): Promise<{ date: string; mentionCount: number; avgSentiment: number }[]>;
 
-  getTrendPredictions(params?: { topic?: string; limit?: number }): Promise<TrendPrediction[]>;
+  getTrendPredictions(params?: { topic?: string; limit?: number; clientId?: number }): Promise<TrendPrediction[]>;
   createTrendPrediction(data: InsertTrendPrediction): Promise<TrendPrediction>;
 
   getSubscription(clientId: number): Promise<Subscription | undefined>;
@@ -615,6 +615,9 @@ export class DatabaseStorage implements IStorage {
     const conditions = [];
     let needsSourceJoin = false;
 
+    if (params?.clientId) {
+      conditions.push(eq(articles.clientId, params.clientId));
+    }
     if (params?.search) {
       conditions.push(sql`(${articles.title} ILIKE ${`%${params.search}%`} OR ${articles.content} ILIKE ${`%${params.search}%`})`);
     }
@@ -680,6 +683,10 @@ export class DatabaseStorage implements IStorage {
       category: articles.category,
       imageUrl: articles.imageUrl,
       subSource: articles.subSource,
+      engagementLikes: articles.engagementLikes,
+      engagementComments: articles.engagementComments,
+      engagementShares: articles.engagementShares,
+      clientId: articles.clientId,
       createdAt: articles.createdAt,
       source: sources
     })
@@ -1050,7 +1057,7 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  async getContentVolume(startDate: string, endDate: string, sourceIds?: number[]) {
+  async getContentVolume(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return { timeline: [], bySource: [], byHour: [], peaks: [] };
     }
@@ -1058,11 +1065,13 @@ export class DatabaseStorage implements IStorage {
     const end = new Date(endDate);
     const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
     const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+    const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
+    const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
 
     const timelineRows = await db.execute(sql`
       SELECT TO_CHAR(published_at, 'YYYY-MM-DD') as date, COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
     `);
@@ -1071,7 +1080,7 @@ export class DatabaseStorage implements IStorage {
       SELECT a.source_id as "sourceId", s.name as "sourceName", COUNT(*)::int as count
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA}
+      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA}
       GROUP BY a.source_id, s.name
       ORDER BY count DESC
       LIMIT 20
@@ -1080,7 +1089,7 @@ export class DatabaseStorage implements IStorage {
     const byHourRows = await db.execute(sql`
       SELECT EXTRACT(HOUR FROM published_at)::int as hour, COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
       GROUP BY EXTRACT(HOUR FROM published_at)
       ORDER BY hour ASC
     `);
@@ -1102,7 +1111,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[]) {
+  async getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return { topics: [], topicTimeline: [], byCategory: [] };
     }
@@ -1111,12 +1120,15 @@ export class DatabaseStorage implements IStorage {
     const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
     const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
     const sourceFilterA2 = sourceIds ? sql`AND a2.source_id = ANY(${sourceIds})` : sql``;
+    const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
+    const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
+    const clientFilterA2 = clientId ? sql`AND a2.client_id = ${clientId}` : sql``;
 
     const topicRows = await db.execute(sql`
       SELECT kw as topic, COUNT(*)::int as count,
         MODE() WITHIN GROUP (ORDER BY sentiment_label) as sentiment
       FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
+      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
       GROUP BY kw
       ORDER BY count DESC
       LIMIT 20
@@ -1125,10 +1137,10 @@ export class DatabaseStorage implements IStorage {
     const topicTimelineRows = await db.execute(sql`
       SELECT TO_CHAR(a.published_at, 'YYYY-MM-DD') as date, kw as topic, COUNT(*)::int as count
       FROM articles a, unnest(a.keywords) as kw
-      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA}
+      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA}
       AND kw IN (
         SELECT kw2 FROM articles a2, unnest(a2.keywords) as kw2
-        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end} ${sourceFilterA2}
+        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end} ${sourceFilterA2} ${clientFilterA2}
         GROUP BY kw2 ORDER BY COUNT(*) DESC LIMIT 5
       )
       GROUP BY TO_CHAR(a.published_at, 'YYYY-MM-DD'), kw
@@ -1138,7 +1150,7 @@ export class DatabaseStorage implements IStorage {
     const categoryRows = await db.execute(sql`
       SELECT COALESCE(category, 'general') as category, COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
       GROUP BY category
       ORDER BY count DESC
     `);
@@ -1161,7 +1173,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getKeywordAnalysis(startDate: string, endDate: string, sourceIds?: number[]) {
+  async getKeywordAnalysis(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return { topKeywords: [], keywordTimeline: [] };
     }
@@ -1170,12 +1182,15 @@ export class DatabaseStorage implements IStorage {
     const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
     const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
     const sourceFilterA2 = sourceIds ? sql`AND a2.source_id = ANY(${sourceIds})` : sql``;
+    const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
+    const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
+    const clientFilterA2 = clientId ? sql`AND a2.client_id = ${clientId}` : sql``;
 
     const topKeywordsRows = await db.execute(sql`
       SELECT kw as keyword, COUNT(*)::int as count,
         COALESCE(AVG(sentiment_score), 0)::int as "avgSentiment"
       FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
+      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
       GROUP BY kw
       ORDER BY count DESC
       LIMIT 25
@@ -1184,10 +1199,10 @@ export class DatabaseStorage implements IStorage {
     const keywordTimelineRows = await db.execute(sql`
       SELECT TO_CHAR(a.published_at, 'YYYY-MM-DD') as date, kw as keyword, COUNT(*)::int as count
       FROM articles a, unnest(a.keywords) as kw
-      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA}
+      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA}
       AND kw IN (
         SELECT kw2 FROM articles a2, unnest(a2.keywords) as kw2
-        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end} ${sourceFilterA2}
+        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end} ${sourceFilterA2} ${clientFilterA2}
         GROUP BY kw2 ORDER BY COUNT(*) DESC LIMIT 10
       )
       GROUP BY TO_CHAR(a.published_at, 'YYYY-MM-DD'), kw
@@ -1208,7 +1223,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getSentimentReports(startDate: string, endDate: string, sourceIds?: number[]) {
+  async getSentimentReports(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return {
         overall: { positive: 0, negative: 0, neutral: 0 },
@@ -1221,6 +1236,8 @@ export class DatabaseStorage implements IStorage {
     const end = new Date(endDate);
     const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
     const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+    const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
+    const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
 
     const overallRows = await db.execute(sql`
       SELECT
@@ -1228,7 +1245,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
     `);
     const overall = overallRows.rows[0] as any;
 
@@ -1239,7 +1256,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE a.sentiment_label = 'neutral' OR a.sentiment_label IS NULL)::int as neutral
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA}
+      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA}
       GROUP BY a.source_id, s.name
       ORDER BY (COUNT(*) FILTER (WHERE a.sentiment_label = 'positive') + COUNT(*) FILTER (WHERE a.sentiment_label = 'negative') + COUNT(*) FILTER (WHERE a.sentiment_label = 'neutral' OR a.sentiment_label IS NULL)) DESC
       LIMIT 15
@@ -1251,7 +1268,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
     `);
@@ -1262,7 +1279,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
       GROUP BY category
       ORDER BY (COUNT(*)) DESC
     `);
@@ -1295,7 +1312,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getSourceBehavior(startDate: string, endDate: string, sourceIds?: number[]) {
+  async getSourceBehavior(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return { sources: [], diversity: [] };
     }
@@ -1304,6 +1321,8 @@ export class DatabaseStorage implements IStorage {
     const daysDiff = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
     const sourceIdFilter = sourceIds ? sql`AND s.id = ANY(${sourceIds})` : sql``;
     const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+    const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
+    const clientFilterS = clientId ? sql`AND s.client_id = ${clientId}` : sql``;
 
     const sourceRows = await db.execute(sql`
       SELECT 
@@ -1314,7 +1333,7 @@ export class DatabaseStorage implements IStorage {
       FROM sources s
       LEFT JOIN articles a ON a.source_id = s.id AND a.published_at >= ${start} AND a.published_at <= ${end}
       LEFT JOIN LATERAL unnest(a.keywords) as unnest_kw ON true
-      WHERE 1=1 ${sourceIdFilter}
+      WHERE 1=1 ${sourceIdFilter} ${clientFilterS}
       GROUP BY s.id, s.name, s.type
       ORDER BY "articleCount" DESC
     `);
@@ -1323,7 +1342,7 @@ export class DatabaseStorage implements IStorage {
       SELECT s.type as "sourceType", COUNT(DISTINCT a.id)::int as count
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA}
+      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA}
       GROUP BY s.type
       ORDER BY count DESC
     `);
@@ -1345,13 +1364,14 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getNarrativeComparison(topic: string, startDate: string, endDate: string, sourceIds?: number[]) {
+  async getNarrativeComparison(topic: string, startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return { topic, sources: [], hasContrast: false };
     }
     const start = new Date(startDate);
     const end = new Date(endDate);
     const sourceFilter = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+    const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
 
     const rows = await db.execute(sql`
       SELECT 
@@ -1364,7 +1384,7 @@ export class DatabaseStorage implements IStorage {
       JOIN sources s ON a.source_id = s.id
       WHERE (a.keywords IS NOT NULL AND ${topic} = ANY(a.keywords))
         AND a.published_at >= ${start} AND a.published_at <= ${end}
-        ${sourceFilter}
+        ${sourceFilter} ${clientFilterA}
       GROUP BY s.id, s.name
       HAVING COUNT(*) >= 1
       ORDER BY total DESC
@@ -1401,7 +1421,7 @@ export class DatabaseStorage implements IStorage {
     return { topic, sources: sourcesData, hasContrast };
   }
 
-  async getAnalyticsDailyBrief(date: string, sourceIds?: number[]) {
+  async getAnalyticsDailyBrief(date: string, sourceIds?: number[], clientId?: number) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return {
         date,
@@ -1418,12 +1438,14 @@ export class DatabaseStorage implements IStorage {
     const prevDayStart = new Date(dayStart.getTime() - 24 * 60 * 60 * 1000);
     const sourceFilter = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
     const sourceFilterPlain = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+    const clientFilter = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
+    const clientFilterPlain = clientId ? sql`AND client_id = ${clientId}` : sql``;
 
     const topStoriesRows = await db.execute(sql`
       SELECT a.title, a.url, s.name as "sourceName", a.sentiment_label as sentiment
       FROM articles a
       JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${dayStart} AND a.published_at <= ${dayEnd} ${sourceFilter}
+      WHERE a.published_at >= ${dayStart} AND a.published_at <= ${dayEnd} ${sourceFilter} ${clientFilter}
       ORDER BY a.published_at DESC
       LIMIT 5
     `);
@@ -1431,7 +1453,7 @@ export class DatabaseStorage implements IStorage {
     const topicRows = await db.execute(sql`
       SELECT kw as topic, COUNT(*)::int as count
       FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL AND published_at >= ${dayStart} AND published_at <= ${dayEnd} ${sourceFilterPlain}
+      WHERE keywords IS NOT NULL AND published_at >= ${dayStart} AND published_at <= ${dayEnd} ${sourceFilterPlain} ${clientFilterPlain}
       GROUP BY kw ORDER BY count DESC LIMIT 1
     `);
 
@@ -1441,7 +1463,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${dayStart} AND published_at <= ${dayEnd} ${sourceFilterPlain}
+      WHERE published_at >= ${dayStart} AND published_at <= ${dayEnd} ${sourceFilterPlain} ${clientFilterPlain}
     `);
 
     const prevSentimentRows = await db.execute(sql`
@@ -1450,7 +1472,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${prevDayStart} AND published_at < ${dayStart} ${sourceFilterPlain}
+      WHERE published_at >= ${prevDayStart} AND published_at < ${dayStart} ${sourceFilterPlain} ${clientFilterPlain}
     `);
 
     const spikeRows = await db.execute(sql`
@@ -1459,7 +1481,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE a.published_at >= ${prevDayStart} AND a.published_at < ${dayStart})::int as "yesterdayCount"
       FROM articles a
       JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${prevDayStart} AND a.published_at <= ${dayEnd} ${sourceFilter}
+      WHERE a.published_at >= ${prevDayStart} AND a.published_at <= ${dayEnd} ${sourceFilter} ${clientFilter}
       GROUP BY s.name
       HAVING COUNT(*) FILTER (WHERE a.published_at >= ${dayStart} AND a.published_at <= ${dayEnd}) > 0
       ORDER BY "todayCount" DESC
@@ -1491,7 +1513,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getKeywordDetail(keyword: string, startDate: string, endDate: string, sourceIds?: number[]) {
+  async getKeywordDetail(keyword: string, startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return { keyword, frequency: [], topSources: [], sentiment: { positive: 0, negative: 0, neutral: 0 }, headlines: [] };
     }
@@ -1499,12 +1521,14 @@ export class DatabaseStorage implements IStorage {
     const end = new Date(endDate);
     const sourceFilter = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
     const sourceFilterPlain = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+    const clientFilter = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
+    const clientFilterPlain = clientId ? sql`AND client_id = ${clientId}` : sql``;
 
     const freqRows = await db.execute(sql`
       SELECT TO_CHAR(published_at, 'YYYY-MM-DD') as date, COUNT(*)::int as count
       FROM articles
       WHERE keywords IS NOT NULL AND ${keyword} = ANY(keywords)
-        AND published_at >= ${start} AND published_at <= ${end} ${sourceFilterPlain}
+        AND published_at >= ${start} AND published_at <= ${end} ${sourceFilterPlain} ${clientFilterPlain}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
     `);
@@ -1514,7 +1538,7 @@ export class DatabaseStorage implements IStorage {
       FROM articles a
       JOIN sources s ON a.source_id = s.id
       WHERE a.keywords IS NOT NULL AND ${keyword} = ANY(a.keywords)
-        AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilter}
+        AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilter} ${clientFilter}
       GROUP BY s.name
       ORDER BY count DESC
       LIMIT 10
@@ -1527,7 +1551,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
       WHERE keywords IS NOT NULL AND ${keyword} = ANY(keywords)
-        AND published_at >= ${start} AND published_at <= ${end} ${sourceFilterPlain}
+        AND published_at >= ${start} AND published_at <= ${end} ${sourceFilterPlain} ${clientFilterPlain}
     `);
 
     const headlineRows = await db.execute(sql`
@@ -1535,7 +1559,7 @@ export class DatabaseStorage implements IStorage {
       FROM articles a
       JOIN sources s ON a.source_id = s.id
       WHERE a.keywords IS NOT NULL AND ${keyword} = ANY(a.keywords)
-        AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilter}
+        AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilter} ${clientFilter}
       ORDER BY a.published_at DESC
       LIMIT 20
     `);
@@ -1919,20 +1943,26 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async getUnanalyzedArticleIds(limit: number = 100): Promise<number[]> {
+  async getUnanalyzedArticleIds(limit: number = 100, clientId?: number): Promise<number[]> {
+    const conditions = [isNull(articleAiAnalysis.id)];
+    if (clientId) conditions.push(eq(articles.clientId, clientId));
     const rows = await db.select({ id: articles.id })
       .from(articles)
       .leftJoin(articleAiAnalysis, eq(articles.id, articleAiAnalysis.articleId))
-      .where(isNull(articleAiAnalysis.id))
+      .where(and(...conditions))
       .orderBy(desc(articles.publishedAt))
       .limit(limit);
     return rows.map(r => r.id);
   }
 
-  async getStoryClusters(params?: { limit?: number; offset?: number }): Promise<StoryCluster[]> {
+  async getStoryClusters(params?: { limit?: number; offset?: number; clientId?: number }): Promise<StoryCluster[]> {
     const limit = params?.limit || 50;
     const offset = params?.offset || 0;
+    const conditions = [];
+    if (params?.clientId) conditions.push(eq(storyClusters.clientId, params.clientId));
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
     return await db.select().from(storyClusters)
+      .where(whereClause)
       .orderBy(desc(storyClusters.lastUpdated))
       .limit(limit)
       .offset(offset);
@@ -1987,39 +2017,50 @@ export class DatabaseStorage implements IStorage {
     return rows;
   }
 
-  async getDailyBriefs(limit: number = 30): Promise<DailyBrief[]> {
+  async getDailyBriefs(limit: number = 30, clientId?: number): Promise<DailyBrief[]> {
+    const conditions = [];
+    if (clientId) conditions.push(eq(dailyBriefs.clientId, clientId));
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
     return await db.select().from(dailyBriefs)
+      .where(whereClause)
       .orderBy(desc(dailyBriefs.date))
       .limit(limit);
   }
 
-  async getDailyBrief(date: string): Promise<DailyBrief | undefined> {
-    const [row] = await db.select().from(dailyBriefs).where(eq(dailyBriefs.date, date));
+  async getDailyBrief(date: string, clientId?: number): Promise<DailyBrief | undefined> {
+    const conditions = [eq(dailyBriefs.date, date)];
+    if (clientId) conditions.push(eq(dailyBriefs.clientId, clientId));
+    const [row] = await db.select().from(dailyBriefs).where(and(...conditions));
     return row;
   }
 
   async upsertDailyBrief(data: InsertDailyBrief): Promise<DailyBrief> {
-    const [row] = await db.insert(dailyBriefs)
-      .values(data)
-      .onConflictDoUpdate({
-        target: dailyBriefs.date,
-        set: {
-          content: data.content,
-          keyStories: data.keyStories,
-          majorDevelopments: data.majorDevelopments,
-          emergingTopics: data.emergingTopics,
-          toneShifts: data.toneShifts,
-          articleCount: data.articleCount,
-          sourceCount: data.sourceCount,
-          confidenceScore: data.confidenceScore,
-        },
-      })
-      .returning();
+    if (data.clientId) {
+      const existing = await this.getDailyBrief(data.date, data.clientId);
+      if (existing) {
+        const [row] = await db.update(dailyBriefs)
+          .set({
+            content: data.content,
+            keyStories: data.keyStories,
+            majorDevelopments: data.majorDevelopments,
+            emergingTopics: data.emergingTopics,
+            toneShifts: data.toneShifts,
+            articleCount: data.articleCount,
+            sourceCount: data.sourceCount,
+            confidenceScore: data.confidenceScore,
+          })
+          .where(eq(dailyBriefs.id, existing.id))
+          .returning();
+        return row;
+      }
+    }
+    const [row] = await db.insert(dailyBriefs).values(data).returning();
     return row;
   }
 
-  async getDetectedEvents(params?: { type?: string; severity?: string; limit?: number; acknowledged?: boolean }): Promise<DetectedEvent[]> {
+  async getDetectedEvents(params?: { type?: string; severity?: string; limit?: number; acknowledged?: boolean; clientId?: number }): Promise<DetectedEvent[]> {
     const conditions = [];
+    if (params?.clientId) conditions.push(eq(detectedEvents.clientId, params.clientId));
     if (params?.type) conditions.push(eq(detectedEvents.type, params.type));
     if (params?.severity) conditions.push(eq(detectedEvents.severity, params.severity));
     if (params?.acknowledged !== undefined) conditions.push(eq(detectedEvents.acknowledged, params.acknowledged));
@@ -2039,8 +2080,9 @@ export class DatabaseStorage implements IStorage {
     await db.update(detectedEvents).set({ acknowledged: true }).where(eq(detectedEvents.id, id));
   }
 
-  async getEntityMentions(entityName: string, params?: { limit?: number; startDate?: string; endDate?: string }): Promise<EntityMention[]> {
+  async getEntityMentions(entityName: string, params?: { limit?: number; startDate?: string; endDate?: string; clientId?: number }): Promise<EntityMention[]> {
     const conditions = [eq(entityMentions.entityName, entityName)];
+    if (params?.clientId) conditions.push(eq(entityMentions.clientId, params.clientId));
     if (params?.startDate) conditions.push(gte(entityMentions.mentionDate, new Date(params.startDate)));
     if (params?.endDate) conditions.push(lte(entityMentions.mentionDate, new Date(params.endDate)));
     return await db.select().from(entityMentions)
@@ -2059,8 +2101,9 @@ export class DatabaseStorage implements IStorage {
     await db.insert(entityMentions).values(data);
   }
 
-  async getTopEntities(params?: { limit?: number; days?: number; entityType?: string }): Promise<{ entityName: string; entityType: string; mentionCount: number; avgSentiment: number }[]> {
+  async getTopEntities(params?: { limit?: number; days?: number; entityType?: string; clientId?: number }): Promise<{ entityName: string; entityType: string; mentionCount: number; avgSentiment: number }[]> {
     const conditions = [];
+    if (params?.clientId) conditions.push(eq(entityMentions.clientId, params.clientId));
     if (params?.days) {
       const since = new Date(Date.now() - (params.days) * 86400000);
       conditions.push(gte(entityMentions.mentionDate, since));
@@ -2081,25 +2124,28 @@ export class DatabaseStorage implements IStorage {
     return rows;
   }
 
-  async getEntityTimeline(entityName: string, days: number = 30): Promise<{ date: string; mentionCount: number; avgSentiment: number }[]> {
+  async getEntityTimeline(entityName: string, days: number = 30, clientId?: number): Promise<{ date: string; mentionCount: number; avgSentiment: number }[]> {
     const since = new Date(Date.now() - days * 86400000);
+    const conditions = [
+      eq(entityMentions.entityName, entityName),
+      gte(entityMentions.mentionDate, since),
+    ];
+    if (clientId) conditions.push(eq(entityMentions.clientId, clientId));
     const rows = await db.select({
       date: sql<string>`TO_CHAR(${entityMentions.mentionDate}, 'YYYY-MM-DD')`,
       mentionCount: sql<number>`count(*)::int`,
       avgSentiment: sql<number>`COALESCE(AVG(${entityMentions.sentimentScore}), 0)::int`,
     })
       .from(entityMentions)
-      .where(and(
-        eq(entityMentions.entityName, entityName),
-        gte(entityMentions.mentionDate, since),
-      ))
+      .where(and(...conditions))
       .groupBy(sql`TO_CHAR(${entityMentions.mentionDate}, 'YYYY-MM-DD')`)
       .orderBy(asc(sql`TO_CHAR(${entityMentions.mentionDate}, 'YYYY-MM-DD')`));
     return rows;
   }
 
-  async getTrendPredictions(params?: { topic?: string; limit?: number }): Promise<TrendPrediction[]> {
+  async getTrendPredictions(params?: { topic?: string; limit?: number; clientId?: number }): Promise<TrendPrediction[]> {
     const conditions = [];
+    if (params?.clientId) conditions.push(eq(trendPredictions.clientId, params.clientId));
     if (params?.topic) conditions.push(eq(trendPredictions.topic, params.topic));
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
     return await db.select().from(trendPredictions)
@@ -3061,6 +3107,13 @@ export class DatabaseStorage implements IStorage {
 
   async deleteFutureBriefing(id: number): Promise<void> {
     await db.delete(futureBriefings).where(eq(futureBriefings.id, id));
+  }
+
+  async getDistinctClientIds(): Promise<number[]> {
+    const rows = await db.selectDistinct({ clientId: articles.clientId })
+      .from(articles)
+      .where(sql`${articles.clientId} IS NOT NULL`);
+    return rows.map(r => r.clientId!).filter(Boolean);
   }
 
 }

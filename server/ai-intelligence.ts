@@ -49,14 +49,15 @@ Respond ONLY with valid JSON.`
   }
 }
 
-export async function processUnanalyzedArticles(batchSize = 10): Promise<number> {
-  const unanalyzedIds = await storage.getUnanalyzedArticleIds(batchSize);
+export async function processUnanalyzedArticles(batchSize = 10, clientId?: number | null): Promise<number> {
+  const unanalyzedIds = await storage.getUnanalyzedArticleIds(batchSize, clientId ?? undefined);
   if (unanalyzedIds.length === 0) return 0;
 
   let processed = 0;
   for (const articleId of unanalyzedIds) {
     const article = await storage.getArticle(articleId);
     if (!article) continue;
+    if (clientId && article.clientId !== clientId) continue;
 
     const analysis = await deepAnalyzeArticle(article);
     if (analysis) {
@@ -75,6 +76,7 @@ export async function processUnanalyzedArticles(batchSize = 10): Promise<number>
             sentimentScore: article.sentimentScore,
             context: truncate(article.title, 200),
             mentionDate: article.publishedAt || article.ingestedAt || new Date(),
+            clientId: article.clientId ?? null,
           }));
 
         if (mentions.length > 0) {
@@ -89,8 +91,8 @@ export async function processUnanalyzedArticles(batchSize = 10): Promise<number>
   return processed;
 }
 
-export async function clusterArticles(): Promise<number> {
-  const recentArticles = await storage.getArticles({ limit: 100 });
+export async function clusterArticles(clientId?: number | null): Promise<number> {
+  const recentArticles = await storage.getArticles({ limit: 100, clientId: clientId ?? undefined });
   if (recentArticles.items.length === 0) return 0;
 
   const analysisMap = new Map<number, any>();
@@ -170,6 +172,7 @@ export async function clusterArticles(): Promise<number> {
       entries.reduce((sum: number, e: {article: Article; analysis: any}) => sum + (e.article.sentimentScore || 0), 0) / entries.length
     );
 
+    const clusterClientId = entries[0].article.clientId ?? null;
     const cluster = await storage.createStoryCluster({
       title: entries[0].article.title,
       mainTopic: topic,
@@ -183,6 +186,7 @@ export async function clusterArticles(): Promise<number> {
         return d && d < min ? d : min;
       }, new Date()),
       lastUpdated: new Date(),
+      clientId: clusterClientId,
     });
 
     for (const entry of entries) {
@@ -244,7 +248,7 @@ export async function analyzeNarratives(clusterId: number): Promise<any> {
   }
 }
 
-export async function detectEvents(): Promise<number> {
+export async function detectEvents(clientId?: number | null): Promise<number> {
   const now = new Date();
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const twoDaysAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
@@ -252,12 +256,14 @@ export async function detectEvents(): Promise<number> {
   const recentArticles = await storage.getArticles({
     startDate: oneDayAgo.toISOString(),
     limit: 500,
+    clientId: clientId ?? undefined,
   });
 
   const olderArticles = await storage.getArticles({
     startDate: twoDaysAgo.toISOString(),
     endDate: oneDayAgo.toISOString(),
     limit: 500,
+    clientId: clientId ?? undefined,
   });
 
   const recentTopics = new Map<string, number>();
@@ -331,22 +337,23 @@ export async function detectEvents(): Promise<number> {
   }
 
   for (const event of events) {
-    await storage.createDetectedEvent(event);
+    await storage.createDetectedEvent({ ...event, clientId: clientId ?? null });
   }
 
   console.log(`[AI Intelligence] Detected ${events.length} events`);
   return events.length;
 }
 
-export async function generateDailyBrief(): Promise<any> {
+export async function generateDailyBrief(clientId?: number | null): Promise<any> {
   const today = new Date().toISOString().split("T")[0];
-  const existing = await storage.getDailyBrief(today);
+  const existing = await storage.getDailyBrief(today, clientId ?? undefined);
   if (existing) return existing;
 
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const recentArticles = await storage.getArticles({
     startDate: oneDayAgo.toISOString(),
     limit: 200,
+    clientId: clientId ?? undefined,
   });
 
   if (recentArticles.items.length < 3) {
@@ -355,8 +362,8 @@ export async function generateDailyBrief(): Promise<any> {
   }
 
   const topArticles = recentArticles.items.slice(0, 30);
-  const recentEvents = await storage.getDetectedEvents({ limit: 10 });
-  const topEntities = await storage.getTopEntities({ limit: 10, days: 1 });
+  const recentEvents = await storage.getDetectedEvents({ limit: 10, clientId: clientId ?? undefined });
+  const topEntities = await storage.getTopEntities({ limit: 10, days: 1, clientId: clientId ?? undefined });
 
   const briefInput = {
     articles: topArticles.map(a => ({
@@ -413,6 +420,7 @@ Make the content insightful and interpretive, not just a recap.`
       articleCount: recentArticles.items.length,
       sourceCount: sources.size,
       confidenceScore: Math.min(90, 40 + topArticles.length * 2),
+      clientId: clientId ?? null,
     });
 
     console.log(`[AI Intelligence] Generated daily brief for ${today}`);
@@ -423,9 +431,9 @@ Make the content insightful and interpretive, not just a recap.`
   }
 }
 
-export async function generateTrendPredictions(): Promise<number> {
-  const topEntities = await storage.getTopEntities({ limit: 10, days: 7 });
-  const recentEvents = await storage.getDetectedEvents({ limit: 20 });
+export async function generateTrendPredictions(clientId?: number | null): Promise<number> {
+  const topEntities = await storage.getTopEntities({ limit: 10, days: 7, clientId: clientId ?? undefined });
+  const recentEvents = await storage.getDetectedEvents({ limit: 20, clientId: clientId ?? undefined });
 
   if (topEntities.length === 0 && recentEvents.length === 0) return 0;
 
@@ -482,6 +490,7 @@ Generate 3-5 most likely predictions based on the data.`
           basedOnArticleCount: topEntities.reduce((sum, e) => sum + e.mentionCount, 0),
           basedOnSourceDiversity: topEntities.length,
           expiresAt: new Date(Date.now() + (p.timeframe === "24h" ? 24 : p.timeframe === "1_week" ? 168 : 48) * 60 * 60 * 1000),
+          clientId: clientId ?? null,
         });
       }
     }
@@ -498,18 +507,18 @@ Generate 3-5 most likely predictions based on the data.`
   }
 }
 
-export async function answerIntelligenceQuery(question: string): Promise<{
+export async function answerIntelligenceQuery(question: string, clientId?: number | null): Promise<{
   answer: string;
   sources: string[];
   confidence: number;
   basedOnArticleCount: number;
   basedOnSourceDiversity: number;
 }> {
-  const recentArticles = await storage.getArticles({ limit: 50 });
-  const topEntities = await storage.getTopEntities({ limit: 15, days: 7 });
-  const recentEvents = await storage.getDetectedEvents({ limit: 10 });
-  const latestBriefs = await storage.getDailyBriefs(3);
-  const predictions = await storage.getTrendPredictions({ limit: 10 });
+  const recentArticles = await storage.getArticles({ limit: 50, clientId: clientId ?? undefined });
+  const topEntities = await storage.getTopEntities({ limit: 15, days: 7, clientId: clientId ?? undefined });
+  const recentEvents = await storage.getDetectedEvents({ limit: 10, clientId: clientId ?? undefined });
+  const latestBriefs = await storage.getDailyBriefs(3, clientId ?? undefined);
+  const predictions = await storage.getTrendPredictions({ limit: 10, clientId: clientId ?? undefined });
 
   const context = {
     recentArticles: recentArticles.items.slice(0, 20).map(a => ({
@@ -584,19 +593,22 @@ export async function answerIntelligenceQuery(question: string): Promise<{
 export async function runIntelligencePipeline(): Promise<void> {
   console.log("[AI Intelligence] Starting intelligence pipeline...");
 
-  const analyzed = await processUnanalyzedArticles(15);
-  console.log(`[AI Intelligence] Deep analysis: ${analyzed} articles processed`);
+  const clientIds = await storage.getDistinctClientIds();
+  for (const cId of clientIds) {
+    const analyzed = await processUnanalyzedArticles(15, cId);
+    console.log(`[AI Intelligence] Deep analysis (client=${cId}): ${analyzed} articles processed`);
 
-  if (analyzed > 0) {
-    const clusters = await clusterArticles();
-    console.log(`[AI Intelligence] Clustering: ${clusters} clusters created`);
+    if (analyzed > 0) {
+      const clusters = await clusterArticles(cId);
+      console.log(`[AI Intelligence] Clustering (client=${cId}): ${clusters} clusters created`);
+    }
+
+    const eventCount = await detectEvents(cId);
+    console.log(`[AI Intelligence] Event detection (client=${cId}): ${eventCount} events detected`);
+
+    await generateDailyBrief(cId);
+    await generateTrendPredictions(cId);
   }
-
-  const eventCount = await detectEvents();
-  console.log(`[AI Intelligence] Event detection: ${eventCount} events detected`);
-
-  await generateDailyBrief();
-  await generateTrendPredictions();
 
   console.log("[AI Intelligence] Pipeline complete");
 }
