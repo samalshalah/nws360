@@ -472,14 +472,16 @@ export async function registerRoutes(
     }
   });
 
+  const sourceCreateInput = api.sources.create.input.omit({ clientId: true, userId: true, logoUrl: true, active: true, refreshPriority: true, country: true });
+
   app.post(api.sources.create.path, async (req, res) => {
     try {
       if (!req.isAuthenticated()) return res.sendStatus(401);
       const user = req.user as any;
-      const input = api.sources.create.input.parse(req.body);
+      const input = sourceCreateInput.parse(req.body);
       const clientId = resolveClientId(user, req);
       const logoUrl = getSourceLogoUrl(input.url, input.name);
-      const source = await storage.createSource({...input, userId: user.id, clientId: clientId || undefined, logoUrl});
+      const source = await storage.createSource({...input, userId: user.id, clientId: clientId || 9001, logoUrl});
 
       setTimeout(async () => {
         try {
