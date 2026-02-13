@@ -454,16 +454,16 @@ export async function registerRoutes(
 
   app.post("/api/fetch-all", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    console.log("[Fetch-All] Background fetch triggered by user");
-    fetchAllFeeds()
-      .then(results => {
-        const totalNew = results.reduce((sum: number, r: any) => sum + (r.newArticles || 0), 0);
-        console.log(`[Fetch-All] Complete: ${totalNew} new articles from ${results.length} sources`);
-      })
-      .catch(err => {
-        console.error("[Fetch-All] Background fetch failed:", err);
-      });
-    res.json({ success: true, message: "Feed fetch started in background. New articles will appear shortly." });
+    console.log("[Fetch-All] Fetch triggered by user");
+    try {
+      const results = await fetchAllFeeds();
+      const totalNew = results.reduce((sum: number, r: any) => sum + (r.newArticles || 0), 0);
+      console.log(`[Fetch-All] Complete: ${totalNew} new articles from ${results.length} sources`);
+      res.json({ success: true, totalNewArticles: totalNew, message: `Fetched ${totalNew} new articles from ${results.length} sources` });
+    } catch (err) {
+      console.error("[Fetch-All] Fetch failed:", err);
+      res.status(500).json({ success: false, message: "Feed fetch failed" });
+    }
   });
 
   // === ARTICLES ===
