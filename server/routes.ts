@@ -187,6 +187,177 @@ export async function registerRoutes(
     res.sendStatus(204);
   });
 
+  app.post("/api/sources/discover-channels", async (req, res) => {
+    try {
+      if (!req.isAuthenticated()) return res.sendStatus(401);
+      const { url } = req.body;
+      if (!url || typeof url !== "string") {
+        return res.status(400).json({ channels: {} });
+      }
+
+      let targetUrl = url.trim();
+      if (!targetUrl.startsWith("http")) {
+        targetUrl = `https://${targetUrl}`;
+      }
+      try {
+        new URL(targetUrl);
+      } catch {
+        return res.json({ channels: {} });
+      }
+
+      const channels: Record<string, { url: string; confidence: string }> = {};
+
+      try {
+        const response = await fetch(targetUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          },
+          signal: AbortSignal.timeout(15000),
+          redirect: "follow",
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const html = await response.text();
+        const cheerio = await import("cheerio");
+        const $ = cheerio.load(html);
+
+        const socialPatterns: { type: string; patterns: RegExp[]; normalize: (url: string) => string }[] = [
+          {
+            type: "facebook",
+            patterns: [/(?:https?:\/\/)?(?:www\.)?(?:facebook\.com|fb\.com)\/([A-Za-z0-9._-]+)\/?/i],
+            normalize: (u: string) => {
+              const m = u.match(/(?:facebook\.com|fb\.com)\/([A-Za-z0-9._-]+)/i);
+              return m ? `https://facebook.com/${m[1]}` : u;
+            },
+          },
+          {
+            type: "twitter",
+            patterns: [/(?:https?:\/\/)?(?:www\.)?(?:twitter\.com|x\.com)\/([A-Za-z0-9_]+)\/?/i],
+            normalize: (u: string) => {
+              const m = u.match(/(?:twitter\.com|x\.com)\/([A-Za-z0-9_]+)/i);
+              return m ? `https://x.com/${m[1]}` : u;
+            },
+          },
+          {
+            type: "youtube",
+            patterns: [/(?:https?:\/\/)?(?:www\.)?youtube\.com\/(?:@|channel\/|user\/|c\/)?([A-Za-z0-9_-]+)\/?/i],
+            normalize: (u: string) => {
+              const m = u.match(/youtube\.com\/((?:@|channel\/|user\/|c\/)?[A-Za-z0-9_-]+)/i);
+              return m ? `https://youtube.com/${m[1]}` : u;
+            },
+          },
+          {
+            type: "instagram",
+            patterns: [/(?:https?:\/\/)?(?:www\.)?instagram\.com\/([A-Za-z0-9._-]+)\/?/i],
+            normalize: (u: string) => {
+              const m = u.match(/instagram\.com\/([A-Za-z0-9._-]+)/i);
+              return m ? `https://instagram.com/${m[1]}` : u;
+            },
+          },
+          {
+            type: "telegram",
+            patterns: [/(?:https?:\/\/)?(?:t\.me|telegram\.me)\/([A-Za-z0-9_]+)\/?/i],
+            normalize: (u: string) => {
+              const m = u.match(/(?:t\.me|telegram\.me)\/([A-Za-z0-9_]+)/i);
+              return m ? `https://t.me/${m[1]}` : u;
+            },
+          },
+        ];
+
+        const skipPaths = new Set(["share", "sharer", "sharer.php", "intent", "dialog", "login", "help", "about", "policy", "privacy", "terms", "watch", "hashtag", "search", "explore"]);
+
+        $("a[href]").each((_, el) => {
+          const href = $(el).attr("href");
+          if (!href) return;
+
+          for (const sp of socialPatterns) {
+            if (channels[sp.type]) continue;
+            for (const pattern of sp.patterns) {
+              const match = href.match(pattern);
+              if (match) {
+                const username = match[1]?.toLowerCase();
+                if (username && !skipPaths.has(username)) {
+                  channels[sp.type] = {
+                    url: sp.normalize(href),
+                    confidence: "high",
+                  };
+                }
+                break;
+              }
+            }
+          }
+        });
+
+        const metaSelectors = [
+          'meta[property="og:see_also"]',
+          'meta[name="twitter:site"]',
+          'meta[name="twitter:creator"]',
+          'link[rel="me"]',
+        ];
+        for (const sel of metaSelectors) {
+          $(sel).each((_, el) => {
+            const content = $(el).attr("content") || $(el).attr("href") || "";
+            if (!content) return;
+            for (const sp of socialPatterns) {
+              if (channels[sp.type]) continue;
+              for (const pattern of sp.patterns) {
+                const match = content.match(pattern);
+                if (match) {
+                  const username = match[1]?.toLowerCase();
+                  if (username && !skipPaths.has(username)) {
+                    channels[sp.type] = { url: sp.normalize(content), confidence: "medium" };
+                  }
+                  break;
+                }
+              }
+            }
+          });
+        }
+
+        const twitterHandle = $('meta[name="twitter:site"]').attr("content");
+        if (twitterHandle && !channels.twitter) {
+          const handle = twitterHandle.replace(/^@/, "");
+          if (handle && !skipPaths.has(handle.toLowerCase())) {
+            channels.twitter = { url: `https://x.com/${handle}`, confidence: "high" };
+          }
+        }
+
+        const jsonLd = $('script[type="application/ld+json"]');
+        jsonLd.each((_, el) => {
+          try {
+            const data = JSON.parse($(el).html() || "{}");
+            const sameAs = data.sameAs || data["@graph"]?.[0]?.sameAs || [];
+            const urls = Array.isArray(sameAs) ? sameAs : [sameAs];
+            for (const sUrl of urls) {
+              if (typeof sUrl !== "string") continue;
+              for (const sp of socialPatterns) {
+                if (channels[sp.type]) continue;
+                for (const pattern of sp.patterns) {
+                  const match = sUrl.match(pattern);
+                  if (match) {
+                    const username = match[1]?.toLowerCase();
+                    if (username && !skipPaths.has(username)) {
+                      channels[sp.type] = { url: sp.normalize(sUrl), confidence: "high" };
+                    }
+                    break;
+                  }
+                }
+              }
+            }
+          } catch {}
+        });
+
+      } catch (scrapeErr) {
+        console.error("[Discover] Failed to scrape website for social links:", scrapeErr);
+      }
+
+      res.json({ channels });
+    } catch (err) {
+      console.error("[Discover] Channel discovery error:", err);
+      res.json({ channels: {} });
+    }
+  });
+
   // === WEBSITE SEARCH / DISCOVERY ===
   app.get("/api/search-websites", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);

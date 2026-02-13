@@ -149,6 +149,7 @@ type ChannelState = {
   url: string;
   previewResult?: PreviewResult;
   status: "idle" | "testing" | "success" | "failed";
+  discovered?: boolean;
 };
 
 function AddSourceView() {
@@ -177,6 +178,8 @@ function AddSourceView() {
   const [step, setStep] = useState<"channels" | "preview">("channels");
   const [isTesting, setIsTesting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isDiscovering, setIsDiscovering] = useState(false);
+  const [discoveryDone, setDiscoveryDone] = useState(false);
 
   const searchWebsites = useCallback(async (query: string) => {
     if (query.length < 2) return;
@@ -203,7 +206,48 @@ function AddSourceView() {
     });
     setChannels(init);
     setStep("channels");
+    setDiscoveryDone(false);
     setShowChannelDialog(true);
+
+    if (url && (url.includes(".") || url.startsWith("http"))) {
+      discoverChannels(url, init);
+    }
+  };
+
+  const discoverChannels = async (url: string, currentChannels?: Record<string, ChannelState>) => {
+    setIsDiscovering(true);
+    try {
+      const res = await fetch("/api/sources/discover-channels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const discovered = data.channels || {};
+        setChannels(prev => {
+          const base = currentChannels || prev;
+          const updated: Record<string, ChannelState> = {};
+          for (const [type, state] of Object.entries(base)) {
+            updated[type] = { ...state, discovered: false };
+          }
+          for (const [type, info] of Object.entries(discovered) as [string, { url: string; confidence: string }][]) {
+            if (updated[type]) {
+              updated[type] = {
+                ...updated[type],
+                enabled: true,
+                url: info.url,
+                discovered: true,
+                status: "idle",
+              };
+            }
+          }
+          return updated;
+        });
+      }
+    } catch {}
+    setIsDiscovering(false);
+    setDiscoveryDone(true);
   };
 
   const handleSearchSubmit = () => {
@@ -245,14 +289,14 @@ function AddSourceView() {
   const toggleChannel = (type: string) => {
     setChannels(prev => ({
       ...prev,
-      [type]: { ...prev[type], enabled: !prev[type].enabled, status: "idle", previewResult: undefined },
+      [type]: { ...prev[type], enabled: !prev[type].enabled, status: "idle", previewResult: undefined, discovered: !prev[type].enabled ? prev[type].discovered : false },
     }));
   };
 
   const setChannelUrl = (type: string, url: string) => {
     setChannels(prev => ({
       ...prev,
-      [type]: { ...prev[type], url },
+      [type]: { ...prev[type], url, discovered: false },
     }));
   };
 
@@ -350,6 +394,7 @@ function AddSourceView() {
     setStep("channels");
     setSourceName("");
     setSourceUrl("");
+    setDiscoveryDone(false);
   };
 
   return (
@@ -507,8 +552,30 @@ function AddSourceView() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Import Channels</Label>
-                  <p className="text-xs text-muted-foreground mb-2">Select one or more channels to import from. Each creates a separate source.</p>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div>
+                      <Label>Import Channels</Label>
+                      <p className="text-xs text-muted-foreground">Select channels to import from. Each creates a separate source.</p>
+                    </div>
+                    {isDiscovering && (
+                      <Badge variant="secondary" data-testid="badge-discovering">
+                        <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                        Finding channels...
+                      </Badge>
+                    )}
+                    {discoveryDone && !isDiscovering && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => sourceUrl && discoverChannels(sourceUrl)}
+                        disabled={!sourceUrl.trim() || isDiscovering}
+                        data-testid="button-rediscover-channels"
+                      >
+                        <Search className="w-3 h-3 mr-1" />
+                        Re-scan
+                      </Button>
+                    )}
+                  </div>
                   <div className="space-y-2">
                     {CHANNEL_OPTIONS.map((ch) => {
                       const Icon = ch.icon;
@@ -518,7 +585,7 @@ function AddSourceView() {
                       return (
                         <div key={ch.type} className="space-y-2">
                           <div
-                            className={`flex items-center gap-3 p-3 rounded-md border transition-colors ${state.enabled ? "border-primary/50 bg-primary/5" : "border-border"}`}
+                            className={`flex items-center gap-3 p-3 rounded-md border transition-colors ${state.discovered ? "border-green-500/50 bg-green-500/5" : state.enabled ? "border-primary/50 bg-primary/5" : "border-border"}`}
                           >
                             <Switch
                               checked={state.enabled}
@@ -532,6 +599,12 @@ function AddSourceView() {
                                 <span className="text-xs text-muted-foreground ml-2">({displayName})</span>
                               )}
                             </div>
+                            {state.discovered && (
+                              <Badge variant="secondary" className="shrink-0" data-testid={`badge-discovered-${ch.type}`}>
+                                <CheckCircle2 className="w-3 h-3 mr-1 text-green-500" />
+                                Found
+                              </Badge>
+                            )}
                           </div>
                           {state.enabled && ch.needsUrl && (
                             <div className="ml-10">
@@ -539,9 +612,14 @@ function AddSourceView() {
                                 value={state.url}
                                 onChange={e => setChannelUrl(ch.type, e.target.value)}
                                 placeholder={ch.placeholder}
-                                className="text-sm"
+                                className={`text-sm ${state.discovered ? "border-green-500/30" : ""}`}
                                 data-testid={`input-channel-url-${ch.type}`}
                               />
+                              {state.discovered && (
+                                <p className="text-xs text-green-600 dark:text-green-400 mt-1" data-testid={`text-discovered-hint-${ch.type}`}>
+                                  Auto-detected from website. You can edit if needed.
+                                </p>
+                              )}
                             </div>
                           )}
                         </div>
