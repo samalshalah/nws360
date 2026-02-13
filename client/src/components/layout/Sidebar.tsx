@@ -27,7 +27,16 @@ const sourcesSubPages = [
   { key: "addSource", href: "/sources/add", icon: Plus },
   { key: "manageSources", href: "/sources/manage", icon: List },
   { key: "keywords", href: "/sources/keywords", icon: Hash },
-  { key: "sourceHealth", href: "/sources/health", icon: Activity },
+];
+
+const controlMonitorSubPages = [
+  { key: "adminDashboard", href: "/admin/dashboard", icon: LayoutDashboard, label: "Admin Dashboard" },
+  { key: "users", href: "/users", icon: Users, label: "User Management" },
+  { key: "opsDashboard", href: "/admin/ops", icon: Activity, label: "Operations" },
+  { key: "sourceHealth", href: "/sources/health", icon: Monitor, label: "Source Health" },
+  { key: "productIntelligence", href: "/admin/product-analytics", icon: Lightbulb, label: "Product Intelligence" },
+  { key: "integrationMonitoring", href: "/admin/integrations", icon: Plug, label: "Integration Monitor" },
+  { key: "usageBilling", href: "/usage-billing", icon: CreditCard, label: "Usage & Billing" },
 ];
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
@@ -36,8 +45,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
   const isAnalyticsActive = location.startsWith("/analytics");
   const isSourcesActive = location.startsWith("/sources") || location === "/admin";
+  const isControlActive = location.startsWith("/admin") || location === "/users" || location === "/usage-billing" || location === "/sources/health";
   const [analyticsOpen, setAnalyticsOpen] = useState(isAnalyticsActive);
   const [sourcesOpen, setSourcesOpen] = useState(isSourcesActive);
+  const [controlOpen, setControlOpen] = useState(isControlActive);
 
   const topNavItems = [
     { name: t("nav.dashboard"), href: '/', icon: LayoutDashboard },
@@ -182,87 +193,49 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           )}
         </div>
 
-        {user && (
-          <Link href="/users">
-            <div
-              onClick={onNavigate}
-              data-testid="nav-users"
+        {user && (user as any).role === "admin" && (
+          <div>
+            <button
+              onClick={() => setControlOpen(!controlOpen)}
+              data-testid="nav-control-toggle"
               className={cn(
-                "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
-                location === "/users"
-                  ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
+                "w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
+                isControlActive && !controlOpen
+                  ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
             >
-              <Users className={cn("w-5 h-5", location === "/users" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
-              {t("nav.users")}
-            </div>
-          </Link>
-        )}
+              <Shield className={cn("w-5 h-5", isControlActive && !controlOpen ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
+              <span className="flex-1 text-left rtl:text-right">{t("nav.controlMonitor", "Control & Monitor")}</span>
+              <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", controlOpen ? "rotate-180" : "")} />
+            </button>
 
-        {user && (user as any).role === "admin" && (
-          <>
-            <Link href="/admin/dashboard">
-              <div
-                onClick={onNavigate}
-                data-testid="nav-admin-dashboard"
-                className={cn(
-                  "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
-                  location === "/admin/dashboard"
-                    ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
-                )}
-              >
-                <Shield className={cn("w-5 h-5", location === "/admin/dashboard" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
-                {t("nav.adminDashboard", "Admin Dashboard")}
+            {controlOpen && (
+              <div className="mt-1 space-y-0.5 ltr:ml-4 rtl:mr-4">
+                {controlMonitorSubPages.map((sub) => {
+                  const isActive = location === sub.href;
+                  const SubIcon = sub.icon;
+                  return (
+                    <Link key={sub.href} href={sub.href}>
+                      <div
+                        onClick={onNavigate}
+                        data-testid={`nav-control-${sub.key}`}
+                        className={cn(
+                          "flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200 cursor-pointer group",
+                          isActive
+                            ? "bg-primary/10 text-primary font-semibold"
+                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                        )}
+                      >
+                        <SubIcon className={cn("w-3.5 h-3.5", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+                        {t(`nav.${sub.key}`, sub.label)}
+                      </div>
+                    </Link>
+                  );
+                })}
               </div>
-            </Link>
-            <Link href="/admin/ops">
-              <div
-                onClick={onNavigate}
-                data-testid="nav-ops-dashboard"
-                className={cn(
-                  "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
-                  location === "/admin/ops"
-                    ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
-                )}
-              >
-                <Activity className={cn("w-5 h-5", location === "/admin/ops" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
-                {t("nav.opsDashboard", "Operations")}
-              </div>
-            </Link>
-            <Link href="/admin/product-analytics">
-              <div
-                onClick={onNavigate}
-                data-testid="nav-product-analytics"
-                className={cn(
-                  "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
-                  location === "/admin/product-analytics"
-                    ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
-                )}
-              >
-                <Lightbulb className={cn("w-5 h-5", location === "/admin/product-analytics" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
-                {t("nav.productIntelligence", "Product Intelligence")}
-              </div>
-            </Link>
-            <Link href="/admin/integrations">
-              <div
-                onClick={onNavigate}
-                data-testid="nav-admin-integrations"
-                className={cn(
-                  "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
-                  location === "/admin/integrations"
-                    ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
-                )}
-              >
-                <Monitor className={cn("w-5 h-5", location === "/admin/integrations" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
-                {t("nav.integrationMonitoring", "Integration Monitor")}
-              </div>
-            </Link>
-          </>
+            )}
+          </div>
         )}
 
         <Link href="/executive">
@@ -342,22 +315,6 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           >
             <Plug className={cn("w-5 h-5", location === "/integrations" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
             {t("nav.integrations", "Integrations")}
-          </div>
-        </Link>
-
-        <Link href="/usage-billing">
-          <div
-            onClick={onNavigate}
-            data-testid="nav-usage-billing"
-            className={cn(
-              "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
-              location === "/usage-billing"
-                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 ltr:translate-x-1 rtl:-translate-x-1"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground ltr:hover:translate-x-1 rtl:hover:-translate-x-1"
-            )}
-          >
-            <CreditCard className={cn("w-5 h-5", location === "/usage-billing" ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary")} />
-            {t("nav.usageBilling", "Usage & Billing")}
           </div>
         </Link>
 

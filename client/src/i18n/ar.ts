@@ -33,6 +33,12 @@ export default {
     sourceHealth: "صحة المصادر",
     home: "الرئيسية",
     search: "بحث",
+    controlMonitor: "التحكم والمراقبة",
+    adminDashboard: "لوحة الإدارة",
+    opsDashboard: "العمليات",
+    productIntelligence: "ذكاء المنتج",
+    integrationMonitoring: "مراقبة التكاملات",
+    usageBilling: "الاستخدام والفوترة",
   },
   rightPanel: {
     insights: "رؤى",

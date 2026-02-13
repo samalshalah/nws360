@@ -33,6 +33,12 @@ export default {
     sourceHealth: "Kaynak Sağlığı",
     home: "Ana Sayfa",
     search: "Ara",
+    controlMonitor: "Kontrol ve İzleme",
+    adminDashboard: "Yönetici Paneli",
+    opsDashboard: "Operasyonlar",
+    productIntelligence: "Ürün Zekası",
+    integrationMonitoring: "Entegrasyon İzleme",
+    usageBilling: "Kullanım ve Faturalandırma",
   },
   rightPanel: {
     insights: "Öngörüler",

@@ -33,6 +33,12 @@ export default {
     sourceHealth: "Source Health",
     home: "Home",
     search: "Search",
+    controlMonitor: "Control & Monitor",
+    adminDashboard: "Admin Dashboard",
+    opsDashboard: "Operations",
+    productIntelligence: "Product Intelligence",
+    integrationMonitoring: "Integration Monitor",
+    usageBilling: "Usage & Billing",
   },
   rightPanel: {
     insights: "Insights",

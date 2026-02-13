@@ -33,6 +33,12 @@ export default {
     sourceHealth: "Salud de fuentes",
     home: "Inicio",
     search: "Buscar",
+    controlMonitor: "Control y Monitoreo",
+    adminDashboard: "Panel de Administración",
+    opsDashboard: "Operaciones",
+    productIntelligence: "Inteligencia de Producto",
+    integrationMonitoring: "Monitor de Integraciones",
+    usageBilling: "Uso y Facturación",
   },
   rightPanel: {
     insights: "Perspectivas",
