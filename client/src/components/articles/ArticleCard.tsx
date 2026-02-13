@@ -17,6 +17,7 @@ interface ArticleCardProps {
   article: Article & { source: Source | null };
   selected?: boolean;
   onToggleSelect?: (id: number) => void;
+  layout?: "grid" | "list";
 }
 
 const sourceTypeIcons: Record<string, typeof Rss> = {
@@ -79,7 +80,7 @@ function getPublisherDomain(publisher: string): string | null {
   return normalized + ".com";
 }
 
-export function ArticleCard({ article, selected, onToggleSelect }: ArticleCardProps) {
+export function ArticleCard({ article, selected, onToggleSelect, layout = "grid" }: ArticleCardProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -135,6 +136,191 @@ export function ArticleCard({ article, selected, onToggleSelect }: ArticleCardPr
   const faviconUrl = publisherDomain ? `https://www.google.com/s2/favicons?sz=128&domain=${publisherDomain}` : null;
   const crossPosts = (Array.isArray((article as any).crossPosts) ? (article as any).crossPosts : []) as { platform: string; url: string; sourceId: number }[];
 
+  const sentimentBadge = article.sentimentLabel ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={(e) => { e.stopPropagation(); setLocation(`/feed?sentiment=${article.sentimentLabel}`); }}
+          data-testid={`badge-sentiment-${article.id}`}
+        >
+          <Badge variant="outline" className={cn("capitalize text-xs cursor-pointer", sentimentColor)}>
+            {article.sentimentLabel === "positive" ? t("feed.positive") : 
+             article.sentimentLabel === "negative" ? t("feed.negative") : 
+             t("feed.neutral")}
+          </Badge>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-[220px] text-center text-xs">
+        {t("feed.sentimentTooltip")}
+      </TooltipContent>
+    </Tooltip>
+  ) : null;
+
+  const categoryBadge = articleCategory && articleCategory !== "general" ? (
+    <button
+      onClick={(e) => { e.stopPropagation(); setLocation(`/feed?category=${articleCategory}`); }}
+      data-testid={`badge-category-${article.id}`}
+    >
+      <Badge variant="outline" className={cn("text-xs capitalize cursor-pointer", categoryColors[articleCategory] || categoryColors.general)}>
+        {t(`feed.categories.${articleCategory}`)}
+      </Badge>
+    </button>
+  ) : null;
+
+  const sourceInfo = (
+    <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground bg-muted/50 px-2 py-1 rounded-md">
+      <SourceIcon className="w-3.5 h-3.5" />
+      {article.subSource ? (
+        <>
+          <span className="font-semibold text-foreground/80" data-testid={`text-subsource-${article.id}`}>{article.subSource}</span>
+          <span className="text-muted-foreground/40" data-testid={`text-via-${article.id}`}>{t("common.via")}</span>
+          <button
+            className="hover:text-primary hover:underline transition-colors cursor-pointer"
+            onClick={(e) => { e.stopPropagation(); if (article.sourceId) setLocation(`/feed?sourceId=${article.sourceId}`); }}
+            data-testid={`text-source-${article.id}`}
+          >{article.source?.name || t("common.noResults")}</button>
+        </>
+      ) : (
+        <button
+          className="hover:text-primary hover:underline transition-colors cursor-pointer"
+          onClick={(e) => { e.stopPropagation(); if (article.sourceId) setLocation(`/feed?sourceId=${article.sourceId}`); }}
+          data-testid={`text-source-${article.id}`}
+        >{article.source?.name || t("common.noResults")}</button>
+      )}
+      <span className="text-muted-foreground/60">
+        {article.source?.type ? t(`feed.sourceTypes.${article.source.type}`) : ""}
+      </span>
+    </div>
+  );
+
+  const actionButtons = (
+    <div className="flex items-center gap-1">
+      <Button
+        size="icon"
+        variant="ghost"
+        onClick={handleBookmarkToggle}
+        title={isBookmarked ? t("feed.unbookmark") : t("feed.bookmark")}
+        data-testid={`button-bookmark-${article.id}`}
+      >
+        <Bookmark className={cn("w-4 h-4", isBookmarked ? "fill-primary text-primary" : "text-muted-foreground")} />
+      </Button>
+      <Button
+        size="icon"
+        variant="ghost"
+        onClick={handleShare}
+        title={t("feed.share")}
+        data-testid={`button-share-${article.id}`}
+      >
+        <Share2 className="w-4 h-4 text-muted-foreground" />
+      </Button>
+      <a
+        href={article.url || "#"}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-1.5 text-sm font-semibold text-primary hover:text-primary/80 transition-colors"
+        data-testid={`link-read-article-${article.id}`}
+      >
+        {t("feed.readFullStory")}
+        <ExternalLink className="w-3.5 h-3.5" />
+      </a>
+    </div>
+  );
+
+  const timeInfo = (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <Calendar className="w-3.5 h-3.5" />
+      {article.publishedAt ? formatDistanceToNow(new Date(article.publishedAt), { addSuffix: true }) : t("common.recently")}
+    </div>
+  );
+
+  const crossPostIcons = crossPosts.length > 0 ? (
+    <div className="flex items-center gap-0.5" data-testid={`cross-posts-${article.id}`}>
+      <span className="text-[10px] text-muted-foreground/60 mr-0.5">{t("feed.alsoOn", "Also on")}</span>
+      {crossPosts.map((cp, idx) => {
+        const pi = platformIcons[cp.platform];
+        if (!pi) return null;
+        const PIcon = pi.icon;
+        return (
+          <a
+            key={idx}
+            href={cp.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={pi.label}
+            onClick={(e) => e.stopPropagation()}
+            className={cn("p-1 rounded-md transition-colors hover-elevate", pi.color)}
+            data-testid={`cross-post-${cp.platform}-${article.id}`}
+          >
+            <PIcon className="w-3.5 h-3.5" />
+          </a>
+        );
+      })}
+    </div>
+  ) : null;
+
+  const selectCheckbox = onToggleSelect ? (
+    <button
+      onClick={(e) => { e.stopPropagation(); onToggleSelect(article.id); }}
+      className={cn(
+        "absolute top-3 left-3 rtl:left-auto rtl:right-3 z-10 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors",
+        selected ? "bg-primary border-primary text-primary-foreground" : "bg-background/80 border-muted-foreground/40"
+      )}
+      data-testid={`checkbox-article-${article.id}`}
+    >
+      {selected && <span className="text-xs font-bold">&#10003;</span>}
+    </button>
+  ) : null;
+
+  if (layout === "list") {
+    return (
+      <motion.div
+        initial={{ opacity: 0, x: -10 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.15 }}
+        className={cn(
+          "bg-card border rounded-md shadow-sm hover:shadow-md transition-all duration-200 group flex relative",
+          selected ? "border-primary ring-1 ring-primary/30" : "border-border/50"
+        )}
+        data-testid={`card-article-${article.id}`}
+      >
+        {selectCheckbox}
+        {hasImage && (
+          <div className="relative w-40 min-h-[120px] shrink-0 overflow-hidden bg-muted rounded-l-md" data-testid={`img-article-${article.id}`}>
+            <img
+              src={article.imageUrl!}
+              alt={article.title}
+              className="w-full h-full object-cover"
+              loading="lazy"
+              onError={() => setImgError(true)}
+            />
+          </div>
+        )}
+        <div className="flex flex-col flex-1 p-4 gap-2 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            {sourceInfo}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {categoryBadge}
+              {sentimentBadge}
+            </div>
+          </div>
+          <h3 className="text-base font-bold font-display text-foreground leading-tight line-clamp-1 group-hover:text-primary transition-colors">
+            {article.title}
+          </h3>
+          <p className="text-muted-foreground text-sm leading-relaxed line-clamp-2 flex-1">
+            {displayContent}
+          </p>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-3">
+              {timeInfo}
+              {crossPostIcons}
+            </div>
+            {actionButtons}
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -147,18 +333,7 @@ export function ArticleCard({ article, selected, onToggleSelect }: ArticleCardPr
       )}
       data-testid={`card-article-${article.id}`}
     >
-      {onToggleSelect && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggleSelect(article.id); }}
-          className={cn(
-            "absolute top-3 left-3 rtl:left-auto rtl:right-3 z-10 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors",
-            selected ? "bg-primary border-primary text-primary-foreground" : "bg-background/80 border-muted-foreground/40"
-          )}
-          data-testid={`checkbox-article-${article.id}`}
-        >
-          {selected && <span className="text-xs font-bold">&#10003;</span>}
-        </button>
-      )}
+      {selectCheckbox}
       {hasImage ? (
         <div className="relative w-full h-48 overflow-hidden bg-muted" data-testid={`img-article-${article.id}`}>
           <img
@@ -183,60 +358,10 @@ export function ArticleCard({ article, selected, onToggleSelect }: ArticleCardPr
 
       <div className="p-6 flex flex-col flex-1">
         <div className="flex items-start justify-between gap-2 mb-4 flex-wrap">
-          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground bg-muted/50 px-2 py-1 rounded-md">
-            <SourceIcon className="w-3.5 h-3.5" />
-            {article.subSource ? (
-              <>
-                <span className="font-semibold text-foreground/80" data-testid={`text-subsource-${article.id}`}>{article.subSource}</span>
-                <span className="text-muted-foreground/40" data-testid={`text-via-${article.id}`}>{t("common.via")}</span>
-                <button
-                  className="hover:text-primary hover:underline transition-colors cursor-pointer"
-                  onClick={(e) => { e.stopPropagation(); if (article.sourceId) setLocation(`/feed?sourceId=${article.sourceId}`); }}
-                  data-testid={`text-source-${article.id}`}
-                >{article.source?.name || t("common.noResults")}</button>
-              </>
-            ) : (
-              <button
-                className="hover:text-primary hover:underline transition-colors cursor-pointer"
-                onClick={(e) => { e.stopPropagation(); if (article.sourceId) setLocation(`/feed?sourceId=${article.sourceId}`); }}
-                data-testid={`text-source-${article.id}`}
-              >{article.source?.name || t("common.noResults")}</button>
-            )}
-            <span className="text-muted-foreground/60">
-              {article.source?.type ? t(`feed.sourceTypes.${article.source.type}`) : ""}
-            </span>
-          </div>
-          
+          {sourceInfo}
           <div className="flex items-center gap-1.5 flex-wrap">
-            {articleCategory && articleCategory !== "general" && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setLocation(`/feed?category=${articleCategory}`); }}
-                data-testid={`badge-category-${article.id}`}
-              >
-                <Badge variant="outline" className={cn("text-xs capitalize cursor-pointer", categoryColors[articleCategory] || categoryColors.general)}>
-                  {t(`feed.categories.${articleCategory}`)}
-                </Badge>
-              </button>
-            )}
-            {article.sentimentLabel && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setLocation(`/feed?sentiment=${article.sentimentLabel}`); }}
-                    data-testid={`badge-sentiment-${article.id}`}
-                  >
-                    <Badge variant="outline" className={cn("capitalize text-xs cursor-pointer", sentimentColor)}>
-                      {article.sentimentLabel === "positive" ? t("feed.positive") : 
-                       article.sentimentLabel === "negative" ? t("feed.negative") : 
-                       t("feed.neutral")}
-                    </Badge>
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="max-w-[220px] text-center text-xs">
-                  {t("feed.sentimentTooltip")}
-                </TooltipContent>
-              </Tooltip>
-            )}
+            {categoryBadge}
+            {sentimentBadge}
           </div>
         </div>
 
@@ -250,66 +375,10 @@ export function ArticleCard({ article, selected, onToggleSelect }: ArticleCardPr
 
         <div className="flex items-center justify-between gap-2 pt-4 border-t border-border/50 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Calendar className="w-3.5 h-3.5" />
-              {article.publishedAt ? formatDistanceToNow(new Date(article.publishedAt), { addSuffix: true }) : t("common.recently")}
-            </div>
-            {crossPosts.length > 0 && (
-              <div className="flex items-center gap-0.5" data-testid={`cross-posts-${article.id}`}>
-                <span className="text-[10px] text-muted-foreground/60 mr-0.5">{t("feed.alsoOn", "Also on")}</span>
-                {crossPosts.map((cp, idx) => {
-                  const pi = platformIcons[cp.platform];
-                  if (!pi) return null;
-                  const PIcon = pi.icon;
-                  return (
-                    <a
-                      key={idx}
-                      href={cp.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={pi.label}
-                      onClick={(e) => e.stopPropagation()}
-                      className={cn("p-1 rounded-md transition-colors hover-elevate", pi.color)}
-                      data-testid={`cross-post-${cp.platform}-${article.id}`}
-                    >
-                      <PIcon className="w-3.5 h-3.5" />
-                    </a>
-                  );
-                })}
-              </div>
-            )}
+            {timeInfo}
+            {crossPostIcons}
           </div>
-
-          <div className="flex items-center gap-1">
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={handleBookmarkToggle}
-              title={isBookmarked ? t("feed.unbookmark") : t("feed.bookmark")}
-              data-testid={`button-bookmark-${article.id}`}
-            >
-              <Bookmark className={cn("w-4 h-4", isBookmarked ? "fill-primary text-primary" : "text-muted-foreground")} />
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={handleShare}
-              title={t("feed.share")}
-              data-testid={`button-share-${article.id}`}
-            >
-              <Share2 className="w-4 h-4 text-muted-foreground" />
-            </Button>
-            <a
-              href={article.url || "#"}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-sm font-semibold text-primary hover:text-primary/80 transition-colors"
-              data-testid={`link-read-article-${article.id}`}
-            >
-              {t("feed.readFullStory")}
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
-          </div>
+          {actionButtons}
         </div>
       </div>
     </motion.div>

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe } from "lucide-react";
+import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe, LayoutGrid, List } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "react-i18next";
@@ -36,6 +36,9 @@ export default function Feed() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const [layout, setLayout] = useState<"grid" | "list">(() => {
+    return (localStorage.getItem("feed-layout") as "grid" | "list") || "grid";
+  });
 
   const [filters, setFilters] = useState(() => {
     const params = new URLSearchParams(searchString);
@@ -477,13 +480,36 @@ export default function Feed() {
               {t("feed.clearFilters")}
             </Button>
           )}
+
+          <div className="flex items-center gap-0.5 ml-auto border border-border rounded-md p-0.5">
+            <Button
+              size="icon"
+              variant={layout === "grid" ? "default" : "ghost"}
+              className="h-8 w-8"
+              onClick={() => { setLayout("grid"); localStorage.setItem("feed-layout", "grid"); }}
+              data-testid="button-layout-grid"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </Button>
+            <Button
+              size="icon"
+              variant={layout === "list" ? "default" : "ghost"}
+              className="h-8 w-8"
+              onClick={() => { setLayout("list"); localStorage.setItem("feed-layout", "list"); }}
+              data-testid="button-layout-list"
+            >
+              <List className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
       </div>
 
       {isLoadingArticles && page === 1 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className={cn(
+          layout === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "flex flex-col gap-4"
+        )}>
           {[1, 2, 3, 4, 5, 6].map((i) => (
-            <Skeleton key={i} className="h-80 w-full rounded-md" />
+            <Skeleton key={i} className={layout === "grid" ? "h-80 w-full rounded-md" : "h-32 w-full rounded-md"} />
           ))}
         </div>
       ) : allArticles.length === 0 && !isFetching ? (
@@ -494,13 +520,16 @@ export default function Feed() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className={cn(
+            layout === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "flex flex-col gap-4"
+          )}>
             {allArticles.map((article: any) => (
               <ArticleCard
                 key={article.id}
                 article={article}
                 selected={selectedArticles.has(article.id)}
                 onToggleSelect={toggleSelectArticle}
+                layout={layout}
               />
             ))}
           </div>
