@@ -86,6 +86,9 @@ export const articles = pgTable("articles", {
   engagementComments: integer("engagement_comments"),
   engagementShares: integer("engagement_shares"),
   clientId: integer("client_id"),
+  aiAnalysisStatus: text("ai_analysis_status").default("success"),
+  aiRetryCount: integer("ai_retry_count").default(0),
+  aiLastRetryAt: timestamp("ai_last_retry_at"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_articles_client_id").on(table.clientId),
