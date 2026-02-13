@@ -279,7 +279,7 @@ export const insertStoryClusterSchema = createInsertSchema(storyClusters).omit({
 // === ARTICLE AI ANALYSIS ===
 export const articleAiAnalysis = pgTable("article_ai_analysis", {
   id: serial("id").primaryKey(),
-  articleId: integer("article_id").references(() => articles.id).notNull(),
+  articleId: integer("article_id").references(() => articles.id, { onDelete: "cascade" }).notNull(),
   mainTopic: text("main_topic"),
   subtopics: text("subtopics").array(),
   entities: jsonb("entities"),
@@ -348,7 +348,7 @@ export const entityMentions = pgTable("entity_mentions", {
   id: serial("id").primaryKey(),
   entityName: text("entity_name").notNull(),
   entityType: text("entity_type").notNull(),
-  articleId: integer("article_id").references(() => articles.id),
+  articleId: integer("article_id").references(() => articles.id, { onDelete: "cascade" }),
   sourceId: integer("source_id").references(() => sources.id),
   sentiment: text("sentiment"),
   sentimentScore: integer("sentiment_score"),
@@ -520,7 +520,7 @@ export const insertInsightEngagementSchema = createInsertSchema(insightEngagemen
 // === PRODUCT INTELLIGENCE: AI CORRECTIONS ===
 export const aiCorrections = pgTable("ai_corrections", {
   id: serial("id").primaryKey(),
-  articleId: integer("article_id").references(() => articles.id),
+  articleId: integer("article_id").references(() => articles.id, { onDelete: "set null" }),
   userId: integer("user_id").references(() => users.id).notNull(),
   field: text("field").notNull(),
   oldValue: text("old_value"),

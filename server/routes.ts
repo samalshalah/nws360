@@ -162,6 +162,7 @@ export async function registerRoutes(
       }
     }
     await storage.deleteSource(id);
+    runAnalyticsComputation().catch(e => console.error("[Analytics] Post-source-delete recomputation error:", e));
     res.sendStatus(204);
   });
 
@@ -699,6 +700,9 @@ export async function registerRoutes(
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids array required" });
     const deleted = await storage.deleteArticles(ids);
+    if (deleted > 0) {
+      runAnalyticsComputation().catch(e => console.error("[Analytics] Post-article-delete recomputation error:", e));
+    }
     res.json({ deleted });
   });
 

@@ -602,7 +602,18 @@ export class DatabaseStorage implements IStorage {
     return source;
   }
 
+  async cleanupArticleDependents(articleIds: number[]): Promise<void> {
+    if (articleIds.length === 0) return;
+    await db.delete(comments).where(and(eq(comments.targetType, "article"), inArray(comments.targetId, articleIds)));
+    await db.delete(annotations).where(and(eq(annotations.targetType, "article"), inArray(annotations.targetId, articleIds)));
+    await db.delete(timelineEvents).where(inArray(timelineEvents.articleId, articleIds));
+    await db.delete(bookmarks).where(inArray(bookmarks.articleId, articleIds));
+  }
+
   async deleteSource(id: number): Promise<void> {
+    const sourceArticles = await db.select({ id: articles.id }).from(articles).where(eq(articles.sourceId, id));
+    const articleIds = sourceArticles.map(a => a.id);
+    await this.cleanupArticleDependents(articleIds);
     await db.delete(articles).where(eq(articles.sourceId, id));
     await db.delete(sources).where(eq(sources.id, id));
   }
@@ -939,6 +950,8 @@ export class DatabaseStorage implements IStorage {
     }
     const userSources = await this.getSourcesByUserId(id);
     for (const source of userSources) {
+      const sourceArticles = await db.select({ id: articles.id }).from(articles).where(eq(articles.sourceId, source.id));
+      await this.cleanupArticleDependents(sourceArticles.map(a => a.id));
       await db.delete(articles).where(eq(articles.sourceId, source.id));
       await db.delete(sources).where(eq(sources.id, source.id));
     }
@@ -948,7 +961,7 @@ export class DatabaseStorage implements IStorage {
 
   async deleteArticles(ids: number[]): Promise<number> {
     if (ids.length === 0) return 0;
-    await db.delete(bookmarks).where(inArray(bookmarks.articleId, ids));
+    await this.cleanupArticleDependents(ids);
     const result = await db.delete(articles).where(inArray(articles.id, ids)).returning({ id: articles.id });
     return result.length;
   }
@@ -1595,16 +1608,22 @@ export class DatabaseStorage implements IStorage {
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
 
-      const result = await db
-        .delete(articles)
+      const expiredArticles = await db
+        .select({ id: articles.id })
+        .from(articles)
         .where(
           and(
             eq(articles.sourceId, source.id),
             lte(articles.createdAt, cutoffDate)
           )
-        )
-        .returning({ id: articles.id });
-      totalDeleted += result.length;
+        );
+      const expiredIds = expiredArticles.map(a => a.id);
+      if (expiredIds.length === 0) continue;
+
+      await this.cleanupArticleDependents(expiredIds);
+      await db.delete(bookmarks).where(inArray(bookmarks.articleId, expiredIds));
+      await db.delete(articles).where(inArray(articles.id, expiredIds));
+      totalDeleted += expiredIds.length;
     }
 
     return totalDeleted;
