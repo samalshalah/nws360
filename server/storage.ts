@@ -79,7 +79,8 @@ import {
   type LongRangeBriefing, type InsertLongRangeBriefing,
   type AiMemoryAnswer, type InsertAiMemoryAnswer,
   topicForecasts, earlySignals, riskScores, influenceGraph,
-  attentionDecay, alertPriorityScores, forecastResults, futureBriefings,
+  attentionDecay, alertPriorityScores, forecastResults, futureBriefings, articleTranslations,
+  type ArticleTranslation, type InsertArticleTranslation,
   type TopicForecast, type InsertTopicForecast,
   type EarlySignal, type InsertEarlySignal,
   type RiskScore, type InsertRiskScore,
@@ -565,6 +566,11 @@ export interface IStorage {
   getFutureBriefings(clientId?: number, limit?: number): Promise<FutureBriefing[]>;
   createFutureBriefing(data: InsertFutureBriefing): Promise<FutureBriefing>;
   deleteFutureBriefing(id: number): Promise<void>;
+
+  // Article Translations
+  getArticleTranslation(articleId: number, targetLanguage: string): Promise<ArticleTranslation | undefined>;
+  createArticleTranslation(data: InsertArticleTranslation): Promise<ArticleTranslation>;
+  updateArticleTranslation(id: number, data: Partial<InsertArticleTranslation>): Promise<ArticleTranslation | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -3251,6 +3257,25 @@ export class DatabaseStorage implements IStorage {
       .from(articles)
       .where(sql`${articles.clientId} IS NOT NULL`);
     return rows.map(r => r.clientId!).filter(Boolean);
+  }
+
+  async getArticleTranslation(articleId: number, targetLanguage: string): Promise<ArticleTranslation | undefined> {
+    const [row] = await db.select().from(articleTranslations)
+      .where(and(
+        eq(articleTranslations.articleId, articleId),
+        eq(articleTranslations.targetLanguage, targetLanguage)
+      ));
+    return row;
+  }
+
+  async createArticleTranslation(data: InsertArticleTranslation): Promise<ArticleTranslation> {
+    const [row] = await db.insert(articleTranslations).values(data).returning();
+    return row;
+  }
+
+  async updateArticleTranslation(id: number, data: Partial<InsertArticleTranslation>): Promise<ArticleTranslation | undefined> {
+    const [row] = await db.update(articleTranslations).set(data).where(eq(articleTranslations.id, id)).returning();
+    return row;
   }
 
 }

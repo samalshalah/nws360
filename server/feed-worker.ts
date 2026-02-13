@@ -2,6 +2,7 @@ import RssParser from "rss-parser";
 import { storage } from "./storage";
 import { openai } from "./replit_integrations/image/client";
 import { scrapeWebsite, fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed, fetchTelegramFeed } from "./web-scraper";
+import { enqueueJob, registerJobHandler, openaiLimiter } from "./processing-queue";
 
 const parser = new RssParser({
   timeout: 15000,
@@ -51,49 +52,51 @@ export type AIAnalysisResult = {
 };
 
 export async function analyzeWithAI(title: string, content: string): Promise<AIAnalysisResult> {
-  try {
-    const textToAnalyze = truncate(`${title}. ${content}`, 2000);
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            'You analyze news articles. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "topics" (array of 1-3 topic labels like "economy", "elections", "climate", "cybersecurity", "AI", "conflict", "trade", "healthcare"), "summary" (1-2 sentence summary), "category" (exactly one of: political, health, tech, sports, business, entertainment, science, urgent, general), "country" (ISO 3166-1 alpha-2 code of the primary country the article is about, or null if unclear). Respond ONLY with valid JSON.',
-        },
-        { role: "user", content: textToAnalyze },
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 500,
-    });
+  return openaiLimiter.run(async () => {
+    try {
+      const textToAnalyze = truncate(`${title}. ${content}`, 2000);
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content:
+              'You analyze news articles. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "topics" (array of 1-3 topic labels like "economy", "elections", "climate", "cybersecurity", "AI", "conflict", "trade", "healthcare"), "summary" (1-2 sentence summary), "category" (exactly one of: political, health, tech, sports, business, entertainment, science, urgent, general), "country" (ISO 3166-1 alpha-2 code of the primary country the article is about, or null if unclear). Respond ONLY with valid JSON.',
+          },
+          { role: "user", content: textToAnalyze },
+        ],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 500,
+      });
 
-    const result = JSON.parse(completion.choices[0].message.content || "{}");
-    const cat = typeof result.category === "string" ? result.category.toLowerCase() : "general";
-    const validSentiments = ["positive", "negative", "neutral"];
-    const rawSentiment = typeof result.sentiment === "string" ? result.sentiment.toLowerCase() : "neutral";
-    return {
-      sentimentLabel: validSentiments.includes(rawSentiment) ? rawSentiment : "neutral",
-      sentimentScore: typeof result.score === "number" ? result.score : 0,
-      keywords: Array.isArray(result.keywords) ? result.keywords : [],
-      topics: Array.isArray(result.topics) ? result.topics : [],
-      summary: result.summary || truncate(content, 200),
-      category: VALID_CATEGORIES.includes(cat) ? cat : "general",
-      country: typeof result.country === "string" && result.country.length === 2 ? result.country.toUpperCase() : null,
-      aiAnalysisStatus: "success",
-    };
-  } catch (e) {
-    console.error("AI analysis failed:", e);
-    return {
-      sentimentLabel: null as any,
-      sentimentScore: null as any,
-      keywords: [],
-      topics: [],
-      summary: truncate(content, 200),
-      category: "general",
-      country: null,
-      aiAnalysisStatus: "failed",
-    };
-  }
+      const result = JSON.parse(completion.choices[0].message.content || "{}");
+      const cat = typeof result.category === "string" ? result.category.toLowerCase() : "general";
+      const validSentiments = ["positive", "negative", "neutral"];
+      const rawSentiment = typeof result.sentiment === "string" ? result.sentiment.toLowerCase() : "neutral";
+      return {
+        sentimentLabel: validSentiments.includes(rawSentiment) ? rawSentiment : "neutral",
+        sentimentScore: typeof result.score === "number" ? result.score : 0,
+        keywords: Array.isArray(result.keywords) ? result.keywords : [],
+        topics: Array.isArray(result.topics) ? result.topics : [],
+        summary: result.summary || truncate(content, 200),
+        category: VALID_CATEGORIES.includes(cat) ? cat : "general",
+        country: typeof result.country === "string" && result.country.length === 2 ? result.country.toUpperCase() : null,
+        aiAnalysisStatus: "success",
+      };
+    } catch (e) {
+      console.error("AI analysis failed:", e);
+      return {
+        sentimentLabel: null as any,
+        sentimentScore: null as any,
+        keywords: [],
+        topics: [],
+        summary: truncate(content, 200),
+        category: "general",
+        country: null,
+        aiAnalysisStatus: "failed",
+      };
+    }
+  });
 }
 
 function extractImageFromRssItem(item: any): string | undefined {
@@ -493,42 +496,119 @@ async function processItems(
 
     const contentClean = cleanText(contentRaw);
 
-    const analysis = await analyzeWithAI(title, contentClean);
-
     const article = {
       title,
       content: truncate(contentRaw, 5000),
       contentClean: truncate(contentClean, 5000),
-      summary: analysis.summary,
+      summary: truncate(contentClean, 200),
       url: item.url,
       sourceId: source.id,
       publishedAt: item.publishedAt,
       language: "en",
-      country: analysis.country,
-      sentimentLabel: analysis.aiAnalysisStatus === "failed" ? null : analysis.sentimentLabel,
-      sentimentScore: analysis.aiAnalysisStatus === "failed" ? null : analysis.sentimentScore,
-      keywords: analysis.keywords,
-      topics: analysis.topics,
-      category: analysis.category,
+      country: null,
+      sentimentLabel: null,
+      sentimentScore: null,
+      keywords: [] as string[],
+      topics: [] as string[],
+      category: "general",
       imageUrl: item.image || null,
       subSource: item.subSource || null,
       engagementLikes: item.engagementLikes ?? null,
       engagementComments: item.engagementComments ?? null,
       engagementShares: item.engagementShares ?? null,
       clientId: source.clientId ?? null,
-      aiAnalysisStatus: analysis.aiAnalysisStatus,
+      aiAnalysisStatus: "pending" as const,
       aiRetryCount: 0,
     };
 
     try {
-      await storage.createArticle(article);
+      const created = await storage.createArticle(article);
       newArticles++;
+      await enqueueJob("ANALYZE_ARTICLE", { articleId: created.id }, { priority: 3, maxAttempts: 3 });
     } catch (e) {
       console.error(`[Worker] STORE failed for article: ${item.url}`, e);
     }
   }
 
   return newArticles;
+}
+
+async function handleAnalyzeArticle(payload: { articleId: number }): Promise<any> {
+  const article = await storage.getArticle(payload.articleId);
+  if (!article) return { skipped: true, reason: "article not found" };
+
+  const analysis = await analyzeWithAI(article.title, article.contentClean || article.content || "");
+
+  const updateData: any = {
+    summary: analysis.summary,
+    country: analysis.country,
+    keywords: analysis.keywords,
+    topics: analysis.topics,
+    category: analysis.category,
+    aiAnalysisStatus: analysis.aiAnalysisStatus,
+  };
+
+  if (analysis.aiAnalysisStatus === "success") {
+    updateData.sentimentLabel = analysis.sentimentLabel;
+    updateData.sentimentScore = analysis.sentimentScore;
+  } else {
+    updateData.sentimentLabel = null;
+    updateData.sentimentScore = null;
+  }
+
+  await storage.updateArticle(payload.articleId, updateData);
+  return { articleId: payload.articleId, status: analysis.aiAnalysisStatus };
+}
+
+async function handleTranslateArticle(payload: { articleId: number; targetLanguage: string }): Promise<any> {
+  const article = await storage.getArticle(payload.articleId);
+  if (!article) return { skipped: true, reason: "article not found" };
+
+  const langNames: Record<string, string> = {
+    en: "English", ar: "Arabic", fr: "French", es: "Spanish", tr: "Turkish"
+  };
+  const targetLangName = langNames[payload.targetLanguage] || payload.targetLanguage;
+
+  const existing = await storage.getArticleTranslation(payload.articleId, payload.targetLanguage);
+  if (!existing) return { skipped: true, reason: "no translation record" };
+
+  try {
+    const textToTranslate = `Title: ${article.title}\n\nContent: ${(article.content || "").substring(0, 3000)}${article.summary ? `\n\nSummary: ${article.summary}` : ""}`;
+
+    const result = await openaiLimiter.run(async () => {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a professional news translator. Translate the following news article to ${targetLangName}. Return JSON with: "title" (translated title), "content" (translated content), "summary" (translated summary). Respond ONLY with valid JSON.`,
+          },
+          { role: "user", content: textToTranslate },
+        ],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 2000,
+      });
+      return JSON.parse(completion.choices[0].message.content || "{}");
+    });
+
+    await storage.updateArticleTranslation(existing.id, {
+      translatedTitle: result.title || article.title,
+      translatedContent: result.content || article.content,
+      translatedSummary: result.summary || article.summary,
+      status: "completed",
+    });
+
+    return { articleId: payload.articleId, targetLanguage: payload.targetLanguage, status: "completed" };
+  } catch (e) {
+    console.error(`Translation failed for article ${payload.articleId}:`, e);
+    await storage.updateArticleTranslation(existing.id, { status: "failed" });
+    throw e;
+  }
+}
+
+export function registerArticleAnalysisHandler() {
+  registerJobHandler("ANALYZE_ARTICLE", handleAnalyzeArticle);
+  registerJobHandler("TRANSLATE_ARTICLE", handleTranslateArticle);
 }
 
 const MAX_RETRIES = 3;

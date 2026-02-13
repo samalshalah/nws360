@@ -7,7 +7,9 @@ export type JobType =
   | "FETCH_ALL_PRIORITY"
   | "COMPUTE_ANALYTICS"
   | "DATA_RETENTION"
-  | "BACKFILL_IMAGES";
+  | "BACKFILL_IMAGES"
+  | "ANALYZE_ARTICLE"
+  | "TRANSLATE_ARTICLE";
 
 interface JobHandler {
   (payload: any): Promise<any>;
@@ -18,6 +20,45 @@ const handlers: Map<string, JobHandler> = new Map();
 export function registerJobHandler(type: JobType, handler: JobHandler) {
   handlers.set(type, handler);
 }
+
+export class ConcurrencyLimiter {
+  private running = 0;
+  private queue: (() => void)[] = [];
+  constructor(private maxConcurrent: number) {}
+
+  async acquire(): Promise<void> {
+    if (this.running < this.maxConcurrent) {
+      this.running++;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.queue.push(() => {
+        this.running++;
+        resolve();
+      });
+    });
+  }
+
+  release(): void {
+    this.running--;
+    const next = this.queue.shift();
+    if (next) next();
+  }
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+
+  get activeCount(): number { return this.running; }
+  get waitingCount(): number { return this.queue.length; }
+}
+
+export const openaiLimiter = new ConcurrencyLimiter(3);
 
 export async function enqueueJob(
   type: JobType,
@@ -161,16 +202,60 @@ async function processOne(): Promise<boolean> {
 let queueInterval: ReturnType<typeof setInterval> | null = null;
 let isProcessing = false;
 
+async function claimBatch(limit: number): Promise<(typeof processingJobs.$inferSelect)[]> {
+  const now = new Date();
+  const jobs = await db
+    .select()
+    .from(processingJobs)
+    .where(
+      and(
+        eq(processingJobs.status, "pending"),
+        lte(processingJobs.runAt, now)
+      )
+    )
+    .orderBy(asc(processingJobs.priority), asc(processingJobs.runAt))
+    .limit(limit);
+
+  const claimed: (typeof processingJobs.$inferSelect)[] = [];
+  for (const job of jobs) {
+    const [c] = await db
+      .update(processingJobs)
+      .set({ status: "running", startedAt: now, attempts: (job.attempts ?? 0) + 1 })
+      .where(and(eq(processingJobs.id, job.id), eq(processingJobs.status, "pending")))
+      .returning();
+    if (c) claimed.push(c);
+  }
+  return claimed;
+}
+
 async function processLoop() {
   if (isProcessing) return;
   isProcessing = true;
   try {
-    let processed = 0;
-    while (processed < 10) {
-      const hadWork = await processOne();
-      if (!hadWork) break;
-      processed++;
-    }
+    const batch = await claimBatch(6);
+    if (batch.length === 0) return;
+
+    const promises = batch.map(async (job) => {
+      const handler = handlers.get(job.type);
+      if (!handler) {
+        await failJob(job.id, `No handler for job type: ${job.type}`, 1);
+        return;
+      }
+      try {
+        const result = await handler(job.payload);
+        await completeJob(job.id, result);
+      } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        const stack = e instanceof Error ? e.stack : undefined;
+        await failJob(job.id, errorMsg, job.maxAttempts ?? 3);
+        await logSystemError("queue", `Job ${job.type} failed: ${errorMsg}`, "error", {
+          stackTrace: stack,
+          sourceId: (job.payload as any)?.sourceId,
+        });
+      }
+    });
+
+    await Promise.all(promises);
   } catch (e) {
     console.error("[Queue] Process loop error:", e);
   } finally {
@@ -178,9 +263,9 @@ async function processLoop() {
   }
 }
 
-export function startQueueProcessor(intervalMs = 5000) {
+export function startQueueProcessor(intervalMs = 3000) {
   if (queueInterval) clearInterval(queueInterval);
-  console.log(`[Queue] Starting processor, poll interval: ${intervalMs}ms`);
+  console.log(`[Queue] Starting processor, poll interval: ${intervalMs}ms, OpenAI concurrency: ${openaiLimiter.activeCount}/${3}`);
   queueInterval = setInterval(processLoop, intervalMs);
 }
 
@@ -209,12 +294,33 @@ export async function getQueueStats() {
     .orderBy(desc(processingJobs.completedAt))
     .limit(5);
 
+  const byType = await db
+    .select({
+      type: processingJobs.type,
+      pending: sql<number>`count(*) filter (where ${processingJobs.status} = 'pending')`,
+      running: sql<number>`count(*) filter (where ${processingJobs.status} = 'running')`,
+      completed: sql<number>`count(*) filter (where ${processingJobs.status} = 'completed')`,
+      failed: sql<number>`count(*) filter (where ${processingJobs.status} = 'failed')`,
+      avgDurationMs: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (${processingJobs.completedAt} - ${processingJobs.startedAt})) * 1000) FILTER (WHERE ${processingJobs.completedAt} IS NOT NULL AND ${processingJobs.startedAt} IS NOT NULL), 0)::int`,
+    })
+    .from(processingJobs)
+    .groupBy(processingJobs.type);
+
   return {
     pending: Number(stats?.pending ?? 0),
     processing: Number(stats?.running ?? 0),
     completed: Number(stats?.completed ?? 0),
     failed: Number(stats?.failed ?? 0),
     total: Number(stats?.pending ?? 0) + Number(stats?.running ?? 0) + Number(stats?.completed ?? 0) + Number(stats?.failed ?? 0),
+    openaiConcurrency: { active: openaiLimiter.activeCount, waiting: openaiLimiter.waitingCount, max: 3 },
+    byType: byType.map(t => ({
+      type: t.type,
+      pending: Number(t.pending),
+      running: Number(t.running),
+      completed: Number(t.completed),
+      failed: Number(t.failed),
+      avgDurationMs: Number(t.avgDurationMs),
+    })),
     recentFailures: recentFailed.map(j => ({
       id: j.id,
       type: j.type,

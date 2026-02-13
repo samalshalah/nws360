@@ -4,7 +4,7 @@ import { setupAuth } from "./auth";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI } from "./feed-worker";
+import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler } from "./feed-worker";
 import { openai } from "./replit_integrations/image/client";
 import { db } from "./db";
 import { articles, PLAN_LIMITS } from "@shared/schema";
@@ -281,43 +281,37 @@ export async function registerRoutes(
       
       const targetLang = params.lang?.split("-")[0];
       if (targetLang && targetLang !== "en") {
-        const langNames: Record<string, string> = {
-          en: "English", ar: "Arabic", fr: "French", es: "Spanish", tr: "Turkish"
-        };
-        const targetLangName = langNames[targetLang] || targetLang;
-        
         const articlesToTranslate = result.items.filter((article) => {
           const articleLang = (article.language || "en").split("-")[0].toLowerCase();
           return articleLang !== targetLang;
         });
 
-        const batchSize = 5;
-        for (let i = 0; i < articlesToTranslate.length; i += batchSize) {
-          const batch = articlesToTranslate.slice(i, i + batchSize);
-          const translationPromises = batch.map(async (article) => {
-            try {
-              const textToTranslate = `Title: ${article.title}\nSummary: ${article.summary || article.content.substring(0, 500)}`;
-              const completion = await openai.chat.completions.create({
-                model: "gpt-4o-mini",
-                messages: [
-                  {
-                    role: "system",
-                    content: `Translate the following news article title and summary to ${targetLangName}. Return JSON with: "title" (translated title), "summary" (translated summary). Respond ONLY with valid JSON.`,
-                  },
-                  { role: "user", content: textToTranslate },
-                ],
-                response_format: { type: "json_object" },
-                max_completion_tokens: 1000,
-              });
-              const translated = JSON.parse(completion.choices[0].message.content || "{}");
-              article.title = translated.title || article.title;
-              article.summary = translated.summary || article.summary;
-            } catch (e) {
-              console.error(`Translation failed for article ${article.id}:`, e);
+        await Promise.all(articlesToTranslate.map(async (article) => {
+          try {
+            const cached = await storage.getArticleTranslation(article.id, targetLang);
+            if (cached && cached.status === "completed") {
+              article.title = cached.translatedTitle || article.title;
+              article.summary = cached.translatedSummary || article.summary;
+            } else if (!cached || cached.status === "failed") {
+              if (!cached) {
+                await storage.createArticleTranslation({
+                  articleId: article.id,
+                  targetLanguage: targetLang,
+                  status: "pending",
+                  translatedTitle: null,
+                  translatedContent: null,
+                  translatedSummary: null,
+                });
+              } else {
+                await storage.updateArticleTranslation(cached.id, { status: "pending" });
+              }
+              const { enqueueJob } = await import("./processing-queue");
+              await enqueueJob("TRANSLATE_ARTICLE", { articleId: article.id, targetLanguage: targetLang }, { priority: 4, maxAttempts: 2 });
             }
-          });
-          await Promise.all(translationPromises);
-        }
+          } catch (e) {
+            console.error(`Translation lookup failed for article ${article.id}:`, e);
+          }
+        }));
       }
       
       res.json({
@@ -425,7 +419,7 @@ export async function registerRoutes(
     res.sendStatus(204);
   });
 
-  // === ARTICLE TRANSLATION ===
+  // === ARTICLE TRANSLATION (cached + async) ===
   app.post("/api/articles/:id/translate", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
@@ -441,36 +435,65 @@ export async function registerRoutes(
     const article = await storage.getArticle(id, clientId || undefined);
     if (!article) return res.status(404).json({ message: "Article not found" });
 
+    const cached = await storage.getArticleTranslation(id, targetLanguage);
+    if (cached && cached.status === "completed") {
+      return res.json({
+        translatedTitle: cached.translatedTitle || article.title,
+        translatedContent: cached.translatedContent || article.content,
+        translatedSummary: cached.translatedSummary || article.summary,
+        targetLanguage,
+        cached: true,
+      });
+    }
+
+    if (cached && cached.status === "pending") {
+      return res.json({
+        translatedTitle: article.title,
+        translatedContent: article.content,
+        translatedSummary: article.summary,
+        targetLanguage,
+        pending: true,
+        message: "Translation is being processed",
+      });
+    }
+
+    if (cached && cached.status === "failed") {
+      await storage.updateArticleTranslation(cached.id, { status: "pending" });
+      const { enqueueJob } = await import("./processing-queue");
+      await enqueueJob("TRANSLATE_ARTICLE", { articleId: id, targetLanguage }, { priority: 4, maxAttempts: 2 });
+      return res.json({
+        translatedTitle: article.title,
+        translatedContent: article.content,
+        translatedSummary: article.summary,
+        targetLanguage,
+        pending: true,
+        message: "Translation retrying",
+      });
+    }
+
     try {
-      const langNames: Record<string, string> = {
-        en: "English", ar: "Arabic", fr: "French", es: "Spanish", tr: "Turkish"
-      };
-      const targetLangName = langNames[targetLanguage] || targetLanguage;
-      
-      const textToTranslate = `Title: ${article.title}\n\nContent: ${article.content?.substring(0, 3000) || ""}${article.summary ? `\n\nSummary: ${article.summary}` : ""}`;
-      
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are a professional news translator. Translate the following news article to ${targetLangName}. Return JSON with: "title" (translated title), "content" (translated content), "summary" (translated summary). Respond ONLY with valid JSON.`,
-          },
-          { role: "user", content: textToTranslate },
-        ],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 2000,
+      await storage.createArticleTranslation({
+        articleId: id,
+        targetLanguage,
+        status: "pending",
+        translatedTitle: null,
+        translatedContent: null,
+        translatedSummary: null,
       });
 
-      const result = JSON.parse(completion.choices[0].message.content || "{}");
+      const { enqueueJob } = await import("./processing-queue");
+      await enqueueJob("TRANSLATE_ARTICLE", { articleId: id, targetLanguage }, { priority: 4, maxAttempts: 2 });
+
       res.json({
-        translatedTitle: result.title || article.title,
-        translatedContent: result.content || article.content,
-        translatedSummary: result.summary || article.summary,
+        translatedTitle: article.title,
+        translatedContent: article.content,
+        translatedSummary: article.summary,
         targetLanguage,
+        pending: true,
+        message: "Translation queued",
       });
     } catch (e) {
-      console.error("Translation failed:", e);
+      console.error("Translation enqueue failed:", e);
       res.status(500).json({ message: "Translation failed" });
     }
   });
@@ -1125,8 +1148,11 @@ export async function registerRoutes(
   // === ADMIN: LOGS & HEALTH ===
   app.get("/api/admin/system-health", async (req, res) => {
     if (!requireAdmin(req, res)) return;
-    const health = await storage.getSystemHealth();
-    res.json(health);
+    const [health, queueStats] = await Promise.all([
+      storage.getSystemHealth(),
+      getQueueStats(),
+    ]);
+    res.json({ ...health, queue: queueStats });
   });
 
   app.get("/api/admin/audit-logs", async (req, res) => {
@@ -2179,6 +2205,7 @@ export async function registerRoutes(
 
   // === SEED & START WORKERS ===
   await seed();
+  registerArticleAnalysisHandler();
   startFeedWorker();
   startQueueProcessor();
   startLearningWorker();

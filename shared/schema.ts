@@ -1479,6 +1479,24 @@ export type InsertForecastResult = z.infer<typeof insertForecastResultSchema>;
 export type FutureBriefing = typeof futureBriefings.$inferSelect;
 export type InsertFutureBriefing = z.infer<typeof insertFutureBriefingSchema>;
 
+// === ARTICLE TRANSLATIONS CACHE ===
+export const articleTranslations = pgTable("article_translations", {
+  id: serial("id").primaryKey(),
+  articleId: integer("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
+  targetLanguage: text("target_language").notNull(),
+  status: text("status").notNull().default("pending"),
+  translatedTitle: text("translated_title"),
+  translatedContent: text("translated_content"),
+  translatedSummary: text("translated_summary"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("article_translations_article_lang_idx").on(table.articleId, table.targetLanguage),
+]);
+
+export const insertArticleTranslationSchema = createInsertSchema(articleTranslations).omit({ id: true, createdAt: true });
+export type ArticleTranslation = typeof articleTranslations.$inferSelect;
+export type InsertArticleTranslation = z.infer<typeof insertArticleTranslationSchema>;
+
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;
 export type RegisterRequest = InsertUser;
