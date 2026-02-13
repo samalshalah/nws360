@@ -102,6 +102,7 @@ export default {
     loadingMore: "جاري تحميل المزيد...",
     noMoreArticles: "لا توجد مقالات أخرى",
     allTypes: "الكل",
+    allChannels: "كل القنوات",
     news: "أخبار",
     social: "اجتماعي",
     allDates: "كل التواريخ",

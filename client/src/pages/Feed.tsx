@@ -236,7 +236,7 @@ export default function Feed() {
   };
 
   const CHANNEL_CONFIG: { key: string; label: string; icon: any; color: string }[] = [
-    { key: "all", label: t("feed.allTypes"), icon: Newspaper, color: "" },
+    { key: "all", label: t("feed.allChannels") || "All Channels", icon: Newspaper, color: "" },
     { key: "rss", label: "RSS", icon: Rss, color: "text-orange-500" },
     { key: "website", label: "Web", icon: Globe, color: "text-blue-500" },
     { key: "youtube", label: "YouTube", icon: SiYoutube, color: "text-red-500" },
@@ -324,64 +324,64 @@ export default function Feed() {
       </div>
 
       <div className="space-y-4">
-        <div className="relative w-full">
-          <Search className="absolute left-3 rtl:left-auto rtl:right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground z-10" />
-          <Input
-            ref={searchInputRef}
-            placeholder={t("feed.searchPlaceholder")}
-            className="ltr:pl-11 rtl:pr-11 bg-background text-base"
-            value={searchInput}
-            onChange={(e) => {
-              const val = e.target.value;
-              setSearchInput(val);
-              setShowSuggestions(true);
-              if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-              searchDebounceRef.current = setTimeout(() => {
-                updateFilter("search", val);
-              }, 400);
-            }}
-            onFocus={() => setShowSuggestions(true)}
-            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-            data-testid="input-search-articles"
-            aria-label={t("feed.searchPlaceholder")}
-          />
-          {searchInput && (
-            <button
-              onClick={() => { setSearchInput(""); updateFilter("search", ""); setShowSuggestions(false); }}
-              className="absolute right-3 rtl:right-auto rtl:left-3 top-1/2 -translate-y-1/2 z-10"
-              data-testid="button-clear-search"
-              aria-label="Clear search"
-            >
-              <X className="w-4 h-4 text-muted-foreground" />
-            </button>
-          )}
-          {showSuggestions && suggestions.length > 0 && (
-            <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-md shadow-lg z-50 overflow-hidden" data-testid="search-suggestions">
-              {suggestions.map((s, i) => (
-                <button
-                  key={i}
-                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-left hover:bg-muted transition-colors"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    setSearchInput(s.text);
-                    updateFilter("search", s.text);
-                    setShowSuggestions(false);
-                  }}
-                  data-testid={`suggestion-${i}`}
-                >
-                  {s.type === "trending" ? (
-                    <TrendingUp className="w-3.5 h-3.5 text-primary shrink-0" />
-                  ) : (
-                    <Newspaper className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  )}
-                  <span className="truncate">{s.text}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
         <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full sm:w-[180px]">
+            <Search className="absolute left-3 rtl:left-auto rtl:right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground z-10" />
+            <Input
+              ref={searchInputRef}
+              placeholder={t("feed.searchPlaceholder")}
+              className="ltr:pl-9 rtl:pr-9 bg-background"
+              value={searchInput}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSearchInput(val);
+                setShowSuggestions(true);
+                if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+                searchDebounceRef.current = setTimeout(() => {
+                  updateFilter("search", val);
+                }, 400);
+              }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+              data-testid="input-search-articles"
+              aria-label={t("feed.searchPlaceholder")}
+            />
+            {searchInput && (
+              <button
+                onClick={() => { setSearchInput(""); updateFilter("search", ""); setShowSuggestions(false); }}
+                className="absolute right-3 rtl:right-auto rtl:left-3 top-1/2 -translate-y-1/2 z-10"
+                data-testid="button-clear-search"
+                aria-label="Clear search"
+              >
+                <X className="w-4 h-4 text-muted-foreground" />
+              </button>
+            )}
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-md shadow-lg z-50 overflow-hidden" data-testid="search-suggestions">
+                {suggestions.map((s, i) => (
+                  <button
+                    key={i}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-left hover:bg-muted transition-colors"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setSearchInput(s.text);
+                      updateFilter("search", s.text);
+                      setShowSuggestions(false);
+                    }}
+                    data-testid={`suggestion-${i}`}
+                  >
+                    {s.type === "trending" ? (
+                      <TrendingUp className="w-3.5 h-3.5 text-primary shrink-0" />
+                    ) : (
+                      <Newspaper className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    )}
+                    <span className="truncate">{s.text}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <Select
             value={filters.sourceName || "all"}
             onValueChange={(val) => updateFilter("sourceName", val === "all" ? undefined : val)}
@@ -404,7 +404,7 @@ export default function Feed() {
             onValueChange={(val) => updateFilter("sourceType", val === "all" ? undefined : val)}
           >
             <SelectTrigger className="w-full sm:w-[170px] bg-background" data-testid="select-filter-channel-type">
-              <SelectValue placeholder={t("feed.allTypes")} />
+              <SelectValue placeholder={t("feed.allChannels")} />
             </SelectTrigger>
             <SelectContent>
               {visibleChannels.map(ch => {

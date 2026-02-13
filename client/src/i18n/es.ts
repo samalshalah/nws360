@@ -102,6 +102,7 @@ export default {
     loadingMore: "Cargando más...",
     noMoreArticles: "No hay más artículos",
     allTypes: "Todos",
+    allChannels: "Todos los canales",
     news: "Noticias",
     social: "Social",
     allDates: "Todas las fechas",

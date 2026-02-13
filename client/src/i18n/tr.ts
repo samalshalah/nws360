@@ -102,6 +102,7 @@ export default {
     loadingMore: "Daha fazla yükleniyor...",
     noMoreArticles: "Yüklenecek başka makale yok",
     allTypes: "Tümü",
+    allChannels: "Tüm Kanallar",
     news: "Haberler",
     social: "Sosyal",
     allDates: "Tüm Tarihler",
