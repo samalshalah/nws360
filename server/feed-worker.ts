@@ -427,12 +427,30 @@ async function fetchGoogleNewsArticles(source: { id: number; name: string; url: 
   const limit = source.maxArticlesPerFetch || 10;
   const keyword = source.url.trim();
   const encodedKeyword = encodeURIComponent(keyword);
-  const rssUrl = `https://news.google.com/rss/search?q=${encodedKeyword}&hl=en&gl=US&ceid=US:en`;
-  console.log(`[Worker] Fetching Google News for keyword "${keyword}": ${rssUrl}`);
+  const recentUrl = `https://news.google.com/rss/search?q=${encodedKeyword}+when:1d&hl=en&gl=US&ceid=US:en`;
+  const fallbackUrl = `https://news.google.com/rss/search?q=${encodedKeyword}+when:7d&hl=en&gl=US&ceid=US:en`;
+  const defaultUrl = `https://news.google.com/rss/search?q=${encodedKeyword}&hl=en&gl=US&ceid=US:en`;
+  console.log(`[Worker] Fetching Google News for keyword "${keyword}" (recent first)`);
 
   try {
-    const feed = await parser.parseURL(rssUrl);
-    const rawItems = feed.items.slice(0, limit);
+    let feed = await parser.parseURL(recentUrl);
+    if (!feed.items || feed.items.length === 0) {
+      console.log(`[Worker] No articles from last 24h for "${keyword}", trying 7-day window`);
+      feed = await parser.parseURL(fallbackUrl);
+    }
+    if (!feed.items || feed.items.length === 0) {
+      console.log(`[Worker] No articles from last 7d for "${keyword}", using default`);
+      feed = await parser.parseURL(defaultUrl);
+    }
+
+    const allItems = feed.items || [];
+    const itemsWithDates = allItems.map(item => ({
+      ...item,
+      _parsedDate: item.pubDate ? new Date(item.pubDate) : new Date(0),
+    }));
+    itemsWithDates.sort((a, b) => b._parsedDate.getTime() - a._parsedDate.getTime());
+
+    const rawItems = itemsWithDates.slice(0, limit);
     const items: { title: string; url: string; content: string; publishedAt: Date; image?: string; subSource?: string }[] = [];
     for (const item of rawItems) {
       const subSource = extractGoogleNewsSubSource(item);
@@ -450,12 +468,13 @@ async function fetchGoogleNewsArticles(source: { id: number; name: string; url: 
         title: cleanTitle,
         url: googleNewsUrl,
         content: stripHtml(item.contentSnippet || item.content || item.summary || item.title || ""),
-        publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+        publishedAt: item._parsedDate.getTime() > 0 ? item._parsedDate : new Date(),
         image,
         subSource,
       });
     }
 
+    console.log(`[Worker] Google News: got ${items.length} articles for "${keyword}", newest: ${items[0]?.publishedAt?.toISOString() || 'none'}`);
     return await processItems(source, items);
   } catch (e) {
     console.error(`[Worker] Google News fetch failed for "${keyword}":`, e);
