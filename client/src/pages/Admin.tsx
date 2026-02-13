@@ -326,10 +326,15 @@ function AddSourceView() {
           body: JSON.stringify({ url: testUrl, type: ch.type, maxArticles: settings.maxArticlesPerFetch }),
         });
         const data: PreviewResult = await res.json();
-        if (data.success && data.articles.length > 0) {
+        const isGoogleFallback = data.method === "google_news_fallback";
+        const isNativeFeed = !isGoogleFallback;
+        if (data.success && data.articles.length > 0 && isNativeFeed) {
           updated[ch.type] = { ...updated[ch.type], status: "success", previewResult: data };
         } else {
-          updated[ch.type] = { ...updated[ch.type], status: "failed", previewResult: data };
+          const failReason = isGoogleFallback
+            ? { ...data, success: false, error: ch.type === "website" ? "No RSS feed found for this website" : `Could not connect to ${ch.label || ch.type} feed directly` }
+            : data;
+          updated[ch.type] = { ...updated[ch.type], status: "failed", previewResult: failReason };
         }
       } catch {
         updated[ch.type] = { ...updated[ch.type], status: "failed", previewResult: { success: false, method: "none", articles: [], error: "Connection failed" } };
@@ -357,12 +362,6 @@ function AddSourceView() {
       if (preview?.method === "rss" && preview?.feedUrl) {
         finalType = "rss";
         finalUrl = preview.feedUrl;
-      } else if (preview?.method === "google_news_fallback" && ch.type === "website") {
-        finalType = "google_news";
-        try {
-          const domain = new URL(finalUrl.startsWith("http") ? finalUrl : `https://${finalUrl}`).hostname.replace("www.", "");
-          finalUrl = `site:${domain}`;
-        } catch {}
       }
 
       await new Promise<void>((resolve) => {
