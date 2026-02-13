@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp } from "lucide-react";
+import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe } from "lucide-react";
+import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "react-i18next";
 import { useMutation } from "@tanstack/react-query";
@@ -230,10 +231,26 @@ export default function Feed() {
     resetScroll();
   };
 
-  const sourceTypePills: { key: string; label: string }[] = [
-    { key: "all", label: t("feed.allTypes") },
-    ...SOURCE_TYPES.map(type => ({ key: type, label: t(`feed.sourceTypes.${type}`) })),
+  const CHANNEL_CONFIG: { key: string; label: string; icon: any; color: string }[] = [
+    { key: "all", label: t("feed.allTypes"), icon: Newspaper, color: "" },
+    { key: "rss", label: "RSS", icon: Rss, color: "text-orange-500" },
+    { key: "website", label: "Web", icon: Globe, color: "text-blue-500" },
+    { key: "youtube", label: "YouTube", icon: SiYoutube, color: "text-red-500" },
+    { key: "twitter", label: "X", icon: SiX, color: "" },
+    { key: "facebook", label: "Facebook", icon: SiFacebook, color: "text-blue-600" },
+    { key: "instagram", label: "Instagram", icon: SiInstagram, color: "text-pink-500" },
+    { key: "telegram", label: "Telegram", icon: SiTelegram, color: "text-sky-500" },
+    { key: "google_news", label: "Google News", icon: SiGooglenews, color: "text-blue-500" },
   ];
+
+  const activeChannelTypes = useMemo(() => {
+    if (!sources) return new Set<string>();
+    return new Set(sources.map((s: any) => s.type));
+  }, [sources]);
+
+  const visibleChannels = CHANNEL_CONFIG.filter(
+    ch => ch.key === "all" || activeChannelTypes.has(ch.key)
+  );
 
   const timeRangePills = [
     { key: "today", label: t("feed.today") },
@@ -354,21 +371,30 @@ export default function Feed() {
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Select
-            value={filters.sourceType || "all"}
-            onValueChange={(val) => updateFilter("sourceType", val === "all" ? undefined : val)}
-          >
-            <SelectTrigger className="w-full sm:w-[160px] bg-background" data-testid="select-filter-source-type">
-              <SelectValue placeholder={t("feed.allSourceTypes")} />
-            </SelectTrigger>
-            <SelectContent>
-              {sourceTypePills.map(pill => (
-                <SelectItem key={pill.key} value={pill.key}>{pill.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+          {visibleChannels.map(ch => {
+            const isActive = (filters.sourceType || "all") === ch.key;
+            const Icon = ch.icon;
+            return (
+              <Button
+                key={ch.key}
+                variant={isActive ? "default" : "outline"}
+                size="sm"
+                onClick={() => updateFilter("sourceType", ch.key === "all" ? undefined : ch.key)}
+                className={cn(
+                  "shrink-0 gap-1.5",
+                  !isActive && "text-muted-foreground"
+                )}
+                data-testid={`button-channel-${ch.key}`}
+              >
+                <Icon className={cn("w-3.5 h-3.5", !isActive && ch.color)} />
+                {ch.label}
+              </Button>
+            );
+          })}
+        </div>
 
+        <div className="flex flex-wrap items-center gap-2">
           <Select
             value={filters.dateRange}
             onValueChange={(val) => updateFilter("dateRange", val)}
