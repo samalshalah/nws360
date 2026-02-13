@@ -283,16 +283,20 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
               onError={() => setImgError(true)}
             />
           </div>
-        ) : faviconUrl ? (
+        ) : (
           <div className="relative w-40 min-h-[120px] shrink-0 overflow-hidden bg-gradient-to-br from-muted to-muted/60 rounded-l-md flex items-center justify-center" data-testid={`favicon-article-${article.id}`}>
-            <img
-              src={faviconUrl}
-              alt={article.subSource || article.source?.name || ""}
-              className="w-8 h-8 rounded-md"
-              loading="lazy"
-            />
+            {faviconUrl ? (
+              <img
+                src={faviconUrl}
+                alt={article.subSource || article.source?.name || ""}
+                className="w-8 h-8 rounded-md"
+                loading="lazy"
+              />
+            ) : (
+              <SourceIcon className="w-8 h-8 text-muted-foreground/30" />
+            )}
           </div>
-        ) : null}
+        )}
         <div className="flex flex-col flex-1 p-4 gap-2 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             {sourceInfo}
@@ -342,17 +346,21 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
             onError={() => setImgError(true)}
           />
         </div>
-      ) : faviconUrl ? (
-        <div className="relative w-full h-32 overflow-hidden bg-gradient-to-br from-muted to-muted/60 flex items-center justify-center gap-3" data-testid={`favicon-article-${article.id}`}>
-          <img
-            src={faviconUrl}
-            alt={article.subSource || article.source?.name || ""}
-            className="w-10 h-10 rounded-md"
-            loading="lazy"
-          />
-          <span className="text-sm font-semibold text-muted-foreground/70">{article.subSource || article.source?.name}</span>
+      ) : (
+        <div className="relative w-full h-48 overflow-hidden bg-gradient-to-br from-muted to-muted/60 flex items-center justify-center gap-3" data-testid={`favicon-article-${article.id}`}>
+          {faviconUrl ? (
+            <img
+              src={faviconUrl}
+              alt={article.subSource || article.source?.name || ""}
+              className="w-12 h-12 rounded-md"
+              loading="lazy"
+            />
+          ) : (
+            <SourceIcon className="w-10 h-10 text-muted-foreground/30" />
+          )}
+          <span className="text-sm font-semibold text-muted-foreground/50">{article.subSource || article.source?.name}</span>
         </div>
-      ) : null}
+      )}
 
       <div className="p-6 flex flex-col flex-1">
         <div className="flex items-start justify-between gap-2 mb-4 flex-wrap">
