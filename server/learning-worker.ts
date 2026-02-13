@@ -5,46 +5,67 @@ const ALERT_TYPES = ["volume_spike", "sentiment_shift", "emerging_topic", "narra
 
 async function analyzeFeedback() {
   console.log("[Learning] Analyzing user feedback...");
-  const feedback = await storage.getUserFeedback({});
-  if (feedback.length === 0) {
-    console.log("[Learning] No feedback to analyze");
-    return;
-  }
+  const clients = await storage.getClients();
 
-  const featureStats: Record<string, { useful: number; unclear: number; wrong: number; total: number }> = {};
-  for (const f of feedback) {
-    if (!featureStats[f.feature]) {
-      featureStats[f.feature] = { useful: 0, unclear: 0, wrong: 0, total: 0 };
-    }
-    featureStats[f.feature].total++;
-    if (f.rating === "useful" || f.rating === "helpful" || f.rating === "accurate") {
-      featureStats[f.feature].useful++;
-    } else if (f.rating === "unclear") {
-      featureStats[f.feature].unclear++;
-    } else {
-      featureStats[f.feature].wrong++;
-    }
-  }
+  for (const client of clients) {
+    const users = await storage.getUsersByClientId(client.id);
+    const userIds = users.map(u => u.id);
+    if (userIds.length === 0) continue;
 
-  console.log("[Learning] Feedback analysis:", JSON.stringify(featureStats));
-  return featureStats;
+    let clientFeedback: any[] = [];
+    for (const uid of userIds) {
+      const fb = await storage.getUserFeedback({ userId: uid });
+      clientFeedback.push(...fb);
+    }
+    if (clientFeedback.length === 0) continue;
+
+    const featureStats: Record<string, { useful: number; unclear: number; wrong: number; total: number }> = {};
+    for (const f of clientFeedback) {
+      if (!featureStats[f.feature]) {
+        featureStats[f.feature] = { useful: 0, unclear: 0, wrong: 0, total: 0 };
+      }
+      featureStats[f.feature].total++;
+      if (f.rating === "useful" || f.rating === "helpful" || f.rating === "accurate") {
+        featureStats[f.feature].useful++;
+      } else if (f.rating === "unclear") {
+        featureStats[f.feature].unclear++;
+      } else {
+        featureStats[f.feature].wrong++;
+      }
+    }
+
+    console.log(`[Learning] Feedback analysis (client=${client.id}):`, JSON.stringify(featureStats));
+  }
 }
 
 async function recalibrateAlertThresholds() {
   console.log("[Learning] Recalibrating alert thresholds...");
-  const engagement = await storage.getInsightEngagement({ insightType: "alert" });
-  if (engagement.length === 0) {
-    console.log("[Learning] No alert engagement data to recalibrate");
-    return;
-  }
-
   const clients = await storage.getClients();
+
   for (const client of clients) {
-    const feedback = await storage.getUserFeedback({ feature: "alert" });
-    const clientFeedback = feedback.filter((f: any) => f.targetType === "alert");
+    const users = await storage.getUsersByClientId(client.id);
+    const userIds = users.map(u => u.id);
+    if (userIds.length === 0) continue;
+
+    let clientEngagement: any[] = [];
+    for (const uid of userIds) {
+      const eng = await storage.getInsightEngagement({ userId: uid, insightType: "alert" });
+      clientEngagement.push(...eng);
+    }
+    if (clientEngagement.length === 0) {
+      console.log(`[Learning] No alert engagement data for client ${client.id}, skipping recalibration`);
+      continue;
+    }
+
+    let clientFeedback: any[] = [];
+    for (const uid of userIds) {
+      const fb = await storage.getUserFeedback({ userId: uid, feature: "alert" });
+      clientFeedback.push(...fb);
+    }
+    const alertFeedback = clientFeedback.filter((f: any) => f.targetType === "alert");
 
     for (const alertType of ALERT_TYPES) {
-      const relevantFeedback = clientFeedback.filter((f: any) => {
+      const relevantFeedback = alertFeedback.filter((f: any) => {
         return f.comment?.includes(alertType) || f.targetType === alertType;
       });
 
@@ -76,61 +97,73 @@ async function recalibrateAlertThresholds() {
 
 async function refreshRecommendations() {
   console.log("[Learning] Refreshing dashboard recommendations...");
-  const engagement = await storage.getInsightEngagement({});
-  if (engagement.length === 0) return;
+  const clients = await storage.getClients();
 
-  const userTopicInteractions: Record<number, Record<string, number>> = {};
-  for (const e of engagement) {
-    if (!userTopicInteractions[e.userId]) {
-      userTopicInteractions[e.userId] = {};
-    }
-    const key = `${e.insightType}:${e.insightId}`;
-    userTopicInteractions[e.userId][key] = (userTopicInteractions[e.userId][key] || 0) + (e.clicked ? 2 : 1);
-  }
+  for (const client of clients) {
+    const users = await storage.getUsersByClientId(client.id);
 
-  for (const [userIdStr, interactions] of Object.entries(userTopicInteractions)) {
-    const userId = parseInt(userIdStr);
-    const sorted = Object.entries(interactions).sort((a, b) => b[1] - a[1]);
-    const topInteractions = sorted.slice(0, 5).map(([key]) => key.split(":")[0]);
-    const uniqueTypes = Array.from(new Set(topInteractions));
+    for (const user of users) {
+      const engagement = await storage.getInsightEngagement({ userId: user.id });
+      if (engagement.length === 0) continue;
 
-    const existing = await storage.getDashboardPreferences(userId);
-    if (!existing) {
-      await storage.upsertDashboardPreferences({
-        userId,
-        recommendedPanels: uniqueTypes.map(t => ({ type: t, reason: "Based on your engagement" })),
-        autoSuggested: true,
-      });
-      console.log(`[Learning] Created recommendations for user ${userId}`);
+      const interactions: Record<string, number> = {};
+      for (const e of engagement) {
+        const key = `${e.insightType}:${e.insightId}`;
+        interactions[key] = (interactions[key] || 0) + (e.clicked ? 2 : 1);
+      }
+
+      const sorted = Object.entries(interactions).sort((a, b) => b[1] - a[1]);
+      const topInteractions = sorted.slice(0, 5).map(([key]) => key.split(":")[0]);
+      const uniqueTypes = Array.from(new Set(topInteractions));
+
+      const existing = await storage.getDashboardPreferences(user.id);
+      if (!existing) {
+        await storage.upsertDashboardPreferences({
+          userId: user.id,
+          recommendedPanels: uniqueTypes.map(t => ({ type: t, reason: "Based on your engagement" })),
+          autoSuggested: true,
+        });
+        console.log(`[Learning] Created recommendations for user ${user.id} (client=${client.id})`);
+      }
     }
   }
 }
 
 async function growKnowledgeBase() {
   console.log("[Learning] Growing knowledge base from corrections...");
-  const corrections = await storage.getAiCorrections({ status: "accepted" });
-  if (corrections.length === 0) return;
+  const clients = await storage.getClients();
 
-  const correctionPatterns: Record<string, { count: number; oldValues: string[]; newValues: string[] }> = {};
-  for (const c of corrections) {
-    const pattern = `${c.field} correction`;
-    if (!correctionPatterns[pattern]) {
-      correctionPatterns[pattern] = { count: 0, oldValues: [], newValues: [] };
+  for (const client of clients) {
+    const users = await storage.getUsersByClientId(client.id);
+
+    let clientCorrections: any[] = [];
+    for (const user of users) {
+      const corr = await storage.getAiCorrections({ userId: user.id, status: "accepted" });
+      clientCorrections.push(...corr);
     }
-    correctionPatterns[pattern].count++;
-    if (c.oldValue) correctionPatterns[pattern].oldValues.push(c.oldValue);
-    correctionPatterns[pattern].newValues.push(c.newValue);
-  }
+    if (clientCorrections.length === 0) continue;
 
-  for (const [pattern, data] of Object.entries(correctionPatterns)) {
-    if (data.count >= 3) {
-      const mostCommonNew = getMostCommon(data.newValues);
-      await storage.upsertKnowledgeEntry({
-        questionPattern: `Common ${pattern}`,
-        answerSummary: `Users frequently correct ${pattern}. Most common correction: "${mostCommonNew}" (${data.count} corrections)`,
-        queryCount: data.count,
-      });
-      console.log(`[Learning] Added knowledge entry: ${pattern} (${data.count} corrections)`);
+    const correctionPatterns: Record<string, { count: number; oldValues: string[]; newValues: string[] }> = {};
+    for (const c of clientCorrections) {
+      const pattern = `${c.field} correction`;
+      if (!correctionPatterns[pattern]) {
+        correctionPatterns[pattern] = { count: 0, oldValues: [], newValues: [] };
+      }
+      correctionPatterns[pattern].count++;
+      if (c.oldValue) correctionPatterns[pattern].oldValues.push(c.oldValue);
+      correctionPatterns[pattern].newValues.push(c.newValue);
+    }
+
+    for (const [pattern, data] of Object.entries(correctionPatterns)) {
+      if (data.count >= 3) {
+        const mostCommonNew = getMostCommon(data.newValues);
+        await storage.upsertKnowledgeEntry({
+          questionPattern: `Common ${pattern}`,
+          answerSummary: `Users frequently correct ${pattern}. Most common correction: "${mostCommonNew}" (${data.count} corrections)`,
+          queryCount: data.count,
+        });
+        console.log(`[Learning] Added knowledge entry: ${pattern} (${data.count} corrections, client=${client.id})`);
+      }
     }
   }
 }
@@ -151,9 +184,9 @@ async function generateMonthlyValueReports() {
     const existing = await storage.getValueReports(client.id);
     if (existing.some((r: any) => r.reportMonth === reportMonth)) continue;
 
-    const articleResult = await storage.getArticles({});
-    const briefs = await storage.getDailyBriefs(30);
-    const events = await storage.getDetectedEvents({ limit: 100 });
+    const articleResult = await storage.getArticles({ clientId: client.id });
+    const briefs = await storage.getDailyBriefs(30, client.id);
+    const events = await storage.getDetectedEvents({ limit: 100, clientId: client.id });
 
     await storage.createValueReport({
       clientId: client.id,

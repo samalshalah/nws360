@@ -639,45 +639,49 @@ export async function fetchAllFeeds(): Promise<{ sourceName: string; newArticles
 }
 
 export async function backfillGoogleNewsImages(): Promise<number> {
-  const { items } = await storage.getArticles({ limit: 200 });
-  const googleNewsArticles = items.filter(
-    (a) => (a.source?.type === "google_news" || a.source?.type === "facebook") && (!a.imageUrl || isGenericGoogleImage(a.imageUrl)) && a.imageUrl !== "none"
-  );
-  if (googleNewsArticles.length === 0) return 0;
+  const clientIds = await storage.getDistinctClientIds();
+  let totalUpdated = 0;
 
-  console.log(`[Worker] Backfilling images for ${googleNewsArticles.length} Google News articles...`);
-  let updated = 0;
+  for (const clientId of clientIds) {
+    const { items } = await storage.getArticles({ limit: 200, clientId });
+    const googleNewsArticles = items.filter(
+      (a) => (a.source?.type === "google_news" || a.source?.type === "facebook") && (!a.imageUrl || isGenericGoogleImage(a.imageUrl)) && a.imageUrl !== "none"
+    );
+    if (googleNewsArticles.length === 0) continue;
 
-  const batch = googleNewsArticles.slice(0, 2);
-  for (const article of batch) {
-    if (braveRateLimited && Date.now() < braveRateLimitedUntil) {
-      console.log("[Worker] Brave rate limited, skipping remaining backfill");
-      break;
-    }
-    try {
-      const realUrl = await resolveGoogleNewsArticleUrl(article.title, article.subSource || undefined);
-      if (realUrl) {
-        console.log(`[Worker] Resolved: ${realUrl.substring(0, 100)}`);
-        const image = await fetchOgImage(realUrl);
-        if (image && !isGenericGoogleImage(image)) {
-          await storage.updateArticle(article.id, { imageUrl: image });
-          updated++;
-          console.log(`[Worker] Backfilled image for article ${article.id}: ${image.substring(0, 80)}`);
+    console.log(`[Worker] Backfilling images for ${googleNewsArticles.length} articles (client=${clientId})...`);
+
+    const batch = googleNewsArticles.slice(0, 2);
+    for (const article of batch) {
+      if (braveRateLimited && Date.now() < braveRateLimitedUntil) {
+        console.log("[Worker] Brave rate limited, skipping remaining backfill");
+        break;
+      }
+      try {
+        const realUrl = await resolveGoogleNewsArticleUrl(article.title, article.subSource || undefined);
+        if (realUrl) {
+          console.log(`[Worker] Resolved: ${realUrl.substring(0, 100)}`);
+          const image = await fetchOgImage(realUrl);
+          if (image && !isGenericGoogleImage(image)) {
+            await storage.updateArticle(article.id, { imageUrl: image });
+            totalUpdated++;
+            console.log(`[Worker] Backfilled image for article ${article.id}: ${image.substring(0, 80)}`);
+          } else {
+            await storage.updateArticle(article.id, { imageUrl: "none" });
+            console.log(`[Worker] No usable image for article ${article.id}, marked as checked`);
+          }
         } else {
           await storage.updateArticle(article.id, { imageUrl: "none" });
-          console.log(`[Worker] No usable image for article ${article.id}, marked as checked`);
         }
-      } else {
-        await storage.updateArticle(article.id, { imageUrl: "none" });
+        await new Promise(resolve => setTimeout(resolve, 10000));
+      } catch (e) {
+        console.error(`[Worker] Backfill error for article ${article.id}:`, e);
       }
-      await new Promise(resolve => setTimeout(resolve, 10000));
-    } catch (e) {
-      console.error(`[Worker] Backfill error for article ${article.id}:`, e);
     }
   }
 
-  console.log(`[Worker] Backfill complete: updated ${updated}/${googleNewsArticles.length} articles`);
-  return updated;
+  console.log(`[Worker] Backfill complete: updated ${totalUpdated} articles across ${clientIds.length} clients`);
+  return totalUpdated;
 }
 
 const PRIORITY_INTERVALS: Record<string, number> = {
