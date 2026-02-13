@@ -1,0 +1,93 @@
+Build a professional SaaS landing page for a news intelligence platform called NWS360.
+
+This is NOT a marketing website and NOT a portfolio site.
+The page must look like an enterprise analytics product (Bloomberg, Dataminr, Meltwater style).
+Serious, minimal, data-oriented, high-trust.
+
+Tech stack:
+React + Vite + Tailwind (use existing project stack)
+Add a new route: / (public landing page)
+
+The landing page must contain ONLY these sections in this order:
+
+HERO (above the fold)
+Goal: immediately explain the product
+Left side:
+Title: “Understand the World Before It Happens”
+Subtitle: “AI-powered monitoring across news, TV, and social media — organized into signals, narratives, and forecasts.”
+Buttons:
+Primary: “Open Live Demo”
+Secondary: “Login”
+Right side:
+A dashboard mock layout (fake widgets using cards and charts — no images, use UI components)
+
+WHAT THE SYSTEM DOES
+Three horizontal cards:
+
+Monitor: Track media sources in real time
+
+Analyze: AI extracts entities, sentiment, and stories
+
+Predict: Detect narrative shifts and early signals
+
+Each card must look like a software feature, not marketing copy.
+
+LIVE DATA DEMO EXPLANATION
+Explain what the demo is:
+Visitors can open a read-only live feed of aggregated sources.
+No signup required.
+Add a button: “Enter Demo Feed”
+
+WHO IT IS FOR
+Four small blocks:
+Media Organizations
+Government & Policy
+Corporate Intelligence
+Research Teams
+
+Keep tone professional and concise.
+
+SECURITY & TRUST
+Short section:
+
+Multi-tenant data isolation
+
+Client-level data separation
+
+No cross-organization visibility
+
+AI analysis runs per client
+
+FINAL CTA
+Centered:
+“Start Monitoring Your Information Space”
+Buttons:
+Login
+Request Access
+
+Header menu (top right):
+Demo
+Login
+
+No footer navigation, only small copyright line.
+
+Design rules:
+
+Dark theme
+
+Neutral colors (slate/gray/blue)
+
+No marketing gradients
+
+No stock photos
+
+Use cards, tables, charts feeling
+
+Should look like software UI preview
+
+Routing behavior:
+Demo button → /demo
+Login button → /login
+
+Do not modify existing dashboard pages.
+Create a clean isolated public landing layout.

@@ -76,7 +76,7 @@ export default function OnboardingWizard() {
 
   useEffect(() => {
     if (onboardingState && (onboardingState as any)?.completed) {
-      setLocation("/");
+      setLocation("/dashboard");
     }
   }, [onboardingState, setLocation]);
 
@@ -110,7 +110,7 @@ export default function OnboardingWizard() {
     } else {
       saveProgress(5, { completed: true });
       toast({ title: "Setup complete!", description: "Your workspace is ready." });
-      setLocation("/");
+      setLocation("/dashboard");
     }
   };
 

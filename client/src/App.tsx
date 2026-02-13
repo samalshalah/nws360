@@ -45,6 +45,7 @@ import IntegrationMonitoring from "@/pages/IntegrationMonitoring";
 import Collaboration from "@/pages/Collaboration";
 import Knowledge from "@/pages/Knowledge";
 import Forecasting from "@/pages/Forecasting";
+import Landing from "@/pages/Landing";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, ...rest }: { component: any, path?: string }) {
@@ -64,7 +65,7 @@ function ProtectedRoute({ component: Component, ...rest }: { component: any, pat
     return null;
   }
 
-  const showRightPanel = location === "/" || location === "/feed" || location.startsWith("/feed?");
+  const showRightPanel = location === "/dashboard" || location === "/feed" || location.startsWith("/feed?");
 
   return (
     <div className="flex h-screen bg-background">
@@ -97,7 +98,8 @@ function Router() {
       <Route path="/login" component={Login} />
       <Route path="/onboarding" component={OnboardingWizard} />
       
-      <Route path="/">
+      <Route path="/" component={Landing} />
+      <Route path="/dashboard">
         <ProtectedRoute component={Dashboard} />
       </Route>
       <Route path="/feed">

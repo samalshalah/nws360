@@ -51,7 +51,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const [controlOpen, setControlOpen] = useState(isControlActive);
 
   const topNavItems = [
-    { name: t("nav.dashboard"), href: '/', icon: LayoutDashboard },
+    { name: t("nav.dashboard"), href: '/dashboard', icon: LayoutDashboard },
     { name: t("nav.newsFeed"), href: '/feed', icon: Newspaper },
     { name: t("nav.saved"), href: '/saved', icon: Bookmark },
   ];
@@ -76,7 +76,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             <Link key={item.href} href={item.href}>
               <div
                 onClick={onNavigate}
-                data-testid={`nav-${item.href === "/" ? "dashboard" : item.href.replace("/", "")}`}
+                data-testid={`nav-${item.href.replace("/", "")}`}
                 className={cn(
                   "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 cursor-pointer group",
                   isActive
@@ -399,7 +399,7 @@ export function MobileBottomNav() {
 
   const tabs = [
     { name: t("nav.newsFeed"), icon: Newspaper, href: "/feed", testId: "nav-bottom-feed" },
-    { name: t("nav.dashboard"), icon: LayoutDashboard, href: "/", testId: "nav-bottom-dashboard" },
+    { name: t("nav.dashboard"), icon: LayoutDashboard, href: "/dashboard", testId: "nav-bottom-dashboard" },
     { name: t("nav.saved"), icon: Bookmark, href: "/saved", testId: "nav-bottom-saved" },
     { name: t("nav.analytics"), icon: BarChart3, href: "/analytics", testId: "nav-bottom-analytics" },
     { name: t("nav.sources"), icon: Settings, href: "/sources/add", testId: "nav-bottom-sources" },
