@@ -9,6 +9,17 @@ import { storage } from "./storage";
 import { User } from "@shared/schema";
 import { fetchAllFeeds } from "./feed-worker";
 
+declare module "express-session" {
+  interface SessionData {
+    impersonation?: {
+      activeOrganizationId: number | null;
+      activeUserId: number | null;
+      originalUserId: number;
+      isImpersonating: boolean;
+    };
+  }
+}
+
 const scryptAsync = promisify(scrypt);
 const MemoryStore = createMemoryStore(session);
 
@@ -88,6 +99,17 @@ export function setupAuth(app: Express) {
         password: hashedPassword,
       });
 
+      try {
+        const defaultGroupName = user.role === "admin" ? "Platform Admin" :
+          user.role === "client" ? "Organization Admin" : "Viewer";
+        const group = await storage.getPermissionGroupByName(defaultGroupName);
+        if (group) {
+          await storage.assignUserToGroup(user.id, group.id);
+        }
+      } catch (e) {
+        console.error("[Register] Auto-assign permission group failed:", e);
+      }
+
       req.login(user, (err) => {
         if (err) return next(err);
         res.status(201).json(user);
@@ -129,4 +151,46 @@ export function setupAuth(app: Express) {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     res.json(req.user);
   });
+}
+
+export function requirePermission(...permissionCodes: string[]) {
+  return async (req: any, res: any, next: any) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+
+    if (user.role === "admin") return next();
+
+    try {
+      const userPerms = await storage.getEffectivePermissions(user.id);
+      const hasAll = permissionCodes.every((code) => userPerms.includes(code));
+      if (!hasAll) {
+        return res.status(403).json({ message: "Insufficient permissions", required: permissionCodes });
+      }
+      next();
+    } catch (err: any) {
+      console.error("[requirePermission] Error:", err.message);
+      res.status(500).json({ message: "Permission check failed" });
+    }
+  };
+}
+
+export function requireAnyPermission(...permissionCodes: string[]) {
+  return async (req: any, res: any, next: any) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+
+    if (user.role === "admin") return next();
+
+    try {
+      const userPerms = await storage.getEffectivePermissions(user.id);
+      const hasAny = permissionCodes.some((code) => userPerms.includes(code));
+      if (!hasAny) {
+        return res.status(403).json({ message: "Insufficient permissions", required: permissionCodes });
+      }
+      next();
+    } catch (err: any) {
+      console.error("[requireAnyPermission] Error:", err.message);
+      res.status(500).json({ message: "Permission check failed" });
+    }
+  };
 }

@@ -112,6 +112,7 @@ export const bookmarks = pgTable("bookmarks", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id),
   articleId: integer("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   uniqueIndex("bookmarks_user_article_idx").on(table.userId, table.articleId),
@@ -152,6 +153,7 @@ export const adminAuditLogs = pgTable("admin_audit_logs", {
   entity: text("entity").notNull(),
   entityId: integer("entity_id"),
   details: text("details"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -248,6 +250,7 @@ export const usageMetrics = pgTable("usage_metrics", {
   id: serial("id").primaryKey(),
   event: text("event").notNull(),
   userId: integer("user_id"),
+  clientId: integer("client_id"),
   metadata: jsonb("metadata"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
@@ -293,6 +296,7 @@ export const articleAiAnalysis = pgTable("article_ai_analysis", {
   narrativeSummary: text("narrative_summary"),
   clusterId: integer("cluster_id").references(() => storyClusters.id),
   confidenceScore: integer("confidence_score").default(70),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   uniqueIndex("idx_ai_analysis_article").on(table.articleId),
@@ -448,6 +452,7 @@ export const notificationSettings = pgTable("notification_settings", {
   type: text("type").notNull().default("briefing"),
   enabled: boolean("enabled").default(true),
   config: jsonb("config"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_notification_user").on(table.userId),
@@ -496,6 +501,7 @@ export const userFeedback = pgTable("user_feedback", {
   targetType: text("target_type"),
   rating: text("rating").notNull(),
   comment: text("comment"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_feedback_user").on(table.userId),
@@ -514,6 +520,7 @@ export const insightEngagement = pgTable("insight_engagement", {
   clicked: boolean("clicked").default(false),
   exported: boolean("exported").default(false),
   dwellTimeSeconds: integer("dwell_time_seconds"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_engagement_user").on(table.userId),
@@ -531,6 +538,7 @@ export const aiCorrections = pgTable("ai_corrections", {
   oldValue: text("old_value"),
   newValue: text("new_value").notNull(),
   status: text("status").notNull().default("pending"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_corrections_article").on(table.articleId),
@@ -564,6 +572,7 @@ export const dashboardPreferences = pgTable("dashboard_preferences", {
   recommendedPanels: jsonb("recommended_panels"),
   frequentSearches: text("frequent_searches").array(),
   autoSuggested: boolean("auto_suggested").default(false),
+  clientId: integer("client_id"),
   updatedAt: timestamp("updated_at").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
@@ -680,6 +689,7 @@ export const emailSubscriptions = pgTable("email_subscriptions", {
   sendWeeklySummary: boolean("send_weekly_summary").default(false),
   customSchedule: jsonb("custom_schedule"),
   active: boolean("active").default(true),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_email_sub_user").on(table.userId),
@@ -734,6 +744,7 @@ export const exportJobs = pgTable("export_jobs", {
   status: text("status").notNull().default("pending"),
   resultUrl: text("result_url"),
   resultData: jsonb("result_data"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
   completedAt: timestamp("completed_at"),
 }, (table) => [
@@ -789,6 +800,7 @@ export const mobileNotificationPrefs = pgTable("mobile_notification_prefs", {
   severityLevel: text("severity_level").default("high"),
   quietHoursStart: text("quiet_hours_start"),
   quietHoursEnd: text("quiet_hours_end"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_mobile_notif_user").on(table.userId),
@@ -958,6 +970,7 @@ export const comments = pgTable("comments", {
   message: text("message").notNull(),
   parentCommentId: integer("parent_comment_id"),
   workspaceId: integer("workspace_id"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("comments_target_idx").on(table.targetType, table.targetId),
@@ -974,6 +987,7 @@ export const annotations = pgTable("annotations", {
   noteType: text("note_type").notNull().default("observation"),
   content: text("content").notNull(),
   workspaceId: integer("workspace_id"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("annotations_target_idx").on(table.targetType, table.targetId),
@@ -1048,6 +1062,7 @@ export const tasks = pgTable("tasks", {
   relatedTargetType: text("related_target_type"),
   relatedTargetId: integer("related_target_id"),
   dueDate: timestamp("due_date"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1060,6 +1075,7 @@ export const watchlists = pgTable("watchlists", {
   entityOrTopic: text("entity_or_topic").notNull(),
   targetType: text("target_type").notNull().default("entity"),
   workspaceId: integer("workspace_id"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1075,6 +1091,7 @@ export const internalAlerts = pgTable("internal_alerts", {
   message: text("message").notNull(),
   read: boolean("read").default(false),
   workspaceId: integer("workspace_id"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("internal_alerts_receiver_idx").on(table.receiverId),
@@ -1090,6 +1107,7 @@ export const changeHistory = pgTable("change_history", {
   entityId: integer("entity_id").notNull(),
   changeType: text("change_type").notNull(),
   details: jsonb("details"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("change_history_entity_idx").on(table.entityType, table.entityId),
@@ -1106,6 +1124,7 @@ export const activityEvents = pgTable("activity_events", {
   targetType: text("target_type"),
   targetId: integer("target_id"),
   metadata: jsonb("metadata"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("activity_events_ws_idx").on(table.workspaceId, table.createdAt),
@@ -1490,6 +1509,7 @@ export const articleTranslations = pgTable("article_translations", {
   translatedTitle: text("translated_title"),
   translatedContent: text("translated_content"),
   translatedSummary: text("translated_summary"),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   uniqueIndex("article_translations_article_lang_idx").on(table.articleId, table.targetLanguage),
@@ -1498,6 +1518,143 @@ export const articleTranslations = pgTable("article_translations", {
 export const insertArticleTranslationSchema = createInsertSchema(articleTranslations).omit({ id: true, createdAt: true });
 export type ArticleTranslation = typeof articleTranslations.$inferSelect;
 export type InsertArticleTranslation = z.infer<typeof insertArticleTranslationSchema>;
+
+// === ENTERPRISE ACCESS CONTROL: PERMISSION GROUPS ===
+export const permissionGroups = pgTable("permission_groups", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  description: text("description"),
+  isSystem: boolean("is_system").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPermissionGroupSchema = createInsertSchema(permissionGroups).omit({ id: true, createdAt: true });
+
+// === ENTERPRISE ACCESS CONTROL: PERMISSIONS ===
+export const permissions = pgTable("permissions", {
+  id: serial("id").primaryKey(),
+  code: text("code").notNull().unique(),
+  resource: text("resource").notNull(),
+  action: text("action").notNull(),
+  scope: text("scope").notNull().default("org"),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_permissions_resource").on(table.resource),
+  index("idx_permissions_code").on(table.code),
+]);
+
+export const insertPermissionSchema = createInsertSchema(permissions).omit({ id: true, createdAt: true });
+
+// === ENTERPRISE ACCESS CONTROL: GROUP → PERMISSION MAPPING ===
+export const groupPermissions = pgTable("group_permissions", {
+  id: serial("id").primaryKey(),
+  groupId: integer("group_id").notNull().references(() => permissionGroups.id, { onDelete: "cascade" }),
+  permissionId: integer("permission_id").notNull().references(() => permissions.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("group_perm_unique").on(table.groupId, table.permissionId),
+]);
+
+export const insertGroupPermissionSchema = createInsertSchema(groupPermissions).omit({ id: true, createdAt: true });
+
+// === ENTERPRISE ACCESS CONTROL: USER → PERMISSION GROUP MAPPING ===
+export const userPermissionGroups = pgTable("user_permission_groups", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  groupId: integer("group_id").notNull().references(() => permissionGroups.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("user_perm_group_unique").on(table.userId, table.groupId),
+]);
+
+export const insertUserPermissionGroupSchema = createInsertSchema(userPermissionGroups).omit({ id: true, createdAt: true });
+
+// === ENTERPRISE ACCESS CONTROL: USER → DIRECT PERMISSION MAPPING ===
+export const userPermissions = pgTable("user_permissions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  permissionId: integer("permission_id").notNull().references(() => permissions.id, { onDelete: "cascade" }),
+  granted: boolean("granted").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("user_perm_unique").on(table.userId, table.permissionId),
+]);
+
+export const insertUserPermissionSchema = createInsertSchema(userPermissions).omit({ id: true, createdAt: true });
+
+// === IMPERSONATION AUDIT LOG ===
+export const impersonationLogs = pgTable("impersonation_logs", {
+  id: serial("id").primaryKey(),
+  adminUserId: integer("admin_user_id").notNull().references(() => users.id),
+  targetUserId: integer("target_user_id"),
+  targetOrganizationId: integer("target_organization_id"),
+  action: text("action").notNull(),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_impersonation_admin").on(table.adminUserId),
+  index("idx_impersonation_created").on(table.createdAt),
+]);
+
+export const insertImpersonationLogSchema = createInsertSchema(impersonationLogs).omit({ id: true, createdAt: true });
+
+// RBAC Types
+export type PermissionGroup = typeof permissionGroups.$inferSelect;
+export type InsertPermissionGroup = z.infer<typeof insertPermissionGroupSchema>;
+
+export type Permission = typeof permissions.$inferSelect;
+export type InsertPermission = z.infer<typeof insertPermissionSchema>;
+
+export type GroupPermission = typeof groupPermissions.$inferSelect;
+export type InsertGroupPermission = z.infer<typeof insertGroupPermissionSchema>;
+
+export type UserPermissionGroup = typeof userPermissionGroups.$inferSelect;
+export type InsertUserPermissionGroup = z.infer<typeof insertUserPermissionGroupSchema>;
+
+export type UserPermission = typeof userPermissions.$inferSelect;
+export type InsertUserPermission = z.infer<typeof insertUserPermissionSchema>;
+
+export type ImpersonationLog = typeof impersonationLogs.$inferSelect;
+export type InsertImpersonationLog = z.infer<typeof insertImpersonationLogSchema>;
+
+// Default Permission Codes
+export const PERMISSION_CODES = {
+  ARTICLES_READ: "articles:read:org",
+  ARTICLES_MANAGE: "articles:manage:org",
+  SOURCES_READ: "sources:read:org",
+  SOURCES_MANAGE: "sources:manage:org",
+  ANALYTICS_VIEW: "analytics:view:org",
+  ANALYTICS_EXPORT: "analytics:export:org",
+  REPORTS_VIEW: "reports:view:org",
+  REPORTS_EXPORT: "reports:export:org",
+  AI_VIEW: "ai:view:org",
+  AI_CONFIGURE: "ai:configure:org",
+  USERS_VIEW: "users:view:org",
+  USERS_MANAGE: "users:manage:org",
+  SETTINGS_VIEW: "settings:view:org",
+  SETTINGS_MANAGE: "settings:manage:org",
+  INTELLIGENCE_VIEW: "intelligence:view:org",
+  INTELLIGENCE_MANAGE: "intelligence:manage:org",
+  COLLABORATION_VIEW: "collaboration:view:org",
+  COLLABORATION_MANAGE: "collaboration:manage:org",
+  INTEGRATIONS_VIEW: "integrations:view:org",
+  INTEGRATIONS_MANAGE: "integrations:manage:org",
+  PLATFORM_MONITOR: "platform:monitor:any",
+  PLATFORM_IMPERSONATE: "platform:impersonate:any",
+  PLATFORM_ADMIN: "platform:admin:any",
+} as const;
+
+export type PermissionCode = (typeof PERMISSION_CODES)[keyof typeof PERMISSION_CODES];
+
+// Default Permission Groups (roles)
+export const DEFAULT_PERMISSION_GROUPS = {
+  PLATFORM_ADMIN: "platform_admin",
+  ORG_ADMIN: "org_admin",
+  ANALYST: "analyst",
+  VIEWER: "viewer",
+} as const;
 
 // Request Types
 export type LoginRequest = Pick<InsertUser, "username" | "password">;

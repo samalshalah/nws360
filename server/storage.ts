@@ -80,6 +80,7 @@ import {
   type AiMemoryAnswer, type InsertAiMemoryAnswer,
   topicForecasts, earlySignals, riskScores, influenceGraph,
   attentionDecay, alertPriorityScores, forecastResults, futureBriefings, articleTranslations,
+  permissionGroups, permissions, groupPermissions, userPermissionGroups, userPermissions, impersonationLogs,
   type ArticleTranslation, type InsertArticleTranslation,
   type TopicForecast, type InsertTopicForecast,
   type EarlySignal, type InsertEarlySignal,
@@ -89,6 +90,12 @@ import {
   type AlertPriorityScore, type InsertAlertPriorityScore,
   type ForecastResult, type InsertForecastResult,
   type FutureBriefing, type InsertFutureBriefing,
+  type PermissionGroup, type InsertPermissionGroup,
+  type Permission, type InsertPermission,
+  type GroupPermission, type InsertGroupPermission,
+  type UserPermissionGroup, type InsertUserPermissionGroup,
+  type UserPermission, type InsertUserPermission,
+  type ImpersonationLog, type InsertImpersonationLog,
 } from "@shared/schema";
 import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
@@ -572,6 +579,41 @@ export interface IStorage {
   getArticleTranslation(articleId: number, targetLanguage: string): Promise<ArticleTranslation | undefined>;
   createArticleTranslation(data: InsertArticleTranslation): Promise<ArticleTranslation>;
   updateArticleTranslation(id: number, data: Partial<InsertArticleTranslation>): Promise<ArticleTranslation | undefined>;
+
+  // === ENTERPRISE ACCESS CONTROL ===
+  // Permission Groups
+  getPermissionGroups(): Promise<PermissionGroup[]>;
+  getPermissionGroup(id: number): Promise<PermissionGroup | undefined>;
+  getPermissionGroupByName(name: string): Promise<PermissionGroup | undefined>;
+  createPermissionGroup(data: InsertPermissionGroup): Promise<PermissionGroup>;
+  deletePermissionGroup(id: number): Promise<void>;
+
+  // Permissions
+  getPermissions(): Promise<Permission[]>;
+  getPermissionByCode(code: string): Promise<Permission | undefined>;
+  createPermission(data: InsertPermission): Promise<Permission>;
+
+  // Group-Permission Mapping
+  getGroupPermissions(groupId: number): Promise<Permission[]>;
+  addPermissionToGroup(groupId: number, permissionId: number): Promise<GroupPermission>;
+  removePermissionFromGroup(groupId: number, permissionId: number): Promise<void>;
+
+  // User-Permission Group Mapping
+  getUserPermissionGroups(userId: number): Promise<(UserPermissionGroup & { groupName: string })[]>;
+  assignUserToGroup(userId: number, groupId: number): Promise<UserPermissionGroup>;
+  removeUserFromGroup(userId: number, groupId: number): Promise<void>;
+
+  // User Direct Permissions
+  getUserDirectPermissions(userId: number): Promise<(UserPermission & { code: string })[]>;
+  assignDirectPermission(userId: number, permissionId: number, granted: boolean): Promise<UserPermission>;
+  removeDirectPermission(userId: number, permissionId: number): Promise<void>;
+
+  // Resolved Permissions (groups + direct)
+  getEffectivePermissions(userId: number): Promise<string[]>;
+
+  // Impersonation Logs
+  createImpersonationLog(data: InsertImpersonationLog): Promise<ImpersonationLog>;
+  getImpersonationLogs(params?: { adminUserId?: number; limit?: number }): Promise<ImpersonationLog[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -3290,6 +3332,273 @@ export class DatabaseStorage implements IStorage {
   async updateArticleTranslation(id: number, data: Partial<InsertArticleTranslation>): Promise<ArticleTranslation | undefined> {
     const [row] = await db.update(articleTranslations).set(data).where(eq(articleTranslations.id, id)).returning();
     return row;
+  }
+
+  // === ENTERPRISE ACCESS CONTROL ===
+
+  // Permission Groups
+  async getPermissionGroups(): Promise<PermissionGroup[]> {
+    return db.select().from(permissionGroups).orderBy(asc(permissionGroups.name));
+  }
+
+  async getPermissionGroup(id: number): Promise<PermissionGroup | undefined> {
+    const [row] = await db.select().from(permissionGroups).where(eq(permissionGroups.id, id));
+    return row;
+  }
+
+  async getPermissionGroupByName(name: string): Promise<PermissionGroup | undefined> {
+    const [row] = await db.select().from(permissionGroups).where(eq(permissionGroups.name, name));
+    return row;
+  }
+
+  async createPermissionGroup(data: InsertPermissionGroup): Promise<PermissionGroup> {
+    const [row] = await db.insert(permissionGroups).values(data).returning();
+    return row;
+  }
+
+  async deletePermissionGroup(id: number): Promise<void> {
+    await db.delete(permissionGroups).where(eq(permissionGroups.id, id));
+  }
+
+  // Permissions
+  async getPermissions(): Promise<Permission[]> {
+    return db.select().from(permissions).orderBy(asc(permissions.code));
+  }
+
+  async getPermissionByCode(code: string): Promise<Permission | undefined> {
+    const [row] = await db.select().from(permissions).where(eq(permissions.code, code));
+    return row;
+  }
+
+  async createPermission(data: InsertPermission): Promise<Permission> {
+    const [row] = await db.insert(permissions).values(data).returning();
+    return row;
+  }
+
+  // Group-Permission Mapping
+  async getGroupPermissions(groupId: number): Promise<Permission[]> {
+    const rows = await db.select({ permission: permissions })
+      .from(groupPermissions)
+      .innerJoin(permissions, eq(groupPermissions.permissionId, permissions.id))
+      .where(eq(groupPermissions.groupId, groupId));
+    return rows.map(r => r.permission);
+  }
+
+  async addPermissionToGroup(groupId: number, permissionId: number): Promise<GroupPermission> {
+    const [row] = await db.insert(groupPermissions)
+      .values({ groupId, permissionId })
+      .onConflictDoNothing()
+      .returning();
+    return row;
+  }
+
+  async removePermissionFromGroup(groupId: number, permissionId: number): Promise<void> {
+    await db.delete(groupPermissions).where(
+      and(eq(groupPermissions.groupId, groupId), eq(groupPermissions.permissionId, permissionId))
+    );
+  }
+
+  // User-Permission Group Mapping
+  async getUserPermissionGroups(userId: number): Promise<(UserPermissionGroup & { groupName: string })[]> {
+    const rows = await db.select({
+      id: userPermissionGroups.id,
+      userId: userPermissionGroups.userId,
+      groupId: userPermissionGroups.groupId,
+      createdAt: userPermissionGroups.createdAt,
+      groupName: permissionGroups.name,
+    })
+    .from(userPermissionGroups)
+    .innerJoin(permissionGroups, eq(userPermissionGroups.groupId, permissionGroups.id))
+    .where(eq(userPermissionGroups.userId, userId));
+    return rows;
+  }
+
+  async assignUserToGroup(userId: number, groupId: number): Promise<UserPermissionGroup> {
+    const [row] = await db.insert(userPermissionGroups)
+      .values({ userId, groupId })
+      .onConflictDoNothing()
+      .returning();
+    return row;
+  }
+
+  async removeUserFromGroup(userId: number, groupId: number): Promise<void> {
+    await db.delete(userPermissionGroups).where(
+      and(eq(userPermissionGroups.userId, userId), eq(userPermissionGroups.groupId, groupId))
+    );
+  }
+
+  // User Direct Permissions
+  async getUserDirectPermissions(userId: number): Promise<(UserPermission & { code: string })[]> {
+    const rows = await db.select({
+      id: userPermissions.id,
+      userId: userPermissions.userId,
+      permissionId: userPermissions.permissionId,
+      granted: userPermissions.granted,
+      createdAt: userPermissions.createdAt,
+      code: permissions.code,
+    })
+    .from(userPermissions)
+    .innerJoin(permissions, eq(userPermissions.permissionId, permissions.id))
+    .where(eq(userPermissions.userId, userId));
+    return rows;
+  }
+
+  async assignDirectPermission(userId: number, permissionId: number, granted: boolean): Promise<UserPermission> {
+    const [row] = await db.insert(userPermissions)
+      .values({ userId, permissionId, granted })
+      .onConflictDoNothing()
+      .returning();
+    return row;
+  }
+
+  async removeDirectPermission(userId: number, permissionId: number): Promise<void> {
+    await db.delete(userPermissions).where(
+      and(eq(userPermissions.userId, userId), eq(userPermissions.permissionId, permissionId))
+    );
+  }
+
+  // Resolved Permissions (from groups + direct permissions)
+  async getEffectivePermissions(userId: number): Promise<string[]> {
+    const groupPerms = await db.select({ code: permissions.code })
+      .from(userPermissionGroups)
+      .innerJoin(groupPermissions, eq(userPermissionGroups.groupId, groupPermissions.groupId))
+      .innerJoin(permissions, eq(groupPermissions.permissionId, permissions.id))
+      .where(eq(userPermissionGroups.userId, userId));
+
+    const directPerms = await db.select({
+      code: permissions.code,
+      granted: userPermissions.granted,
+    })
+    .from(userPermissions)
+    .innerJoin(permissions, eq(userPermissions.permissionId, permissions.id))
+    .where(eq(userPermissions.userId, userId));
+
+    const permSet = new Set<string>(groupPerms.map(r => r.code));
+
+    for (const dp of directPerms) {
+      if (dp.granted) {
+        permSet.add(dp.code);
+      } else {
+        permSet.delete(dp.code);
+      }
+    }
+
+    return Array.from(permSet);
+  }
+
+  // Impersonation Logs
+  async createImpersonationLog(data: InsertImpersonationLog): Promise<ImpersonationLog> {
+    const [row] = await db.insert(impersonationLogs).values(data).returning();
+    return row;
+  }
+
+  async getImpersonationLogs(params?: { adminUserId?: number; limit?: number }): Promise<ImpersonationLog[]> {
+    const conditions: any[] = [];
+    if (params?.adminUserId) {
+      conditions.push(eq(impersonationLogs.adminUserId, params.adminUserId));
+    }
+    const query = db.select().from(impersonationLogs)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(impersonationLogs.createdAt))
+      .limit(params?.limit || 50);
+    return query;
+  }
+
+  async seedDefaultPermissions(): Promise<void> {
+    const { PERMISSION_CODES, DEFAULT_PERMISSION_GROUPS } = await import("@shared/schema");
+
+    const allCodes = Object.values(PERMISSION_CODES);
+    for (const code of allCodes) {
+      const existing = await db.select().from(permissions).where(eq(permissions.code, code)).limit(1);
+      if (existing.length === 0) {
+        const parts = code.split(":");
+        const resource = parts[0] || "general";
+        const action = parts[1] || "access";
+        const scope = parts[2] || "org";
+        await db.insert(permissions).values({
+          code,
+          resource,
+          action,
+          scope,
+          description: `Permission: ${code}`,
+        });
+      }
+    }
+
+    const groupDefs: Record<string, { name: string; description: string; isSystem: boolean; codes: string[] }> = {
+      [DEFAULT_PERMISSION_GROUPS.PLATFORM_ADMIN]: {
+        name: "Platform Admin",
+        description: "Full platform access - all permissions",
+        isSystem: true,
+        codes: allCodes,
+      },
+      [DEFAULT_PERMISSION_GROUPS.ORG_ADMIN]: {
+        name: "Organization Admin",
+        description: "Full organization management access",
+        isSystem: true,
+        codes: allCodes.filter((c: string) => !c.startsWith("billing:") || c === PERMISSION_CODES.BILLING_VIEW),
+      },
+      [DEFAULT_PERMISSION_GROUPS.ANALYST]: {
+        name: "Analyst",
+        description: "Content analysis and reporting access",
+        isSystem: true,
+        codes: [
+          PERMISSION_CODES.ARTICLES_READ, PERMISSION_CODES.ARTICLES_MANAGE,
+          PERMISSION_CODES.SOURCES_READ,
+          PERMISSION_CODES.ANALYTICS_VIEW, PERMISSION_CODES.ANALYTICS_EXPORT,
+          PERMISSION_CODES.REPORTS_VIEW, PERMISSION_CODES.REPORTS_EXPORT,
+          PERMISSION_CODES.AI_VIEW,
+          PERMISSION_CODES.INTELLIGENCE_VIEW,
+          PERMISSION_CODES.COLLABORATION_VIEW, PERMISSION_CODES.COLLABORATION_CONTRIBUTE,
+        ],
+      },
+      [DEFAULT_PERMISSION_GROUPS.VIEWER]: {
+        name: "Viewer",
+        description: "Read-only access to articles and analytics",
+        isSystem: true,
+        codes: [
+          PERMISSION_CODES.ARTICLES_READ,
+          PERMISSION_CODES.SOURCES_READ,
+          PERMISSION_CODES.ANALYTICS_VIEW,
+          PERMISSION_CODES.REPORTS_VIEW,
+          PERMISSION_CODES.AI_VIEW,
+          PERMISSION_CODES.INTELLIGENCE_VIEW,
+          PERMISSION_CODES.COLLABORATION_VIEW,
+        ],
+      },
+    };
+
+    for (const [_slug, def] of Object.entries(groupDefs)) {
+      let group = await db.select().from(permissionGroups).where(eq(permissionGroups.name, def.name)).limit(1);
+      let groupId: number;
+      if (group.length === 0) {
+        const [created] = await db.insert(permissionGroups).values({
+          name: def.name,
+          description: def.description,
+          isSystem: def.isSystem,
+        }).returning();
+        groupId = created.id;
+      } else {
+        groupId = group[0].id;
+      }
+
+      for (const code of def.codes) {
+        const perm = await db.select().from(permissions).where(eq(permissions.code, code)).limit(1);
+        if (perm.length > 0) {
+          const existing = await db.select().from(groupPermissions)
+            .where(and(eq(groupPermissions.groupId, groupId), eq(groupPermissions.permissionId, perm[0].id)))
+            .limit(1);
+          if (existing.length === 0) {
+            await db.insert(groupPermissions).values({
+              groupId,
+              permissionId: perm[0].id,
+            });
+          }
+        }
+      }
+    }
+
+    console.log("[Seed] Default permission groups and permissions seeded successfully");
   }
 
 }

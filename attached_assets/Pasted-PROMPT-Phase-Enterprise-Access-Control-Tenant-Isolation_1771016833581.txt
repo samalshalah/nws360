@@ -1,0 +1,144 @@
+PROMPT — Phase: Enterprise Access Control + Tenant Isolation + Impersonation
+
+Implement a full enterprise-grade authorization system for a multi-tenant SaaS intelligence platform.
+
+This system MUST enforce strict tenant data isolation while allowing privileged administrators to impersonate users safely for monitoring and support.
+
+The platform structure is:
+
+Platform (super admin)
+→ Organizations (clients)
+→ Users (belong to an organization)
+→ Data (sources, articles, analytics, AI output, reports, predictions)
+
+No data may ever be accessible across organizations unless the authenticated user is a platform administrator operating in impersonation mode.
+
+1) Tenant Isolation (Critical Requirement)
+
+Every database record MUST belong to an organization.
+
+Add organizationId to ALL data tables including but not limited to:
+
+sources
+articles
+analytics_cache
+story_clusters
+entities
+events
+daily_briefs
+predictions
+translations
+knowledge_memory
+reports
+jobs
+ai_outputs
+alerts
+keywords
+
+Update all storage queries so every read/write always filters by organizationId.
+
+No route is allowed to rely on UI filtering.
+Isolation must exist at database query level.
+
+If a user requests a resource not belonging to their organization → return 404, not 403.
+
+2) Permission Engine (Not Roles)
+
+Implement a permission-based authorization model.
+
+Tables:
+
+permissions
+permission_groups
+user_permissions
+user_permission_groups
+
+Permissions must follow this format:
+
+resource:action:scope
+
+Examples:
+articles:read:org
+sources:manage:org
+analytics:view:org
+reports:export:org
+ai:configure:org
+users:manage:org
+platform:monitor:any
+platform:impersonate:any
+
+Do NOT hardcode roles in logic.
+Roles are only predefined permission groups.
+
+Authorization middleware must check permissions before route handlers execute.
+
+3) Impersonation System (Admin Monitoring Mode)
+
+Platform admins can impersonate any organization and any user.
+
+Add a session state:
+
+session.activeOrganizationId
+session.activeUserId
+session.isImpersonating
+
+Behavior:
+
+When admin selects an organization → all queries run under that organization scope.
+
+When admin selects a user → system behaves exactly as that user including permissions.
+
+Log every impersonation action:
+who impersonated
+which user
+timestamp
+IP
+
+Add API endpoints:
+
+POST /admin/impersonate/organization/:id
+POST /admin/impersonate/user/:id
+POST /admin/impersonate/exit
+
+4) UI Behavior
+
+Frontend must NOT decide access rights.
+
+Instead fetch:
+
+GET /auth/me
+
+Response returns:
+user
+organization
+permissions
+impersonationState
+
+Sidebar menu renders dynamically based on permissions.
+
+5) Admin Dashboard Requirement
+
+Platform admin dashboard must include:
+
+Organization dropdown
+User dropdown (filtered by selected organization)
+
+When changed:
+refresh auth context
+reload data under impersonated scope
+
+Client admins can only see users inside their organization.
+
+6) Security Rules
+
+Never trust client-provided organizationId
+Always derive organizationId from session context
+Background workers must process data per organization
+Queue jobs must include organizationId
+
+7) Backwards Compatibility
+
+Migrate existing data:
+create default organization
+assign all existing records to it
+assign existing users to that organization

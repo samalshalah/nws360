@@ -41,7 +41,10 @@ function sanitizeInput(text: string | undefined): string {
   return sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} }).trim();
 }
 
-function resolveClientId(user: any): number | null {
+function resolveClientId(user: any, req?: any): number | null {
+  if (req?.session?.impersonation?.isImpersonating && req.session.impersonation.activeOrganizationId) {
+    return req.session.impersonation.activeOrganizationId;
+  }
   if (user.role === "admin") return null;
   if (user.clientId) return user.clientId;
   if (user.role === "client") return user.id;
@@ -63,8 +66,8 @@ function getSourceLogoUrl(sourceUrl: string, sourceName?: string): string | null
   }
 }
 
-function requireClientId(user: any): number {
-  const cid = resolveClientId(user);
+function requireClientId(user: any, req?: any): number {
+  const cid = resolveClientId(user, req);
   if (cid === null && user.role !== "admin") {
     throw new Error("User has no associated client");
   }
@@ -93,6 +96,170 @@ export async function registerRoutes(
   app.use("/api/", apiLimiter);
   app.use("/api/login", authLimiter);
   app.use("/api/register", authLimiter);
+
+  // === ENHANCED AUTH: /auth/me with permissions & impersonation ===
+  app.get("/api/auth/me", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+
+    try {
+      const impersonation = req.session?.impersonation || null;
+
+      let effectiveUser = user;
+      if (impersonation?.isImpersonating && impersonation?.activeUserId) {
+        effectiveUser = await storage.getUser(impersonation.activeUserId) || user;
+      }
+
+      const effectivePermissions = await storage.getEffectivePermissions(effectiveUser.id);
+
+      let organization = null;
+      const orgId = impersonation?.activeOrganizationId || user.clientId || (user.role === "client" ? user.id : null);
+      if (orgId) {
+        organization = await storage.getClient(orgId);
+      }
+
+      res.json({
+        user: {
+          id: effectiveUser.id,
+          username: effectiveUser.username,
+          role: effectiveUser.role,
+          clientId: effectiveUser.clientId,
+          disabled: effectiveUser.disabled,
+          createdAt: effectiveUser.createdAt,
+        },
+        originalUser: impersonation?.isImpersonating ? {
+          id: user.id,
+          username: user.username,
+          role: user.role,
+        } : null,
+        organization: organization ? {
+          id: organization.id,
+          name: organization.name,
+          organizationType: organization.organizationType,
+          defaultLanguage: organization.defaultLanguage,
+          active: organization.active,
+        } : null,
+        permissions: effectivePermissions,
+        impersonation: impersonation ? {
+          isImpersonating: impersonation.isImpersonating,
+          activeOrganizationId: impersonation.activeOrganizationId,
+          activeUserId: impersonation.activeUserId,
+          originalUserId: impersonation.originalUserId,
+        } : { isImpersonating: false, activeOrganizationId: null, activeUserId: null, originalUserId: null },
+      });
+    } catch (err: any) {
+      console.error("[auth/me] Error:", err.message);
+      res.status(500).json({ message: "Failed to load auth context" });
+    }
+  });
+
+  // === IMPERSONATION ENDPOINTS ===
+  app.post("/api/admin/impersonate/organization/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (user.role !== "admin") return res.status(403).json({ message: "Platform admin access required" });
+
+    const orgId = parseInt(req.params.id);
+    const org = await storage.getClient(orgId);
+    if (!org) return res.status(404).json({ message: "Organization not found" });
+
+    req.session.impersonation = {
+      activeOrganizationId: orgId,
+      activeUserId: null,
+      originalUserId: user.id,
+      isImpersonating: true,
+    };
+
+    await storage.createImpersonationLog({
+      adminUserId: user.id,
+      targetOrganizationId: orgId,
+      targetUserId: null,
+      action: "impersonate_organization",
+      ipAddress: req.ip || req.socket.remoteAddress || null,
+      userAgent: req.headers["user-agent"] || null,
+    });
+
+    await storage.createAuditLog({
+      userId: user.id,
+      action: "impersonate_organization",
+      entity: "organization",
+      entityId: orgId,
+      details: `Admin impersonating organization: ${org.name}`,
+    });
+
+    res.json({ message: "Now impersonating organization", organization: { id: org.id, name: org.name } });
+  });
+
+  app.post("/api/admin/impersonate/user/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (user.role !== "admin") return res.status(403).json({ message: "Platform admin access required" });
+
+    const targetUserId = parseInt(req.params.id);
+    const targetUser = await storage.getUser(targetUserId);
+    if (!targetUser) return res.status(404).json({ message: "User not found" });
+
+    const targetOrgId = targetUser.clientId || (targetUser.role === "client" ? targetUser.id : null);
+
+    req.session.impersonation = {
+      activeOrganizationId: targetOrgId,
+      activeUserId: targetUserId,
+      originalUserId: user.id,
+      isImpersonating: true,
+    };
+
+    await storage.createImpersonationLog({
+      adminUserId: user.id,
+      targetUserId: targetUserId,
+      targetOrganizationId: targetOrgId,
+      action: "impersonate_user",
+      ipAddress: req.ip || req.socket.remoteAddress || null,
+      userAgent: req.headers["user-agent"] || null,
+    });
+
+    await storage.createAuditLog({
+      userId: user.id,
+      action: "impersonate_user",
+      entity: "user",
+      entityId: targetUserId,
+      details: `Admin impersonating user: ${targetUser.username}`,
+    });
+
+    res.json({ message: "Now impersonating user", user: { id: targetUser.id, username: targetUser.username } });
+  });
+
+  app.post("/api/admin/impersonate/exit", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+
+    if (!req.session.impersonation?.isImpersonating) {
+      return res.status(400).json({ message: "Not currently impersonating" });
+    }
+
+    await storage.createImpersonationLog({
+      adminUserId: req.session.impersonation.originalUserId,
+      targetUserId: req.session.impersonation.activeUserId,
+      targetOrganizationId: req.session.impersonation.activeOrganizationId,
+      action: "exit_impersonation",
+      ipAddress: req.ip || req.socket.remoteAddress || null,
+      userAgent: req.headers["user-agent"] || null,
+    });
+
+    req.session.impersonation = undefined;
+
+    res.json({ message: "Exited impersonation mode" });
+  });
+
+  // === IMPERSONATION LOGS ===
+  app.get("/api/admin/impersonation-logs", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (user.role !== "admin") return res.status(403).json({ message: "Platform admin access required" });
+
+    const limit = parseInt(req.query.limit as string) || 50;
+    const logs = await storage.getImpersonationLogs({ limit });
+    res.json(logs);
+  });
 
   // === SOURCES ===
   app.get(api.sources.list.path, async (req, res) => {
@@ -135,7 +302,7 @@ export async function registerRoutes(
       if (!req.isAuthenticated()) return res.sendStatus(401);
       const user = req.user as any;
       const input = api.sources.create.input.parse(req.body);
-      const clientId = resolveClientId(user);
+      const clientId = resolveClientId(user, req);
       const logoUrl = getSourceLogoUrl(input.url, input.name);
       const source = await storage.createSource({...input, userId: user.id, clientId: clientId || undefined, logoUrl});
 
@@ -492,7 +659,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     try {
       const user = req.user as any;
-      const clientId = resolveClientId(user);
+      const clientId = resolveClientId(user, req);
       const scopedSourceIds = await getUserSourceIds(user);
       let filteredSourceIds = scopedSourceIds;
       const sourceNameFilter = req.query.sourceName as string;
@@ -572,7 +739,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     try {
       const user = req.user as any;
-      const clientId = resolveClientId(user);
+      const clientId = resolveClientId(user, req);
       const scopedSourceIds = await getUserSourceIds(user);
       if (Array.isArray(scopedSourceIds) && scopedSourceIds.length === 0) {
         return res.json([]);
@@ -596,7 +763,7 @@ export async function registerRoutes(
   app.get("/api/articles/export", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const scopedSourceIds = await getUserSourceIds(user);
     const params = {
       search: req.query.search as string,
@@ -630,7 +797,7 @@ export async function registerRoutes(
   app.get(api.articles.get.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid article ID" });
     const article = await storage.getArticle(id, clientId || undefined);
@@ -666,7 +833,7 @@ export async function registerRoutes(
   app.post("/api/articles/:id/translate", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid article ID" });
     const { targetLanguage } = req.body;
@@ -747,7 +914,7 @@ export async function registerRoutes(
     
     try {
       const user = req.user as any;
-      const clientId = resolveClientId(user);
+      const clientId = resolveClientId(user, req);
       const scopedSourceIds = await getUserSourceIds(user);
       const allArticles = await storage.getArticles({ limit: 500, sourceIds: scopedSourceIds, clientId: clientId || undefined });
       const unanalyzed = allArticles.items.filter(
@@ -800,7 +967,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
@@ -812,7 +979,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
@@ -824,7 +991,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
@@ -836,7 +1003,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
@@ -848,7 +1015,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
@@ -860,7 +1027,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const topic = req.query.topic as string;
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
@@ -879,7 +1046,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const dateStr = (req.query.date as string) || new Date().toISOString().split("T")[0];
     if (isNaN(Date.parse(dateStr))) return res.status(400).json({ message: "valid date required" });
     try {
@@ -895,7 +1062,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const keyword = req.query.keyword as string;
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
@@ -921,7 +1088,7 @@ export async function registerRoutes(
   app.get("/api/bookmarks/articles", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const userId = user.id;
     try {
       const articleIds = await storage.getBookmarks(userId);
@@ -1110,7 +1277,7 @@ export async function registerRoutes(
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const scopedSourceIds = await getUserSourceIds(user);
     const sentimentData = await storage.getSentimentReports(startDate, endDate, scopedSourceIds, clientId || undefined);
     const csvHeader = "Source,Positive,Negative,Neutral,Total\n";
@@ -1157,7 +1324,7 @@ export async function registerRoutes(
     try {
       const { name, url, type, active, intervalMinutes, maxArticlesPerFetch, retentionDays, country, refreshPriority } = req.body;
       if (!name || !url || !type) return res.status(400).json({ message: "name, url, and type are required" });
-      const adminClientId = req.body.clientId || resolveClientId(user);
+      const adminClientId = req.body.clientId || resolveClientId(user, req);
       const logoUrl = getSourceLogoUrl(url, name);
       const source = await storage.createSource({ name: sanitizeInput(name), url, type, active: active !== false, intervalMinutes: intervalMinutes || 15, maxArticlesPerFetch: maxArticlesPerFetch || 10, retentionDays: retentionDays || 30, country: country || null, refreshPriority: refreshPriority || "medium", userId: user.id, clientId: adminClientId || undefined, logoUrl });
       await storage.createAuditLog({ userId: user.id, action: "create", entity: "source", entityId: source.id, details: `Created source: ${source.name}` });
@@ -2481,7 +2648,7 @@ export async function registerRoutes(
   app.get("/api/stories", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
     const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
     const clusters = await storage.getStoryClusters({ limit, offset, clientId: clientId || undefined });
@@ -2493,7 +2660,7 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const cluster = await storage.getStoryCluster(id, clientId || undefined);
     if (!cluster) return res.status(404).json({ message: "Story not found" });
     const clusterArticles = await storage.getClusterArticles(id);
@@ -2505,7 +2672,7 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const cluster = await storage.getStoryCluster(id, clientId || undefined);
     if (!cluster) return res.status(404).json({ message: "Story not found" });
     const result = await analyzeNarratives(id);
@@ -2516,7 +2683,7 @@ export async function registerRoutes(
   app.get("/api/briefs", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
     const briefs = await storage.getDailyBriefs(limit, clientId || undefined);
     res.json(briefs);
@@ -2525,7 +2692,7 @@ export async function registerRoutes(
   app.get("/api/briefs/:date", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const brief = await storage.getDailyBrief(req.params.date, clientId || undefined);
     if (!brief) return res.status(404).json({ message: "No brief for this date" });
     res.json(brief);
@@ -2534,7 +2701,7 @@ export async function registerRoutes(
   app.get("/api/events", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const events = await storage.getDetectedEvents({
       type: req.query.type as string,
       severity: req.query.severity as string,
@@ -2548,7 +2715,7 @@ export async function registerRoutes(
   app.post("/api/events/:id/acknowledge", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
     await storage.acknowledgeEvent(id, clientId || undefined);
@@ -2558,7 +2725,7 @@ export async function registerRoutes(
   app.get("/api/entities", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const topEntities = await storage.getTopEntities({
       limit: req.query.limit ? parseInt(req.query.limit as string) : 30,
       days: req.query.days ? parseInt(req.query.days as string) : 7,
@@ -2571,7 +2738,7 @@ export async function registerRoutes(
   app.get("/api/entities/:name", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const name = decodeURIComponent(req.params.name);
     const mentions = await storage.getEntityMentions(name, {
       limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
@@ -2586,7 +2753,7 @@ export async function registerRoutes(
   app.get("/api/predictions", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const predictions = await storage.getTrendPredictions({
       topic: req.query.topic as string,
       limit: req.query.limit ? parseInt(req.query.limit as string) : 20,
@@ -2598,7 +2765,7 @@ export async function registerRoutes(
   app.post("/api/ai/query", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const { question } = req.body;
     if (!question || typeof question !== "string") return res.status(400).json({ message: "Question is required" });
     const result = await answerIntelligenceQuery(sanitizeInput(question), clientId || undefined);
@@ -2806,7 +2973,7 @@ export async function registerRoutes(
   app.get("/api/executive/snapshot", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const clientId = resolveClientId(user);
+    const clientId = resolveClientId(user, req);
     const scopedSourceIds = await getUserSourceIds(user);
     const articles = await storage.getArticles({ limit: 5, sourceIds: scopedSourceIds, clientId: clientId || undefined });
     const events = await storage.getDetectedEvents({ limit: 5, clientId: clientId || undefined });
@@ -3230,7 +3397,7 @@ export async function registerRoutes(
   app.post("/api/integrations/export", async (req, res) => {
     const user = (req as any).user;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const exportClientId = resolveClientId(user);
+    const exportClientId = resolveClientId(user, req);
     const { exportType, format, filters } = req.body;
     if (!exportType || !format) return res.status(400).json({ message: "Export type and format required" });
     let resultData: any = null;

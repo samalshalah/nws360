@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { insertUserSchema, insertSourceSchema, insertKeywordSchema, users, sources, articles, keywords } from './schema';
 
+export type LoginRequest = { username: string; password: string };
+export type RegisterRequest = z.infer<typeof insertUserSchema>;
+
 // Shared Error Schemas
 export const errorSchemas = {
   validation: z.object({

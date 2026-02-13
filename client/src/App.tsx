@@ -13,6 +13,7 @@ import { getDirection } from "@/i18n";
 import { ThemeProvider } from "@/components/ThemeProvider";
 
 import { BreakingNewsBanner } from "@/components/BreakingNewsBanner";
+import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Feed from "@/pages/Feed";
@@ -74,6 +75,7 @@ function ProtectedRoute({ component: Component, ...rest }: { component: any, pat
       </a>
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0 h-screen">
+        <ImpersonationBanner />
         <MobileHeader />
         <BreakingNewsBanner />
         <main id="main-content" className="flex-1 overflow-y-auto min-h-0 pb-16 md:pb-0" role="main" aria-label="Main content">

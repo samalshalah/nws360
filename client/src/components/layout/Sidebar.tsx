@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash, Menu, Bookmark, Users, Activity, GitCompare, Zap, Tag, Brain, Eye, CreditCard, HelpCircle, Lightbulb, Plug, Monitor, UsersRound, ExternalLink, Code } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { LanguageSelector } from "@/components/LanguageSelector";
@@ -42,6 +43,7 @@ const controlMonitorSubPages = [
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const [location] = useLocation();
   const { logout, user } = useAuth();
+  const { isAdmin, hasPermission, hasAnyPermission } = usePermissions();
   const { t } = useTranslation();
   const isAnalyticsActive = location.startsWith("/analytics");
   const isSourcesActive = location.startsWith("/sources") || location === "/admin";
@@ -193,7 +195,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           )}
         </div>
 
-        {user && (user as any).role === "admin" && (
+        {user && (isAdmin || hasAnyPermission("users:manage:org", "settings:manage:org")) && (
           <div>
             <button
               onClick={() => setControlOpen(!controlOpen)}
@@ -335,7 +337,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </Link>
       </nav>
 
-      {user && (user as any).role === "admin" && (
+      {user && isAdmin && (
         <div className="px-4 pb-2">
           <div className="border-t border-border/50 pt-3 mb-1">
             <span className="px-4 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Developer Tools</span>
