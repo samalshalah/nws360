@@ -13,7 +13,7 @@ import rateLimit from "express-rate-limit";
 import sanitizeHtml from "sanitize-html";
 import { scrypt, randomBytes, createHash } from "crypto";
 import { promisify } from "util";
-import { startQueueProcessor, getQueueStats, logSystemError } from "./processing-queue";
+import { startQueueProcessor, getQueueStats, logSystemError, enqueueJob, openaiLimiter } from "./processing-queue";
 import { runAnalyticsComputation } from "./analytics-worker";
 import { runDataRetention, onSourceHardDeleted } from "./data-retention-worker";
 import { startLearningWorker } from "./learning-worker";
@@ -245,12 +245,16 @@ export async function registerRoutes(
 
   app.post("/api/fetch-all", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    try {
-      const results = await fetchAllFeeds();
-      res.json({ success: true, results });
-    } catch (err) {
-      res.status(500).json({ success: false, message: "Fetch failed" });
-    }
+    console.log("[Fetch-All] Background fetch triggered by user");
+    fetchAllFeeds()
+      .then(results => {
+        const totalNew = results.reduce((sum: number, r: any) => sum + (r.newArticles || 0), 0);
+        console.log(`[Fetch-All] Complete: ${totalNew} new articles from ${results.length} sources`);
+      })
+      .catch(err => {
+        console.error("[Fetch-All] Background fetch failed:", err);
+      });
+    res.json({ success: true, message: "Feed fetch started in background. New articles will appear shortly." });
   });
 
   // === ARTICLES ===
@@ -511,32 +515,25 @@ export async function registerRoutes(
         a => (!a.sentimentLabel || a.sentimentLabel === "neutral") && a.sentimentScore === 0 && (!a.keywords || a.keywords.length === 0)
       );
       
-      let analyzed = 0;
-      const batchSize = 5;
-      
-      for (let i = 0; i < Math.min(unanalyzed.length, 100); i += batchSize) {
-        const batch = unanalyzed.slice(i, i + batchSize);
-        const promises = batch.map(async (article) => {
-          try {
-            const analysis = await analyzeWithAI(article.title, article.content || article.title);
-            await db.update(articles)
-              .set({
-                sentimentLabel: analysis.sentimentLabel,
-                sentimentScore: analysis.sentimentScore,
-                keywords: analysis.keywords,
-                summary: analysis.summary,
-                category: analysis.category,
-              })
-              .where(eq(articles.id, article.id));
-            analyzed++;
-          } catch (e) {
-            console.error(`[Reanalyze] Failed for article ${article.id}:`, e);
-          }
-        });
-        await Promise.all(promises);
+      const toEnqueue = unanalyzed.slice(0, 100);
+      const batchId = `reanalyze-${Date.now()}`;
+      let enqueued = 0;
+
+      for (const article of toEnqueue) {
+        try {
+          await db.update(articles)
+            .set({ aiAnalysisStatus: "pending" })
+            .where(eq(articles.id, article.id));
+          await enqueueJob("ANALYZE_ARTICLE", { articleId: article.id }, { priority: 2, maxAttempts: 3 });
+          enqueued++;
+        } catch (e) {
+          console.error(`[Reanalyze] Failed to enqueue article ${article.id}:`, e);
+        }
       }
+
+      console.log(`[Reanalyze] Enqueued ${enqueued}/${toEnqueue.length} articles (batch: ${batchId})`);
       
-      res.json({ success: true, analyzed, total: unanalyzed.length });
+      res.json({ success: true, batchId, enqueued, total: unanalyzed.length, message: "Articles queued for re-analysis. Check queue stats for progress." });
     } catch (err) {
       console.error("[Reanalyze] Error:", err);
       res.status(500).json({ success: false, message: "Re-analysis failed" });
@@ -1185,9 +1182,16 @@ export async function registerRoutes(
   app.post("/api/admin/compute-analytics", async (req, res) => {
     if (!requireAdmin(req, res)) return;
     const user = req.user as any;
-    const result = await runAnalyticsComputation();
-    await storage.createAuditLog({ userId: user.id, action: "compute_analytics", entity: "analytics_cache", details: `Triggered analytics computation: ${result.success ? "success" : "failed"}` });
-    res.json(result);
+    console.log(`[Analytics] Manual computation triggered by user ${user.id}`);
+    await storage.createAuditLog({ userId: user.id, action: "compute_analytics", entity: "analytics_cache", details: "Triggered analytics computation (background)" });
+    runAnalyticsComputation()
+      .then(result => {
+        console.log(`[Analytics] Manual computation complete: ${result.success ? "success" : "failed"}`);
+      })
+      .catch(err => {
+        console.error("[Analytics] Manual computation failed:", err);
+      });
+    res.json({ success: true, message: "Analytics computation started in background." });
   });
 
   // === ADMIN: TRIGGER DATA RETENTION ===
@@ -1862,18 +1866,19 @@ export async function registerRoutes(
         matches.length > 0 ? `Historical matches: ${matches.slice(0, 5).map(m => `story ${m.currentStoryId} ~ story ${m.pastStoryId} (${m.similarityScore}%)`).join(", ")}` : "",
       ].filter(Boolean).join("\n");
 
-      const OpenAI = (await import("openai")).default;
-      const openai = new OpenAI();
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: `You are a memory-enhanced intelligence analyst for a news platform. You have access to institutional knowledge including story timelines, recurring patterns, trend lifecycles, entity histories, organizational notes, and historical matches. Use this context to provide historically-aware, contextual answers. Always reference relevant past data when available.\n\nKnowledge Context:\n${contextSummary || "No historical data available yet."}` },
-          { role: "user", content: parsed.data.query },
-        ],
-        max_tokens: 1000,
+      const answer = await openaiLimiter.run(async () => {
+        const OpenAI = (await import("openai")).default;
+        const ai = new OpenAI();
+        const completion = await ai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: `You are a memory-enhanced intelligence analyst for a news platform. You have access to institutional knowledge including story timelines, recurring patterns, trend lifecycles, entity histories, organizational notes, and historical matches. Use this context to provide historically-aware, contextual answers. Always reference relevant past data when available.\n\nKnowledge Context:\n${contextSummary || "No historical data available yet."}` },
+            { role: "user", content: parsed.data.query },
+          ],
+          max_tokens: 1000,
+        });
+        return completion.choices[0]?.message?.content || "Unable to generate answer.";
       });
-
-      const answer = completion.choices[0]?.message?.content || "Unable to generate answer.";
       const saved = await storage.createAiMemoryAnswer({
         query: parsed.data.query,
         answer,
@@ -2176,19 +2181,20 @@ export async function registerRoutes(
         signals.length > 0 ? `Active signals: ${signals.slice(0, 5).map(s => `${s.signalType} on ${s.relatedTopic} (strength: ${s.strength}%)`).join(", ")}` : "",
       ].filter(Boolean).join("\n");
 
-      const OpenAI = (await import("openai")).default;
-      const openai = new OpenAI();
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: `You are a predictive intelligence analyst for a news monitoring platform. Given a topic and a hypothetical event, estimate the likely outcomes based on the hypothetical scenario itself and general domain reasoning. Provide your analysis as JSON with these fields: coverageIncreaseLikelihood (0-100), sentimentImpact (string describing direction and magnitude), relatedTopicsActivation (array of topic strings), riskAssessment (string), timeframe (string), explanation (string). Be specific and data-driven. IMPORTANT: The following context contains prior AI-generated estimates (not verified facts). Use them only as background reference, not as evidence. Base your analysis on the hypothetical event itself.\n\nPrior estimates (AI-generated, not verified):\n${context || "No prior estimates available."}` },
-          { role: "user", content: `Topic: ${parsed.data.topic}\nHypothetical Event: ${parsed.data.hypotheticalEvent}` },
-        ],
-        max_tokens: 800,
-        response_format: { type: "json_object" },
+      const result = await openaiLimiter.run(async () => {
+        const OpenAI = (await import("openai")).default;
+        const ai = new OpenAI();
+        const completion = await ai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: `You are a predictive intelligence analyst for a news monitoring platform. Given a topic and a hypothetical event, estimate the likely outcomes based on the hypothetical scenario itself and general domain reasoning. Provide your analysis as JSON with these fields: coverageIncreaseLikelihood (0-100), sentimentImpact (string describing direction and magnitude), relatedTopicsActivation (array of topic strings), riskAssessment (string), timeframe (string), explanation (string). Be specific and data-driven. IMPORTANT: The following context contains prior AI-generated estimates (not verified facts). Use them only as background reference, not as evidence. Base your analysis on the hypothetical event itself.\n\nPrior estimates (AI-generated, not verified):\n${context || "No prior estimates available."}` },
+            { role: "user", content: `Topic: ${parsed.data.topic}\nHypothetical Event: ${parsed.data.hypotheticalEvent}` },
+          ],
+          max_tokens: 800,
+          response_format: { type: "json_object" },
+        });
+        return JSON.parse(completion.choices[0]?.message?.content || "{}");
       });
-
-      const result = JSON.parse(completion.choices[0]?.message?.content || "{}");
       res.json(result);
     } catch (err: any) {
       console.error("Simulation error:", err.message);
