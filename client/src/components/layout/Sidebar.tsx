@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash, Menu, Bookmark, Users, Activity, GitCompare, Zap, Tag, Brain, Eye, CreditCard, HelpCircle, Lightbulb, Plug, Monitor, UsersRound } from "lucide-react";
+import { LayoutDashboard, Newspaper, BarChart3, Settings, LogOut, ChevronDown, FileBarChart, TrendingUp, Search, MessageSquare, Shield, FileText, Network, Plus, List, Hash, Menu, Bookmark, Users, Activity, GitCompare, Zap, Tag, Brain, Eye, CreditCard, HelpCircle, Lightbulb, Plug, Monitor, UsersRound, ExternalLink, Code } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
@@ -334,6 +334,24 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         </Link>
       </nav>
+
+      {user && (user as any).role === "admin" && (
+        <div className="px-4 pb-2">
+          <div className="border-t border-border/50 pt-3 mb-1">
+            <span className="px-4 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Developer Tools</span>
+          </div>
+          <Link href="/">
+            <div
+              onClick={onNavigate}
+              data-testid="nav-dev-public-site"
+              className="flex items-center gap-3 px-4 py-2 text-xs font-medium text-muted-foreground rounded-lg hover:bg-muted hover:text-foreground transition-all duration-200 cursor-pointer group"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary" />
+              Public Site
+            </div>
+          </Link>
+        </div>
+      )}
 
       <div className="p-4 border-t border-border/50 space-y-2">
         <div className="flex items-center gap-2">
