@@ -1015,12 +1015,13 @@ export class DatabaseStorage implements IStorage {
     const sourcesCountRows = await db.execute(sql`SELECT COUNT(*)::int as count FROM sources WHERE 1=1 ${sourceIdFilter}`);
     const sourcesCount = Number((sourcesCountRows.rows[0] as any)?.count || 0);
 
+    const aiFilter = sql`AND (ai_analysis_status = 'success' OR ai_analysis_status IS NULL)`;
     const sentimentRows = await db.execute(sql`
       SELECT 
         COALESCE(sentiment_label, 'neutral') as label,
         COUNT(*)::int as count
       FROM articles
-      WHERE 1=1 ${sourceFilter}
+      WHERE 1=1 ${sourceFilter} ${aiFilter}
       GROUP BY sentiment_label
     `);
     const sentimentDistribution = (sentimentRows.rows as any[]).map((r: any) => ({
@@ -1038,7 +1039,7 @@ export class DatabaseStorage implements IStorage {
     const keywordRows = await db.execute(sql`
       SELECT kw as keyword, COUNT(*)::int as count
       FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL ${sourceFilter}
+      WHERE keywords IS NOT NULL ${sourceFilter} ${aiFilter}
       GROUP BY kw
       ORDER BY count DESC
       LIMIT 10
@@ -1076,6 +1077,7 @@ export class DatabaseStorage implements IStorage {
       return [];
     }
     const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+    const aiFilter = sql`AND (ai_analysis_status = 'success' OR ai_analysis_status IS NULL)`;
     const rows = await db.execute(sql`
       SELECT 
         TO_CHAR(published_at, 'YYYY-MM-DD') as date,
@@ -1083,7 +1085,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= NOW() - INTERVAL '30 days' ${sourceFilter}
+      WHERE published_at >= NOW() - INTERVAL '30 days' ${sourceFilter} ${aiFilter}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
     `);
