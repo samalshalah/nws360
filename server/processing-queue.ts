@@ -9,7 +9,19 @@ export type JobType =
   | "DATA_RETENTION"
   | "BACKFILL_IMAGES"
   | "ANALYZE_ARTICLE"
-  | "TRANSLATE_ARTICLE";
+  | "TRANSLATE_ARTICLE"
+  | "INTELLIGENCE_PIPELINE";
+
+export const JOB_PRIORITIES: Record<string, number> = {
+  DATA_RETENTION: 1,
+  COMPUTE_ANALYTICS: 2,
+  INTELLIGENCE_PIPELINE: 3,
+  TRANSLATE_ARTICLE: 4,
+  FETCH_SOURCE: 5,
+  FETCH_ALL_PRIORITY: 5,
+  BACKFILL_IMAGES: 5,
+  ANALYZE_ARTICLE: 5,
+};
 
 interface JobHandler {
   (payload: any): Promise<any>;
@@ -68,7 +80,7 @@ export async function enqueueJob(
   const [job] = await db.insert(processingJobs).values({
     type,
     status: "pending",
-    priority: options.priority ?? 5,
+    priority: options.priority ?? JOB_PRIORITIES[type] ?? 5,
     payload,
     runAt: options.runAt ?? new Date(),
     maxAttempts: options.maxAttempts ?? 3,
@@ -204,20 +216,41 @@ let isProcessing = false;
 
 async function claimBatch(limit: number): Promise<(typeof processingJobs.$inferSelect)[]> {
   const now = new Date();
-  const jobs = await db
+  const reservedSlots = 1;
+  const maxAnalyze = Math.max(1, limit - reservedSlots);
+
+  const nonAnalyzeJobs = await db
     .select()
     .from(processingJobs)
     .where(
       and(
         eq(processingJobs.status, "pending"),
-        lte(processingJobs.runAt, now)
+        lte(processingJobs.runAt, now),
+        sql`${processingJobs.type} != 'ANALYZE_ARTICLE'`
       )
     )
     .orderBy(asc(processingJobs.priority), asc(processingJobs.runAt))
-    .limit(limit);
+    .limit(reservedSlots);
+
+  const analyzeJobs = await db
+    .select()
+    .from(processingJobs)
+    .where(
+      and(
+        eq(processingJobs.status, "pending"),
+        lte(processingJobs.runAt, now),
+        sql`${processingJobs.type} = 'ANALYZE_ARTICLE'`
+      )
+    )
+    .orderBy(asc(processingJobs.priority), asc(processingJobs.runAt))
+    .limit(maxAnalyze);
+
+  const selected = [...nonAnalyzeJobs, ...analyzeJobs]
+    .sort((a, b) => (a.priority ?? 5) - (b.priority ?? 5) || (a.runAt?.getTime() ?? 0) - (b.runAt?.getTime() ?? 0))
+    .slice(0, limit);
 
   const claimed: (typeof processingJobs.$inferSelect)[] = [];
-  for (const job of jobs) {
+  for (const job of selected) {
     const [c] = await db
       .update(processingJobs)
       .set({ status: "running", startedAt: now, attempts: (job.attempts ?? 0) + 1 })
@@ -340,4 +373,65 @@ export async function cleanupOldJobs(daysOld = 7) {
         lte(processingJobs.createdAt, cutoff)
       )
     );
+}
+
+interface PeriodicJobConfig {
+  type: JobType;
+  intervalMs: number;
+  priority: number;
+  maxAttempts: number;
+}
+
+const PERIODIC_JOBS: PeriodicJobConfig[] = [
+  { type: "COMPUTE_ANALYTICS", intervalMs: 15 * 60 * 1000, priority: JOB_PRIORITIES.COMPUTE_ANALYTICS, maxAttempts: 1 },
+  { type: "DATA_RETENTION", intervalMs: 24 * 60 * 60 * 1000, priority: JOB_PRIORITIES.DATA_RETENTION, maxAttempts: 1 },
+  { type: "INTELLIGENCE_PIPELINE", intervalMs: 30 * 60 * 1000, priority: JOB_PRIORITIES.INTELLIGENCE_PIPELINE, maxAttempts: 1 },
+];
+
+async function hasActiveJob(type: JobType): Promise<boolean> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(processingJobs)
+    .where(
+      and(
+        eq(processingJobs.type, type),
+        sql`${processingJobs.status} IN ('pending', 'running')`
+      )
+    );
+  return Number(row?.count ?? 0) > 0;
+}
+
+let periodicTimers: ReturnType<typeof setInterval>[] = [];
+
+export function startPeriodicJobs() {
+  stopPeriodicJobs();
+  for (const config of PERIODIC_JOBS) {
+    const scheduleOne = async () => {
+      try {
+        const active = await hasActiveJob(config.type);
+        if (!active) {
+          await enqueueJob(config.type, {}, {
+            priority: config.priority,
+            maxAttempts: config.maxAttempts,
+          });
+          console.log(`[Scheduler] Enqueued periodic job: ${config.type}`);
+        }
+      } catch (e) {
+        console.error(`[Scheduler] Failed to enqueue ${config.type}:`, e);
+      }
+    };
+
+    scheduleOne();
+
+    const timer = setInterval(scheduleOne, config.intervalMs);
+    periodicTimers.push(timer);
+    console.log(`[Scheduler] ${config.type} scheduled every ${Math.round(config.intervalMs / 60000)}min`);
+  }
+}
+
+export function stopPeriodicJobs() {
+  for (const timer of periodicTimers) {
+    clearInterval(timer);
+  }
+  periodicTimers = [];
 }

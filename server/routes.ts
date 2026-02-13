@@ -13,7 +13,7 @@ import rateLimit from "express-rate-limit";
 import sanitizeHtml from "sanitize-html";
 import { scrypt, randomBytes, createHash } from "crypto";
 import { promisify } from "util";
-import { startQueueProcessor, getQueueStats, logSystemError, enqueueJob, openaiLimiter } from "./processing-queue";
+import { startQueueProcessor, startPeriodicJobs, getQueueStats, logSystemError, enqueueJob, openaiLimiter, registerJobHandler } from "./processing-queue";
 import { runAnalyticsComputation } from "./analytics-worker";
 import { runDataRetention, onSourceHardDeleted } from "./data-retention-worker";
 import { startLearningWorker } from "./learning-worker";
@@ -2453,31 +2453,30 @@ export async function registerRoutes(
   await seed();
   registerArticleAnalysisHandler();
   startFeedWorker();
-  startQueueProcessor();
-  startLearningWorker();
+  registerJobHandler("COMPUTE_ANALYTICS", async () => {
+    await runAnalyticsComputation();
+    return { completed: true };
+  });
+  registerJobHandler("DATA_RETENTION", async () => {
+    await runDataRetention();
+    return { completed: true };
+  });
 
-  setInterval(async () => {
-    try {
-      await runAnalyticsComputation();
-    } catch (e) {
-      console.error("[Analytics Worker] Error:", e);
-    }
-  }, 15 * 60 * 1000);
+  // === AI INTELLIGENCE ROUTES ===
+  const { answerIntelligenceQuery, runIntelligencePipeline, analyzeNarratives } = await import("./ai-intelligence");
+
+  registerJobHandler("INTELLIGENCE_PIPELINE", async () => {
+    await runIntelligencePipeline();
+    return { completed: true };
+  });
+
+  startQueueProcessor();
+  startPeriodicJobs();
+  startLearningWorker();
 
   setTimeout(() => {
     runAnalyticsComputation().catch(e => console.error("[Analytics] Initial computation error:", e));
   }, 30000);
-
-  setInterval(async () => {
-    try {
-      await runDataRetention();
-    } catch (e) {
-      console.error("[Retention Worker] Error:", e);
-    }
-  }, 24 * 60 * 60 * 1000);
-
-  // === AI INTELLIGENCE ROUTES ===
-  const { answerIntelligenceQuery, runIntelligencePipeline, analyzeNarratives } = await import("./ai-intelligence");
 
   app.get("/api/stories", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
