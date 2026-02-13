@@ -1,0 +1,69 @@
+You are now performing a hostile security audit.
+
+Simulate an authenticated user belonging to Client A attempting to access, modify, or infer data belonging to Client B.
+
+You must actively try to break tenant isolation and report vulnerabilities.
+
+Perform the following tests:
+
+1) Direct ID Guessing
+Attempt to access records belonging to another tenant by manually changing numeric IDs in:
+- articles
+- sources
+- analytics
+- story_clusters
+- detected_events
+- daily_briefs
+- predictions
+Report if any endpoint returns:
+- data
+- different error messages
+- timing differences
+- existence confirmation
+
+2) List Endpoint Leakage
+Check all list endpoints:
+GET /api/articles
+GET /api/sources
+GET /api/analytics/*
+GET /api/events
+GET /api/stories
+Confirm the SQL query always filters by clientId at the database level, not after fetching.
+
+3) Update/Delete Escalation
+Attempt PATCH and DELETE operations using IDs from another tenant.
+Verify storage layer prevents modification even if route logic forgets validation.
+
+4) Background Worker Isolation
+Verify workers never process global datasets:
+- feed-worker
+- analytics-worker
+- intelligence pipeline
+- retention worker
+Confirm each loop iterates per client and queries include clientId.
+
+5) Cache Isolation
+Verify cached analytics, AI results, and translations include clientId in the key.
+Confirm cached data from one tenant cannot be returned to another.
+
+6) Impersonation Safety
+If admin impersonation exists:
+- verify audit logs store original admin id
+- verify actions are tagged as impersonated
+- verify impersonation cannot escalate to other clients without admin privileges
+
+7) Timing Side-Channel
+Check whether “not found” and “forbidden” responses differ in:
+- response body
+- status code
+- execution time
+If so, mark as enumeration vulnerability.
+
+OUTPUT FORMAT:
+
+For each test:
+PASS or FAIL
+If FAIL → show the exact vulnerable query or route and explain the attack path clearly.
+
+Do not suggest improvements yet.
+Only detect and report vulnerabilities.

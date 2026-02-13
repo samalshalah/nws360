@@ -109,10 +109,10 @@ export interface IStorage {
 
   // Sources
   getSources(): Promise<Source[]>;
-  getSource(id: number): Promise<Source | undefined>;
+  getSource(id: number, clientId?: number): Promise<Source | undefined>;
   createSource(source: InsertSource): Promise<Source>;
-  updateSource(id: number, source: Partial<InsertSource>): Promise<Source | undefined>;
-  deleteSource(id: number): Promise<void>;
+  updateSource(id: number, source: Partial<InsertSource>, clientId?: number): Promise<Source | undefined>;
+  deleteSource(id: number, clientId?: number): Promise<void>;
 
   // Articles
   getArticles(params?: ArticleQueryParams): Promise<{ items: (Article & { source: Source | null })[], total: number }>;
@@ -151,8 +151,8 @@ export interface IStorage {
   deleteUser(id: number): Promise<void>;
 
   // Bulk article operations
-  deleteArticles(ids: number[]): Promise<number>;
-  updateArticlesCategory(ids: number[], category: string): Promise<number>;
+  deleteArticles(ids: number[], clientId?: number): Promise<number>;
+  updateArticlesCategory(ids: number[], category: string, clientId?: number): Promise<number>;
 
   // Cleanup
   deleteExpiredArticles(): Promise<number>;
@@ -295,7 +295,7 @@ export interface IStorage {
   getUsageMetrics(params?: { event?: string; startDate?: string; endDate?: string; limit?: number }): Promise<{ event: string; count: number; lastOccurred: Date | null }[]>;
   getUsageSummary(days?: number): Promise<{ dailyActiveUsers: number; totalEvents: number; topEvents: { event: string; count: number }[]; topEndpoints: { event: string; count: number }[] }>;
 
-  getArticleAiAnalysis(articleId: number): Promise<ArticleAiAnalysis | undefined>;
+  getArticleAiAnalysis(articleId: number, clientId?: number): Promise<ArticleAiAnalysis | undefined>;
   upsertArticleAiAnalysis(data: InsertArticleAiAnalysis): Promise<ArticleAiAnalysis>;
   getUnanalyzedArticleIds(limit?: number, clientId?: number): Promise<number[]>;
 
@@ -303,7 +303,7 @@ export interface IStorage {
   getStoryCluster(id: number, clientId?: number): Promise<StoryCluster | undefined>;
   createStoryCluster(data: InsertStoryCluster): Promise<StoryCluster>;
   updateStoryCluster(id: number, data: Partial<InsertStoryCluster>): Promise<StoryCluster>;
-  getClusterArticles(clusterId: number): Promise<(Article & { sourceName?: string | null })[]>;
+  getClusterArticles(clusterId: number, clientId?: number): Promise<(Article & { sourceName?: string | null })[]>;
 
   getDailyBriefs(limit?: number, clientId?: number): Promise<DailyBrief[]>;
   getDailyBrief(date: string, clientId?: number): Promise<DailyBrief | undefined>;
@@ -445,7 +445,7 @@ export interface IStorage {
   deleteSharedReport(id: number, clientId?: number): Promise<void>;
   getBriefingItems(reportId: number): Promise<BriefingItem[]>;
   createBriefingItem(data: InsertBriefingItem): Promise<BriefingItem>;
-  deleteBriefingItem(id: number): Promise<void>;
+  deleteBriefingItem(id: number, clientId?: number): Promise<void>;
 
   // Custom Tags
   getCustomTags(params?: { clientId?: number; workspaceId?: number }): Promise<CustomTag[]>;
@@ -482,7 +482,7 @@ export interface IStorage {
 
   // Knowledge Memory - Story Timelines
   getStoryTimelines(clientId?: number): Promise<StoryTimeline[]>;
-  getStoryTimeline(id: number): Promise<StoryTimeline | undefined>;
+  getStoryTimeline(id: number, clientId?: number): Promise<StoryTimeline | undefined>;
   createStoryTimeline(data: InsertStoryTimeline): Promise<StoryTimeline>;
   updateStoryTimeline(id: number, data: Partial<InsertStoryTimeline>, clientId?: number): Promise<StoryTimeline | undefined>;
   deleteStoryTimeline(id: number, clientId?: number): Promise<void>;
@@ -501,7 +501,7 @@ export interface IStorage {
 
   // Knowledge Memory - Entity Memory
   getEntityMemories(clientId?: number): Promise<EntityMemory[]>;
-  getEntityMemoryByName(name: string): Promise<EntityMemory | undefined>;
+  getEntityMemoryByName(name: string, clientId?: number): Promise<EntityMemory | undefined>;
   createEntityMemory(data: InsertEntityMemory): Promise<EntityMemory>;
   updateEntityMemory(id: number, data: Partial<InsertEntityMemory>, clientId?: number): Promise<EntityMemory | undefined>;
   deleteEntityMemory(id: number, clientId?: number): Promise<void>;
@@ -638,8 +638,10 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(sources);
   }
 
-  async getSource(id: number): Promise<Source | undefined> {
-    const [source] = await db.select().from(sources).where(eq(sources.id, id));
+  async getSource(id: number, clientId?: number): Promise<Source | undefined> {
+    const conditions = [eq(sources.id, id)];
+    if (clientId) conditions.push(eq(sources.clientId, clientId));
+    const [source] = await db.select().from(sources).where(and(...conditions));
     return source;
   }
 
@@ -648,8 +650,10 @@ export class DatabaseStorage implements IStorage {
     return source;
   }
 
-  async updateSource(id: number, updates: Partial<InsertSource>): Promise<Source | undefined> {
-    const [source] = await db.update(sources).set(updates).where(eq(sources.id, id)).returning();
+  async updateSource(id: number, updates: Partial<InsertSource>, clientId?: number): Promise<Source | undefined> {
+    const conditions = [eq(sources.id, id)];
+    if (clientId) conditions.push(eq(sources.clientId, clientId));
+    const [source] = await db.update(sources).set(updates).where(and(...conditions)).returning();
     return source;
   }
 
@@ -661,7 +665,11 @@ export class DatabaseStorage implements IStorage {
     await db.delete(bookmarks).where(inArray(bookmarks.articleId, articleIds));
   }
 
-  async deleteSource(id: number): Promise<void> {
+  async deleteSource(id: number, clientId?: number): Promise<void> {
+    const conditions = [eq(sources.id, id)];
+    if (clientId) conditions.push(eq(sources.clientId, clientId));
+    const [source] = await db.select().from(sources).where(and(...conditions));
+    if (!source) return;
     const sourceArticles = await db.select({ id: articles.id }).from(articles).where(eq(articles.sourceId, id));
     const articleIds = sourceArticles.map(a => a.id);
     await this.cleanupArticleDependents(articleIds);
@@ -1021,16 +1029,23 @@ export class DatabaseStorage implements IStorage {
     await db.delete(users).where(eq(users.id, id));
   }
 
-  async deleteArticles(ids: number[]): Promise<number> {
+  async deleteArticles(ids: number[], clientId?: number): Promise<number> {
     if (ids.length === 0) return 0;
-    await this.cleanupArticleDependents(ids);
-    const result = await db.delete(articles).where(inArray(articles.id, ids)).returning({ id: articles.id });
+    const conditions = [inArray(articles.id, ids)];
+    if (clientId) conditions.push(eq(articles.clientId, clientId));
+    const scopedArticles = await db.select({ id: articles.id }).from(articles).where(and(...conditions));
+    const scopedIds = scopedArticles.map(a => a.id);
+    if (scopedIds.length === 0) return 0;
+    await this.cleanupArticleDependents(scopedIds);
+    const result = await db.delete(articles).where(inArray(articles.id, scopedIds)).returning({ id: articles.id });
     return result.length;
   }
 
-  async updateArticlesCategory(ids: number[], category: string): Promise<number> {
+  async updateArticlesCategory(ids: number[], category: string, clientId?: number): Promise<number> {
     if (ids.length === 0) return 0;
-    const result = await db.update(articles).set({ category }).where(inArray(articles.id, ids)).returning({ id: articles.id });
+    const conditions = [inArray(articles.id, ids)];
+    if (clientId) conditions.push(eq(articles.clientId, clientId));
+    const result = await db.update(articles).set({ category }).where(and(...conditions)).returning({ id: articles.id });
     return result.length;
   }
 
@@ -2040,7 +2055,11 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getArticleAiAnalysis(articleId: number): Promise<ArticleAiAnalysis | undefined> {
+  async getArticleAiAnalysis(articleId: number, clientId?: number): Promise<ArticleAiAnalysis | undefined> {
+    if (clientId) {
+      const article = await this.getArticle(articleId, clientId);
+      if (!article) return undefined;
+    }
     const [row] = await db.select().from(articleAiAnalysis).where(eq(articleAiAnalysis.articleId, articleId));
     return row;
   }
@@ -2110,7 +2129,9 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async getClusterArticles(clusterId: number): Promise<(Article & { sourceName?: string | null })[]> {
+  async getClusterArticles(clusterId: number, clientId?: number): Promise<(Article & { sourceName?: string | null })[]> {
+    const conditions = [eq(articleAiAnalysis.clusterId, clusterId)];
+    if (clientId) conditions.push(eq(articles.clientId, clientId));
     const rows = await db.select({
       id: articles.id,
       title: articles.title,
@@ -2136,7 +2157,7 @@ export class DatabaseStorage implements IStorage {
       .from(articles)
       .innerJoin(articleAiAnalysis, eq(articles.id, articleAiAnalysis.articleId))
       .leftJoin(sources, eq(articles.sourceId, sources.id))
-      .where(eq(articleAiAnalysis.clusterId, clusterId))
+      .where(and(...conditions))
       .orderBy(desc(articles.publishedAt));
     return rows;
   }
@@ -2852,7 +2873,14 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async deleteBriefingItem(id: number): Promise<void> {
+  async deleteBriefingItem(id: number, clientId?: number): Promise<void> {
+    if (clientId) {
+      const [item] = await db.select().from(briefingItems).where(eq(briefingItems.id, id));
+      if (item) {
+        const report = await this.getSharedReport(item.reportId);
+        if (!report || report.clientId !== clientId) return;
+      }
+    }
     await db.delete(briefingItems).where(eq(briefingItems.id, id));
   }
 
@@ -2977,8 +3005,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(storyTimelines).orderBy(desc(storyTimelines.lastSeen));
   }
 
-  async getStoryTimeline(id: number): Promise<StoryTimeline | undefined> {
-    const [row] = await db.select().from(storyTimelines).where(eq(storyTimelines.id, id));
+  async getStoryTimeline(id: number, clientId?: number): Promise<StoryTimeline | undefined> {
+    const conditions = [eq(storyTimelines.id, id)];
+    if (clientId) conditions.push(eq(storyTimelines.clientId, clientId));
+    const [row] = await db.select().from(storyTimelines).where(and(...conditions));
     return row;
   }
 
@@ -3054,8 +3084,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(entityMemory).orderBy(desc(entityMemory.updatedAt));
   }
 
-  async getEntityMemoryByName(name: string): Promise<EntityMemory | undefined> {
-    const [row] = await db.select().from(entityMemory).where(eq(entityMemory.entityName, name));
+  async getEntityMemoryByName(name: string, clientId?: number): Promise<EntityMemory | undefined> {
+    const conditions = [eq(entityMemory.entityName, name)];
+    if (clientId) conditions.push(eq(entityMemory.clientId, clientId));
+    const [row] = await db.select().from(entityMemory).where(and(...conditions));
     return row;
   }
 

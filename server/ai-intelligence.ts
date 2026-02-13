@@ -97,7 +97,7 @@ export async function clusterArticles(clientId?: number | null): Promise<number>
 
   const analysisMap = new Map<number, any>();
   for (const article of recentArticles.items) {
-    const analysis = await storage.getArticleAiAnalysis(article.id);
+    const analysis = await storage.getArticleAiAnalysis(article.id, clientId ?? undefined);
     if (analysis && !analysis.clusterId) {
       analysisMap.set(article.id, { article, analysis });
     }
