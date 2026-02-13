@@ -305,7 +305,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
               {sentimentBadge}
             </div>
           </div>
-          <h3 className="text-base font-bold font-display text-foreground leading-tight line-clamp-1 group-hover:text-primary transition-colors">
+          <h3 className="text-sm font-bold font-display text-foreground leading-snug group-hover:text-primary transition-colors">
             {article.title}
           </h3>
           <p className="text-muted-foreground text-sm leading-relaxed line-clamp-2 flex-1">
@@ -371,7 +371,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
           </div>
         </div>
 
-        <h3 className="text-xl font-bold font-display text-foreground leading-tight mb-3 line-clamp-2 group-hover:text-primary transition-colors">
+        <h3 className="text-sm font-bold font-display text-foreground leading-snug mb-3 group-hover:text-primary transition-colors">
           {article.title}
         </h3>
 
