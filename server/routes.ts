@@ -326,10 +326,27 @@ export async function registerRoutes(
         jsonLd.each((_, el) => {
           try {
             const data = JSON.parse($(el).html() || "{}");
-            const sameAs = data.sameAs || data["@graph"]?.[0]?.sameAs || [];
-            const urls = Array.isArray(sameAs) ? sameAs : [sameAs];
+            const collectSameAs = (obj: any): string[] => {
+              const results: string[] = [];
+              if (!obj || typeof obj !== "object") return results;
+              if (obj.sameAs) {
+                const sa = Array.isArray(obj.sameAs) ? obj.sameAs : [obj.sameAs];
+                results.push(...sa.filter((s: any) => typeof s === "string"));
+              }
+              for (const key of ["publisher", "author", "creator", "organization", "sourceOrganization"]) {
+                if (obj[key] && typeof obj[key] === "object") {
+                  results.push(...collectSameAs(obj[key]));
+                }
+              }
+              if (obj["@graph"] && Array.isArray(obj["@graph"])) {
+                for (const item of obj["@graph"]) {
+                  results.push(...collectSameAs(item));
+                }
+              }
+              return results;
+            };
+            const urls = collectSameAs(data);
             for (const sUrl of urls) {
-              if (typeof sUrl !== "string") continue;
               for (const sp of socialPatterns) {
                 if (channels[sp.type]) continue;
                 for (const pattern of sp.patterns) {
