@@ -392,14 +392,11 @@ export async function registerRoutes(
   app.get(api.articles.get.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const clientId = resolveClientId(user);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid article ID" });
-    const article = await storage.getArticle(id);
+    const article = await storage.getArticle(id, clientId || undefined);
     if (!article) return res.status(404).json({ message: "Article not found" });
-    if (scopedSourceIds && article.sourceId && !scopedSourceIds.includes(article.sourceId)) {
-      return res.status(403).json({ message: "Access denied" });
-    }
     res.json(article);
   });
 
@@ -440,9 +437,8 @@ export async function registerRoutes(
       return res.status(400).json({ message: "targetLanguage is required" });
     }
 
-    const article = await storage.getArticle(id);
+    const article = await storage.getArticle(id, clientId || undefined);
     if (!article) return res.status(404).json({ message: "Article not found" });
-    if (clientId && article.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
 
     try {
       const langNames: Record<string, string> = {
@@ -1541,7 +1537,7 @@ export async function registerRoutes(
   app.patch("/api/knowledge/timelines/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const item = await storage.updateStoryTimeline(parseInt(req.params.id), req.body);
+    const item = await storage.updateStoryTimeline(parseInt(req.params.id), req.body, user.clientId || undefined);
     if (!item) return res.status(404).json({ message: "Not found" });
     res.json(item);
   });
@@ -1549,7 +1545,7 @@ export async function registerRoutes(
   app.delete("/api/knowledge/timelines/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteStoryTimeline(parseInt(req.params.id));
+    await storage.deleteStoryTimeline(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -1557,24 +1553,40 @@ export async function registerRoutes(
   app.get("/api/knowledge/timelines/:id/events", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const events = await storage.getTimelineEvents(parseInt(req.params.id));
+    const timelineId = parseInt(req.params.id);
+    if (user.clientId) {
+      const timeline = await storage.getStoryTimeline(timelineId);
+      if (!timeline || timeline.clientId !== user.clientId) return res.status(404).json({ message: "Not found" });
+    }
+    const events = await storage.getTimelineEvents(timelineId);
     res.json(events);
   });
 
   app.post("/api/knowledge/timelines/:id/events", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const timelineId = parseInt(req.params.id);
+    if (user.clientId) {
+      const timeline = await storage.getStoryTimeline(timelineId);
+      if (!timeline || timeline.clientId !== user.clientId) return res.status(404).json({ message: "Not found" });
+    }
     const schema = z.object({ label: z.string().min(1), description: z.string().optional(), articleId: z.number().int().optional() });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
-    const item = await storage.createTimelineEvent({ ...parsed.data, timelineId: parseInt(req.params.id) });
-    await storage.updateStoryTimeline(parseInt(req.params.id), { lastSeen: new Date() });
+    const item = await storage.createTimelineEvent({ ...parsed.data, timelineId });
+    await storage.updateStoryTimeline(timelineId, { lastSeen: new Date() }, user.clientId || undefined);
     res.status(201).json(item);
   });
 
   app.delete("/api/knowledge/timeline-events/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    if (user.clientId) {
+      const event = await storage.getTimelineEvent(parseInt(req.params.id));
+      if (!event) return res.status(404).json({ message: "Not found" });
+      const timeline = await storage.getStoryTimeline(event.timelineId);
+      if (!timeline || timeline.clientId !== user.clientId) return res.status(404).json({ message: "Not found" });
+    }
     await storage.deleteTimelineEvent(parseInt(req.params.id));
     res.json({ success: true });
   });
@@ -1600,7 +1612,7 @@ export async function registerRoutes(
   app.patch("/api/knowledge/patterns/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const item = await storage.updateRecurringPattern(parseInt(req.params.id), req.body);
+    const item = await storage.updateRecurringPattern(parseInt(req.params.id), req.body, user.clientId || undefined);
     if (!item) return res.status(404).json({ message: "Not found" });
     res.json(item);
   });
@@ -1608,7 +1620,7 @@ export async function registerRoutes(
   app.delete("/api/knowledge/patterns/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteRecurringPattern(parseInt(req.params.id));
+    await storage.deleteRecurringPattern(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -1641,7 +1653,7 @@ export async function registerRoutes(
   app.patch("/api/knowledge/entity-memory/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const item = await storage.updateEntityMemory(parseInt(req.params.id), req.body);
+    const item = await storage.updateEntityMemory(parseInt(req.params.id), req.body, user.clientId || undefined);
     if (!item) return res.status(404).json({ message: "Not found" });
     res.json(item);
   });
@@ -1649,7 +1661,7 @@ export async function registerRoutes(
   app.delete("/api/knowledge/entity-memory/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteEntityMemory(parseInt(req.params.id));
+    await storage.deleteEntityMemory(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -1675,7 +1687,7 @@ export async function registerRoutes(
   app.delete("/api/knowledge/narrative-shifts/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteNarrativeShift(parseInt(req.params.id));
+    await storage.deleteNarrativeShift(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -1701,7 +1713,7 @@ export async function registerRoutes(
   app.delete("/api/knowledge/org-notes/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteInstitutionalNote(parseInt(req.params.id));
+    await storage.deleteInstitutionalNote(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -1726,7 +1738,7 @@ export async function registerRoutes(
   app.patch("/api/knowledge/historical-matches/:id/acknowledge", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.acknowledgeHistoricalMatch(parseInt(req.params.id));
+    await storage.acknowledgeHistoricalMatch(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -1751,7 +1763,7 @@ export async function registerRoutes(
   app.patch("/api/knowledge/trends/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const item = await storage.updateTrendLifecycle(parseInt(req.params.id), req.body);
+    const item = await storage.updateTrendLifecycle(parseInt(req.params.id), req.body, user.clientId || undefined);
     if (!item) return res.status(404).json({ message: "Not found" });
     res.json(item);
   });
@@ -1759,7 +1771,7 @@ export async function registerRoutes(
   app.delete("/api/knowledge/trends/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteTrendLifecycle(parseInt(req.params.id));
+    await storage.deleteTrendLifecycle(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -1785,7 +1797,7 @@ export async function registerRoutes(
   app.delete("/api/knowledge/briefings/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteLongRangeBriefing(parseInt(req.params.id));
+    await storage.deleteLongRangeBriefing(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -2204,11 +2216,10 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
-    const cluster = await storage.getStoryCluster(id);
-    if (!cluster) return res.status(404).json({ message: "Story not found" });
     const user = req.user as any;
     const clientId = resolveClientId(user);
-    if (clientId && cluster.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
+    const cluster = await storage.getStoryCluster(id, clientId || undefined);
+    if (!cluster) return res.status(404).json({ message: "Story not found" });
     const clusterArticles = await storage.getClusterArticles(id);
     res.json({ ...cluster, articles: clusterArticles });
   });
@@ -2217,11 +2228,10 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
-    const cluster = await storage.getStoryCluster(id);
-    if (!cluster) return res.status(404).json({ message: "Story not found" });
     const user = req.user as any;
     const clientId = resolveClientId(user);
-    if (clientId && cluster.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
+    const cluster = await storage.getStoryCluster(id, clientId || undefined);
+    if (!cluster) return res.status(404).json({ message: "Story not found" });
     const result = await analyzeNarratives(id);
     if (!result) return res.status(404).json({ message: "Not enough data for narrative analysis" });
     res.json(result);
@@ -2261,9 +2271,11 @@ export async function registerRoutes(
 
   app.post("/api/events/:id/acknowledge", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
-    await storage.acknowledgeEvent(id);
+    await storage.acknowledgeEvent(id, clientId || undefined);
     res.json({ success: true });
   });
 
@@ -2795,14 +2807,14 @@ export async function registerRoutes(
   app.patch("/api/integrations/webhooks/:id", async (req, res) => {
     const user = (req as any).user;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const webhook = await storage.updateWebhook(parseInt(req.params.id), req.body);
+    const webhook = await storage.updateWebhook(parseInt(req.params.id), req.body, user.clientId || undefined);
     res.json(webhook);
   });
 
   app.delete("/api/integrations/webhooks/:id", async (req, res) => {
     const user = (req as any).user;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteWebhook(parseInt(req.params.id));
+    await storage.deleteWebhook(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -2837,12 +2849,16 @@ export async function registerRoutes(
   });
 
   app.patch("/api/integrations/email-subscriptions/:id", async (req, res) => {
-    const sub = await storage.updateEmailSubscription(parseInt(req.params.id), req.body);
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const sub = await storage.updateEmailSubscription(parseInt(req.params.id), req.body, user.id);
     res.json(sub);
   });
 
   app.delete("/api/integrations/email-subscriptions/:id", async (req, res) => {
-    await storage.deleteEmailSubscription(parseInt(req.params.id));
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteEmailSubscription(parseInt(req.params.id), user.id);
     res.json({ success: true });
   });
 
@@ -2862,12 +2878,16 @@ export async function registerRoutes(
   });
 
   app.patch("/api/integrations/communication/:id", async (req, res) => {
-    const config = await storage.updateIntegrationConfig(parseInt(req.params.id), req.body);
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const config = await storage.updateIntegrationConfig(parseInt(req.params.id), req.body, user.clientId || undefined);
     res.json(config);
   });
 
   app.delete("/api/integrations/communication/:id", async (req, res) => {
-    await storage.deleteIntegrationConfig(parseInt(req.params.id));
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteIntegrationConfig(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -2895,7 +2915,9 @@ export async function registerRoutes(
   });
 
   app.delete("/api/integrations/embeds/:id", async (req, res) => {
-    await storage.deleteEmbedToken(parseInt(req.params.id));
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteEmbedToken(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -3005,12 +3027,16 @@ export async function registerRoutes(
   });
 
   app.patch("/api/integrations/sso/:id", async (req, res) => {
-    const config = await storage.updateSsoConfig(parseInt(req.params.id), req.body);
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const config = await storage.updateSsoConfig(parseInt(req.params.id), req.body, user.clientId || undefined);
     res.json(config);
   });
 
   app.delete("/api/integrations/sso/:id", async (req, res) => {
-    await storage.deleteSsoConfig(parseInt(req.params.id));
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteSsoConfig(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -3040,12 +3066,16 @@ export async function registerRoutes(
   });
 
   app.patch("/api/integrations/import-connectors/:id", async (req, res) => {
-    const connector = await storage.updateImportConnector(parseInt(req.params.id), req.body);
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const connector = await storage.updateImportConnector(parseInt(req.params.id), req.body, user.clientId || undefined);
     res.json(connector);
   });
 
   app.delete("/api/integrations/import-connectors/:id", async (req, res) => {
-    await storage.deleteImportConnector(parseInt(req.params.id));
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    await storage.deleteImportConnector(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -3153,13 +3183,16 @@ export async function registerRoutes(
   app.delete("/api/collaboration/workspaces/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteWorkspace(parseInt(req.params.id));
+    await storage.deleteWorkspace(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
   app.get("/api/collaboration/workspaces/:id/members", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const ws = await storage.getWorkspace(parseInt(req.params.id));
+    if (!ws) return res.status(404).json({ message: "Not found" });
+    if (user.clientId && ws.clientId !== user.clientId) return res.status(403).json({ message: "Access denied" });
     const members = await storage.getWorkspaceMembers(parseInt(req.params.id));
     res.json(members);
   });
@@ -3167,6 +3200,9 @@ export async function registerRoutes(
   app.post("/api/collaboration/workspaces/:id/members", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const ws = await storage.getWorkspace(parseInt(req.params.id));
+    if (!ws) return res.status(404).json({ message: "Not found" });
+    if (user.clientId && ws.clientId !== user.clientId) return res.status(403).json({ message: "Access denied" });
     const member = await storage.addWorkspaceMember({ workspaceId: parseInt(req.params.id), userId: req.body.userId, role: req.body.role || "member" });
     res.status(201).json(member);
   });
@@ -3174,6 +3210,9 @@ export async function registerRoutes(
   app.delete("/api/collaboration/workspaces/:wsId/members/:userId", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const ws = await storage.getWorkspace(parseInt(req.params.wsId));
+    if (!ws) return res.status(404).json({ message: "Not found" });
+    if (user.clientId && ws.clientId !== user.clientId) return res.status(403).json({ message: "Access denied" });
     await storage.removeWorkspaceMember(parseInt(req.params.wsId), parseInt(req.params.userId));
     res.json({ success: true });
   });
@@ -3200,7 +3239,7 @@ export async function registerRoutes(
   app.delete("/api/collaboration/comments/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteComment(parseInt(req.params.id));
+    await storage.deleteComment(parseInt(req.params.id), user.id);
     res.json({ success: true });
   });
 
@@ -3226,7 +3265,7 @@ export async function registerRoutes(
   app.delete("/api/collaboration/annotations/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteAnnotation(parseInt(req.params.id));
+    await storage.deleteAnnotation(parseInt(req.params.id), user.id);
     res.json({ success: true });
   });
 
@@ -3252,7 +3291,7 @@ export async function registerRoutes(
   app.patch("/api/collaboration/reports/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const report = await storage.updateSharedReport(parseInt(req.params.id), req.body);
+    const report = await storage.updateSharedReport(parseInt(req.params.id), req.body, user.clientId || undefined);
     if (!report) return res.status(404).json({ message: "Not found" });
     await storage.createChangeHistory({ userId: user.id, entityType: "report", entityId: report.id, changeType: "updated", details: req.body });
     res.json(report);
@@ -3261,13 +3300,16 @@ export async function registerRoutes(
   app.delete("/api/collaboration/reports/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteSharedReport(parseInt(req.params.id));
+    await storage.deleteSharedReport(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
   app.get("/api/collaboration/reports/:id/items", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const report = await storage.getSharedReport(parseInt(req.params.id));
+    if (!report) return res.status(404).json({ message: "Not found" });
+    if (user.clientId && report.clientId !== user.clientId) return res.status(403).json({ message: "Access denied" });
     const items = await storage.getBriefingItems(parseInt(req.params.id));
     res.json(items);
   });
@@ -3275,6 +3317,9 @@ export async function registerRoutes(
   app.post("/api/collaboration/reports/:id/items", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const report = await storage.getSharedReport(parseInt(req.params.id));
+    if (!report) return res.status(404).json({ message: "Not found" });
+    if (user.clientId && report.clientId !== user.clientId) return res.status(403).json({ message: "Access denied" });
     const item = await storage.createBriefingItem({ ...req.body, reportId: parseInt(req.params.id) });
     res.status(201).json(item);
   });
@@ -3312,7 +3357,7 @@ export async function registerRoutes(
   app.delete("/api/collaboration/tags/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteCustomTag(parseInt(req.params.id));
+    await storage.deleteCustomTag(parseInt(req.params.id), user.clientId || undefined);
     res.json({ success: true });
   });
 
@@ -3333,7 +3378,7 @@ export async function registerRoutes(
   app.delete("/api/collaboration/tag-assignments/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteTagAssignment(parseInt(req.params.id));
+    await storage.deleteTagAssignment(parseInt(req.params.id), user.id);
     res.json({ success: true });
   });
 
@@ -3362,6 +3407,12 @@ export async function registerRoutes(
   app.patch("/api/collaboration/tasks/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const existingTask = await storage.getTask(parseInt(req.params.id));
+    if (!existingTask) return res.status(404).json({ message: "Not found" });
+    if (existingTask.workspaceId && user.clientId) {
+      const ws = await storage.getWorkspace(existingTask.workspaceId);
+      if (ws && ws.clientId !== user.clientId) return res.status(403).json({ message: "Access denied" });
+    }
     const task = await storage.updateTask(parseInt(req.params.id), req.body);
     if (!task) return res.status(404).json({ message: "Not found" });
     if (req.body.status === "resolved") {
@@ -3373,6 +3424,12 @@ export async function registerRoutes(
   app.delete("/api/collaboration/tasks/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const existingTask = await storage.getTask(parseInt(req.params.id));
+    if (!existingTask) return res.status(404).json({ message: "Not found" });
+    if (existingTask.workspaceId && user.clientId) {
+      const ws = await storage.getWorkspace(existingTask.workspaceId);
+      if (ws && ws.clientId !== user.clientId) return res.status(403).json({ message: "Access denied" });
+    }
     await storage.deleteTask(parseInt(req.params.id));
     res.json({ success: true });
   });
@@ -3395,7 +3452,7 @@ export async function registerRoutes(
   app.delete("/api/collaboration/watchlists/:id", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.deleteWatchlist(parseInt(req.params.id));
+    await storage.deleteWatchlist(parseInt(req.params.id), user.id);
     res.json({ success: true });
   });
 
@@ -3418,7 +3475,7 @@ export async function registerRoutes(
   app.patch("/api/collaboration/alerts/:id/read", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    await storage.markAlertRead(parseInt(req.params.id));
+    await storage.markAlertRead(parseInt(req.params.id), user.id);
     res.json({ success: true });
   });
 
