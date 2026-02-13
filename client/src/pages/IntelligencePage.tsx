@@ -203,7 +203,7 @@ function StoriesTab({ mode }: { mode: string }) {
 
               {mode === "analyst" && (
                 <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
-                  <span data-testid={`text-importance-${story.id}`}>Importance: {(story.importanceScore * 100).toFixed(0)}%</span>
+                  <span data-testid={`text-importance-${story.id}`}>Importance: {story.importanceScore?.toFixed(0)}%</span>
                   <span data-testid={`text-sentiment-${story.id}`}>Sentiment: {story.avgSentiment?.toFixed(2)}</span>
                   <span><Clock className="w-3 h-3 inline mr-1" />{new Date(story.firstSeen).toLocaleDateString()}</span>
                   <span>Updated: {new Date(story.lastUpdated).toLocaleDateString()}</span>
@@ -226,22 +226,26 @@ function StoriesTab({ mode }: { mode: string }) {
 
                   {detailLoading && <Skeleton className="h-20 w-full" />}
 
-                  {storyDetail && storyDetail.id === story.id && storyDetail.articles && (
+                  {storyDetail && storyDetail.id === story.id && (
                     <div className="space-y-2">
                       <p className="text-xs font-semibold text-muted-foreground">Articles</p>
-                      {storyDetail.articles.map((article, idx) => (
-                        <div key={article.id || idx} className="flex items-center justify-between gap-2 py-1.5 border-b last:border-b-0 text-xs">
-                          <div className="flex-1 min-w-0">
-                            {article.url ? (
-                              <a href={article.url} target="_blank" rel="noopener noreferrer" className="font-medium truncate block text-primary hover:underline" data-testid={`link-article-${article.id}`}>{article.title}</a>
-                            ) : (
-                              <p className="font-medium truncate">{article.title}</p>
-                            )}
-                            <p className="text-muted-foreground">{article.sourceName || `Source ${article.sourceId}`} &middot; {new Date(article.publishedAt).toLocaleDateString()}</p>
+                      {storyDetail.articles && storyDetail.articles.length > 0 ? (
+                        storyDetail.articles.map((article, idx) => (
+                          <div key={article.id || idx} className="flex items-center justify-between gap-2 py-1.5 border-b last:border-b-0 text-xs">
+                            <div className="flex-1 min-w-0">
+                              {article.url ? (
+                                <a href={article.url} target="_blank" rel="noopener noreferrer" className="font-medium truncate block text-primary hover:underline" data-testid={`link-article-${article.id}`}>{article.title}</a>
+                              ) : (
+                                <p className="font-medium truncate">{article.title}</p>
+                              )}
+                              <p className="text-muted-foreground">{article.sourceName || `Source ${article.sourceId}`} &middot; {new Date(article.publishedAt).toLocaleDateString()}</p>
+                            </div>
+                            <Badge variant="secondary">{article.sentimentLabel || "neutral"}</Badge>
                           </div>
-                          <Badge variant="secondary">{article.sentiment}</Badge>
-                        </div>
-                      ))}
+                        ))
+                      ) : (
+                        <p className="text-xs text-muted-foreground py-2">Articles for this cluster are not yet linked. New clusters will have articles linked automatically.</p>
+                      )}
                     </div>
                   )}
 
