@@ -4,7 +4,7 @@ import { setupAuth } from "./auth";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler } from "./feed-worker";
+import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler, previewSource } from "./feed-worker";
 import { openai } from "./replit_integrations/image/client";
 import { db } from "./db";
 import { articles, PLAN_LIMITS } from "@shared/schema";
@@ -92,6 +92,27 @@ export async function registerRoutes(
     const allSources = await storage.getSources();
     const filtered = allSources.filter((s: any) => userIds.includes(s.userId));
     res.json(filtered);
+  });
+
+  const previewInputSchema = z.object({
+    url: z.string().min(1, "URL is required").max(2000),
+    type: z.enum(["website", "rss", "twitter", "youtube", "facebook", "instagram", "telegram", "google_news"]),
+    maxArticles: z.number().int().min(1).max(50).optional().default(10),
+  });
+
+  app.post("/api/sources/preview", async (req, res) => {
+    try {
+      if (!req.isAuthenticated()) return res.sendStatus(401);
+      const input = previewInputSchema.parse(req.body);
+      const result = await previewSource(input.url, input.type, input.maxArticles);
+      res.json(result);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ success: false, method: "none", articles: [], error: err.errors[0].message });
+      }
+      const msg = err instanceof Error ? err.message : "Preview failed";
+      res.json({ success: false, method: "none", articles: [], error: msg });
+    }
   });
 
   app.post(api.sources.create.path, async (req, res) => {

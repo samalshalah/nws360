@@ -700,6 +700,131 @@ export async function fetchSourceFeed(sourceId: number): Promise<number> {
   }
 }
 
+export type PreviewArticle = {
+  title: string;
+  url: string;
+  content: string;
+  publishedAt: Date;
+  image?: string;
+};
+
+export type SourcePreviewResult = {
+  success: boolean;
+  method: string;
+  articles: PreviewArticle[];
+  feedUrl?: string;
+  error?: string;
+};
+
+export async function previewSource(url: string, type: string, maxArticles: number = 10): Promise<SourcePreviewResult> {
+  const normalized = normalizeUrl(url);
+
+  if (type === "google_news") {
+    const keyword = url.trim();
+    const encodedKeyword = encodeURIComponent(keyword);
+    const rssUrl = `https://news.google.com/rss/search?q=${encodedKeyword}&hl=en&gl=US&ceid=US:en`;
+    try {
+      const feed = await parser.parseURL(rssUrl);
+      const articles = feed.items.slice(0, maxArticles).map(item => {
+        const subSource = extractGoogleNewsSubSource(item);
+        const rawTitle = stripHtml(item.title || "Untitled");
+        return {
+          title: cleanGoogleNewsTitle(rawTitle, subSource),
+          url: item.link || "",
+          content: stripHtml(item.contentSnippet || item.content || item.summary || item.title || "").substring(0, 300),
+          publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+          image: extractImageFromRssItem(item),
+        };
+      });
+      if (articles.length > 0) {
+        return { success: true, method: "google_news", articles };
+      }
+    } catch {}
+    return { success: false, method: "none", articles: [], error: "Unable to fetch Google News results for this keyword" };
+  }
+
+  if (type === "rss") {
+    try {
+      let feedUrl = normalized;
+      if (!feedUrl.match(/\.(xml|rss|atom)$/i) && !feedUrl.includes("/feed") && !feedUrl.includes("/rss")) {
+        const discovered = await discoverRssFeed(feedUrl);
+        if (discovered) feedUrl = discovered;
+      }
+      const feed = await parser.parseURL(feedUrl);
+      const articles = feed.items.slice(0, maxArticles).map(item => ({
+        title: stripHtml(item.title || "Untitled"),
+        url: item.link || "",
+        content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || "").substring(0, 300),
+        publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+        image: extractImageFromRssItem(item),
+      }));
+      if (articles.length > 0) {
+        return { success: true, method: "rss", articles, feedUrl };
+      }
+    } catch {}
+    return { success: false, method: "none", articles: [], error: "Unable to parse RSS feed from this URL" };
+  }
+
+  // For website type: try website scraping first, then RSS discovery, then alternatives
+  // Step 1: Try direct website scraping
+  try {
+    const scraped = await scrapeWebsite(normalized);
+    if (scraped.length > 0) {
+      const articles = scraped.slice(0, maxArticles).map(a => ({
+        title: a.title,
+        url: a.url,
+        content: (a.content || "").substring(0, 300),
+        publishedAt: a.publishedAt || new Date(),
+        image: a.image,
+      }));
+      return { success: true, method: "website", articles };
+    }
+  } catch (e) {
+    console.log(`[Preview] Website scraping failed for ${normalized}: ${e instanceof Error ? e.message : e}`);
+  }
+
+  // Step 2: Try RSS feed discovery
+  try {
+    const feedUrl = await discoverRssFeed(normalized);
+    if (feedUrl) {
+      const feed = await parser.parseURL(feedUrl);
+      const articles = feed.items.slice(0, maxArticles).map(item => ({
+        title: stripHtml(item.title || "Untitled"),
+        url: item.link || "",
+        content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || "").substring(0, 300),
+        publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+        image: extractImageFromRssItem(item),
+      }));
+      if (articles.length > 0) {
+        return { success: true, method: "rss", articles, feedUrl };
+      }
+    }
+  } catch (e) {
+    console.log(`[Preview] RSS discovery failed for ${normalized}: ${e instanceof Error ? e.message : e}`);
+  }
+
+  // Step 3: Try Google News as fallback
+  try {
+    const domain = new URL(normalized).hostname.replace("www.", "");
+    const rssUrl = `https://news.google.com/rss/search?q=site:${domain}&hl=en&gl=US&ceid=US:en`;
+    const feed = await parser.parseURL(rssUrl);
+    const articles = feed.items.slice(0, maxArticles).map(item => ({
+      title: stripHtml(item.title || "Untitled"),
+      url: item.link || "",
+      content: stripHtml(item.contentSnippet || item.content || item.summary || "").substring(0, 300),
+      publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+      image: extractImageFromRssItem(item),
+    }));
+    if (articles.length > 0) {
+      return { success: true, method: "google_news_fallback", articles };
+    }
+  } catch (e) {
+    console.log(`[Preview] Google News fallback failed for ${normalized}: ${e instanceof Error ? e.message : e}`);
+  }
+
+  return { success: false, method: "none", articles: [], error: "Unable to fetch articles from this source. Please check the URL and try again." };
+}
+
 export async function fetchAllFeeds(): Promise<{ sourceName: string; newArticles: number; error?: string }[]> {
   const allSources = await storage.getSources();
   const activeSources = allSources.filter((s) => s.active);

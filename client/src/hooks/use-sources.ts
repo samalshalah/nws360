@@ -114,6 +114,23 @@ export function useFetchAllSources() {
   });
 }
 
+export function usePreviewSource() {
+  return useMutation({
+    mutationFn: async (data: { url: string; type: string; maxArticles?: number }) => {
+      const res = await fetch("/api/sources/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ error: "Preview failed" }));
+        throw new Error(error.error || "Preview failed");
+      }
+      return res.json();
+    },
+  });
+}
+
 export function useDeleteSource() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

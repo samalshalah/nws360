@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources, useUpdateSource } from "@/hooks/use-sources";
+import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources, useUpdateSource, usePreviewSource } from "@/hooks/use-sources";
 import { useKeywords, useCreateKeyword, useDeleteKeyword } from "@/hooks/use-keywords";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ArrowRight, ThumbsUp, MessageCircle, Share2, Info } from "lucide-react";
+import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ArrowRight, ThumbsUp, MessageCircle, Share2, Info, CheckCircle2, AlertTriangle, ExternalLink } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
@@ -117,6 +117,22 @@ interface WebsiteSearchResult {
   hasFeed: boolean;
 }
 
+type PreviewArticle = {
+  title: string;
+  url: string;
+  content: string;
+  publishedAt: string;
+  image?: string;
+};
+
+type PreviewResult = {
+  success: boolean;
+  method: string;
+  articles: PreviewArticle[];
+  feedUrl?: string;
+  error?: string;
+};
+
 function AddSourceView() {
   const { t } = useTranslation();
   const { mutate: createSource, isPending: isCreating } = useCreateSource();
@@ -125,6 +141,11 @@ function AddSourceView() {
   const [searchResults, setSearchResults] = useState<WebsiteSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showResults, setShowResults] = useState(false);
+
+  const { mutate: previewSource, isPending: isPreviewing } = usePreviewSource();
+  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
+  const [showPreviewDialog, setShowPreviewDialog] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -208,15 +229,53 @@ function AddSourceView() {
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handlePreview = (e: React.FormEvent) => {
     e.preventDefault();
-    createSource(formData, {
+    setPreviewError(null);
+    setPreviewResult(null);
+    previewSource(
+      { url: formData.url, type: formData.type, maxArticles: formData.maxArticlesPerFetch },
+      {
+        onSuccess: (data: PreviewResult) => {
+          if (data.success && data.articles.length > 0) {
+            setPreviewResult(data);
+            setShowPreviewDialog(true);
+          } else {
+            setPreviewError(data.error || "Unable to fetch articles from this source. Please check the URL and try again.");
+          }
+        },
+        onError: () => {
+          setPreviewError("Failed to connect. Please check your internet connection and try again.");
+        },
+      }
+    );
+  };
+
+  const handleConfirmImport = () => {
+    const finalFormData = { ...formData };
+    if (previewResult?.method === "rss" && previewResult?.feedUrl) {
+      finalFormData.type = "rss";
+      finalFormData.url = previewResult.feedUrl;
+    } else if (previewResult?.method === "google_news_fallback") {
+      finalFormData.type = "google_news";
+      const url = formData.url.trim();
+      try {
+        const domain = new URL(url.startsWith("http") ? url : `https://${url}`).hostname.replace("www.", "");
+        finalFormData.url = `site:${domain}`;
+      } catch {
+        finalFormData.url = url;
+      }
+    }
+    createSource(finalFormData, {
       onSuccess: () => {
         setSelectedType(null);
         setFormData({ name: "", url: "", type: "website", intervalMinutes: 15, maxArticlesPerFetch: 10, retentionDays: 7 });
         setSearchQuery("");
         setSearchResults([]);
         setShowResults(false);
+        setShowPreviewDialog(false);
+        setPreviewResult(null);
+        setPreviewError(null);
       },
     });
   };
@@ -224,6 +283,8 @@ function AddSourceView() {
   const goBack = () => {
     setSelectedType(null);
     setFormData({ name: "", url: "", type: "website", intervalMinutes: 15, maxArticlesPerFetch: 10, retentionDays: 7 });
+    setPreviewError(null);
+    setPreviewResult(null);
   };
 
   const isGoogleNews = formData.type === "google_news";
@@ -255,7 +316,7 @@ function AddSourceView() {
 
         <Card>
           <CardContent className="pt-6">
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form onSubmit={handlePreview} className="space-y-5">
               <div className="space-y-2">
                 <Label htmlFor="name">{t("admin.sourceName")}</Label>
                 <Input
@@ -350,19 +411,94 @@ function AddSourceView() {
                 </div>
               </div>
 
-              <Button type="submit" className="w-full" disabled={isCreating} data-testid="button-submit-source">
-                {isCreating ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+              {previewError && (
+                <div className="flex items-start gap-3 p-3 rounded-md bg-destructive/10 text-destructive text-sm" data-testid="text-preview-error">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{previewError}</span>
+                </div>
+              )}
+
+              <Button type="submit" className="w-full" disabled={isPreviewing} data-testid="button-submit-source">
+                {isPreviewing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    Testing source...
+                  </>
                 ) : (
                   <>
-                    <Plus className="w-4 h-4 mr-2 rtl:mr-0 rtl:ml-2" />
-                    {t("admin.addSource")}
+                    <Search className="w-4 h-4 mr-2 rtl:mr-0 rtl:ml-2" />
+                    Test & Preview
                   </>
                 )}
               </Button>
             </form>
           </CardContent>
         </Card>
+
+        <Dialog open={showPreviewDialog} onOpenChange={setShowPreviewDialog}>
+          <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-500" />
+                Articles Found
+              </DialogTitle>
+              <p className="text-sm text-muted-foreground">
+                {previewResult?.articles.length} article{(previewResult?.articles.length || 0) !== 1 ? "s" : ""} will be imported
+                {previewResult?.method && previewResult.method !== formData.type && (
+                  <span> via <Badge variant="secondary" className="ml-1">{previewResult.method === "rss" ? "RSS Feed" : previewResult.method === "google_news_fallback" ? "Google News" : previewResult.method}</Badge></span>
+                )}
+              </p>
+            </DialogHeader>
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-0" data-testid="preview-articles-list">
+              {previewResult?.articles.map((article, idx) => (
+                <div key={idx} className="flex gap-3 p-3 rounded-md bg-muted/50" data-testid={`preview-article-${idx}`}>
+                  {article.image && (
+                    <img
+                      src={article.image}
+                      alt=""
+                      className="w-16 h-16 rounded-md object-cover flex-shrink-0"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                    />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm leading-tight line-clamp-2">{article.title}</p>
+                    {article.content && (
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{article.content}</p>
+                    )}
+                    <div className="flex items-center gap-2 mt-1.5">
+                      {article.publishedAt && (
+                        <span className="text-xs text-muted-foreground">
+                          {(() => {
+                            try { return formatDistanceToNow(new Date(article.publishedAt), { addSuffix: true }); }
+                            catch { return ""; }
+                          })()}
+                        </span>
+                      )}
+                      {article.url && (
+                        <a href={article.url} target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground flex items-center gap-1 hover-elevate rounded px-1" data-testid={`link-preview-article-${idx}`}>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 pt-3 border-t">
+              <Button variant="outline" className="flex-1" onClick={() => setShowPreviewDialog(false)} data-testid="button-cancel-import">
+                Cancel
+              </Button>
+              <Button className="flex-1" onClick={handleConfirmImport} disabled={isCreating} data-testid="button-confirm-import">
+                {isCreating ? (
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                ) : (
+                  <Plus className="w-4 h-4 mr-2" />
+                )}
+                OK - Import Articles
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
