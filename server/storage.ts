@@ -109,7 +109,7 @@ export interface IStorage {
   // Articles
   getArticles(params?: ArticleQueryParams): Promise<{ items: (Article & { source: Source | null })[], total: number }>;
   getArticle(id: number): Promise<Article | undefined>;
-  getArticlesByIds(ids: number[]): Promise<(Article & { source: Source | null })[]>;
+  getArticlesByIds(ids: number[], clientId?: number): Promise<(Article & { source: Source | null })[]>;
   createArticle(article: InsertArticle): Promise<Article>;
   getArticleByUrl(url: string): Promise<Article | undefined>; // For deduplication
 
@@ -705,8 +705,10 @@ export class DatabaseStorage implements IStorage {
     return article;
   }
 
-  async getArticlesByIds(ids: number[]): Promise<(Article & { source: Source | null })[]> {
+  async getArticlesByIds(ids: number[], clientId?: number): Promise<(Article & { source: Source | null })[]> {
     if (ids.length === 0) return [];
+    const conditions = [inArray(articles.id, ids)];
+    if (clientId) conditions.push(eq(articles.clientId, clientId));
     const items = await db.select({
       id: articles.id,
       title: articles.title,
@@ -731,7 +733,7 @@ export class DatabaseStorage implements IStorage {
     })
       .from(articles)
       .leftJoin(sources, eq(articles.sourceId, sources.id))
-      .where(inArray(articles.id, ids))
+      .where(and(...conditions))
       .orderBy(desc(articles.publishedAt));
     return items as any;
   }

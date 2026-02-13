@@ -334,6 +334,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     try {
       const user = req.user as any;
+      const clientId = resolveClientId(user);
       const scopedSourceIds = await getUserSourceIds(user);
       if (Array.isArray(scopedSourceIds) && scopedSourceIds.length === 0) {
         return res.json([]);
@@ -342,6 +343,7 @@ export async function registerRoutes(
       const result = await storage.getArticles({
         category: "urgent",
         sourceIds: scopedSourceIds,
+        clientId: clientId || undefined,
         startDate: since || new Date(Date.now() - 3600000).toISOString(),
         limit: 10,
         page: 1,
@@ -356,11 +358,13 @@ export async function registerRoutes(
   app.get("/api/articles/export", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
+    const clientId = resolveClientId(user);
     const scopedSourceIds = await getUserSourceIds(user);
     const params = {
       search: req.query.search as string,
       sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
       sourceIds: scopedSourceIds,
+      clientId: clientId || undefined,
       sentiment: req.query.sentiment as string,
       category: req.query.category as string,
       sourceType: req.query.sourceType as string,
@@ -426,6 +430,8 @@ export async function registerRoutes(
   // === ARTICLE TRANSLATION ===
   app.post("/api/articles/:id/translate", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid article ID" });
     const { targetLanguage } = req.body;
@@ -436,6 +442,7 @@ export async function registerRoutes(
 
     const article = await storage.getArticle(id);
     if (!article) return res.status(404).json({ message: "Article not found" });
+    if (clientId && article.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
 
     try {
       const langNames: Record<string, string> = {
@@ -477,8 +484,9 @@ export async function registerRoutes(
     
     try {
       const user = req.user as any;
+      const clientId = resolveClientId(user);
       const scopedSourceIds = await getUserSourceIds(user);
-      const allArticles = await storage.getArticles({ limit: 500, sourceIds: scopedSourceIds });
+      const allArticles = await storage.getArticles({ limit: 500, sourceIds: scopedSourceIds, clientId: clientId || undefined });
       const unanalyzed = allArticles.items.filter(
         a => (!a.sentimentLabel || a.sentimentLabel === "neutral") && a.sentimentScore === 0 && (!a.keywords || a.keywords.length === 0)
       );
@@ -656,11 +664,13 @@ export async function registerRoutes(
 
   app.get("/api/bookmarks/articles", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    const userId = (req.user as any).id;
+    const user = req.user as any;
+    const clientId = resolveClientId(user);
+    const userId = user.id;
     try {
       const articleIds = await storage.getBookmarks(userId);
       if (articleIds.length === 0) return res.json([]);
-      const bookmarkedArticles = await storage.getArticlesByIds(articleIds);
+      const bookmarkedArticles = await storage.getArticlesByIds(articleIds, clientId || undefined);
       res.json(bookmarkedArticles);
     } catch (err) {
       console.error("Error fetching bookmarked articles:", err);
@@ -841,8 +851,9 @@ export async function registerRoutes(
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
     const user = req.user as any;
+    const clientId = resolveClientId(user);
     const scopedSourceIds = await getUserSourceIds(user);
-    const sentimentData = await storage.getSentimentReports(startDate, endDate, scopedSourceIds);
+    const sentimentData = await storage.getSentimentReports(startDate, endDate, scopedSourceIds, clientId || undefined);
     const csvHeader = "Source,Positive,Negative,Neutral,Total\n";
     const csvRows = sentimentData.bySource.map(s => {
       const total = s.positive + s.negative + s.neutral;
@@ -1249,6 +1260,7 @@ export async function registerRoutes(
   app.get("/api/v1/articles", async (req, res) => {
     const scopes = (req as any).apiKeyScopes as string[];
     if (!scopes.includes("articles:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const partnerClientId = (req as any).apiKeyClientId as number | undefined;
     const params = {
       search: req.query.search as string,
       sentiment: req.query.sentiment as string,
@@ -1257,6 +1269,7 @@ export async function registerRoutes(
       topic: req.query.topic as string,
       startDate: req.query.startDate as string,
       endDate: req.query.endDate as string,
+      clientId: partnerClientId || undefined,
       page: req.query.page ? Math.max(1, parseInt(req.query.page as string)) : 1,
       limit: req.query.limit ? Math.min(50, Math.max(1, parseInt(req.query.limit as string))) : 20,
     };
@@ -1287,27 +1300,30 @@ export async function registerRoutes(
   app.get("/api/v1/trending-topics", async (req, res) => {
     const scopes = (req as any).apiKeyScopes as string[];
     if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const partnerClientId = (req as any).apiKeyClientId as number | undefined;
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const data = await storage.getTrendingTopics(sevenDaysAgo.toISOString(), now.toISOString());
+    const data = await storage.getTrendingTopics(sevenDaysAgo.toISOString(), now.toISOString(), undefined, partnerClientId || undefined);
     res.json(data);
   });
 
   app.get("/api/v1/sentiment", async (req, res) => {
     const scopes = (req as any).apiKeyScopes as string[];
     if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const partnerClientId = (req as any).apiKeyClientId as number | undefined;
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const data = await storage.getSentimentReports(sevenDaysAgo.toISOString(), now.toISOString());
+    const data = await storage.getSentimentReports(sevenDaysAgo.toISOString(), now.toISOString(), undefined, partnerClientId || undefined);
     res.json(data);
   });
 
   app.get("/api/v1/keywords", async (req, res) => {
     const scopes = (req as any).apiKeyScopes as string[];
     if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const partnerClientId = (req as any).apiKeyClientId as number | undefined;
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const data = await storage.getKeywordAnalysis(sevenDaysAgo.toISOString(), now.toISOString());
+    const data = await storage.getKeywordAnalysis(sevenDaysAgo.toISOString(), now.toISOString(), undefined, partnerClientId || undefined);
     res.json(data);
   });
 
@@ -2502,12 +2518,13 @@ export async function registerRoutes(
   app.get("/api/executive/snapshot", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
+    const clientId = resolveClientId(user);
     const scopedSourceIds = await getUserSourceIds(user);
-    const articles = await storage.getArticles({ limit: 5, sourceIds: scopedSourceIds });
-    const events = await storage.getDetectedEvents({ limit: 5 });
-    const briefs = await storage.getDailyBriefs(1);
-    const entities = await storage.getTopEntities({ limit: 5, days: 1 });
-    const clusters = await storage.getStoryClusters({ limit: 3 });
+    const articles = await storage.getArticles({ limit: 5, sourceIds: scopedSourceIds, clientId: clientId || undefined });
+    const events = await storage.getDetectedEvents({ limit: 5, clientId: clientId || undefined });
+    const briefs = await storage.getDailyBriefs(1, clientId || undefined);
+    const entities = await storage.getTopEntities({ limit: 5, days: 1, clientId: clientId || undefined });
+    const clusters = await storage.getStoryClusters({ limit: 3, clientId: clientId || undefined });
     res.json({
       topStory: clusters[0] || null,
       latestBrief: briefs[0] || null,
@@ -2706,9 +2723,9 @@ export async function registerRoutes(
     if (!clientId) return res.status(400).json({ message: "Client ID required" });
     const now = new Date();
     const reportMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-    const articleResult = await storage.getArticles({});
-    const briefs = await storage.getDailyBriefs(30);
-    const events = await storage.getDetectedEvents({ limit: 100 });
+    const articleResult = await storage.getArticles({ clientId: clientId || undefined });
+    const briefs = await storage.getDailyBriefs(30, clientId || undefined);
+    const events = await storage.getDetectedEvents({ limit: 100, clientId: clientId || undefined });
     const report = await storage.createValueReport({
       clientId,
       reportMonth,
@@ -2896,15 +2913,16 @@ export async function registerRoutes(
     let widgetData: any = {};
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const embedClientId = embedToken.clientId || undefined;
     if (embedToken.widgetType === "trending_topics") {
-      widgetData = await storage.getTrendingTopics(sevenDaysAgo.toISOString(), now.toISOString());
+      widgetData = await storage.getTrendingTopics(sevenDaysAgo.toISOString(), now.toISOString(), undefined, embedClientId);
     } else if (embedToken.widgetType === "sentiment_overview") {
-      widgetData = await storage.getSentimentReports(sevenDaysAgo.toISOString(), now.toISOString());
+      widgetData = await storage.getSentimentReports(sevenDaysAgo.toISOString(), now.toISOString(), undefined, embedClientId);
     } else if (embedToken.widgetType === "entity_tracker") {
-      widgetData = await storage.getTopEntities({ limit: 10, days: 7 });
+      widgetData = await storage.getTopEntities({ limit: 10, days: 7, clientId: embedClientId });
     } else if (embedToken.widgetType === "daily_briefing") {
       const today = now.toISOString().split("T")[0];
-      widgetData = await storage.getDailyBrief(today);
+      widgetData = await storage.getDailyBrief(today, embedClientId);
     }
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NWS360 Widget</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#e2e8f0;padding:16px}.widget{border:1px solid #1e293b;border-radius:8px;padding:16px;background:#111827}.title{font-size:14px;font-weight:600;margin-bottom:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em}.item{padding:8px 0;border-bottom:1px solid #1e293b;font-size:13px}.item:last-child{border-bottom:none}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}.positive{background:#065f46;color:#6ee7b7}.negative{background:#7f1d1d;color:#fca5a5}.neutral{background:#1e293b;color:#94a3b8}.powered{text-align:center;margin-top:12px;font-size:10px;color:#475569}a{color:#60a5fa;text-decoration:none}</style></head><body><div class="widget"><div class="title">${embedToken.widgetType.replace(/_/g, " ")}</div><div id="content">${renderWidgetContent(embedToken.widgetType, widgetData)}</div></div><div class="powered">Powered by NWS360</div></body></html>`;
     res.type("html").send(html);
@@ -2914,11 +2932,12 @@ export async function registerRoutes(
   app.post("/api/integrations/export", async (req, res) => {
     const user = (req as any).user;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const exportClientId = resolveClientId(user);
     const { exportType, format, filters } = req.body;
     if (!exportType || !format) return res.status(400).json({ message: "Export type and format required" });
     let resultData: any = null;
     if (exportType === "articles") {
-      const result = await storage.getArticles(filters || {});
+      const result = await storage.getArticles({ ...(filters || {}), clientId: exportClientId || undefined });
       resultData = result.items.map(a => ({
         id: a.id, title: a.title, url: a.url, summary: a.summary,
         source: a.source?.name, category: a.category,
@@ -2927,15 +2946,15 @@ export async function registerRoutes(
         publishedAt: a.publishedAt,
       }));
     } else if (exportType === "entities") {
-      resultData = await storage.getTopEntities({ limit: 100, days: 30 });
+      resultData = await storage.getTopEntities({ limit: 100, days: 30, clientId: exportClientId || undefined });
     } else if (exportType === "stories") {
-      resultData = await storage.getStoryClusters({ limit: 100 });
+      resultData = await storage.getStoryClusters({ limit: 100, clientId: exportClientId || undefined });
     } else if (exportType === "trends") {
       const now = new Date();
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      resultData = await storage.getTrendingTopics(thirtyDaysAgo.toISOString(), now.toISOString());
+      resultData = await storage.getTrendingTopics(thirtyDaysAgo.toISOString(), now.toISOString(), undefined, exportClientId || undefined);
     } else if (exportType === "briefings") {
-      resultData = await storage.getDailyBriefs(30);
+      resultData = await storage.getDailyBriefs(30, exportClientId || undefined);
     }
     const job = await storage.createExportJob({
       userId: user.id,
@@ -3049,35 +3068,39 @@ export async function registerRoutes(
   app.get("/api/v1/stories", async (req, res) => {
     const scopes = (req as any).apiKeyScopes as string[];
     if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const partnerClientId = (req as any).apiKeyClientId as number | undefined;
     const limit = req.query.limit ? Math.min(50, parseInt(req.query.limit as string)) : 20;
-    const clusters = await storage.getStoryClusters({ limit });
+    const clusters = await storage.getStoryClusters({ limit, clientId: partnerClientId || undefined });
     res.json({ items: clusters, total: clusters.length });
   });
 
   app.get("/api/v1/entities", async (req, res) => {
     const scopes = (req as any).apiKeyScopes as string[];
     if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const partnerClientId = (req as any).apiKeyClientId as number | undefined;
     const limit = req.query.limit ? Math.min(100, parseInt(req.query.limit as string)) : 20;
     const days = req.query.days ? parseInt(req.query.days as string) : 7;
-    const entities = await storage.getTopEntities({ limit, days });
+    const entities = await storage.getTopEntities({ limit, days, clientId: partnerClientId || undefined });
     res.json({ items: entities, total: entities.length });
   });
 
   app.get("/api/v1/briefings", async (req, res) => {
     const scopes = (req as any).apiKeyScopes as string[];
     if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const partnerClientId = (req as any).apiKeyClientId as number | undefined;
     const limit = req.query.limit ? Math.min(30, parseInt(req.query.limit as string)) : 7;
-    const briefs = await storage.getDailyBriefs(limit);
+    const briefs = await storage.getDailyBriefs(limit, partnerClientId || undefined);
     res.json({ items: briefs, total: briefs.length });
   });
 
   app.get("/api/v1/trends", async (req, res) => {
     const scopes = (req as any).apiKeyScopes as string[];
     if (!scopes.includes("analytics:read")) return res.status(403).json({ message: "Insufficient scope" });
+    const partnerClientId = (req as any).apiKeyClientId as number | undefined;
     const now = new Date();
     const days = req.query.days ? parseInt(req.query.days as string) : 7;
     const startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-    const data = await storage.getTrendingTopics(startDate.toISOString(), now.toISOString());
+    const data = await storage.getTrendingTopics(startDate.toISOString(), now.toISOString(), undefined, partnerClientId || undefined);
     res.json(data);
   });
 
