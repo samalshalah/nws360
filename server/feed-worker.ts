@@ -526,6 +526,15 @@ async function processItems(
     if (existing) continue;
 
     const title = item.title || "Untitled";
+
+    if (title.length >= 15) {
+      const titleDup = await storage.getArticleByTitle(title, source.clientId ?? null);
+      if (titleDup) {
+        console.log(`[Worker] Skipping duplicate by title: "${title.substring(0, 60)}..." (existing from source ${titleDup.sourceId})`);
+        continue;
+      }
+    }
+
     const contentRaw = item.content || title;
     if (!contentRaw && !title) continue;
 

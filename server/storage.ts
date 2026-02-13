@@ -113,6 +113,7 @@ export interface IStorage {
   getArticlesByIds(ids: number[], clientId?: number): Promise<(Article & { source: Source | null })[]>;
   createArticle(article: InsertArticle): Promise<Article>;
   getArticleByUrl(url: string): Promise<Article | undefined>; // For deduplication
+  getArticleByTitle(title: string, clientId?: number | null): Promise<Article | undefined>; // For cross-channel deduplication
 
   // Keywords
   getKeywords(): Promise<Keyword[]>;
@@ -772,6 +773,17 @@ export class DatabaseStorage implements IStorage {
 
   async getArticleByUrl(url: string): Promise<Article | undefined> {
     const [article] = await db.select().from(articles).where(eq(articles.url, url));
+    return article;
+  }
+
+  async getArticleByTitle(title: string, clientId?: number | null): Promise<Article | undefined> {
+    const normalizedTitle = title.toLowerCase().trim();
+    if (normalizedTitle.length < 15) return undefined;
+    const conditions = [sql`lower(trim(${articles.title})) = ${normalizedTitle}`];
+    if (clientId !== undefined && clientId !== null) {
+      conditions.push(eq(articles.clientId, clientId));
+    }
+    const [article] = await db.select().from(articles).where(and(...conditions)).limit(1);
     return article;
   }
 
