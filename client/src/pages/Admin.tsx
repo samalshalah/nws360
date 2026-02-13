@@ -864,8 +864,18 @@ function SourcesManager() {
     return config?.color || "";
   };
 
+  const channelSuffixes = ["-RSS", "-FB", "-X", "-YT", "-IG", "-TG", "-News"];
+  const getGroupName = (name: string): string => {
+    for (const suffix of channelSuffixes) {
+      if (name.endsWith(suffix)) {
+        return name.slice(0, -suffix.length);
+      }
+    }
+    return name;
+  };
+
   const sourceGroups = (sources || []).reduce((acc, source) => {
-    const key = source.name;
+    const key = getGroupName(source.name);
     if (!acc[key]) acc[key] = [];
     acc[key].push(source);
     return acc;
