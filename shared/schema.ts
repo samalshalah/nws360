@@ -23,7 +23,7 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   role: text("role").notNull().default("client"),
   parentId: integer("parent_id"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   disabled: boolean("disabled").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -41,7 +41,7 @@ export const sources = pgTable("sources", {
   maxArticlesPerFetch: integer("max_articles_per_fetch").default(10),
   retentionDays: integer("retention_days").default(30),
   userId: integer("user_id"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   country: text("country"),
   refreshPriority: text("refresh_priority").default("medium"),
   logoUrl: text("logo_url"),
@@ -86,7 +86,7 @@ export const articles = pgTable("articles", {
   engagementLikes: integer("engagement_likes"),
   engagementComments: integer("engagement_comments"),
   engagementShares: integer("engagement_shares"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   crossPosts: jsonb("cross_posts").$type<{ platform: string; url: string; sourceId: number }[]>().default([]),
   aiAnalysisStatus: text("ai_analysis_status").default("success"),
   aiRetryCount: integer("ai_retry_count").default(0),
@@ -112,7 +112,7 @@ export const bookmarks = pgTable("bookmarks", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id),
   articleId: integer("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   uniqueIndex("bookmarks_user_article_idx").on(table.userId, table.articleId),
@@ -153,7 +153,7 @@ export const adminAuditLogs = pgTable("admin_audit_logs", {
   entity: text("entity").notNull(),
   entityId: integer("entity_id"),
   details: text("details"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -205,7 +205,7 @@ export const apiKeys = pgTable("api_keys", {
   name: text("name").notNull(),
   keyHash: text("key_hash").notNull().unique(),
   keyPrefix: text("key_prefix").notNull(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   scopes: text("scopes").array().default([]),
   rateLimit: integer("rate_limit").default(100),
   active: boolean("active").default(true),
@@ -224,7 +224,7 @@ export const analyticsCache = pgTable("analytics_cache", {
   data: jsonb("data").notNull(),
   periodStart: timestamp("period_start").notNull(),
   periodEnd: timestamp("period_end").notNull(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   computedAt: timestamp("computed_at").defaultNow(),
 }, (table) => [
   index("idx_cache_type_key").on(table.metricType, table.metricKey),
@@ -250,7 +250,7 @@ export const usageMetrics = pgTable("usage_metrics", {
   id: serial("id").primaryKey(),
   event: text("event").notNull(),
   userId: integer("user_id"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   metadata: jsonb("metadata"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
@@ -271,7 +271,7 @@ export const storyClusters = pgTable("story_clusters", {
   sourceCount: integer("source_count").default(0),
   avgSentiment: integer("avg_sentiment").default(0),
   narrativeVariations: jsonb("narrative_variations"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   firstSeen: timestamp("first_seen").defaultNow(),
   lastUpdated: timestamp("last_updated").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
@@ -296,7 +296,7 @@ export const articleAiAnalysis = pgTable("article_ai_analysis", {
   narrativeSummary: text("narrative_summary"),
   clusterId: integer("cluster_id").references(() => storyClusters.id),
   confidenceScore: integer("confidence_score").default(70),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   uniqueIndex("idx_ai_analysis_article").on(table.articleId),
@@ -319,7 +319,7 @@ export const dailyBriefs = pgTable("daily_briefs", {
   articleCount: integer("article_count").default(0),
   sourceCount: integer("source_count").default(0),
   confidenceScore: integer("confidence_score").default(70),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_brief_date").on(table.date),
@@ -341,7 +341,7 @@ export const detectedEvents = pgTable("detected_events", {
   sourceCount: integer("source_count").default(0),
   confidenceScore: integer("confidence_score").default(70),
   acknowledged: boolean("acknowledged").default(false),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_event_type").on(table.type),
@@ -362,7 +362,7 @@ export const entityMentions = pgTable("entity_mentions", {
   sentiment: text("sentiment"),
   sentimentScore: integer("sentiment_score"),
   context: text("context"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   mentionDate: timestamp("mention_date").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
@@ -388,7 +388,7 @@ export const trendPredictions = pgTable("trend_predictions", {
   confidenceScore: integer("confidence_score").default(70),
   basedOnArticleCount: integer("based_on_article_count").default(0),
   basedOnSourceDiversity: integer("based_on_source_diversity").default(0),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   expiresAt: timestamp("expires_at"),
 }, (table) => [
@@ -452,7 +452,7 @@ export const notificationSettings = pgTable("notification_settings", {
   type: text("type").notNull().default("briefing"),
   enabled: boolean("enabled").default(true),
   config: jsonb("config"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_notification_user").on(table.userId),
@@ -478,7 +478,7 @@ export const insertWhiteLabelSettingSchema = createInsertSchema(whiteLabelSettin
 export const supportTickets = pgTable("support_tickets", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").references(() => users.id).notNull(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   subject: text("subject").notNull(),
   message: text("message").notNull(),
   status: text("status").notNull().default("open"),
@@ -501,7 +501,7 @@ export const userFeedback = pgTable("user_feedback", {
   targetType: text("target_type"),
   rating: text("rating").notNull(),
   comment: text("comment"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_feedback_user").on(table.userId),
@@ -520,7 +520,7 @@ export const insightEngagement = pgTable("insight_engagement", {
   clicked: boolean("clicked").default(false),
   exported: boolean("exported").default(false),
   dwellTimeSeconds: integer("dwell_time_seconds"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_engagement_user").on(table.userId),
@@ -538,7 +538,7 @@ export const aiCorrections = pgTable("ai_corrections", {
   oldValue: text("old_value"),
   newValue: text("new_value").notNull(),
   status: text("status").notNull().default("pending"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_corrections_article").on(table.articleId),
@@ -572,7 +572,7 @@ export const dashboardPreferences = pgTable("dashboard_preferences", {
   recommendedPanels: jsonb("recommended_panels"),
   frequentSearches: text("frequent_searches").array(),
   autoSuggested: boolean("auto_suggested").default(false),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   updatedAt: timestamp("updated_at").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
@@ -689,7 +689,7 @@ export const emailSubscriptions = pgTable("email_subscriptions", {
   sendWeeklySummary: boolean("send_weekly_summary").default(false),
   customSchedule: jsonb("custom_schedule"),
   active: boolean("active").default(true),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_email_sub_user").on(table.userId),
@@ -744,7 +744,7 @@ export const exportJobs = pgTable("export_jobs", {
   status: text("status").notNull().default("pending"),
   resultUrl: text("result_url"),
   resultData: jsonb("result_data"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   completedAt: timestamp("completed_at"),
 }, (table) => [
@@ -800,7 +800,7 @@ export const mobileNotificationPrefs = pgTable("mobile_notification_prefs", {
   severityLevel: text("severity_level").default("high"),
   quietHoursStart: text("quiet_hours_start"),
   quietHoursEnd: text("quiet_hours_end"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_mobile_notif_user").on(table.userId),
@@ -940,7 +940,7 @@ export type InsertValueReport = z.infer<typeof insertValueReportSchema>;
 // === TEAM WORKSPACES ===
 export const workspaces = pgTable("workspaces", {
   id: serial("id").primaryKey(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   name: text("name").notNull(),
   description: text("description"),
   createdBy: integer("created_by"),
@@ -970,7 +970,7 @@ export const comments = pgTable("comments", {
   message: text("message").notNull(),
   parentCommentId: integer("parent_comment_id"),
   workspaceId: integer("workspace_id"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("comments_target_idx").on(table.targetType, table.targetId),
@@ -987,7 +987,7 @@ export const annotations = pgTable("annotations", {
   noteType: text("note_type").notNull().default("observation"),
   content: text("content").notNull(),
   workspaceId: integer("workspace_id"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("annotations_target_idx").on(table.targetType, table.targetId),
@@ -998,7 +998,7 @@ export const insertAnnotationSchema = createInsertSchema(annotations).omit({ id:
 // === SHARED BRIEFINGS / REPORTS ===
 export const sharedReports = pgTable("shared_reports", {
   id: serial("id").primaryKey(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   workspaceId: integer("workspace_id"),
   title: text("title").notNull(),
   summary: text("summary"),
@@ -1026,7 +1026,7 @@ export const insertBriefingItemSchema = createInsertSchema(briefingItems).omit({
 // === CUSTOM TAGS ===
 export const customTags = pgTable("custom_tags", {
   id: serial("id").primaryKey(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   workspaceId: integer("workspace_id"),
   name: text("name").notNull(),
   color: text("color"),
@@ -1062,7 +1062,7 @@ export const tasks = pgTable("tasks", {
   relatedTargetType: text("related_target_type"),
   relatedTargetId: integer("related_target_id"),
   dueDate: timestamp("due_date"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1075,7 +1075,7 @@ export const watchlists = pgTable("watchlists", {
   entityOrTopic: text("entity_or_topic").notNull(),
   targetType: text("target_type").notNull().default("entity"),
   workspaceId: integer("workspace_id"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1091,7 +1091,7 @@ export const internalAlerts = pgTable("internal_alerts", {
   message: text("message").notNull(),
   read: boolean("read").default(false),
   workspaceId: integer("workspace_id"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("internal_alerts_receiver_idx").on(table.receiverId),
@@ -1107,7 +1107,7 @@ export const changeHistory = pgTable("change_history", {
   entityId: integer("entity_id").notNull(),
   changeType: text("change_type").notNull(),
   details: jsonb("details"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("change_history_entity_idx").on(table.entityType, table.entityId),
@@ -1124,7 +1124,7 @@ export const activityEvents = pgTable("activity_events", {
   targetType: text("target_type"),
   targetId: integer("target_id"),
   metadata: jsonb("metadata"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("activity_events_ws_idx").on(table.workspaceId, table.createdAt),
@@ -1206,7 +1206,7 @@ export const storyTimelines = pgTable("story_timelines", {
   summary: text("summary"),
   status: text("status").notNull().default("active"),
   storyClusterId: integer("story_cluster_id"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   firstSeen: timestamp("first_seen").defaultNow(),
   lastSeen: timestamp("last_seen").defaultNow(),
   metadata: jsonb("metadata"),
@@ -1230,7 +1230,7 @@ export const recurringPatterns = pgTable("recurring_patterns", {
   confidence: integer("confidence").default(50),
   lastOccurrence: timestamp("last_occurrence"),
   occurrenceCount: integer("occurrence_count").default(1),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   metadata: jsonb("metadata"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -1245,7 +1245,7 @@ export const entityMemory = pgTable("entity_memory", {
   peakMoments: jsonb("peak_moments"),
   associatedTopics: text("associated_topics").array(),
   toneEvolution: jsonb("tone_evolution"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1259,13 +1259,13 @@ export const narrativeShifts = pgTable("narrative_shifts", {
   sentimentDelta: integer("sentiment_delta"),
   summary: text("summary"),
   storyClusterId: integer("story_cluster_id"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const institutionalNotes = pgTable("institutional_notes", {
   id: serial("id").primaryKey(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   userId: integer("user_id"),
   relatedTopic: text("related_topic").notNull(),
   targetType: text("target_type"),
@@ -1282,7 +1282,7 @@ export const historicalMatches = pgTable("historical_matches", {
   similarityScore: integer("similarity_score").default(0),
   matchReason: text("match_reason"),
   acknowledged: boolean("acknowledged").default(false),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1292,7 +1292,7 @@ export const trendLifecycles = pgTable("trend_lifecycles", {
   stage: text("stage").notNull().default("emergence"),
   stageStartAt: timestamp("stage_start_at").defaultNow(),
   signals: jsonb("signals"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   updatedAt: timestamp("updated_at").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -1305,7 +1305,7 @@ export const longRangeBriefings = pgTable("long_range_briefings", {
   summary: text("summary"),
   findings: jsonb("findings"),
   generatedBy: integer("generated_by"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1315,7 +1315,7 @@ export const aiMemoryAnswers = pgTable("ai_memory_answers", {
   answer: text("answer"),
   contextRefs: jsonb("context_refs"),
   createdBy: integer("created_by"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1366,7 +1366,7 @@ export type InsertAiMemoryAnswer = z.infer<typeof insertAiMemoryAnswerSchema>;
 
 export const topicForecasts = pgTable("topic_forecasts", {
   id: serial("id").primaryKey(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   topic: text("topic").notNull(),
   momentum: integer("momentum").default(0),
   acceleration: integer("acceleration").default(0),
@@ -1384,7 +1384,7 @@ export const insertTopicForecastSchema = createInsertSchema(topicForecasts).omit
 
 export const earlySignals = pgTable("early_signals", {
   id: serial("id").primaryKey(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   signalType: text("signal_type").notNull(),
   relatedTopic: text("related_topic").notNull(),
   strength: integer("strength").default(50),
@@ -1396,7 +1396,7 @@ export const insertEarlySignalSchema = createInsertSchema(earlySignals).omit({ i
 
 export const riskScores = pgTable("risk_scores", {
   id: serial("id").primaryKey(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   subject: text("subject").notNull(),
   subjectType: text("subject_type").default("topic"),
   operationalRisk: integer("operational_risk").default(0),
@@ -1411,7 +1411,7 @@ export const insertRiskScoreSchema = createInsertSchema(riskScores).omit({ id: t
 
 export const influenceGraph = pgTable("influence_graph", {
   id: serial("id").primaryKey(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   sourceA: text("source_a").notNull(),
   sourceB: text("source_b").notNull(),
   influenceStrength: integer("influence_strength").default(50),
@@ -1424,7 +1424,7 @@ export const insertInfluenceGraphSchema = createInsertSchema(influenceGraph).omi
 
 export const attentionDecay = pgTable("attention_decay", {
   id: serial("id").primaryKey(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   topic: text("topic").notNull(),
   estimatedDaysRemaining: integer("estimated_days_remaining").default(7),
   peakDate: timestamp("peak_date"),
@@ -1437,7 +1437,7 @@ export const insertAttentionDecaySchema = createInsertSchema(attentionDecay).omi
 
 export const alertPriorityScores = pgTable("alert_priority_scores", {
   id: serial("id").primaryKey(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   alertId: integer("alert_id"),
   topic: text("topic"),
   score: integer("score").default(50),
@@ -1452,7 +1452,7 @@ export const insertAlertPriorityScoreSchema = createInsertSchema(alertPrioritySc
 
 export const forecastResults = pgTable("forecast_results", {
   id: serial("id").primaryKey(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   forecastId: integer("forecast_id"),
   forecastType: text("forecast_type").notNull(),
   originalPrediction: text("original_prediction"),
@@ -1465,7 +1465,7 @@ export const insertForecastResultSchema = createInsertSchema(forecastResults).om
 
 export const futureBriefings = pgTable("future_briefings", {
   id: serial("id").primaryKey(),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   date: text("date").notNull(),
   possibleEscalations: jsonb("possible_escalations").$type<{ topic: string; probability: number; explanation: string }[]>().default([]),
   emergingActors: jsonb("emerging_actors").$type<{ name: string; context: string }[]>().default([]),
@@ -1509,7 +1509,7 @@ export const articleTranslations = pgTable("article_translations", {
   translatedTitle: text("translated_title"),
   translatedContent: text("translated_content"),
   translatedSummary: text("translated_summary"),
-  clientId: integer("client_id"),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   uniqueIndex("article_translations_article_lang_idx").on(table.articleId, table.targetLanguage),

@@ -629,12 +629,14 @@ async function handleTranslateArticle(payload: { articleId: number; targetLangua
   const article = await storage.getArticle(payload.articleId);
   if (!article) return { skipped: true, reason: "article not found" };
 
+  const articleClientId = article.clientId || undefined;
+
   const langNames: Record<string, string> = {
     en: "English", ar: "Arabic", fr: "French", es: "Spanish", tr: "Turkish"
   };
   const targetLangName = langNames[payload.targetLanguage] || payload.targetLanguage;
 
-  const existing = await storage.getArticleTranslation(payload.articleId, payload.targetLanguage);
+  const existing = await storage.getArticleTranslation(payload.articleId, payload.targetLanguage, articleClientId);
   if (!existing) return { skipped: true, reason: "no translation record" };
 
   try {
@@ -661,12 +663,12 @@ async function handleTranslateArticle(payload: { articleId: number; targetLangua
       translatedContent: result.content || article.content,
       translatedSummary: result.summary || article.summary,
       status: "completed",
-    });
+    }, articleClientId);
 
     return { articleId: payload.articleId, targetLanguage: payload.targetLanguage, status: "completed" };
   } catch (e) {
     console.error(`Translation failed for article ${payload.articleId}:`, e);
-    await storage.updateArticleTranslation(existing.id, { status: "failed" });
+    await storage.updateArticleTranslation(existing.id, { status: "failed" }, articleClientId);
     throw e;
   }
 }

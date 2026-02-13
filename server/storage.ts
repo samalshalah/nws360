@@ -576,9 +576,9 @@ export interface IStorage {
   deleteFutureBriefing(id: number): Promise<void>;
 
   // Article Translations
-  getArticleTranslation(articleId: number, targetLanguage: string): Promise<ArticleTranslation | undefined>;
+  getArticleTranslation(articleId: number, targetLanguage: string, clientId?: number): Promise<ArticleTranslation | undefined>;
   createArticleTranslation(data: InsertArticleTranslation): Promise<ArticleTranslation>;
-  updateArticleTranslation(id: number, data: Partial<InsertArticleTranslation>): Promise<ArticleTranslation | undefined>;
+  updateArticleTranslation(id: number, data: Partial<InsertArticleTranslation>, clientId?: number): Promise<ArticleTranslation | undefined>;
 
   // === ENTERPRISE ACCESS CONTROL ===
   // Permission Groups
@@ -1848,7 +1848,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // === USER MANAGEMENT EXTENSIONS ===
-  async updateUser(id: number, updates: Partial<{ role: string; clientId: number | null; disabled: boolean; password: string }>): Promise<User | undefined> {
+  async updateUser(id: number, updates: Partial<{ role: string; clientId: number; disabled: boolean; password: string }>): Promise<User | undefined> {
     const [user] = await db.update(users).set(updates).where(eq(users.id, id)).returning();
     return user;
   }
@@ -3342,17 +3342,17 @@ export class DatabaseStorage implements IStorage {
 
   async getDistinctClientIds(): Promise<number[]> {
     const rows = await db.selectDistinct({ clientId: articles.clientId })
-      .from(articles)
-      .where(sql`${articles.clientId} IS NOT NULL`);
-    return rows.map(r => r.clientId!).filter(Boolean);
+      .from(articles);
+    return rows.map(r => r.clientId).filter((id): id is number => id !== null && id !== undefined);
   }
 
-  async getArticleTranslation(articleId: number, targetLanguage: string): Promise<ArticleTranslation | undefined> {
-    const [row] = await db.select().from(articleTranslations)
-      .where(and(
-        eq(articleTranslations.articleId, articleId),
-        eq(articleTranslations.targetLanguage, targetLanguage)
-      ));
+  async getArticleTranslation(articleId: number, targetLanguage: string, clientId?: number): Promise<ArticleTranslation | undefined> {
+    const conditions = [
+      eq(articleTranslations.articleId, articleId),
+      eq(articleTranslations.targetLanguage, targetLanguage),
+    ];
+    if (clientId) conditions.push(eq(articleTranslations.clientId, clientId));
+    const [row] = await db.select().from(articleTranslations).where(and(...conditions));
     return row;
   }
 
@@ -3361,8 +3361,10 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async updateArticleTranslation(id: number, data: Partial<InsertArticleTranslation>): Promise<ArticleTranslation | undefined> {
-    const [row] = await db.update(articleTranslations).set(data).where(eq(articleTranslations.id, id)).returning();
+  async updateArticleTranslation(id: number, data: Partial<InsertArticleTranslation>, clientId?: number): Promise<ArticleTranslation | undefined> {
+    const conditions = [eq(articleTranslations.id, id)];
+    if (clientId) conditions.push(eq(articleTranslations.clientId, clientId));
+    const [row] = await db.update(articleTranslations).set(data).where(and(...conditions)).returning();
     return row;
   }
 
@@ -3631,6 +3633,19 @@ export class DatabaseStorage implements IStorage {
     }
 
     console.log("[Seed] Default permission groups and permissions seeded successfully");
+
+    const systemClients = [
+      { id: 9000, name: "SYSTEM", organizationType: "platform" },
+      { id: 9001, name: "DEMO", organizationType: "demo" },
+    ];
+    for (const sc of systemClients) {
+      const existing = await db.select().from(clients).where(eq(clients.id, sc.id)).limit(1);
+      if (existing.length === 0) {
+        await db.execute(sql`INSERT INTO clients (id, name, organization_type, active) VALUES (${sc.id}, ${sc.name}, ${sc.organizationType}, true)`);
+      }
+    }
+    await db.execute(sql`SELECT setval(pg_get_serial_sequence('clients', 'id'), GREATEST((SELECT MAX(id) FROM clients), 9001))`);
+    console.log("[Seed] SYSTEM and DEMO clients ensured");
   }
 
 }

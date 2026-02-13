@@ -47,7 +47,6 @@ function resolveClientId(user: any, req?: any): number | null {
   }
   if (user.role === "admin") return null;
   if (user.clientId) return user.clientId;
-  if (user.role === "client") return user.id;
   return null;
 }
 
@@ -66,10 +65,11 @@ function getSourceLogoUrl(sourceUrl: string, sourceName?: string): string | null
   }
 }
 
-function requireClientId(user: any, req?: any): number {
+function requireClientId(user: any, req: any, res: any): number | false {
   const cid = resolveClientId(user, req);
   if (cid === null && user.role !== "admin") {
-    throw new Error("User has no associated client");
+    res.status(403).json({ message: "No organization assigned" });
+    return false;
   }
   return cid as number;
 }
@@ -113,7 +113,7 @@ export async function registerRoutes(
       const effectivePermissions = await storage.getEffectivePermissions(effectiveUser.id);
 
       let organization = null;
-      const orgId = impersonation?.activeOrganizationId || user.clientId || (user.role === "client" ? user.id : null);
+      const orgId = impersonation?.activeOrganizationId || user.clientId || null;
       if (orgId) {
         organization = await storage.getClient(orgId);
       }
@@ -199,7 +199,7 @@ export async function registerRoutes(
     const targetUser = await storage.getUser(targetUserId);
     if (!targetUser) return res.status(404).json({ message: "User not found" });
 
-    const targetOrgId = targetUser.clientId || (targetUser.role === "client" ? targetUser.id : null);
+    const targetOrgId = targetUser.clientId || null;
 
     req.session.impersonation = {
       activeOrganizationId: targetOrgId,
@@ -701,7 +701,8 @@ export async function registerRoutes(
 
         await Promise.all(articlesToTranslate.map(async (article) => {
           try {
-            const cached = await storage.getArticleTranslation(article.id, targetLang);
+            const articleClientId = article.clientId;
+            const cached = await storage.getArticleTranslation(article.id, targetLang, clientId || undefined);
             if (cached && cached.status === "completed") {
               article.title = cached.translatedTitle || article.title;
               article.summary = cached.translatedSummary || article.summary;
@@ -714,9 +715,10 @@ export async function registerRoutes(
                   translatedTitle: null,
                   translatedContent: null,
                   translatedSummary: null,
+                  clientId: articleClientId,
                 });
               } else {
-                await storage.updateArticleTranslation(cached.id, { status: "pending" });
+                await storage.updateArticleTranslation(cached.id, { status: "pending" }, clientId || undefined);
               }
               const { enqueueJob } = await import("./processing-queue");
               await enqueueJob("TRANSLATE_ARTICLE", { articleId: article.id, targetLanguage: targetLang }, { maxAttempts: 2 });
@@ -849,7 +851,7 @@ export async function registerRoutes(
     const article = await storage.getArticle(id, clientId || undefined);
     if (!article) return res.status(404).json({ message: "Article not found" });
 
-    const cached = await storage.getArticleTranslation(id, targetLanguage);
+    const cached = await storage.getArticleTranslation(id, targetLanguage, clientId || undefined);
     if (cached && cached.status === "completed") {
       return res.json({
         translatedTitle: cached.translatedTitle || article.title,
@@ -872,7 +874,7 @@ export async function registerRoutes(
     }
 
     if (cached && cached.status === "failed") {
-      await storage.updateArticleTranslation(cached.id, { status: "pending" });
+      await storage.updateArticleTranslation(cached.id, { status: "pending" }, clientId || undefined);
       const { enqueueJob } = await import("./processing-queue");
       await enqueueJob("TRANSLATE_ARTICLE", { articleId: id, targetLanguage }, { maxAttempts: 2 });
       return res.json({
@@ -893,6 +895,7 @@ export async function registerRoutes(
         translatedTitle: null,
         translatedContent: null,
         translatedSummary: null,
+        clientId: article.clientId,
       });
 
       const { enqueueJob } = await import("./processing-queue");
@@ -1168,7 +1171,7 @@ export async function registerRoutes(
     const { username, password, role } = req.body;
     if (!username || !password) return res.status(400).json({ message: "Username and password required" });
 
-    const resolvedClientId = currentUser.clientId || (currentUser.role === "client" ? currentUser.id : null);
+    const resolvedClientId = resolveClientId(currentUser, req);
     if (resolvedClientId) {
       const sub = await storage.getSubscription(resolvedClientId);
       if (sub) {

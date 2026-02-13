@@ -42,6 +42,7 @@ Respond ONLY with valid JSON.`
       importanceScore: typeof result.importance_score === "number" ? Math.min(100, Math.max(0, result.importance_score)) : 50,
       narrativeSummary: result.narrative_summary || article.summary || "",
       confidenceScore: typeof result.confidence_score === "number" ? Math.min(100, Math.max(0, result.confidence_score)) : 70,
+      clientId: article.clientId ?? null,
     };
   } catch (e) {
     console.error(`[AI Intelligence] Deep analysis failed for article ${article.id}:`, e);
@@ -337,7 +338,7 @@ export async function detectEvents(clientId?: number | null): Promise<number> {
   }
 
   for (const event of events) {
-    await storage.createDetectedEvent({ ...event, clientId: clientId ?? null });
+    await storage.createDetectedEvent({ ...event, clientId: clientId! });
   }
 
   console.log(`[AI Intelligence] Detected ${events.length} events`);
@@ -420,7 +421,7 @@ Make the content insightful and interpretive, not just a recap.`
       articleCount: recentArticles.items.length,
       sourceCount: sources.size,
       confidenceScore: Math.min(90, 40 + topArticles.length * 2),
-      clientId: clientId ?? null,
+      clientId: clientId!,
     });
 
     console.log(`[AI Intelligence] Generated daily brief for ${today}`);
@@ -490,7 +491,7 @@ Generate 3-5 most likely predictions based on the data.`
           basedOnArticleCount: topEntities.reduce((sum, e) => sum + e.mentionCount, 0),
           basedOnSourceDiversity: topEntities.length,
           expiresAt: new Date(Date.now() + (p.timeframe === "24h" ? 24 : p.timeframe === "1_week" ? 168 : 48) * 60 * 60 * 1000),
-          clientId: clientId ?? null,
+          clientId: clientId!,
         });
       }
     }
