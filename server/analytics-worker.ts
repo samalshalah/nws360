@@ -1,8 +1,10 @@
 import { db } from "./db";
 import { articles, sources, analyticsCache } from "@shared/schema";
-import { sql, and, gte, lte, eq, desc } from "drizzle-orm";
+import { sql, and, gte, lte, eq, desc, or, isNull, ne } from "drizzle-orm";
 import { logSystemError } from "./processing-queue";
 import { storage } from "./storage";
+
+const AI_SUCCESS_FILTER = sql`(${articles.aiAnalysisStatus} = 'success' OR ${articles.aiAnalysisStatus} IS NULL)`;
 
 async function upsertCache(metricType: string, metricKey: string, data: any, periodStart: Date, periodEnd: Date, clientId?: number | null) {
   const conditions = [
@@ -44,6 +46,24 @@ function buildClientCondition(clientId?: number | null) {
   return clientId ? eq(articles.clientId, clientId) : undefined;
 }
 
+async function computeConfidenceCounts(periodStart: Date, periodEnd: Date, clientId?: number | null) {
+  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd)];
+  const cc = buildClientCondition(clientId);
+  if (cc) conditions.push(cc);
+
+  const result = await db
+    .select({
+      totalCount: sql<number>`count(*)`,
+      analyzedCount: sql<number>`count(*) filter (where ${articles.aiAnalysisStatus} = 'success' or ${articles.aiAnalysisStatus} is null)`,
+      failedCount: sql<number>`count(*) filter (where ${articles.aiAnalysisStatus} = 'failed')`,
+      pendingRetryCount: sql<number>`count(*) filter (where ${articles.aiAnalysisStatus} = 'pending_retry')`,
+    })
+    .from(articles)
+    .where(and(...conditions));
+
+  return result[0] || { totalCount: 0, analyzedCount: 0, failedCount: 0, pendingRetryCount: 0 };
+}
+
 async function computeVolumeMetrics(periodStart: Date, periodEnd: Date, clientId?: number | null) {
   const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd)];
   const cc = buildClientCondition(clientId);
@@ -72,12 +92,14 @@ async function computeVolumeMetrics(periodStart: Date, periodEnd: Date, clientId
     .orderBy(desc(sql`count(*)`))
     .limit(20);
 
+  const confidence = await computeConfidenceCounts(periodStart, periodEnd, clientId);
+
   const key = clientId ? `client_${clientId}` : "global";
-  await upsertCache("volume", key, { timeline, bySource }, periodStart, periodEnd, clientId);
+  await upsertCache("volume", key, { timeline, bySource, confidence }, periodStart, periodEnd, clientId);
 }
 
 async function computeTrendingTopics(periodStart: Date, periodEnd: Date, clientId?: number | null) {
-  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd)];
+  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd), AI_SUCCESS_FILTER];
   const cc = buildClientCondition(clientId);
   if (cc) conditions.push(cc);
 
@@ -107,7 +129,7 @@ async function computeTrendingTopics(periodStart: Date, periodEnd: Date, clientI
 }
 
 async function computeSentimentMetrics(periodStart: Date, periodEnd: Date, clientId?: number | null) {
-  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd)];
+  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd), AI_SUCCESS_FILTER];
   const cc = buildClientCondition(clientId);
   if (cc) conditions.push(cc);
 
@@ -137,7 +159,7 @@ async function computeSentimentMetrics(periodStart: Date, periodEnd: Date, clien
 }
 
 async function computeKeywordMetrics(periodStart: Date, periodEnd: Date, clientId?: number | null) {
-  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd)];
+  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd), AI_SUCCESS_FILTER];
   const cc = buildClientCondition(clientId);
   if (cc) conditions.push(cc);
 

@@ -163,6 +163,7 @@ export interface IStorage {
     bySource: { sourceId: number; sourceName: string; count: number }[];
     byHour: { hour: number; count: number }[];
     peaks: { date: string; count: number }[];
+    confidence: { totalCount: number; analyzedCount: number; failedCount: number; pendingRetryCount: number };
   }>;
 
   // Analytics - Trending Topics
@@ -184,6 +185,7 @@ export interface IStorage {
     bySource: { sourceId: number; sourceName: string; positive: number; negative: number; neutral: number }[];
     timeline: { date: string; positive: number; negative: number; neutral: number }[];
     byCategory: { category: string; positive: number; negative: number; neutral: number }[];
+    confidence: { totalCount: number; analyzedCount: number; failedCount: number; pendingRetryCount: number };
   }>;
 
   // Analytics - Source Behavior
@@ -1075,9 +1077,28 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
+  private async getAnalyticsConfidence(start: Date, end: Date, sourceFilter: any, clientFilter: any) {
+    const rows = await db.execute(sql`
+      SELECT 
+        COUNT(*)::int as "totalCount",
+        COUNT(*) FILTER (WHERE ai_analysis_status = 'success' OR ai_analysis_status IS NULL)::int as "analyzedCount",
+        COUNT(*) FILTER (WHERE ai_analysis_status = 'failed')::int as "failedCount",
+        COUNT(*) FILTER (WHERE ai_analysis_status = 'pending_retry')::int as "pendingRetryCount"
+      FROM articles
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
+    `);
+    const r = rows.rows[0] as any;
+    return {
+      totalCount: Number(r?.totalCount || 0),
+      analyzedCount: Number(r?.analyzedCount || 0),
+      failedCount: Number(r?.failedCount || 0),
+      pendingRetryCount: Number(r?.pendingRetryCount || 0),
+    };
+  }
+
   async getContentVolume(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
-      return { timeline: [], bySource: [], byHour: [], peaks: [] };
+      return { timeline: [], bySource: [], byHour: [], peaks: [], confidence: { totalCount: 0, analyzedCount: 0, failedCount: 0, pendingRetryCount: 0 } };
     }
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -1117,6 +1138,8 @@ export class DatabaseStorage implements IStorage {
     const avgCount = timeline.length > 0 ? timeline.reduce((s, t) => s + t.count, 0) / timeline.length : 0;
     const peaks = timeline.filter(t => t.count > avgCount * 1.5).sort((a, b) => b.count - a.count).slice(0, 5);
 
+    const confidence = await this.getAnalyticsConfidence(start, end, sourceFilter, clientFilter);
+
     return {
       timeline,
       bySource: (bySourceRows.rows as any[]).map(r => ({
@@ -1126,6 +1149,7 @@ export class DatabaseStorage implements IStorage {
       })),
       byHour: (byHourRows.rows as any[]).map(r => ({ hour: Number(r.hour), count: Number(r.count) })),
       peaks,
+      confidence,
     };
   }
 
@@ -1142,11 +1166,15 @@ export class DatabaseStorage implements IStorage {
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
     const clientFilterA2 = clientId ? sql`AND a2.client_id = ${clientId}` : sql``;
 
+    const aiFilter = sql`AND (ai_analysis_status = 'success' OR ai_analysis_status IS NULL)`;
+    const aiFilterA = sql`AND (a.ai_analysis_status = 'success' OR a.ai_analysis_status IS NULL)`;
+    const aiFilterA2 = sql`AND (a2.ai_analysis_status = 'success' OR a2.ai_analysis_status IS NULL)`;
+
     const topicRows = await db.execute(sql`
       SELECT kw as topic, COUNT(*)::int as count,
         MODE() WITHIN GROUP (ORDER BY sentiment_label) as sentiment
       FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
+      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter}
       GROUP BY kw
       ORDER BY count DESC
       LIMIT 20
@@ -1155,10 +1183,10 @@ export class DatabaseStorage implements IStorage {
     const topicTimelineRows = await db.execute(sql`
       SELECT TO_CHAR(a.published_at, 'YYYY-MM-DD') as date, kw as topic, COUNT(*)::int as count
       FROM articles a, unnest(a.keywords) as kw
-      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA}
+      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${aiFilterA}
       AND kw IN (
         SELECT kw2 FROM articles a2, unnest(a2.keywords) as kw2
-        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end} ${sourceFilterA2} ${clientFilterA2}
+        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end} ${sourceFilterA2} ${clientFilterA2} ${aiFilterA2}
         GROUP BY kw2 ORDER BY COUNT(*) DESC LIMIT 5
       )
       GROUP BY TO_CHAR(a.published_at, 'YYYY-MM-DD'), kw
@@ -1168,7 +1196,7 @@ export class DatabaseStorage implements IStorage {
     const categoryRows = await db.execute(sql`
       SELECT COALESCE(category, 'general') as category, COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter}
       GROUP BY category
       ORDER BY count DESC
     `);
@@ -1204,11 +1232,15 @@ export class DatabaseStorage implements IStorage {
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
     const clientFilterA2 = clientId ? sql`AND a2.client_id = ${clientId}` : sql``;
 
+    const aiFilter = sql`AND (ai_analysis_status = 'success' OR ai_analysis_status IS NULL)`;
+    const aiFilterA = sql`AND (a.ai_analysis_status = 'success' OR a.ai_analysis_status IS NULL)`;
+    const aiFilterA2 = sql`AND (a2.ai_analysis_status = 'success' OR a2.ai_analysis_status IS NULL)`;
+
     const topKeywordsRows = await db.execute(sql`
       SELECT kw as keyword, COUNT(*)::int as count,
         COALESCE(AVG(sentiment_score), 0)::int as "avgSentiment"
       FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
+      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter}
       GROUP BY kw
       ORDER BY count DESC
       LIMIT 25
@@ -1217,10 +1249,10 @@ export class DatabaseStorage implements IStorage {
     const keywordTimelineRows = await db.execute(sql`
       SELECT TO_CHAR(a.published_at, 'YYYY-MM-DD') as date, kw as keyword, COUNT(*)::int as count
       FROM articles a, unnest(a.keywords) as kw
-      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA}
+      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${aiFilterA}
       AND kw IN (
         SELECT kw2 FROM articles a2, unnest(a2.keywords) as kw2
-        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end} ${sourceFilterA2} ${clientFilterA2}
+        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end} ${sourceFilterA2} ${clientFilterA2} ${aiFilterA2}
         GROUP BY kw2 ORDER BY COUNT(*) DESC LIMIT 10
       )
       GROUP BY TO_CHAR(a.published_at, 'YYYY-MM-DD'), kw
@@ -1256,6 +1288,8 @@ export class DatabaseStorage implements IStorage {
     const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
     const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
+    const aiFilter = sql`AND (ai_analysis_status = 'success' OR ai_analysis_status IS NULL)`;
+    const aiFilterA = sql`AND (a.ai_analysis_status = 'success' OR a.ai_analysis_status IS NULL)`;
 
     const overallRows = await db.execute(sql`
       SELECT
@@ -1263,7 +1297,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter}
     `);
     const overall = overallRows.rows[0] as any;
 
@@ -1274,7 +1308,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE a.sentiment_label = 'neutral' OR a.sentiment_label IS NULL)::int as neutral
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA}
+      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${aiFilterA}
       GROUP BY a.source_id, s.name
       ORDER BY (COUNT(*) FILTER (WHERE a.sentiment_label = 'positive') + COUNT(*) FILTER (WHERE a.sentiment_label = 'negative') + COUNT(*) FILTER (WHERE a.sentiment_label = 'neutral' OR a.sentiment_label IS NULL)) DESC
       LIMIT 15
@@ -1286,7 +1320,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
     `);
@@ -1297,7 +1331,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter}
       GROUP BY category
       ORDER BY (COUNT(*)) DESC
     `);
@@ -1327,6 +1361,7 @@ export class DatabaseStorage implements IStorage {
         negative: Number(r.negative),
         neutral: Number(r.neutral),
       })),
+      confidence: await this.getAnalyticsConfidence(start, end, sourceFilter, clientFilter),
     };
   }
 

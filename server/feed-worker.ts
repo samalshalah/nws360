@@ -39,7 +39,7 @@ function truncate(text: string, maxLen: number): string {
 
 const VALID_CATEGORIES = ["political", "health", "tech", "sports", "business", "entertainment", "science", "urgent", "general"];
 
-export async function analyzeWithAI(title: string, content: string): Promise<{
+export type AIAnalysisResult = {
   sentimentLabel: string;
   sentimentScore: number;
   keywords: string[];
@@ -47,7 +47,10 @@ export async function analyzeWithAI(title: string, content: string): Promise<{
   summary: string;
   category: string;
   country: string | null;
-}> {
+  aiAnalysisStatus: "success" | "failed";
+};
+
+export async function analyzeWithAI(title: string, content: string): Promise<AIAnalysisResult> {
   try {
     const textToAnalyze = truncate(`${title}. ${content}`, 2000);
     const completion = await openai.chat.completions.create({
@@ -76,17 +79,19 @@ export async function analyzeWithAI(title: string, content: string): Promise<{
       summary: result.summary || truncate(content, 200),
       category: VALID_CATEGORIES.includes(cat) ? cat : "general",
       country: typeof result.country === "string" && result.country.length === 2 ? result.country.toUpperCase() : null,
+      aiAnalysisStatus: "success",
     };
   } catch (e) {
     console.error("AI analysis failed:", e);
     return {
-      sentimentLabel: "neutral",
-      sentimentScore: 0,
+      sentimentLabel: null as any,
+      sentimentScore: null as any,
       keywords: [],
       topics: [],
       summary: truncate(content, 200),
       category: "general",
       country: null,
+      aiAnalysisStatus: "failed",
     };
   }
 }
@@ -500,8 +505,8 @@ async function processItems(
       publishedAt: item.publishedAt,
       language: "en",
       country: analysis.country,
-      sentimentLabel: analysis.sentimentLabel,
-      sentimentScore: analysis.sentimentScore,
+      sentimentLabel: analysis.aiAnalysisStatus === "failed" ? null : analysis.sentimentLabel,
+      sentimentScore: analysis.aiAnalysisStatus === "failed" ? null : analysis.sentimentScore,
       keywords: analysis.keywords,
       topics: analysis.topics,
       category: analysis.category,
@@ -511,6 +516,8 @@ async function processItems(
       engagementComments: item.engagementComments ?? null,
       engagementShares: item.engagementShares ?? null,
       clientId: source.clientId ?? null,
+      aiAnalysisStatus: analysis.aiAnalysisStatus,
+      aiRetryCount: 0,
     };
 
     try {
@@ -774,6 +781,20 @@ export function startFeedWorker(intervalMinutes?: number) {
     }
   }, 60 * 60 * 1000);
   workerIntervals.push(retentionInterval);
+
+  import("./ai-retry-worker").then(({ runAIRetryQueue }) => {
+    setTimeout(async () => {
+      try { await runAIRetryQueue(); } catch (e) { console.error("[Worker] Initial AI retry error:", e); }
+    }, 30000);
+    const retryInterval = setInterval(async () => {
+      try {
+        await runAIRetryQueue();
+      } catch (e) {
+        console.error("[Worker] AI retry error:", e);
+      }
+    }, 10 * 60 * 1000);
+    workerIntervals.push(retryInterval);
+  });
 }
 
 export function stopFeedWorker() {
