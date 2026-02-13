@@ -588,13 +588,11 @@ export async function runIntelligencePipeline(): Promise<void> {
 
   const clientIds = await storage.getDistinctClientIds();
   for (const cId of clientIds) {
-    const analyzed = await processUnanalyzedArticles(15, cId);
+    const analyzed = await processUnanalyzedArticles(50, cId);
     console.log(`[AI Intelligence] Deep analysis (client=${cId}): ${analyzed} articles processed`);
 
-    if (analyzed > 0) {
-      const clusters = await clusterArticles(cId);
-      console.log(`[AI Intelligence] Clustering (client=${cId}): ${clusters} clusters created`);
-    }
+    const clusters = await clusterArticles(cId);
+    console.log(`[AI Intelligence] Clustering (client=${cId}): ${clusters} clusters created`);
 
     const eventCount = await detectEvents(cId);
     console.log(`[AI Intelligence] Event detection (client=${cId}): ${eventCount} events detected`);
