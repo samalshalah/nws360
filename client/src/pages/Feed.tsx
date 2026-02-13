@@ -381,30 +381,46 @@ export default function Feed() {
           )}
         </div>
 
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
-          {visibleChannels.map(ch => {
-            const isActive = (filters.sourceType || "all") === ch.key;
-            const Icon = ch.icon;
-            return (
-              <Button
-                key={ch.key}
-                variant={isActive ? "default" : "outline"}
-                size="sm"
-                onClick={() => updateFilter("sourceType", ch.key === "all" ? undefined : ch.key)}
-                className={cn(
-                  "shrink-0 gap-1.5",
-                  !isActive && "text-muted-foreground"
-                )}
-                data-testid={`button-channel-${ch.key}`}
-              >
-                <Icon className={cn("w-3.5 h-3.5", !isActive && ch.color)} />
-                {ch.label}
-              </Button>
-            );
-          })}
-        </div>
-
         <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={filters.sourceName || "all"}
+            onValueChange={(val) => updateFilter("sourceName", val === "all" ? undefined : val)}
+          >
+            <SelectTrigger className="w-full sm:w-[180px] bg-background" data-testid="select-filter-source">
+              <SelectValue placeholder={t("feed.allSources")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("feed.allSources")}</SelectItem>
+              {uniqueSourceNames.map(name => (
+                <SelectItem key={name} value={name}>
+                  {name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={filters.sourceType || "all"}
+            onValueChange={(val) => updateFilter("sourceType", val === "all" ? undefined : val)}
+          >
+            <SelectTrigger className="w-full sm:w-[170px] bg-background" data-testid="select-filter-channel-type">
+              <SelectValue placeholder={t("feed.allTypes")} />
+            </SelectTrigger>
+            <SelectContent>
+              {visibleChannels.map(ch => {
+                const Icon = ch.icon;
+                return (
+                  <SelectItem key={ch.key} value={ch.key}>
+                    <span className="flex items-center gap-1.5">
+                      <Icon className={cn("w-3.5 h-3.5", ch.color)} />
+                      {ch.label}
+                    </span>
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+
           <Select
             value={filters.dateRange}
             onValueChange={(val) => updateFilter("dateRange", val)}
@@ -433,23 +449,6 @@ export default function Feed() {
                     {pill.dot && <span className={cn("w-2 h-2 rounded-full inline-block", pill.dot)} />}
                     {pill.label}
                   </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={filters.sourceName || "all"}
-            onValueChange={(val) => updateFilter("sourceName", val === "all" ? undefined : val)}
-          >
-            <SelectTrigger className="w-full sm:w-[180px] bg-background" data-testid="select-filter-source">
-              <SelectValue placeholder={t("feed.allSources")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("feed.allSources")}</SelectItem>
-              {uniqueSourceNames.map(name => (
-                <SelectItem key={name} value={name}>
-                  {name}
                 </SelectItem>
               ))}
             </SelectContent>
