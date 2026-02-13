@@ -29,7 +29,9 @@ interface AuthContext {
 interface Capabilities {
   role: string;
   tenantId: number | null;
+  tenantName: string | null;
   isImpersonating: boolean;
+  impersonatingUsername: string | null;
   permissions: {
     feeds: boolean;
     analytics: boolean;
@@ -43,6 +45,9 @@ interface Capabilities {
     settings: boolean;
     exports: boolean;
     readOnly: boolean;
+    executive: boolean;
+    knowledgeMemory: boolean;
+    predictiveIntelligence: boolean;
   };
 }
 

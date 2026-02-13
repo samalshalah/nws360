@@ -399,14 +399,27 @@ export async function registerRoutes(
     const clientAdmin = isClientAdmin(user) || sysAdmin;
     const readonlyUser = isReadonly(user);
 
+    let impersonatingUsername: string | null = null;
+    let tenantName: string | null = null;
+    if (ctx.isImpersonating && req.session?.impersonation?.activeUserId) {
+      const impUser = await storage.getUser(req.session.impersonation.activeUserId);
+      if (impUser) impersonatingUsername = impUser.username;
+    }
+    if (ctx.tenantId) {
+      const tenant = await storage.getClient(ctx.tenantId);
+      if (tenant) tenantName = tenant.name;
+    }
+
     res.json({
       role,
       tenantId: ctx.tenantId,
+      tenantName,
       isImpersonating: ctx.isImpersonating,
+      impersonatingUsername,
       permissions: {
         feeds: !readonlyUser,
         analytics: true,
-        intelligence: true,
+        intelligence: !readonlyUser,
         sources: clientAdmin,
         users: clientAdmin,
         billing: clientAdmin,
@@ -416,6 +429,9 @@ export async function registerRoutes(
         settings: clientAdmin,
         exports: !readonlyUser,
         readOnly: readonlyUser,
+        executive: clientAdmin,
+        knowledgeMemory: !readonlyUser,
+        predictiveIntelligence: !readonlyUser,
       },
     });
   });
