@@ -4,7 +4,7 @@ import { setupAuth } from "./auth";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler, previewSource, discoverAllRssFeeds } from "./feed-worker";
+import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler, previewSource } from "./feed-worker";
 import { openai } from "./replit_integrations/image/client";
 import { db } from "./db";
 import { articles, PLAN_LIMITS } from "@shared/schema";
@@ -393,25 +393,6 @@ export async function registerRoutes(
     } catch (err) {
       console.error("[Discover] Channel discovery error:", err);
       res.json({ channels: {} });
-    }
-  });
-
-  app.post("/api/sources/discover-feeds", async (req, res) => {
-    try {
-      if (!req.isAuthenticated()) return res.sendStatus(401);
-      const { url } = req.body;
-      if (!url || typeof url !== "string") {
-        return res.status(400).json({ feeds: [] });
-      }
-      let targetUrl = url.trim();
-      if (!targetUrl.startsWith("http")) {
-        targetUrl = `https://${targetUrl}`;
-      }
-      const feeds = await discoverAllRssFeeds(targetUrl);
-      res.json({ feeds });
-    } catch (err) {
-      console.error("[Discover] Feed discovery error:", err);
-      res.json({ feeds: [] });
     }
   });
 
