@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources, useUpdateSource } from "@/hooks/use-sources";
 import { useKeywords, useCreateKeyword, useDeleteKeyword } from "@/hooks/use-keywords";
@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ArrowRight, ThumbsUp, MessageCircle, Share2, Info, CheckCircle2, AlertTriangle, ExternalLink } from "lucide-react";
+import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ChevronDown, ChevronRight, ArrowRight, ThumbsUp, MessageCircle, Share2, Info, CheckCircle2, AlertTriangle, ExternalLink } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
@@ -829,6 +829,7 @@ function SourcesManager() {
       return res.json();
     },
   });
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [viewingSource, setViewingSource] = useState<{ id: number; name: string } | null>(null);
   const { data: sourceArticles, isLoading: isLoadingArticles } = useQuery<any[]>({
     queryKey: ["/api/articles", { sourceId: viewingSource?.id }],
@@ -861,6 +862,33 @@ function SourcesManager() {
   const getSourceColor = (type: string) => {
     const config = SOURCE_TYPES.find(s => s.type === type);
     return config?.color || "";
+  };
+
+  const sourceGroups = (sources || []).reduce((acc, source) => {
+    const key = source.name;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(source);
+    return acc;
+  }, {} as Record<string, typeof sources extends (infer T)[] | undefined ? T[] : never[]>);
+
+  const toggleGroup = (name: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const channelShortLabels: Record<string, string> = {
+    website: "W",
+    rss: "RSS",
+    google_news: "GN",
+    youtube: "YT",
+    twitter: "X",
+    facebook: "FB",
+    instagram: "IG",
+    telegram: "TG",
   };
 
   return (
@@ -897,90 +925,89 @@ function SourcesManager() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-8"></TableHead>
                     <TableHead>{t("admin.sourceName")}</TableHead>
-                    <TableHead>{t("admin.type")}</TableHead>
+                    <TableHead>Channels</TableHead>
                     <TableHead>Articles</TableHead>
-                    <TableHead>{t("admin.postsPerFetch")}</TableHead>
-                    <TableHead>{t("admin.retention")}</TableHead>
                     <TableHead>{t("admin.status")}</TableHead>
                     <TableHead>{t("admin.lastFetched")}</TableHead>
                     <TableHead className="text-right rtl:text-left">{t("admin.actions")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sources?.map((source) => {
-                    const Icon = getSourceIcon(source.type);
+                  {Object.entries(sourceGroups).map(([groupName, groupSources]) => {
+                    const isExpanded = expandedGroups.has(groupName);
+                    const totalArticles = groupSources.reduce((sum, s) => sum + (articleCounts?.[s.id] ?? 0), 0);
+                    const allActive = groupSources.every(s => s.active);
+                    const latestFetch = groupSources
+                      .filter(s => s.lastFetchedAt)
+                      .sort((a, b) => new Date(b.lastFetchedAt!).getTime() - new Date(a.lastFetchedAt!).getTime())[0];
+                    const isSingle = groupSources.length === 1;
+
                     return (
-                      <TableRow key={source.id}>
-                        <TableCell className="font-medium">{source.name}</TableCell>
+                      <React.Fragment key={groupName}>
+                      <TableRow
+                        className={isExpanded ? "border-b-0" : ""}
+                        data-testid={`source-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
+                      >
+                        <TableCell className="w-8 px-2">
+                          {!isSingle && (
+                            <button
+                              onClick={() => toggleGroup(groupName)}
+                              className="p-1 rounded-md hover-elevate cursor-pointer"
+                              data-testid={`button-expand-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
+                            >
+                              {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                            </button>
+                          )}
+                        </TableCell>
+                        <TableCell className="font-medium">{groupName}</TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2 text-sm">
-                            <Icon className={`w-3.5 h-3.5 ${getSourceColor(source.type)}`} />
-                            <span className="text-muted-foreground">{sourceTypeLabels[source.type] || source.type}</span>
+                          <div className="flex items-center gap-1">
+                            {groupSources.map((s) => {
+                              const Icon = getSourceIcon(s.type);
+                              const shortLabel = channelShortLabels[s.type] || s.type;
+                              return (
+                                <div
+                                  key={s.id}
+                                  className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs border border-border/50 bg-muted/30"
+                                  title={`${sourceTypeLabels[s.type] || s.type}: ${(articleCounts?.[s.id] ?? 0)} articles`}
+                                  data-testid={`channel-badge-${s.type}-${s.id}`}
+                                >
+                                  <Icon className={`w-3 h-3 ${getSourceColor(s.type)}`} />
+                                  <span className="text-muted-foreground font-medium">{shortLabel}</span>
+                                </div>
+                              );
+                            })}
                           </div>
                         </TableCell>
                         <TableCell>
                           <button
                             className="tabular-nums font-medium text-primary underline-offset-4 hover:underline cursor-pointer"
-                            onClick={() => setViewingSource({ id: source.id, name: source.name })}
-                            data-testid={`button-article-count-${source.id}`}
+                            onClick={() => {
+                              if (isSingle) {
+                                setViewingSource({ id: groupSources[0].id, name: groupName });
+                              } else {
+                                toggleGroup(groupName);
+                              }
+                            }}
+                            data-testid={`button-article-count-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
                           >
-                            {(articleCounts?.[source.id] ?? 0).toLocaleString()}
+                            {totalArticles.toLocaleString()}
                           </button>
                         </TableCell>
                         <TableCell>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={50}
-                            className="w-16 h-8 text-center text-sm"
-                            defaultValue={source.maxArticlesPerFetch ?? 10}
-                            key={`posts-${source.id}-${source.maxArticlesPerFetch}`}
-                            onBlur={(e) => {
-                              const val = Math.min(50, Math.max(1, parseInt(e.target.value) || 1));
-                              if (val !== (source.maxArticlesPerFetch ?? 10)) {
-                                updateSource({ id: source.id, maxArticlesPerFetch: val });
-                              }
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                            }}
-                            data-testid={`input-posts-${source.id}`}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Input
-                              type="number"
-                              min={1}
-                              max={30}
-                              className="w-16 h-8 text-center text-sm"
-                              defaultValue={source.retentionDays ?? 7}
-                              key={`retention-${source.id}-${source.retentionDays}`}
-                              onBlur={(e) => {
-                                const val = Math.min(30, Math.max(1, parseInt(e.target.value) || 1));
-                                if (val !== (source.retentionDays ?? 7)) {
-                                  updateSource({ id: source.id, retentionDays: val });
-                                }
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                              }}
-                              data-testid={`input-retention-${source.id}`}
-                            />
-                            <span className="text-sm text-muted-foreground">{t("admin.days")}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
                           <Switch
-                            checked={source.active}
-                            onCheckedChange={(checked) => updateSource({ id: source.id, active: checked })}
-                            data-testid={`switch-source-active-${source.id}`}
+                            checked={allActive}
+                            onCheckedChange={(checked) => {
+                              groupSources.forEach(s => updateSource({ id: s.id, active: checked }));
+                            }}
+                            data-testid={`switch-group-active-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
                           />
                         </TableCell>
                         <TableCell className="text-muted-foreground text-sm">
-                          {source.lastFetchedAt
-                            ? formatDistanceToNow(new Date(source.lastFetchedAt), { addSuffix: true })
+                          {latestFetch?.lastFetchedAt
+                            ? formatDistanceToNow(new Date(latestFetch.lastFetchedAt), { addSuffix: true })
                             : t("common.never")}
                         </TableCell>
                         <TableCell className="text-right rtl:text-left">
@@ -988,25 +1015,130 @@ function SourcesManager() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => fetchSource(source.id)}
-                              disabled={isFetchingOne && fetchingSourceId === source.id}
-                              data-testid={`button-fetch-source-${source.id}`}
+                              onClick={() => groupSources.forEach(s => fetchSource(s.id))}
+                              disabled={isFetchingOne}
+                              data-testid={`button-fetch-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
                             >
-                              <RefreshCw className={`w-4 h-4 ${isFetchingOne && fetchingSourceId === source.id ? "animate-spin" : ""}`} />
+                              <RefreshCw className={`w-4 h-4 ${isFetchingOne && groupSources.some(s => fetchingSourceId === s.id) ? "animate-spin" : ""}`} />
                             </Button>
                             <Button
                               variant="ghost"
                               size="icon"
                               className="text-destructive"
-                              onClick={() => deleteSource(source.id)}
+                              onClick={() => {
+                                groupSources.forEach(s => deleteSource(s.id));
+                              }}
                               disabled={isDeleting}
-                              data-testid={`button-delete-source-${source.id}`}
+                              data-testid={`button-delete-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
                             >
                               <Trash2 className="w-4 h-4" />
                             </Button>
                           </div>
                         </TableCell>
                       </TableRow>
+                      {/* Expanded per-channel rows */}
+                      {isExpanded && groupSources.map((source) => {
+                        const Icon = getSourceIcon(source.type);
+                        return (
+                          <TableRow key={`detail-${source.id}`} className="bg-muted/20" data-testid={`source-channel-row-${source.id}`}>
+                            <TableCell></TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2 text-sm pl-2">
+                                <Icon className={`w-3.5 h-3.5 ${getSourceColor(source.type)}`} />
+                                <span className="text-muted-foreground">{sourceTypeLabels[source.type] || source.type}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                <div className="flex items-center gap-1">
+                                  <span>{t("admin.postsPerFetch")}:</span>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    max={50}
+                                    className="w-16 h-8 text-center text-sm"
+                                    defaultValue={source.maxArticlesPerFetch ?? 10}
+                                    key={`posts-${source.id}-${source.maxArticlesPerFetch}`}
+                                    onBlur={(e) => {
+                                      const val = Math.min(50, Math.max(1, parseInt(e.target.value) || 1));
+                                      if (val !== (source.maxArticlesPerFetch ?? 10)) {
+                                        updateSource({ id: source.id, maxArticlesPerFetch: val });
+                                      }
+                                    }}
+                                    onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                                    data-testid={`input-posts-${source.id}`}
+                                  />
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <span>{t("admin.retention")}:</span>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    max={30}
+                                    className="w-16 h-8 text-center text-sm"
+                                    defaultValue={source.retentionDays ?? 7}
+                                    key={`retention-${source.id}-${source.retentionDays}`}
+                                    onBlur={(e) => {
+                                      const val = Math.min(30, Math.max(1, parseInt(e.target.value) || 1));
+                                      if (val !== (source.retentionDays ?? 7)) {
+                                        updateSource({ id: source.id, retentionDays: val });
+                                      }
+                                    }}
+                                    onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                                    data-testid={`input-retention-${source.id}`}
+                                  />
+                                  <span>{t("admin.days")}</span>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <button
+                                className="tabular-nums text-sm text-primary underline-offset-4 hover:underline cursor-pointer"
+                                onClick={() => setViewingSource({ id: source.id, name: `${groupName} (${sourceTypeLabels[source.type] || source.type})` })}
+                                data-testid={`button-article-count-${source.id}`}
+                              >
+                                {(articleCounts?.[source.id] ?? 0).toLocaleString()}
+                              </button>
+                            </TableCell>
+                            <TableCell>
+                              <Switch
+                                checked={source.active}
+                                onCheckedChange={(checked) => updateSource({ id: source.id, active: checked })}
+                                data-testid={`switch-source-active-${source.id}`}
+                              />
+                            </TableCell>
+                            <TableCell className="text-muted-foreground text-xs">
+                              {source.lastFetchedAt
+                                ? formatDistanceToNow(new Date(source.lastFetchedAt), { addSuffix: true })
+                                : t("common.never")}
+                            </TableCell>
+                            <TableCell className="text-right rtl:text-left">
+                              <div className="flex items-center justify-end rtl:justify-start gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => fetchSource(source.id)}
+                                  disabled={isFetchingOne && fetchingSourceId === source.id}
+                                  data-testid={`button-fetch-source-${source.id}`}
+                                >
+                                  <RefreshCw className={`w-4 h-4 ${isFetchingOne && fetchingSourceId === source.id ? "animate-spin" : ""}`} />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-destructive"
+                                  onClick={() => deleteSource(source.id)}
+                                  disabled={isDeleting}
+                                  data-testid={`button-delete-source-${source.id}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                      </React.Fragment>
                     );
                   })}
                 </TableBody>
@@ -1014,97 +1146,132 @@ function SourcesManager() {
             </div>
 
             <div className="md:hidden space-y-3">
-              {sources?.map((source) => {
-                const Icon = getSourceIcon(source.type);
+              {Object.entries(sourceGroups).map(([groupName, groupSources]) => {
+                const isExpanded = expandedGroups.has(groupName);
+                const totalArticles = groupSources.reduce((sum, s) => sum + (articleCounts?.[s.id] ?? 0), 0);
+                const allActive = groupSources.every(s => s.active);
+                const isSingle = groupSources.length === 1;
+
                 return (
-                  <div key={source.id} className="border border-border rounded-md p-4 space-y-3" data-testid={`mobile-source-card-${source.id}`}>
+                  <div key={groupName} className="border border-border rounded-md p-4 space-y-3" data-testid={`mobile-source-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}>
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
-                        <Icon className={`w-4 h-4 shrink-0 ${getSourceColor(source.type)}`} />
-                        <span className="font-medium truncate">{source.name}</span>
+                        {!isSingle && (
+                          <button onClick={() => toggleGroup(groupName)} className="p-0.5 cursor-pointer" data-testid={`button-expand-group-mobile-${groupName.replace(/\s+/g, '-').toLowerCase()}`}>
+                            {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                          </button>
+                        )}
+                        <span className="font-medium truncate">{groupName}</span>
                       </div>
                       <Switch
-                        checked={source.active}
-                        onCheckedChange={(checked) => updateSource({ id: source.id, active: checked })}
-                        data-testid={`switch-source-active-mobile-${source.id}`}
+                        checked={allActive}
+                        onCheckedChange={(checked) => {
+                          groupSources.forEach(s => updateSource({ id: s.id, active: checked }));
+                        }}
+                        data-testid={`switch-group-active-mobile-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
                       />
                     </div>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {groupSources.map((s) => {
+                        const Icon = getSourceIcon(s.type);
+                        return (
+                          <div
+                            key={s.id}
+                            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs border border-border/50 bg-muted/30"
+                            title={sourceTypeLabels[s.type] || s.type}
+                            data-testid={`channel-badge-mobile-${s.type}-${s.id}`}
+                          >
+                            <Icon className={`w-3 h-3 ${getSourceColor(s.type)}`} />
+                            <span className="text-muted-foreground font-medium">{channelShortLabels[s.type] || s.type}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                     <div className="text-xs text-muted-foreground">
-                      {sourceTypeLabels[source.type] || source.type}
-                      <span> &middot; </span>
                       <button
                         className="text-primary underline-offset-4 hover:underline cursor-pointer"
-                        onClick={() => setViewingSource({ id: source.id, name: source.name })}
-                        data-testid={`button-article-count-mobile-${source.id}`}
+                        onClick={() => {
+                          if (isSingle) setViewingSource({ id: groupSources[0].id, name: groupName });
+                          else toggleGroup(groupName);
+                        }}
+                        data-testid={`button-article-count-mobile-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
                       >
-                        {(articleCounts?.[source.id] ?? 0).toLocaleString()} articles
+                        {totalArticles.toLocaleString()} articles
                       </button>
-                      {source.lastFetchedAt && (
-                        <span> &middot; {formatDistanceToNow(new Date(source.lastFetchedAt), { addSuffix: true })}</span>
-                      )}
                     </div>
-                    <div className="flex items-center gap-4 flex-wrap">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">{t("admin.postsPerFetch")}:</span>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={50}
-                          className="w-16 h-8 text-center text-sm"
-                          defaultValue={source.maxArticlesPerFetch ?? 10}
-                          key={`m-posts-${source.id}-${source.maxArticlesPerFetch}`}
-                          onBlur={(e) => {
-                            const val = Math.min(50, Math.max(1, parseInt(e.target.value) || 1));
-                            if (val !== (source.maxArticlesPerFetch ?? 10)) {
-                              updateSource({ id: source.id, maxArticlesPerFetch: val });
-                            }
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                          }}
-                          data-testid={`input-posts-mobile-${source.id}`}
-                        />
+                    {isExpanded && (
+                      <div className="space-y-2 pt-2 border-t border-border/50">
+                        {groupSources.map((source) => {
+                          const Icon = getSourceIcon(source.type);
+                          return (
+                            <div key={source.id} className="bg-muted/20 rounded-md p-3 space-y-2" data-testid={`mobile-channel-detail-${source.id}`}>
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  <Icon className={`w-3.5 h-3.5 ${getSourceColor(source.type)}`} />
+                                  <span className="text-sm">{sourceTypeLabels[source.type] || source.type}</span>
+                                  <span className="text-xs text-muted-foreground">({(articleCounts?.[source.id] ?? 0)} articles)</span>
+                                </div>
+                                <Switch
+                                  checked={source.active}
+                                  onCheckedChange={(checked) => updateSource({ id: source.id, active: checked })}
+                                  data-testid={`switch-source-active-mobile-${source.id}`}
+                                />
+                              </div>
+                              <div className="flex items-center gap-4 flex-wrap">
+                                <div className="flex items-center gap-1">
+                                  <span className="text-xs text-muted-foreground">{t("admin.postsPerFetch")}:</span>
+                                  <Input
+                                    type="number" min={1} max={50}
+                                    className="w-16 h-8 text-center text-sm"
+                                    defaultValue={source.maxArticlesPerFetch ?? 10}
+                                    key={`m-posts-${source.id}-${source.maxArticlesPerFetch}`}
+                                    onBlur={(e) => {
+                                      const val = Math.min(50, Math.max(1, parseInt(e.target.value) || 1));
+                                      if (val !== (source.maxArticlesPerFetch ?? 10)) updateSource({ id: source.id, maxArticlesPerFetch: val });
+                                    }}
+                                    onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                                    data-testid={`input-posts-mobile-${source.id}`}
+                                  />
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <span className="text-xs text-muted-foreground">{t("admin.retention")}:</span>
+                                  <Input
+                                    type="number" min={1} max={30}
+                                    className="w-16 h-8 text-center text-sm"
+                                    defaultValue={source.retentionDays ?? 7}
+                                    key={`m-retention-${source.id}-${source.retentionDays}`}
+                                    onBlur={(e) => {
+                                      const val = Math.min(30, Math.max(1, parseInt(e.target.value) || 1));
+                                      if (val !== (source.retentionDays ?? 7)) updateSource({ id: source.id, retentionDays: val });
+                                    }}
+                                    onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                                    data-testid={`input-retention-mobile-${source.id}`}
+                                  />
+                                  <span className="text-xs text-muted-foreground">{t("admin.days")}</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">{t("admin.retention")}:</span>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={30}
-                          className="w-16 h-8 text-center text-sm"
-                          defaultValue={source.retentionDays ?? 7}
-                          key={`m-retention-${source.id}-${source.retentionDays}`}
-                          onBlur={(e) => {
-                            const val = Math.min(30, Math.max(1, parseInt(e.target.value) || 1));
-                            if (val !== (source.retentionDays ?? 7)) {
-                              updateSource({ id: source.id, retentionDays: val });
-                            }
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                          }}
-                          data-testid={`input-retention-mobile-${source.id}`}
-                        />
-                        <span className="text-xs text-muted-foreground">{t("admin.days")}</span>
-                      </div>
-                    </div>
+                    )}
                     <div className="flex items-center justify-end gap-1 pt-1 border-t border-border/50">
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => fetchSource(source.id)}
-                        disabled={isFetchingOne && fetchingSourceId === source.id}
-                        data-testid={`button-fetch-source-mobile-${source.id}`}
+                        onClick={() => groupSources.forEach(s => fetchSource(s.id))}
+                        disabled={isFetchingOne}
+                        data-testid={`button-fetch-group-mobile-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
                       >
-                        <RefreshCw className={`w-4 h-4 ${isFetchingOne && fetchingSourceId === source.id ? "animate-spin" : ""}`} />
+                        <RefreshCw className={`w-4 h-4 ${isFetchingOne && groupSources.some(s => fetchingSourceId === s.id) ? "animate-spin" : ""}`} />
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon"
                         className="text-destructive"
-                        onClick={() => deleteSource(source.id)}
+                        onClick={() => groupSources.forEach(s => deleteSource(s.id))}
                         disabled={isDeleting}
-                        data-testid={`button-delete-source-mobile-${source.id}`}
+                        data-testid={`button-delete-group-mobile-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
