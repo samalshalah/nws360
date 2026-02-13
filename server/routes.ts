@@ -549,7 +549,7 @@ export async function registerRoutes(
                 await storage.updateArticleTranslation(cached.id, { status: "pending" });
               }
               const { enqueueJob } = await import("./processing-queue");
-              await enqueueJob("TRANSLATE_ARTICLE", { articleId: article.id, targetLanguage: targetLang }, { priority: 4, maxAttempts: 2 });
+              await enqueueJob("TRANSLATE_ARTICLE", { articleId: article.id, targetLanguage: targetLang }, { maxAttempts: 2 });
             }
           } catch (e) {
             console.error(`Translation lookup failed for article ${article.id}:`, e);
@@ -703,7 +703,7 @@ export async function registerRoutes(
     if (cached && cached.status === "failed") {
       await storage.updateArticleTranslation(cached.id, { status: "pending" });
       const { enqueueJob } = await import("./processing-queue");
-      await enqueueJob("TRANSLATE_ARTICLE", { articleId: id, targetLanguage }, { priority: 4, maxAttempts: 2 });
+      await enqueueJob("TRANSLATE_ARTICLE", { articleId: id, targetLanguage }, { maxAttempts: 2 });
       return res.json({
         translatedTitle: article.title,
         translatedContent: article.content,
@@ -725,7 +725,7 @@ export async function registerRoutes(
       });
 
       const { enqueueJob } = await import("./processing-queue");
-      await enqueueJob("TRANSLATE_ARTICLE", { articleId: id, targetLanguage }, { priority: 4, maxAttempts: 2 });
+      await enqueueJob("TRANSLATE_ARTICLE", { articleId: id, targetLanguage }, { maxAttempts: 2 });
 
       res.json({
         translatedTitle: article.title,
@@ -763,7 +763,7 @@ export async function registerRoutes(
           await db.update(articles)
             .set({ aiAnalysisStatus: "pending" })
             .where(eq(articles.id, article.id));
-          await enqueueJob("ANALYZE_ARTICLE", { articleId: article.id }, { priority: 2, maxAttempts: 3 });
+          await enqueueJob("ANALYZE_ARTICLE", { articleId: article.id }, { maxAttempts: 3 });
           enqueued++;
         } catch (e) {
           console.error(`[Reanalyze] Failed to enqueue article ${article.id}:`, e);

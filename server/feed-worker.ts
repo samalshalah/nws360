@@ -589,7 +589,7 @@ async function processItems(
     try {
       const created = await storage.createArticle(article);
       newArticles++;
-      await enqueueJob("ANALYZE_ARTICLE", { articleId: created.id }, { priority: 3, maxAttempts: 3 });
+      await enqueueJob("ANALYZE_ARTICLE", { articleId: created.id }, { maxAttempts: 3 });
     } catch (e) {
       console.error(`[Worker] STORE failed for article: ${item.url}`, e);
     }
