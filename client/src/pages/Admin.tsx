@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources, useUpdateSource, usePreviewSource } from "@/hooks/use-sources";
+import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources, useUpdateSource } from "@/hooks/use-sources";
 import { useKeywords, useCreateKeyword, useDeleteKeyword } from "@/hooks/use-keywords";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -133,28 +133,50 @@ type PreviewResult = {
   error?: string;
 };
 
+const CHANNEL_OPTIONS = [
+  { type: "website", icon: Globe, label: "Website", suffix: "", color: "text-blue-500", needsUrl: false, placeholder: "" },
+  { type: "rss", icon: Rss, label: "RSS Feed", suffix: "-RSS", color: "text-orange-500", needsUrl: false, placeholder: "" },
+  { type: "google_news", icon: SiGooglenews, label: "Google News", suffix: "-News", color: "text-blue-600", needsUrl: false, placeholder: "" },
+  { type: "facebook", icon: SiFacebook, label: "Facebook", suffix: "-FB", color: "text-blue-600", needsUrl: true, placeholder: "https://facebook.com/pagename" },
+  { type: "twitter", icon: SiX, label: "X / Twitter", suffix: "-X", color: "text-foreground", needsUrl: true, placeholder: "https://x.com/username" },
+  { type: "youtube", icon: SiYoutube, label: "YouTube", suffix: "-YT", color: "text-red-500", needsUrl: true, placeholder: "https://youtube.com/@channel" },
+  { type: "instagram", icon: SiInstagram, label: "Instagram", suffix: "-IG", color: "text-pink-500", needsUrl: true, placeholder: "https://instagram.com/username" },
+  { type: "telegram", icon: SiTelegram, label: "Telegram", suffix: "-TG", color: "text-sky-500", needsUrl: true, placeholder: "https://t.me/channelname" },
+];
+
+type ChannelState = {
+  enabled: boolean;
+  url: string;
+  previewResult?: PreviewResult;
+  status: "idle" | "testing" | "success" | "failed";
+};
+
 function AddSourceView() {
   const { t } = useTranslation();
   const { mutate: createSource, isPending: isCreating } = useCreateSource();
-  const [selectedType, setSelectedType] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<WebsiteSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showResults, setShowResults] = useState(false);
 
-  const { mutate: previewSource, isPending: isPreviewing } = usePreviewSource();
-  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
-  const [showPreviewDialog, setShowPreviewDialog] = useState(false);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-
-  const [formData, setFormData] = useState({
-    name: "",
-    url: "",
-    type: "website",
+  const [showChannelDialog, setShowChannelDialog] = useState(false);
+  const [sourceName, setSourceName] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [channels, setChannels] = useState<Record<string, ChannelState>>(() => {
+    const init: Record<string, ChannelState> = {};
+    CHANNEL_OPTIONS.forEach(ch => {
+      init[ch.type] = { enabled: ch.type === "website", url: "", status: "idle" };
+    });
+    return init;
+  });
+  const [settings, setSettings] = useState({
     intervalMinutes: 15,
     maxArticlesPerFetch: 10,
     retentionDays: 7,
   });
+  const [step, setStep] = useState<"channels" | "preview">("channels");
+  const [isTesting, setIsTesting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
 
   const searchWebsites = useCallback(async (query: string) => {
     if (query.length < 2) return;
@@ -172,336 +194,163 @@ function AddSourceView() {
     setIsSearching(false);
   }, []);
 
+  const openChannelDialog = (name: string, url: string) => {
+    setSourceName(name);
+    setSourceUrl(url);
+    const init: Record<string, ChannelState> = {};
+    CHANNEL_OPTIONS.forEach(ch => {
+      init[ch.type] = { enabled: ch.type === "website", url: "", status: "idle" };
+    });
+    setChannels(init);
+    setStep("channels");
+    setShowChannelDialog(true);
+  };
+
   const handleSearchSubmit = () => {
     const q = searchQuery.trim();
     if (!q) return;
-
     if (q.startsWith("http://") || q.startsWith("https://") || q.includes(".")) {
-      setSelectedType("website");
-      setFormData(prev => ({
-        ...prev,
-        name: q.replace(/https?:\/\/(www\.)?/, "").split("/")[0],
-        url: q,
-        type: "website",
-      }));
+      const name = q.replace(/https?:\/\/(www\.)?/, "").split("/")[0].split(".")[0];
+      const capitalName = name.charAt(0).toUpperCase() + name.slice(1);
+      openChannelDialog(capitalName, q);
     } else {
-      setSelectedType("google_news");
-      setFormData(prev => ({
-        ...prev,
-        name: q,
-        url: q,
-        type: "google_news",
-      }));
+      openChannelDialog(q, q);
     }
   };
 
   const selectSearchResult = (result: WebsiteSearchResult) => {
-    setSelectedType(result.hasFeed ? "rss" : "website");
-    setFormData(prev => ({
-      ...prev,
-      name: result.name,
-      url: result.feedUrl || result.url,
-      type: result.hasFeed ? "rss" : "website",
-    }));
+    openChannelDialog(result.name, result.feedUrl || result.url);
     setShowResults(false);
     setSearchQuery("");
   };
 
   const selectSourceType = (type: string) => {
-    setSelectedType(type);
-    setFormData(prev => ({
-      ...prev,
-      type,
-      name: "",
-      url: "",
-    }));
-    setShowResults(false);
-    setSearchQuery("");
+    openChannelDialog("", "");
+    const init: Record<string, ChannelState> = {};
+    CHANNEL_OPTIONS.forEach(ch => {
+      init[ch.type] = { enabled: ch.type === type, url: "", status: "idle" };
+    });
+    setChannels(init);
   };
 
   const selectTopic = (topic: string) => {
-    setSelectedType("google_news");
-    setFormData(prev => ({
+    openChannelDialog(topic, topic);
+    const init: Record<string, ChannelState> = {};
+    CHANNEL_OPTIONS.forEach(ch => {
+      init[ch.type] = { enabled: ch.type === "google_news", url: "", status: "idle" };
+    });
+    setChannels(init);
+  };
+
+  const toggleChannel = (type: string) => {
+    setChannels(prev => ({
       ...prev,
-      name: topic,
-      url: topic,
-      type: "google_news",
+      [type]: { ...prev[type], enabled: !prev[type].enabled, status: "idle", previewResult: undefined },
     }));
   };
 
-  const handlePreview = (e: React.FormEvent) => {
-    e.preventDefault();
-    setPreviewError(null);
-    setPreviewResult(null);
-    previewSource(
-      { url: formData.url, type: formData.type, maxArticles: formData.maxArticlesPerFetch },
-      {
-        onSuccess: (data: PreviewResult) => {
-          if (data.success && data.articles.length > 0) {
-            setPreviewResult(data);
-            setShowPreviewDialog(true);
-          } else {
-            setPreviewError(data.error || "Unable to fetch articles from this source. Please check the URL and try again.");
-          }
-        },
-        onError: () => {
-          setPreviewError("Failed to connect. Please check your internet connection and try again.");
-        },
-      }
-    );
+  const setChannelUrl = (type: string, url: string) => {
+    setChannels(prev => ({
+      ...prev,
+      [type]: { ...prev[type], url },
+    }));
   };
 
-  const handleConfirmImport = () => {
-    const finalFormData = { ...formData };
-    if (previewResult?.method === "rss" && previewResult?.feedUrl) {
-      finalFormData.type = "rss";
-      finalFormData.url = previewResult.feedUrl;
-    } else if (previewResult?.method === "google_news_fallback") {
-      finalFormData.type = "google_news";
-      const url = formData.url.trim();
-      try {
-        const domain = new URL(url.startsWith("http") ? url : `https://${url}`).hostname.replace("www.", "");
-        finalFormData.url = `site:${domain}`;
-      } catch {
-        finalFormData.url = url;
-      }
+  const enabledChannels = CHANNEL_OPTIONS.filter(ch => channels[ch.type]?.enabled);
+
+  const handleTestAll = async () => {
+    if (!sourceName.trim()) return;
+    setIsTesting(true);
+
+    const updated = { ...channels };
+    for (const ch of enabledChannels) {
+      updated[ch.type] = { ...updated[ch.type], status: "testing" };
     }
-    createSource(finalFormData, {
-      onSuccess: () => {
-        setSelectedType(null);
-        setFormData({ name: "", url: "", type: "website", intervalMinutes: 15, maxArticlesPerFetch: 10, retentionDays: 7 });
-        setSearchQuery("");
-        setSearchResults([]);
-        setShowResults(false);
-        setShowPreviewDialog(false);
-        setPreviewResult(null);
-        setPreviewError(null);
-      },
-    });
+    setChannels({ ...updated });
+
+    for (const ch of enabledChannels) {
+      const testUrl = ch.needsUrl ? channels[ch.type].url : sourceUrl;
+      if (!testUrl.trim()) {
+        updated[ch.type] = { ...updated[ch.type], status: "failed", previewResult: { success: false, method: "none", articles: [], error: "No URL provided" } };
+        setChannels({ ...updated });
+        continue;
+      }
+      try {
+        const res = await fetch("/api/sources/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: testUrl, type: ch.type, maxArticles: settings.maxArticlesPerFetch }),
+        });
+        const data: PreviewResult = await res.json();
+        if (data.success && data.articles.length > 0) {
+          updated[ch.type] = { ...updated[ch.type], status: "success", previewResult: data };
+        } else {
+          updated[ch.type] = { ...updated[ch.type], status: "failed", previewResult: data };
+        }
+      } catch {
+        updated[ch.type] = { ...updated[ch.type], status: "failed", previewResult: { success: false, method: "none", articles: [], error: "Connection failed" } };
+      }
+      setChannels({ ...updated });
+    }
+
+    setIsTesting(false);
+    setStep("preview");
   };
 
-  const goBack = () => {
-    setSelectedType(null);
-    setFormData({ name: "", url: "", type: "website", intervalMinutes: 15, maxArticlesPerFetch: 10, retentionDays: 7 });
-    setPreviewError(null);
-    setPreviewResult(null);
+  const successfulChannels = enabledChannels.filter(ch => channels[ch.type]?.status === "success");
+
+  const handleConfirmImport = async () => {
+    if (successfulChannels.length === 0) return;
+    setIsImporting(true);
+
+    for (const ch of successfulChannels) {
+      const preview = channels[ch.type].previewResult;
+      const suffix = successfulChannels.length > 1 ? ch.suffix : "";
+      const finalName = `${sourceName.trim()}${suffix}`;
+      let finalUrl = ch.needsUrl ? channels[ch.type].url : sourceUrl;
+      let finalType = ch.type;
+
+      if (preview?.method === "rss" && preview?.feedUrl) {
+        finalType = "rss";
+        finalUrl = preview.feedUrl;
+      } else if (preview?.method === "google_news_fallback") {
+        finalType = "google_news";
+        try {
+          const domain = new URL(finalUrl.startsWith("http") ? finalUrl : `https://${finalUrl}`).hostname.replace("www.", "");
+          finalUrl = `site:${domain}`;
+        } catch {}
+      }
+
+      await new Promise<void>((resolve) => {
+        createSource(
+          {
+            name: finalName,
+            url: finalUrl,
+            type: finalType,
+            intervalMinutes: settings.intervalMinutes,
+            maxArticlesPerFetch: settings.maxArticlesPerFetch,
+            retentionDays: settings.retentionDays,
+          },
+          { onSuccess: () => resolve(), onError: () => resolve() }
+        );
+      });
+    }
+
+    setIsImporting(false);
+    setShowChannelDialog(false);
+    setSourceName("");
+    setSourceUrl("");
+    setSearchQuery("");
+    setSearchResults([]);
+    setShowResults(false);
   };
 
-  const isGoogleNews = formData.type === "google_news";
-
-  if (selectedType) {
-    const typeConfig = SOURCE_TYPES.find(s => s.type === selectedType);
-    const TypeIcon = typeConfig?.icon || Globe;
-
-    return (
-      <div className="max-w-xl mx-auto space-y-6 animate-in fade-in duration-300">
-        <button
-          onClick={goBack}
-          className="flex items-center gap-2 text-sm text-muted-foreground hover-elevate px-2 py-1 rounded-md transition-colors"
-          data-testid="button-back-to-types"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          {t("common.back")}
-        </button>
-
-        <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-lg bg-muted flex items-center justify-center ${typeConfig?.color || ""}`}>
-            <TypeIcon className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-xl font-semibold">{t("admin.addNewSource")}</h2>
-            <p className="text-sm text-muted-foreground">{typeConfig ? t(typeConfig.label as any) : selectedType}</p>
-          </div>
-        </div>
-
-        <Card>
-          <CardContent className="pt-6">
-            <form onSubmit={handlePreview} className="space-y-5">
-              <div className="space-y-2">
-                <Label htmlFor="name">{t("admin.sourceName")}</Label>
-                <Input
-                  id="name"
-                  value={formData.name}
-                  onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder={isGoogleNews ? t("admin.googleNewsNamePlaceholder") : t("admin.sourceNamePlaceholder")}
-                  required
-                  data-testid="input-source-name"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="url">
-                  {isGoogleNews ? t("admin.urlLabels.google_news") : t(`admin.urlLabels.${formData.type}` as any)}
-                </Label>
-                <Input
-                  id="url"
-                  value={formData.url}
-                  onChange={e => setFormData(prev => ({ ...prev, url: e.target.value }))}
-                  placeholder={isGoogleNews ? t("admin.urlPlaceholders.google_news") : t(`admin.urlPlaceholders.${formData.type}` as any)}
-                  required
-                  data-testid="input-source-url"
-                />
-                {isGoogleNews && (
-                  <p className="text-xs text-muted-foreground">{t("admin.googleNewsHint")}</p>
-                )}
-              </div>
-
-              <div className="space-y-4 pt-2">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Label>{t("admin.postsPerFetch")}</Label>
-                    <span className="text-sm font-medium text-muted-foreground" data-testid="text-posts-per-fetch">{formData.maxArticlesPerFetch}</span>
-                  </div>
-                  <Slider
-                    value={[formData.maxArticlesPerFetch]}
-                    onValueChange={([val]) => setFormData(prev => ({ ...prev, maxArticlesPerFetch: val }))}
-                    min={1}
-                    max={50}
-                    step={1}
-                    data-testid="slider-posts-per-fetch"
-                  />
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>1</span>
-                    <span>50</span>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Label>{t("admin.articleLifespan")}</Label>
-                    <span className="text-sm font-medium text-muted-foreground" data-testid="text-retention-days">
-                      {formData.retentionDays} {t("admin.days")}
-                    </span>
-                  </div>
-                  <Slider
-                    value={[formData.retentionDays]}
-                    onValueChange={([val]) => setFormData(prev => ({ ...prev, retentionDays: val }))}
-                    min={1}
-                    max={30}
-                    step={1}
-                    data-testid="slider-retention-days"
-                  />
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>1 {t("admin.day")}</span>
-                    <span>30 {t("admin.days")}</span>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>{t("admin.fetchInterval")}</Label>
-                  <Select
-                    value={String(formData.intervalMinutes)}
-                    onValueChange={(val) => setFormData(prev => ({ ...prev, intervalMinutes: parseInt(val) }))}
-                  >
-                    <SelectTrigger data-testid="select-fetch-interval">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="5">5 {t("admin.minutes")}</SelectItem>
-                      <SelectItem value="10">10 {t("admin.minutes")}</SelectItem>
-                      <SelectItem value="15">15 {t("admin.minutes")}</SelectItem>
-                      <SelectItem value="30">30 {t("admin.minutes")}</SelectItem>
-                      <SelectItem value="60">1 {t("admin.hour")}</SelectItem>
-                      <SelectItem value="120">2 {t("admin.hours")}</SelectItem>
-                      <SelectItem value="360">6 {t("admin.hours")}</SelectItem>
-                      <SelectItem value="720">12 {t("admin.hours")}</SelectItem>
-                      <SelectItem value="1440">24 {t("admin.hours")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              {previewError && (
-                <div className="flex items-start gap-3 p-3 rounded-md bg-destructive/10 text-destructive text-sm" data-testid="text-preview-error">
-                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <span>{previewError}</span>
-                </div>
-              )}
-
-              <Button type="submit" className="w-full" disabled={isPreviewing} data-testid="button-submit-source">
-                {isPreviewing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    Testing source...
-                  </>
-                ) : (
-                  <>
-                    <Search className="w-4 h-4 mr-2 rtl:mr-0 rtl:ml-2" />
-                    Test & Preview
-                  </>
-                )}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-
-        <Dialog open={showPreviewDialog} onOpenChange={setShowPreviewDialog}>
-          <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-green-500" />
-                Articles Found
-              </DialogTitle>
-              <p className="text-sm text-muted-foreground">
-                {previewResult?.articles.length} article{(previewResult?.articles.length || 0) !== 1 ? "s" : ""} will be imported
-                {previewResult?.method && previewResult.method !== formData.type && (
-                  <span> via <Badge variant="secondary" className="ml-1">{previewResult.method === "rss" ? "RSS Feed" : previewResult.method === "google_news_fallback" ? "Google News" : previewResult.method}</Badge></span>
-                )}
-              </p>
-            </DialogHeader>
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-0" data-testid="preview-articles-list">
-              {previewResult?.articles.map((article, idx) => (
-                <div key={idx} className="flex gap-3 p-3 rounded-md bg-muted/50" data-testid={`preview-article-${idx}`}>
-                  {article.image && (
-                    <img
-                      src={article.image}
-                      alt=""
-                      className="w-16 h-16 rounded-md object-cover flex-shrink-0"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                    />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm leading-tight line-clamp-2">{article.title}</p>
-                    {article.content && (
-                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{article.content}</p>
-                    )}
-                    <div className="flex items-center gap-2 mt-1.5">
-                      {article.publishedAt && (
-                        <span className="text-xs text-muted-foreground">
-                          {(() => {
-                            try { return formatDistanceToNow(new Date(article.publishedAt), { addSuffix: true }); }
-                            catch { return ""; }
-                          })()}
-                        </span>
-                      )}
-                      {article.url && (
-                        <a href={article.url} target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground flex items-center gap-1 hover-elevate rounded px-1" data-testid={`link-preview-article-${idx}`}>
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2 pt-3 border-t">
-              <Button variant="outline" className="flex-1" onClick={() => setShowPreviewDialog(false)} data-testid="button-cancel-import">
-                Cancel
-              </Button>
-              <Button className="flex-1" onClick={handleConfirmImport} disabled={isCreating} data-testid="button-confirm-import">
-                {isCreating ? (
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                ) : (
-                  <Plus className="w-4 h-4 mr-2" />
-                )}
-                OK - Import Articles
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </div>
-    );
-  }
+  const resetDialog = () => {
+    setShowChannelDialog(false);
+    setStep("channels");
+    setSourceName("");
+    setSourceUrl("");
+  };
 
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
@@ -619,6 +468,270 @@ function AddSourceView() {
           ))}
         </div>
       </div>
+
+      <Dialog open={showChannelDialog} onOpenChange={(open) => { if (!open) resetDialog(); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          {step === "channels" ? (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Plus className="w-5 h-5" />
+                  Add New Source
+                </DialogTitle>
+                <p className="text-sm text-muted-foreground">
+                  Enter source details and select import channels
+                </p>
+              </DialogHeader>
+
+              <div className="space-y-4 flex-1 overflow-y-auto pr-1 min-h-0">
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label>Source Name</Label>
+                    <Input
+                      value={sourceName}
+                      onChange={e => setSourceName(e.target.value)}
+                      placeholder="e.g. CNN, BBC, Al Jazeera"
+                      data-testid="input-channel-source-name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Website URL</Label>
+                    <Input
+                      value={sourceUrl}
+                      onChange={e => setSourceUrl(e.target.value)}
+                      placeholder="e.g. cnn.com"
+                      data-testid="input-channel-source-url"
+                    />
+                    <p className="text-xs text-muted-foreground">Used for Website, RSS, and Google News channels</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Import Channels</Label>
+                  <p className="text-xs text-muted-foreground mb-2">Select one or more channels to import from. Each creates a separate source.</p>
+                  <div className="space-y-2">
+                    {CHANNEL_OPTIONS.map((ch) => {
+                      const Icon = ch.icon;
+                      const state = channels[ch.type];
+                      const suffix = ch.suffix;
+                      const displayName = sourceName.trim() ? `${sourceName.trim()}${suffix}` : ch.label;
+                      return (
+                        <div key={ch.type} className="space-y-2">
+                          <div
+                            className={`flex items-center gap-3 p-3 rounded-md border transition-colors ${state.enabled ? "border-primary/50 bg-primary/5" : "border-border"}`}
+                          >
+                            <Switch
+                              checked={state.enabled}
+                              onCheckedChange={() => toggleChannel(ch.type)}
+                              data-testid={`switch-channel-${ch.type}`}
+                            />
+                            <Icon className={`w-4 h-4 shrink-0 ${ch.color}`} />
+                            <div className="flex-1 min-w-0">
+                              <span className="text-sm font-medium">{ch.label}</span>
+                              {state.enabled && sourceName.trim() && suffix && (
+                                <span className="text-xs text-muted-foreground ml-2">({displayName})</span>
+                              )}
+                            </div>
+                          </div>
+                          {state.enabled && ch.needsUrl && (
+                            <div className="ml-10">
+                              <Input
+                                value={state.url}
+                                onChange={e => setChannelUrl(ch.type, e.target.value)}
+                                placeholder={ch.placeholder}
+                                className="text-sm"
+                                data-testid={`input-channel-url-${ch.type}`}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-3 pt-2">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>Posts per fetch</Label>
+                      <span className="text-sm font-medium text-muted-foreground" data-testid="text-channel-posts-per-fetch">{settings.maxArticlesPerFetch}</span>
+                    </div>
+                    <Slider
+                      value={[settings.maxArticlesPerFetch]}
+                      onValueChange={([val]) => setSettings(prev => ({ ...prev, maxArticlesPerFetch: val }))}
+                      min={1} max={50} step={1}
+                      data-testid="slider-channel-posts-per-fetch"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>Article lifespan</Label>
+                      <span className="text-sm font-medium text-muted-foreground" data-testid="text-channel-retention">{settings.retentionDays} days</span>
+                    </div>
+                    <Slider
+                      value={[settings.retentionDays]}
+                      onValueChange={([val]) => setSettings(prev => ({ ...prev, retentionDays: val }))}
+                      min={1} max={30} step={1}
+                      data-testid="slider-channel-retention"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Fetch interval</Label>
+                    <Select
+                      value={String(settings.intervalMinutes)}
+                      onValueChange={(val) => setSettings(prev => ({ ...prev, intervalMinutes: parseInt(val) }))}
+                    >
+                      <SelectTrigger data-testid="select-channel-interval">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="5">5 minutes</SelectItem>
+                        <SelectItem value="10">10 minutes</SelectItem>
+                        <SelectItem value="15">15 minutes</SelectItem>
+                        <SelectItem value="30">30 minutes</SelectItem>
+                        <SelectItem value="60">1 hour</SelectItem>
+                        <SelectItem value="120">2 hours</SelectItem>
+                        <SelectItem value="360">6 hours</SelectItem>
+                        <SelectItem value="720">12 hours</SelectItem>
+                        <SelectItem value="1440">24 hours</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t">
+                <Button
+                  className="w-full"
+                  disabled={!sourceName.trim() || enabledChannels.length === 0 || isTesting}
+                  onClick={handleTestAll}
+                  data-testid="button-test-channels"
+                >
+                  {isTesting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      Testing {enabledChannels.length} channel{enabledChannels.length !== 1 ? "s" : ""}...
+                    </>
+                  ) : (
+                    <>
+                      <Search className="w-4 h-4 mr-2" />
+                      Test & Preview ({enabledChannels.length} channel{enabledChannels.length !== 1 ? "s" : ""})
+                    </>
+                  )}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-green-500" />
+                  Preview Results
+                </DialogTitle>
+                <p className="text-sm text-muted-foreground">
+                  {successfulChannels.length} of {enabledChannels.length} channel{enabledChannels.length !== 1 ? "s" : ""} ready to import
+                </p>
+              </DialogHeader>
+
+              <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-0" data-testid="preview-channels-list">
+                {enabledChannels.map((ch) => {
+                  const Icon = ch.icon;
+                  const state = channels[ch.type];
+                  const suffix = enabledChannels.length > 1 ? ch.suffix : "";
+                  const displayName = `${sourceName.trim()}${suffix}`;
+                  const articles = state.previewResult?.articles || [];
+
+                  return (
+                    <div key={ch.type} className="rounded-md border" data-testid={`preview-channel-${ch.type}`}>
+                      <div className={`flex items-center gap-3 p-3 ${state.status === "success" ? "bg-green-500/5" : state.status === "failed" ? "bg-destructive/5" : "bg-muted/30"}`}>
+                        <Icon className={`w-4 h-4 shrink-0 ${ch.color}`} />
+                        <span className="text-sm font-medium flex-1">{displayName}</span>
+                        {state.status === "testing" && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                        {state.status === "success" && (
+                          <Badge variant="secondary" data-testid={`badge-channel-success-${ch.type}`}>
+                            <CheckCircle2 className="w-3 h-3 mr-1 text-green-500" />
+                            {articles.length} article{articles.length !== 1 ? "s" : ""}
+                          </Badge>
+                        )}
+                        {state.status === "failed" && (
+                          <Badge variant="secondary" data-testid={`badge-channel-failed-${ch.type}`}>
+                            <AlertTriangle className="w-3 h-3 mr-1 text-destructive" />
+                            Failed
+                          </Badge>
+                        )}
+                      </div>
+                      {state.status === "success" && articles.length > 0 && (
+                        <div className="border-t max-h-48 overflow-y-auto">
+                          {articles.slice(0, 5).map((article, idx) => (
+                            <div key={idx} className="flex gap-3 px-3 py-2 border-b border-border/30 last:border-b-0" data-testid={`preview-article-${ch.type}-${idx}`}>
+                              {article.image && (
+                                <img
+                                  src={article.image}
+                                  alt=""
+                                  className="w-10 h-10 rounded-md object-cover flex-shrink-0"
+                                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                                />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm leading-tight line-clamp-1">{article.title}</p>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  {article.publishedAt && (
+                                    <span className="text-xs text-muted-foreground">
+                                      {(() => {
+                                        try { return formatDistanceToNow(new Date(article.publishedAt), { addSuffix: true }); }
+                                        catch { return ""; }
+                                      })()}
+                                    </span>
+                                  )}
+                                  {article.url && (
+                                    <a href={article.url} target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground flex items-center gap-1 hover-elevate rounded px-1" data-testid={`link-preview-${ch.type}-${idx}`}>
+                                      <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                          {articles.length > 5 && (
+                            <p className="text-xs text-muted-foreground text-center py-1.5">+{articles.length - 5} more</p>
+                          )}
+                        </div>
+                      )}
+                      {state.status === "failed" && state.previewResult?.error && (
+                        <div className="border-t px-3 py-2">
+                          <p className="text-xs text-destructive">{state.previewResult.error}</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex gap-2 pt-3 border-t">
+                <Button variant="outline" onClick={() => setStep("channels")} data-testid="button-back-to-channels">
+                  Back
+                </Button>
+                <Button variant="outline" className="flex-1" onClick={resetDialog} data-testid="button-cancel-import">
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleConfirmImport}
+                  disabled={successfulChannels.length === 0 || isImporting}
+                  data-testid="button-confirm-import"
+                >
+                  {isImporting ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <Plus className="w-4 h-4 mr-2" />
+                  )}
+                  Import {successfulChannels.length} Source{successfulChannels.length !== 1 ? "s" : ""}
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
