@@ -133,7 +133,12 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
   const articleCategory = (article as any).category || "general";
   const hasImage = article.imageUrl && article.imageUrl !== "none" && !imgError;
   const publisherDomain = article.subSource ? getPublisherDomain(article.subSource) : null;
-  const faviconUrl = publisherDomain ? `https://www.google.com/s2/favicons?sz=128&domain=${publisherDomain}` : null;
+  const sourceDomain = article.source?.url ? (() => { try { return new URL(article.source.url).hostname; } catch { return null; } })() : null;
+  const faviconUrl = publisherDomain
+    ? `https://www.google.com/s2/favicons?sz=128&domain=${publisherDomain}`
+    : sourceDomain
+      ? `https://www.google.com/s2/favicons?sz=128&domain=${sourceDomain}`
+      : null;
   const crossPosts = (Array.isArray((article as any).crossPosts) ? (article as any).crossPosts : []) as { platform: string; url: string; sourceId: number }[];
 
   const sentimentBadge = article.sentimentLabel ? (
@@ -284,7 +289,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
         data-testid={`card-article-${article.id}`}
       >
         {selectCheckbox}
-        {hasImage && (
+        {hasImage ? (
           <div className="relative w-40 min-h-[120px] shrink-0 overflow-hidden bg-muted rounded-l-md" data-testid={`img-article-${article.id}`}>
             <img
               src={article.imageUrl!}
@@ -294,7 +299,16 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
               onError={() => setImgError(true)}
             />
           </div>
-        )}
+        ) : faviconUrl ? (
+          <div className="relative w-40 min-h-[120px] shrink-0 overflow-hidden bg-gradient-to-br from-muted to-muted/60 rounded-l-md flex items-center justify-center" data-testid={`favicon-article-${article.id}`}>
+            <img
+              src={faviconUrl}
+              alt={article.subSource || article.source?.name || ""}
+              className="w-8 h-8 rounded-md"
+              loading="lazy"
+            />
+          </div>
+        ) : null}
         <div className="flex flex-col flex-1 p-4 gap-2 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             {sourceInfo}
@@ -344,15 +358,15 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
             onError={() => setImgError(true)}
           />
         </div>
-      ) : faviconUrl && (article.source?.type === "google_news" || article.source?.type === "facebook") ? (
+      ) : faviconUrl ? (
         <div className="relative w-full h-32 overflow-hidden bg-gradient-to-br from-muted to-muted/60 flex items-center justify-center gap-3" data-testid={`favicon-article-${article.id}`}>
           <img
             src={faviconUrl}
-            alt={article.subSource || ""}
+            alt={article.subSource || article.source?.name || ""}
             className="w-10 h-10 rounded-md"
             loading="lazy"
           />
-          <span className="text-sm font-semibold text-muted-foreground/70">{article.subSource}</span>
+          <span className="text-sm font-semibold text-muted-foreground/70">{article.subSource || article.source?.name}</span>
         </div>
       ) : null}
 

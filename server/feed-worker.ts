@@ -961,6 +961,40 @@ export async function backfillGoogleNewsImages(): Promise<number> {
   return totalUpdated;
 }
 
+export async function backfillMissingImages(): Promise<number> {
+  const clientIds = await storage.getDistinctClientIds();
+  let totalUpdated = 0;
+
+  for (const clientId of clientIds) {
+    const { items } = await storage.getArticles({ limit: 200, clientId });
+    const noImageArticles = items.filter(
+      (a) => !a.imageUrl && a.url && a.source?.type !== "google_news" && a.source?.type !== "facebook"
+    );
+    if (noImageArticles.length === 0) continue;
+
+    const batch = noImageArticles.slice(0, 5);
+    for (const article of batch) {
+      try {
+        const image = await fetchOgImage(article.url!);
+        if (image && !isGenericGoogleImage(image)) {
+          await storage.updateArticle(article.id, { imageUrl: image });
+          totalUpdated++;
+          console.log(`[Worker] Resolved image for article ${article.id}: ${image.substring(0, 80)}`);
+        } else {
+          await storage.updateArticle(article.id, { imageUrl: "none" });
+        }
+      } catch (e) {
+        console.error(`[Worker] Image resolve error for article ${article.id}:`, e);
+      }
+    }
+  }
+
+  if (totalUpdated > 0) {
+    console.log(`[Worker] Image resolve: updated ${totalUpdated} articles`);
+  }
+  return totalUpdated;
+}
+
 const PRIORITY_INTERVALS: Record<string, number> = {
   high: 5,
   medium: 10,
@@ -1026,6 +1060,7 @@ export function startFeedWorker(intervalMinutes?: number) {
     }
     try {
       await backfillGoogleNewsImages();
+      await backfillMissingImages();
     } catch (e) {
       console.error("[Worker] Image backfill error:", e);
     }
