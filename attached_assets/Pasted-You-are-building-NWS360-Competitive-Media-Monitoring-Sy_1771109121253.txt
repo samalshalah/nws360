@@ -1,0 +1,261 @@
+You are building NWS360 (Competitive Media Monitoring System) with ONE universal UI.
+All screens exist, but features are hidden dynamically based on role + permissions + plan tier.
+
+Core principle:
+- Same React layout for everyone
+- Sidebar items and page actions appear ONLY if allowed
+- Backend must also enforce permissions (no UI-only security)
+
+Multi-tenant isolation is mandatory.
+AI is ONLY allowed inside Analytics + Intelligence (never in feed ingestion/rendering).
+
+========================================
+1) ROLES (AUTH LEVEL)
+========================================
+System roles (high level):
+1) GLOBAL_ADMIN
+2) CLIENT_ADMIN
+3) CLIENT_USER
+
+Client user types (sub-roles under CLIENT_USER):
+- READER (consumes feed only)
+- ANALYST (analytics + reports)
+- EDITOR (curates, tags, brief drafts)
+- MONITOR (ops/health view, no analytics deep)
+- EXECUTIVE (executive home + brief view only)
+- INTEGRATIONS_MANAGER (manages integrations/webhooks, if plan allows)
+
+IMPORTANT:
+CLIENT_ADMIN can assign these user types to users in their tenant.
+GLOBAL_ADMIN can assign anything and impersonate.
+
+========================================
+2) PERMISSION MODEL (CAPABILITIES)
+========================================
+Implement a capability-based permission system.
+Each user has:
+- role (GLOBAL_ADMIN / CLIENT_ADMIN / CLIENT_USER)
+- userType (nullable for GLOBAL_ADMIN; required for CLIENT_USER)
+- permissions[] (capabilities granted)
+Each tenant has:
+- planTier ("Starter" | "Pro" | "Enterprise")
+- aiEnabled (boolean)
+- aiTier ("None" | "BasicAI" | "ProAI")  // optional
+- features[] (plan gates)
+
+Capabilities (canonical list):
+FEED_VIEW
+FEED_SEARCH
+FEED_FILTER
+ARTICLE_VIEW
+ARTICLE_SAVE
+ARTICLE_EXPORT
+
+SOURCES_VIEW
+SOURCES_ADD
+SOURCES_EDIT
+SOURCES_DELETE
+SOURCE_HEALTH_VIEW
+
+KEYWORDS_VIEW
+KEYWORDS_ADD
+KEYWORDS_EDIT
+KEYWORDS_DELETE
+
+ANALYTICS_VIEW
+ANALYTICS_OVERVIEW
+ANALYTICS_CONTENT_VOLUME
+ANALYTICS_TRENDING_TOPICS
+ANALYTICS_KEYWORD_ANALYSIS
+ANALYTICS_TONE_REPORTS
+ANALYTICS_SOURCE_BEHAVIOR
+ANALYTICS_NETWORK_MAPPING
+ANALYTICS_NARRATIVE_COMPARISON
+ANALYTICS_CUSTOM_REPORTS
+ANALYTICS_EXPORT
+
+INTELLIGENCE_VIEW
+INTELLIGENCE_DAILY_BRIEF
+INTELLIGENCE_PREDICTIONS
+INTELLIGENCE_QA  // only if enabled, and AI-tier allows
+
+COLLAB_VIEW
+COLLAB_COMMENTS
+COLLAB_ANNOTATIONS
+COLLAB_TASKS
+
+INTEGRATIONS_VIEW
+INTEGRATIONS_MANAGE
+INTEGRATION_MONITOR_VIEW
+
+USERS_VIEW
+USERS_INVITE
+USERS_EDIT
+USERS_DISABLE
+USERS_ASSIGN_ROLES
+PERMISSIONS_MANAGE
+
+BILLING_VIEW
+BILLING_MANAGE
+AI_USAGE_VIEW
+
+ADMIN_SYSTEM_DASHBOARD
+ADMIN_TENANT_SWITCH
+ADMIN_IMPERSONATE
+ADMIN_AUDIT_LOGS
+ADMIN_OPERATIONS
+ADMIN_JOB_MONITOR
+
+========================================
+3) DEFAULT PERMISSION SETS BY USER TYPE
+========================================
+Define these defaults (CLIENT_USER only):
+
+READER:
+- FEED_VIEW, FEED_SEARCH, FEED_FILTER
+- ARTICLE_VIEW, ARTICLE_SAVE
+
+ANALYST:
+- READER perms
+- ANALYTICS_VIEW + all analytics subpages
+- ANALYTICS_EXPORT
+- KEYWORDS_VIEW
+- INTELLIGENCE_VIEW (ONLY if tenant.aiEnabled AND user has AI permission)
+- INTELLIGENCE_DAILY_BRIEF (if allowed)
+- INTELLIGENCE_PREDICTIONS (if allowed)
+- AI_USAGE_VIEW (optional: allow read-only)
+
+EDITOR:
+- READER perms
+- KEYWORDS_VIEW, KEYWORDS_ADD, KEYWORDS_EDIT
+- COLLAB_VIEW, COLLAB_COMMENTS, COLLAB_ANNOTATIONS
+- CUSTOM_REPORTS if plan allows
+- INTELLIGENCE_DAILY_BRIEF view if enabled (not generation unless permitted)
+
+MONITOR:
+- FEED_VIEW
+- SOURCE_HEALTH_VIEW
+- INTEGRATION_MONITOR_VIEW
+- ADMIN_JOB_MONITOR (tenant-scoped only, not global)
+
+EXECUTIVE:
+- FEED_VIEW, ARTICLE_VIEW
+- EXECUTIVE_HOME
+- INTELLIGENCE_DAILY_BRIEF view only (if enabled)
+- No configuration permissions
+
+INTEGRATIONS_MANAGER:
+- INTEGRATIONS_VIEW, INTEGRATIONS_MANAGE
+- INTEGRATION_MONITOR_VIEW
+- SOURCES_VIEW (optional)
+- No analytics unless granted
+
+CLIENT_ADMIN default:
+- Everything tenant-scoped except system admin capabilities:
+  USERS_* , PERMISSIONS_MANAGE
+  SOURCES_* , KEYWORDS_*
+  ANALYTICS_* (view/export)
+  BILLING_VIEW + (BILLING_MANAGE depending on tier)
+  AI_USAGE_VIEW
+  INTELLIGENCE_VIEW only if aiEnabled
+
+GLOBAL_ADMIN:
+- All capabilities + tenant switch + impersonation + global operations.
+
+========================================
+4) PLAN TIERS (FEATURE GATES)
+========================================
+Implement planTier gates that hide entire sections:
+
+Starter:
+- Feed + Saved + Basic Sources + Basic Keywords
+- Analytics: Overview + Volume only
+- Intelligence: hidden unless purchased AI add-on
+
+Pro:
+- Full analytics suite
+- Collaboration
+- Limited integrations (1-2)
+- Intelligence available if AI add-on enabled
+
+Enterprise:
+- Everything
+- Advanced integrations, SSO, audit logs, custom exports
+- Executive Home, Predictive Intelligence
+
+AI add-on is separate:
+- aiEnabled must be true AND user must have INTELLIGENCE_* permissions
+- If aiEnabled is false: Hide ALL Intelligence menu and ALL AI buttons.
+
+========================================
+5) UNIVERSAL NAVIGATION (DYNAMIC)
+========================================
+Build a single navigation config array with items like:
+{ label, path, icon, requiredCaps[], requiredFeatures[], adminOnly?, aiOnly? }
+
+Render sidebar by filtering:
+- role + capabilities + tenant.planTier features + tenant.aiEnabled
+
+No page should be reachable if user lacks required capability:
+- Route guard must redirect to /403 (or /not-authorized)
+- Backend must return 403 for forbidden.
+
+========================================
+6) UX PAGES (MATCH CURRENT LOOK)
+========================================
+Keep current “NWS360 Control Center” design language.
+Universal layout:
+- Left sidebar
+- Top bar (search/filter)
+- Main content
+- Optional right slide-over panel for article details
+
+PAGES to keep (but conditionally visible):
+- News Feed
+- Saved
+- Analytics pages (all the ones in current menu)
+- Intelligence Hub, Predictions, Executive Home
+- Collaboration
+- Knowledge
+- Sources (Add/Manage)
+- Keywords
+- Operations, Source Health
+- Integrations + Integration Monitor
+- Usage & Billing
+- Help
+- Public Site link
+
+========================================
+7) CLIENT ADMIN USER MANAGEMENT
+========================================
+Create Client Admin screens:
+- Users list (tenant only)
+- Invite user
+- Assign userType (READER/ANALYST/EDITOR/MONITOR/EXECUTIVE/INTEGRATIONS_MANAGER)
+- Optional fine-grain override: toggle capabilities per user (advanced)
+- “Role templates” button: apply default permission set for a userType
+
+========================================
+8) IMPORTANT AI RULE
+========================================
+Feed must never call AI.
+AI actions only exist inside:
+- Analytics (summaries, insights)
+- Intelligence (briefs, predictions, QA)
+
+AI buttons must be hidden unless:
+tenant.aiEnabled AND user has INTELLIGENCE_* capability.
+
+========================================
+9) DELIVERABLES
+========================================
+Return implementation plan + code structure for:
+- Permission types (TypeScript)
+- nav config + filtering
+- route guards
+- sample sidebar rendering
+- default permission templates per userType
+- client admin “Users & Permissions” UI skeleton
+
+Do not remove existing pages.
+Just enforce visibility + access.
