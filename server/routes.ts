@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { setupAuth } from "./auth";
-import { storage, assertTenant, TenantNotFoundError } from "./storage";
+import { storage, assertTenant, TenantNotFoundError, safeNotFound } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler, previewSource } from "./feed-worker";
@@ -510,7 +510,7 @@ export async function registerRoutes(
       if (!isSystemAdmin(user)) {
         const existingSource = await storage.getSource(id, clientId || undefined);
         if (!existingSource || existingSource.userId !== user.id) {
-          return res.status(403).json({ message: "Access denied" });
+          return safeNotFound(res);
         }
       }
       const rawBody = req.body;
@@ -546,7 +546,7 @@ export async function registerRoutes(
     if (!isSystemAdmin(user)) {
       const existingSource = await storage.getSource(id, clientId || undefined);
       if (!existingSource || existingSource.userId !== user.id) {
-        return res.status(403).json({ message: "Access denied" });
+        return safeNotFound(res);
       }
     }
     await storage.deleteSource(id, clientId || undefined);
@@ -809,7 +809,7 @@ export async function registerRoutes(
     const source = await storage.getSource(id, clientId || undefined);
     if (!source) return res.status(404).json({ message: "Source not found" });
     if (!isSystemAdmin(user) && source.userId !== user.id) {
-      return res.status(403).json({ message: "Access denied" });
+      return safeNotFound(res);
     }
     try {
       const newArticles = await fetchSourceFeed(id);
@@ -1398,7 +1398,7 @@ export async function registerRoutes(
     if (!isSystemAdmin(currentUser)) {
       const targetUser = await storage.getUser(id);
       if (!targetUser || targetUser.parentId !== currentUser.id) {
-        return res.status(403).json({ message: "Access denied" });
+        return safeNotFound(res);
       }
     }
 
@@ -1419,7 +1419,7 @@ export async function registerRoutes(
     if (!isSystemAdmin(currentUser)) {
       const targetUser = await storage.getUser(id);
       if (!targetUser || targetUser.parentId !== currentUser.id) {
-        return res.status(403).json({ message: "Access denied" });
+        return safeNotFound(res);
       }
     }
 
@@ -1442,7 +1442,7 @@ export async function registerRoutes(
     const sourceId = parseInt(req.params.sourceId);
     const scopedSourceIds = await getUserSourceIds(user);
     if (scopedSourceIds && !scopedSourceIds.includes(sourceId)) {
-      return res.status(403).json({ message: "Access denied" });
+      return safeNotFound(res);
     }
     const logs = await storage.getFetchLogs(sourceId, 50);
     res.json(logs);
@@ -2580,7 +2580,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
     const forecasts = await storage.getTopicForecasts(clientId || undefined);
-    if (!forecasts.find(f => f.id === id)) return res.sendStatus(403);
+    if (!forecasts.find(f => f.id === id)) return safeNotFound(res);
     await storage.deleteTopicForecast(id);
     res.sendStatus(204);
   });
@@ -2616,7 +2616,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
     const signals = await storage.getEarlySignals(clientId || undefined);
-    if (!signals.find(s => s.id === id)) return res.sendStatus(403);
+    if (!signals.find(s => s.id === id)) return safeNotFound(res);
     await storage.deleteEarlySignal(id);
     res.sendStatus(204);
   });
@@ -2655,7 +2655,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
     const risks = await storage.getRiskScores(clientId || undefined);
-    if (!risks.find(r => r.id === id)) return res.sendStatus(403);
+    if (!risks.find(r => r.id === id)) return safeNotFound(res);
     await storage.deleteRiskScore(id);
     res.sendStatus(204);
   });
@@ -2692,7 +2692,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
     const entries = await storage.getInfluenceGraph(clientId || undefined);
-    if (!entries.find(e => e.id === id)) return res.sendStatus(403);
+    if (!entries.find(e => e.id === id)) return safeNotFound(res);
     await storage.deleteInfluenceGraphEntry(id);
     res.sendStatus(204);
   });
@@ -2728,7 +2728,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
     const entries = await storage.getAttentionDecay(clientId || undefined);
-    if (!entries.find(e => e.id === id)) return res.sendStatus(403);
+    if (!entries.find(e => e.id === id)) return safeNotFound(res);
     await storage.deleteAttentionDecay(id);
     res.sendStatus(204);
   });
@@ -2819,7 +2819,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
     const briefings = await storage.getFutureBriefings(clientId || undefined);
-    if (!briefings.find(b => b.id === id)) return res.sendStatus(403);
+    if (!briefings.find(b => b.id === id)) return safeNotFound(res);
     await storage.deleteFutureBriefing(id);
     res.sendStatus(204);
   });

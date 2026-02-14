@@ -114,6 +114,10 @@ export function assertTenant(recordClientId: number | null | undefined, requestC
   }
 }
 
+export function safeNotFound(res: any): any {
+  return res.status(404).json({ message: "Not found" });
+}
+
 export interface IStorage {
   // Users
   getUser(id: number): Promise<User | undefined>;
