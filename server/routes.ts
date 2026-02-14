@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { setupAuth } from "./auth";
-import { storage } from "./storage";
+import { storage, assertTenant, TenantNotFoundError } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler, previewSource } from "./feed-worker";
@@ -3936,7 +3936,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const ws = await storage.getWorkspace(parseInt(req.params.id));
     if (!ws) return res.status(404).json({ message: "Not found" });
-    if (clientId && ws.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
+    try { assertTenant(ws.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
     const members = await storage.getWorkspaceMembers(parseInt(req.params.id));
     res.json(members);
   });
@@ -3947,7 +3947,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const ws = await storage.getWorkspace(parseInt(req.params.id));
     if (!ws) return res.status(404).json({ message: "Not found" });
-    if (clientId && ws.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
+    try { assertTenant(ws.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
     const member = await storage.addWorkspaceMember({ workspaceId: parseInt(req.params.id), userId: req.body.userId, role: req.body.role || "member" });
     res.status(201).json(member);
   });
@@ -3958,7 +3958,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const ws = await storage.getWorkspace(parseInt(req.params.wsId));
     if (!ws) return res.status(404).json({ message: "Not found" });
-    if (clientId && ws.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
+    try { assertTenant(ws.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
     await storage.removeWorkspaceMember(parseInt(req.params.wsId), parseInt(req.params.userId));
     res.json({ success: true });
   });
@@ -4111,7 +4111,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const report = await storage.getSharedReport(parseInt(req.params.id));
     if (!report) return res.status(404).json({ message: "Not found" });
-    if (clientId && report.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
+    try { assertTenant(report.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
     const items = await storage.getBriefingItems(parseInt(req.params.id));
     res.json(items);
   });
@@ -4122,7 +4122,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const report = await storage.getSharedReport(parseInt(req.params.id));
     if (!report) return res.status(404).json({ message: "Not found" });
-    if (clientId && report.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
+    try { assertTenant(report.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
     const item = await storage.createBriefingItem({ ...req.body, reportId: parseInt(req.params.id) });
     res.status(201).json(item);
   });
@@ -4220,7 +4220,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const existingTask = await storage.getTask(parseInt(req.params.id));
     if (!existingTask) return res.status(404).json({ message: "Not found" });
-    if (clientId && existingTask.clientId !== clientId) return res.status(404).json({ message: "Not found" });
+    try { assertTenant(existingTask.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
     const task = await storage.updateTask(parseInt(req.params.id), req.body);
     if (!task) return res.status(404).json({ message: "Not found" });
     if (req.body.status === "resolved") {
@@ -4235,7 +4235,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const existingTask = await storage.getTask(parseInt(req.params.id));
     if (!existingTask) return res.status(404).json({ message: "Not found" });
-    if (clientId && existingTask.clientId !== clientId) return res.status(404).json({ message: "Not found" });
+    try { assertTenant(existingTask.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
     await storage.deleteTask(parseInt(req.params.id));
     res.json({ success: true });
   });

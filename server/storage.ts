@@ -101,6 +101,19 @@ import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } f
 
 const AUTO_PAUSE_THRESHOLD_DB = 5;
 
+export class TenantNotFoundError extends Error {
+  constructor() {
+    super("Not found");
+    this.name = "TenantNotFoundError";
+  }
+}
+
+export function assertTenant(recordClientId: number | null | undefined, requestClientId: number | null | undefined): void {
+  if (requestClientId != null && recordClientId != null && recordClientId !== requestClientId) {
+    throw new TenantNotFoundError();
+  }
+}
+
 export interface IStorage {
   // Users
   getUser(id: number): Promise<User | undefined>;
