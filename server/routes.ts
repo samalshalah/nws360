@@ -2929,8 +2929,8 @@ export async function registerRoutes(
     stopScheduler();
     res.json({ ok: true, message: "Scheduler stopped" });
   });
-  app.post("/api/admin/scheduler/start", requireSystemAdmin, (_req, res) => {
-    startScheduler();
+  app.post("/api/admin/scheduler/start", requireSystemAdmin, async (_req, res) => {
+    await startScheduler();
     res.json({ ok: true, message: "Scheduler started" });
   });
   app.post("/api/admin/scheduler/tick", requireSystemAdmin, async (_req, res) => {
@@ -2946,7 +2946,7 @@ export async function registerRoutes(
   await seed();
   registerArticleAnalysisHandler();
   startFeedWorker();
-  startScheduler();
+  await startScheduler();
   registerJobHandler("COMPUTE_ANALYTICS", async () => {
     await runAnalyticsComputation();
     return { completed: true };

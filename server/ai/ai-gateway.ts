@@ -123,7 +123,8 @@ export async function startInsightJob(jobId: number): Promise<InsightJob> {
     await storage.updateInsightJobStatus(jobId, "expired");
     throw new Error(`[AI Gateway] Job ${jobId} expired before starting`);
   }
-  const updated = await storage.updateInsightJobIfStatus(jobId, "scheduled", "running", { startedAt: new Date() });
+  const nextAttempt = (job.attempt ?? 0) + 1;
+  const updated = await storage.updateInsightJobIfStatus(jobId, "scheduled", "running", { startedAt: new Date(), attempt: nextAttempt });
   if (!updated) throw new Error(`[AI Gateway] Failed to atomically start job ${jobId} — race condition`);
   return updated;
 }
@@ -211,8 +212,12 @@ export async function runInsightAI(params: RunInsightAIParams): Promise<InsightA
     });
   }
 
+  const currentJob = await storage.getInsightJob(jobId);
+  const jobAttempt = currentJob?.attempt ?? 1;
+
   await storage.createAiUsageLog({
     jobId,
+    attempt: jobAttempt,
     clientId,
     type,
     model: dryRun ? "gpt-4o-mini-dry-run" : "gpt-4o-mini",

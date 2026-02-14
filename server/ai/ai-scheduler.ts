@@ -21,11 +21,17 @@ export interface SchedulerTickMetrics {
   queueDepth: Record<string, number>;
 }
 
-export function startScheduler(): void {
+export async function startScheduler(): Promise<void> {
   if (schedulerRunning) {
     console.log("[AI Scheduler] Already running");
     return;
   }
+
+  const recovered = await storage.recoverZombieRunningJobs();
+  if (recovered > 0) {
+    console.log(`[AI Scheduler] Recovered ${recovered} zombie running jobs → failed (server restart safety)`);
+  }
+
   schedulerRunning = true;
   console.log("[AI Scheduler] Starting — tick interval:", TICK_INTERVAL_MS, "ms, max jobs/tick:", MAX_JOBS_PER_TICK);
   tickTimer = setInterval(() => schedulerTick().catch(e => console.error("[AI Scheduler] Tick error:", e)), TICK_INTERVAL_MS);

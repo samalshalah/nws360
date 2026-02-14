@@ -644,6 +644,7 @@ export interface IStorage {
   getScheduledJobs(limit: number): Promise<InsightJob[]>;
   bulkUpdateJobStatus(fromStatus: string, toStatus: string, clientId?: number): Promise<number>;
   expireOldQueuedJobs(maxAgeMs: number): Promise<number>;
+  recoverZombieRunningJobs(): Promise<number>;
   getJobCountsByStatus(): Promise<Record<string, number>>;
   createAiUsageLog(data: InsertAiUsageLog): Promise<AiUsageLog>;
   getDailyAiUsage(clientId: number): Promise<{ totalTokens: number; jobCount: number }>;
@@ -3713,6 +3714,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateInsightJobIfStatus(id: number, fromStatus: string, toStatus: string, extra?: Partial<InsightJob>): Promise<InsightJob | undefined> {
+    if (fromStatus === toStatus) return undefined;
     const updates: any = { status: toStatus, ...extra };
     const [job] = await db.update(insightJobs).set(updates).where(and(eq(insightJobs.id, id), eq(insightJobs.status, fromStatus))).returning();
     return job;
@@ -3744,6 +3746,13 @@ export class DatabaseStorage implements IStorage {
     const result = await db.update(insightJobs)
       .set({ status: "expired", completedAt: new Date() })
       .where(and(eq(insightJobs.status, "queued"), lte(insightJobs.createdAt, cutoff)));
+    return result.rowCount ?? 0;
+  }
+
+  async recoverZombieRunningJobs(): Promise<number> {
+    const result = await db.update(insightJobs)
+      .set({ status: "failed", completedAt: new Date() })
+      .where(eq(insightJobs.status, "running"));
     return result.rowCount ?? 0;
   }
 
