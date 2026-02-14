@@ -66,7 +66,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!data) return;
-    const articles = Array.isArray(data) ? data : (data as any).articles || [];
+    const articles = Array.isArray(data) ? data : (data as any).items || (data as any).articles || [];
     if (page === 1) {
       setAllArticles(articles);
     } else {
