@@ -172,33 +172,50 @@ export async function runInsightAI(params: RunInsightAIParams): Promise<InsightA
     throw new Error(`[AI Gateway] Job ${jobId} has expired`);
   }
 
-  const result = await openaiLimiter.run(async () => {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: payload.systemPrompt },
-        { role: "user", content: payload.userContent },
-      ],
-      ...(payload.responseFormat ? { response_format: payload.responseFormat } : {}),
-      max_completion_tokens: maxTokens || 500,
-    });
+  const dryRun = process.env.AI_DRY_RUN === "1";
 
-    const usage = completion.usage;
-    return {
-      content: completion.choices[0]?.message?.content || "",
-      usage: {
-        promptTokens: usage?.prompt_tokens || 0,
-        completionTokens: usage?.completion_tokens || 0,
-        totalTokens: usage?.total_tokens || 0,
-      },
+  let result: InsightAIResult;
+
+  if (dryRun) {
+    const simPrompt = 800;
+    const simCompletion = 200;
+    const stubContent = payload.responseFormat?.type === "json_object"
+      ? JSON.stringify({ sentiment: "neutral", score: 0, keywords: ["dry-run"], topics: ["test"], summary: "Dry-run stub response", category: "general", country: null })
+      : "Dry-run stub response";
+    result = {
+      content: stubContent,
+      usage: { promptTokens: simPrompt, completionTokens: simCompletion, totalTokens: simPrompt + simCompletion },
     };
-  });
+    console.log(`[AI Gateway] DRY_RUN: job=${jobId} client=${clientId} type=${type} simTokens=${simPrompt + simCompletion}`);
+  } else {
+    result = await openaiLimiter.run(async () => {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: payload.systemPrompt },
+          { role: "user", content: payload.userContent },
+        ],
+        ...(payload.responseFormat ? { response_format: payload.responseFormat } : {}),
+        max_completion_tokens: maxTokens || 500,
+      });
+
+      const usage = completion.usage;
+      return {
+        content: completion.choices[0]?.message?.content || "",
+        usage: {
+          promptTokens: usage?.prompt_tokens || 0,
+          completionTokens: usage?.completion_tokens || 0,
+          totalTokens: usage?.total_tokens || 0,
+        },
+      };
+    });
+  }
 
   await storage.createAiUsageLog({
     jobId,
     clientId,
     type,
-    model: "gpt-4o-mini",
+    model: dryRun ? "gpt-4o-mini-dry-run" : "gpt-4o-mini",
     promptTokens: result.usage.promptTokens,
     completionTokens: result.usage.completionTokens,
     totalTokens: result.usage.totalTokens,
