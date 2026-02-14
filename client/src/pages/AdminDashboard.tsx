@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
@@ -1398,6 +1399,104 @@ function LogsHealthTab() {
   );
 }
 
+function OperationsSummary() {
+  const { t } = useTranslation();
+  const [, setLocation] = useLocation();
+  const { data: health } = useQuery<SystemHealth>({ queryKey: ["/api/admin/system-health"] });
+  const { data: queueStats } = useQuery<QueueStats>({ queryKey: ["/api/admin/queue-stats"] });
+  const { data: clients } = useQuery<Client[]>({ queryKey: ["/api/admin/clients"] });
+  const { data: aiUsage } = useQuery<any>({ queryKey: ["/api/admin/ai-usage-summary"] });
+
+  const hasErrors = (health?.failedSourcesCount ?? 0) > 0;
+  const workerAge = health?.lastWorkerRun
+    ? Math.round((Date.now() - new Date(health.lastWorkerRun).getTime()) / 60000)
+    : null;
+  const workerOk = workerAge !== null && workerAge < 30;
+
+  const summaryCards = [
+    {
+      label: "Tenants",
+      value: clients?.length ?? 0,
+      sub: `${clients?.filter(c => c.active).length ?? 0} active`,
+      color: "text-blue-500 dark:text-blue-400",
+      bg: "bg-blue-500/10",
+      icon: Users,
+    },
+    {
+      label: "Queue",
+      value: (queueStats?.pending ?? 0) + (queueStats?.processing ?? 0),
+      sub: `${queueStats?.pending ?? 0} queued / ${queueStats?.processing ?? 0} running`,
+      color: "text-amber-500 dark:text-amber-400",
+      bg: "bg-amber-500/10",
+      icon: Activity,
+    },
+    {
+      label: "Completed",
+      value: queueStats?.completed ?? 0,
+      sub: `${queueStats?.failed ?? 0} failed`,
+      color: (queueStats?.failed ?? 0) > 0 ? "text-red-500 dark:text-red-400" : "text-green-500 dark:text-green-400",
+      bg: (queueStats?.failed ?? 0) > 0 ? "bg-red-500/10" : "bg-green-500/10",
+      icon: (queueStats?.failed ?? 0) > 0 ? AlertTriangle : CheckCircle,
+    },
+    {
+      label: "Workers",
+      value: workerOk ? "Healthy" : workerAge !== null ? `${workerAge}m ago` : "Unknown",
+      sub: hasErrors ? `${health?.failedSourcesCount} source errors` : "No issues",
+      color: workerOk ? "text-green-500 dark:text-green-400" : "text-amber-500 dark:text-amber-400",
+      bg: workerOk ? "bg-green-500/10" : "bg-amber-500/10",
+      icon: workerOk ? CheckCircle : Clock,
+    },
+  ];
+
+  const quickActions = [
+    { label: "Manage Tenants", href: "/users", icon: Users },
+    { label: "Queue Monitor", href: "/admin/ops", icon: Activity },
+    { label: "Source Health", href: "/sources/health", icon: Server },
+    { label: "Audit Logs", href: "/admin/dashboard", icon: Clock, tab: "logs" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {summaryCards.map((card) => (
+          <Card key={card.label}>
+            <CardContent className="p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{card.label}</p>
+                  <p className={`text-xl font-bold tabular-nums mt-0.5 ${card.color}`} data-testid={`metric-ops-${card.label.toLowerCase()}`}>
+                    {typeof card.value === "number" ? card.value.toLocaleString() : card.value}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">{card.sub}</p>
+                </div>
+                <div className={`p-2 rounded-md ${card.bg}`}>
+                  <card.icon className={`w-4 h-4 ${card.color}`} />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-medium text-muted-foreground mr-1">Quick actions:</span>
+        {quickActions.map((action) => (
+          <Button
+            key={action.label}
+            variant="outline"
+            size="sm"
+            onClick={() => setLocation(action.href)}
+            data-testid={`button-quick-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
+          >
+            <action.icon className="w-3.5 h-3.5 mr-1.5" />
+            {action.label}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const { t } = useTranslation();
   const { user } = useAuth();
@@ -1413,13 +1512,15 @@ export default function AdminDashboard() {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-admin-dashboard-title">
-          {t("Admin Dashboard")}
+        <h1 className="text-2xl font-bold text-foreground" data-testid="text-admin-dashboard-title">
+          Control Center
         </h1>
-        <p className="text-muted-foreground">{t("Manage sources, clients, users, settings, and monitor system health")}</p>
+        <p className="text-sm text-muted-foreground">Platform operations and management</p>
       </div>
+
+      <OperationsSummary />
 
       <Tabs defaultValue="sources" className="w-full">
         <TabsList className="w-full flex flex-wrap h-auto gap-1">

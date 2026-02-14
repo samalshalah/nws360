@@ -457,7 +457,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         <button
           onClick={() => logout()}
           data-testid="button-sign-out"
-          className="flex items-center gap-3 px-4 py-3 w-full text-sm font-medium text-muted-foreground rounded-xl hover:bg-destructive/10 hover:text-destructive transition-colors duration-200"
+          className="flex items-center gap-3 px-4 py-3 w-full text-sm font-medium text-muted-foreground rounded-xl hover-elevate"
         >
           <LogOut className="w-5 h-5" />
           {t("nav.signOut")}

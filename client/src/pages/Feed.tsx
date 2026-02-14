@@ -283,47 +283,33 @@ export default function Feed() {
   const activeSentiment = filters.sentiment || "all";
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl md:text-3xl font-display font-bold text-foreground" data-testid="text-feed-title">{t("feed.title")}</h1>
-            {isFetching && (
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                {currentLang !== "en" ? t("feed.translating") : t("common.loading")}
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            {articlesData && (
-              <Badge variant="secondary" className="text-xs" data-testid="badge-total-articles">
-                <Newspaper className="w-3 h-3 mr-1" />
-                {articlesData.total} {t("feed.articles")}
-              </Badge>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleExport}
-              data-testid="button-export"
-            >
-              <Download className="w-3.5 h-3.5 mr-1.5" />
-              {t("feed.export")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => reanalyzeMutation.mutate()}
-              disabled={reanalyzeMutation.isPending}
-              data-testid="button-reanalyze"
-            >
-              <RefreshCw className={cn("w-3.5 h-3.5 mr-1.5", reanalyzeMutation.isPending && "animate-spin")} />
-              {t("feed.reanalyze")}
-            </Button>
-          </div>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-xl font-bold text-foreground" data-testid="text-feed-title">{t("feed.title")}</h1>
+          {articlesData && (
+            <span className="text-xs text-muted-foreground tabular-nums" data-testid="badge-total-articles">
+              {articlesData.total} {t("feed.articles")}
+            </span>
+          )}
+          {isFetching && (
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+          )}
         </div>
-        <p className="text-muted-foreground">{t("feed.subtitle")}</p>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Button variant="ghost" size="icon" onClick={handleExport} data-testid="button-export">
+            <Download className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => reanalyzeMutation.mutate()}
+            disabled={reanalyzeMutation.isPending}
+            data-testid="button-reanalyze"
+          >
+            <RefreshCw className={cn("w-4 h-4", reanalyzeMutation.isPending && "animate-spin")} />
+          </Button>
+        </div>
       </div>
 
       <div className="space-y-4">
@@ -485,7 +471,6 @@ export default function Feed() {
             <Button
               size="icon"
               variant={layout === "grid" ? "default" : "ghost"}
-              className="h-8 w-8"
               onClick={() => { setLayout("grid"); localStorage.setItem("feed-layout", "grid"); }}
               data-testid="button-layout-grid"
             >
@@ -494,7 +479,6 @@ export default function Feed() {
             <Button
               size="icon"
               variant={layout === "list" ? "default" : "ghost"}
-              className="h-8 w-8"
               onClick={() => { setLayout("list"); localStorage.setItem("feed-layout", "list"); }}
               data-testid="button-layout-list"
             >

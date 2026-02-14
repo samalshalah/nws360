@@ -126,18 +126,16 @@ export default function Analytics() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-foreground" data-testid="text-analytics-title">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-xl font-bold text-foreground" data-testid="text-analytics-title">
             {t("analytics.title")}
           </h1>
-          <p className="text-muted-foreground text-sm">{t("analytics.subtitle")}</p>
+          <UpdatedAt timestamp={dataUpdatedAt ? new Date(dataUpdatedAt) : null} />
         </div>
-        <UpdatedAt timestamp={dataUpdatedAt ? new Date(dataUpdatedAt) : null} />
+        <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
       </div>
-
-      <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
@@ -205,7 +203,7 @@ export default function Analytics() {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
             <div className="flex items-center gap-1">
