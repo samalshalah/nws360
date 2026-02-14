@@ -13,7 +13,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Shield, ShieldOff, Trash2, UserPlus, Users, Crown, Info } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Shield, ShieldOff, Trash2, UserPlus, Users, Crown, Info, KeyRound } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { User } from "@shared/schema";
 
@@ -42,6 +43,8 @@ export default function UserManagement() {
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState("client");
   const [newClientId, setNewClientId] = useState("");
+  const [passwordResetUser, setPasswordResetUser] = useState<{ id: number; username: string } | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
 
   const { data: users, isLoading } = useQuery<(User & { parentId?: number | null })[]>({
     queryKey: ["/api/users"],
@@ -91,6 +94,20 @@ export default function UserManagement() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: t("common.error"), description: error.message });
+    },
+  });
+
+  const changePasswordMutation = useMutation({
+    mutationFn: async ({ id, password }: { id: number; password: string }) => {
+      await apiRequest("PATCH", `/api/users/${id}/password`, { password });
+    },
+    onSuccess: () => {
+      toast({ title: "Password updated successfully" });
+      setPasswordResetUser(null);
+      setResetPassword("");
     },
     onError: (error) => {
       toast({ variant: "destructive", title: t("common.error"), description: error.message });
@@ -300,6 +317,17 @@ export default function UserManagement() {
                                     )}
                                   </Button>
                                 )}
+                                {currentUser?.role === "admin" && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => { setPasswordResetUser({ id: u.id, username: u.username }); setResetPassword(""); }}
+                                    data-testid={`button-change-password-${u.id}`}
+                                  >
+                                    <KeyRound className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
+                                    Change Password
+                                  </Button>
+                                )}
                                 <Button
                                   variant="outline"
                                   size="sm"
@@ -361,6 +389,17 @@ export default function UserManagement() {
                                 )}
                               </Button>
                             )}
+                            {currentUser?.role === "admin" && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => { setPasswordResetUser({ id: u.id, username: u.username }); setResetPassword(""); }}
+                                data-testid={`button-change-password-mobile-${u.id}`}
+                              >
+                                <KeyRound className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
+                                Change Password
+                              </Button>
+                            )}
                             <Button
                               variant="outline"
                               size="sm"
@@ -383,6 +422,38 @@ export default function UserManagement() {
           )}
         </CardContent>
       </Card>
+      <Dialog open={!!passwordResetUser} onOpenChange={(open) => { if (!open) setPasswordResetUser(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Change Password for {passwordResetUser?.username}</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              type="password"
+              placeholder="New password"
+              value={resetPassword}
+              onChange={(e) => setResetPassword(e.target.value)}
+              data-testid="input-reset-password"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPasswordResetUser(null)} data-testid="button-cancel-password-reset">
+              Cancel
+            </Button>
+            <Button
+              disabled={!resetPassword.trim() || changePasswordMutation.isPending}
+              onClick={() => {
+                if (passwordResetUser) {
+                  changePasswordMutation.mutate({ id: passwordResetUser.id, password: resetPassword });
+                }
+              }}
+              data-testid="button-confirm-password-reset"
+            >
+              {changePasswordMutation.isPending ? "Updating..." : "Update Password"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

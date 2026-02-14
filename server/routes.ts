@@ -1445,6 +1445,25 @@ export async function registerRoutes(
     res.json({ id: updated.id, username: updated.username, role: updated.role, parentId: updated.parentId, createdAt: updated.createdAt });
   });
 
+  app.patch("/api/users/:id/password", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const currentUser = req.user as any;
+    if (!isSystemAdmin(currentUser)) {
+      return res.status(403).json({ message: "Only system admins can reset passwords" });
+    }
+    const id = parseInt(req.params.id);
+    if (id === currentUser.id) return res.status(400).json({ message: "Use your account settings to change your own password" });
+    const { password } = req.body;
+    if (!password || password.length < 4) return res.status(400).json({ message: "Password must be at least 4 characters" });
+    const targetUser = await storage.getUser(id);
+    if (!targetUser) return safeNotFound(res);
+    const salt = randomBytes(16).toString("hex");
+    const buf = (await scryptAsync(password, salt, 64)) as Buffer;
+    const hashedPassword = `${salt}:${buf.toString("hex")}`;
+    await storage.updateUserPassword(id, hashedPassword);
+    res.json({ message: "Password updated successfully" });
+  });
+
   app.delete("/api/users/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const currentUser = req.user as any;

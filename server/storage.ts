@@ -168,6 +168,7 @@ export interface IStorage {
   getUsersByParent(parentId: number | null): Promise<User[]>;
   getSourcesByUserId(userId: number): Promise<Source[]>;
   updateUserRole(id: number, role: string): Promise<User | undefined>;
+  updateUserPassword(id: number, hashedPassword: string): Promise<void>;
   deleteUser(id: number): Promise<void>;
 
   // Bulk article operations
@@ -1048,6 +1049,10 @@ export class DatabaseStorage implements IStorage {
   async updateUserRole(id: number, role: string): Promise<User | undefined> {
     const [user] = await db.update(users).set({ role }).where(eq(users.id, id)).returning();
     return user;
+  }
+
+  async updateUserPassword(id: number, hashedPassword: string): Promise<void> {
+    await db.update(users).set({ password: hashedPassword }).where(eq(users.id, id));
   }
 
   async deleteUser(id: number): Promise<void> {
