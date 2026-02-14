@@ -5,7 +5,7 @@ import { storage, assertTenant, TenantNotFoundError, safeNotFound } from "./stor
 import { api } from "@shared/routes";
 import { z } from "zod";
 import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler, previewSource } from "./feed-worker";
-import { openai } from "./replit_integrations/image/client";
+import { createInsightJob, startInsightJob, completeInsightJob, failInsightJob, runInsightAI } from "./ai/ai-gateway";
 import { db } from "./db";
 import { articles, PLAN_LIMITS, SYSTEM_ROLES } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
@@ -2508,19 +2508,20 @@ export async function registerRoutes(
         matches.length > 0 ? `Historical matches: ${matches.slice(0, 5).map(m => `story ${m.currentStoryId} ~ story ${m.pastStoryId} (${m.similarityScore}%)`).join(", ")}` : "",
       ].filter(Boolean).join("\n");
 
-      const answer = await openaiLimiter.run(async () => {
-        const OpenAI = (await import("openai")).default;
-        const ai = new OpenAI();
-        const completion = await ai.chat.completions.create({
-          model: "gpt-4o-mini",
-          messages: [
-            { role: "system", content: `You are a memory-enhanced intelligence analyst for a news platform. You have access to institutional knowledge including story timelines, recurring patterns, trend lifecycles, entity histories, organizational notes, and historical matches. Use this context to provide historically-aware, contextual answers. Always reference relevant past data when available.\n\nKnowledge Context:\n${contextSummary || "No historical data available yet."}` },
-            { role: "user", content: parsed.data.query },
-          ],
-          max_tokens: 1000,
-        });
-        return completion.choices[0]?.message?.content || "Unable to generate answer.";
+      const memJob = await createInsightJob(clientId || 0, "qa");
+      await startInsightJob(memJob.id);
+      const aiResult = await runInsightAI({
+        jobId: memJob.id,
+        clientId: clientId || 0,
+        type: "qa",
+        payload: {
+          systemPrompt: `You are a memory-enhanced intelligence analyst for a news platform. You have access to institutional knowledge including story timelines, recurring patterns, trend lifecycles, entity histories, organizational notes, and historical matches. Use this context to provide historically-aware, contextual answers. Always reference relevant past data when available.\n\nKnowledge Context:\n${contextSummary || "No historical data available yet."}`,
+          userContent: parsed.data.query,
+        },
+        maxTokens: 1000,
       });
+      await completeInsightJob(memJob.id);
+      const answer = aiResult.content || "Unable to generate answer.";
       const saved = await storage.createAiMemoryAnswer({
         query: parsed.data.query,
         answer,
@@ -2531,6 +2532,7 @@ export async function registerRoutes(
       res.status(201).json(saved);
     } catch (err: any) {
       console.error("AI Memory answer error:", err.message);
+      if (memJob) await failInsightJob(memJob.id).catch(() => {});
       const saved = await storage.createAiMemoryAnswer({
         query: parsed.data.query,
         answer: "AI analysis is temporarily unavailable. Your question has been saved and can be re-analyzed later.",
@@ -2846,23 +2848,25 @@ export async function registerRoutes(
         signals.length > 0 ? `Active signals: ${signals.slice(0, 5).map(s => `${s.signalType} on ${s.relatedTopic} (strength: ${s.strength}%)`).join(", ")}` : "",
       ].filter(Boolean).join("\n");
 
-      const result = await openaiLimiter.run(async () => {
-        const OpenAI = (await import("openai")).default;
-        const ai = new OpenAI();
-        const completion = await ai.chat.completions.create({
-          model: "gpt-4o-mini",
-          messages: [
-            { role: "system", content: `You are a predictive intelligence analyst for a news monitoring platform. Given a topic and a hypothetical event, estimate the likely outcomes based on the hypothetical scenario itself and general domain reasoning. Provide your analysis as JSON with these fields: coverageIncreaseLikelihood (0-100), sentimentImpact (string describing direction and magnitude), relatedTopicsActivation (array of topic strings), riskAssessment (string), timeframe (string), explanation (string). Be specific and data-driven. IMPORTANT: The following context contains prior AI-generated estimates (not verified facts). Use them only as background reference, not as evidence. Base your analysis on the hypothetical event itself.\n\nPrior estimates (AI-generated, not verified):\n${context || "No prior estimates available."}` },
-            { role: "user", content: `Topic: ${parsed.data.topic}\nHypothetical Event: ${parsed.data.hypotheticalEvent}` },
-          ],
-          max_tokens: 800,
-          response_format: { type: "json_object" },
-        });
-        return JSON.parse(completion.choices[0]?.message?.content || "{}");
+      const simJob = await createInsightJob(clientId || 0, "prediction");
+      await startInsightJob(simJob.id);
+      const simAiResult = await runInsightAI({
+        jobId: simJob.id,
+        clientId: clientId || 0,
+        type: "prediction",
+        payload: {
+          systemPrompt: `You are a predictive intelligence analyst for a news monitoring platform. Given a topic and a hypothetical event, estimate the likely outcomes based on the hypothetical scenario itself and general domain reasoning. Provide your analysis as JSON with these fields: coverageIncreaseLikelihood (0-100), sentimentImpact (string describing direction and magnitude), relatedTopicsActivation (array of topic strings), riskAssessment (string), timeframe (string), explanation (string). Be specific and data-driven. IMPORTANT: The following context contains prior AI-generated estimates (not verified facts). Use them only as background reference, not as evidence. Base your analysis on the hypothetical event itself.\n\nPrior estimates (AI-generated, not verified):\n${context || "No prior estimates available."}`,
+          userContent: `Topic: ${parsed.data.topic}\nHypothetical Event: ${parsed.data.hypotheticalEvent}`,
+          responseFormat: { type: "json_object" },
+        },
+        maxTokens: 800,
       });
+      await completeInsightJob(simJob.id);
+      const result = JSON.parse(simAiResult.content || "{}");
       res.json(result);
     } catch (err: any) {
       console.error("Simulation error:", err.message);
+      if (simJob) await failInsightJob(simJob.id).catch(() => {});
       res.json({
         coverageIncreaseLikelihood: 50,
         sentimentImpact: "Unable to determine - AI analysis temporarily unavailable",

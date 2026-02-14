@@ -96,6 +96,9 @@ import {
   type UserPermissionGroup, type InsertUserPermissionGroup,
   type UserPermission, type InsertUserPermission,
   type ImpersonationLog, type InsertImpersonationLog,
+  insightJobs, aiUsageLog,
+  type InsightJob, type InsertInsightJob,
+  type AiUsageLog, type InsertAiUsageLog,
 } from "@shared/schema";
 import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
@@ -631,6 +634,12 @@ export interface IStorage {
   // Impersonation Logs
   createImpersonationLog(data: InsertImpersonationLog): Promise<ImpersonationLog>;
   getImpersonationLogs(params?: { adminUserId?: number; limit?: number }): Promise<ImpersonationLog[]>;
+
+  // Insight Jobs (AI Cost Control)
+  createInsightJob(data: InsertInsightJob): Promise<InsightJob>;
+  getInsightJob(id: number): Promise<InsightJob | undefined>;
+  updateInsightJobStatus(id: number, status: string, extra?: Partial<InsightJob>): Promise<InsightJob | undefined>;
+  createAiUsageLog(data: InsertAiUsageLog): Promise<AiUsageLog>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -3677,6 +3686,28 @@ export class DatabaseStorage implements IStorage {
     }
     await db.execute(sql`SELECT setval(pg_get_serial_sequence('clients', 'id'), GREATEST((SELECT MAX(id) FROM clients), 9001))`);
     console.log("[Seed] SYSTEM and DEMO clients ensured");
+  }
+
+  // Insight Jobs (AI Cost Control)
+  async createInsightJob(data: InsertInsightJob): Promise<InsightJob> {
+    const [job] = await db.insert(insightJobs).values(data).returning();
+    return job;
+  }
+
+  async getInsightJob(id: number): Promise<InsightJob | undefined> {
+    const [job] = await db.select().from(insightJobs).where(eq(insightJobs.id, id));
+    return job;
+  }
+
+  async updateInsightJobStatus(id: number, status: string, extra?: Partial<InsightJob>): Promise<InsightJob | undefined> {
+    const updates: any = { status, ...extra };
+    const [job] = await db.update(insightJobs).set(updates).where(eq(insightJobs.id, id)).returning();
+    return job;
+  }
+
+  async createAiUsageLog(data: InsertAiUsageLog): Promise<AiUsageLog> {
+    const [log] = await db.insert(aiUsageLog).values(data).returning();
+    return log;
   }
 
 }

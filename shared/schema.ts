@@ -1678,6 +1678,44 @@ export type UpdateSourceRequest = Partial<InsertSource>;
 
 export type CreateKeywordRequest = InsertKeyword;
 
+// === INSIGHT JOBS (AI Cost Control) ===
+export const insightJobs = pgTable("insight_jobs", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull(),
+  type: text("type").notNull(),
+  status: text("status").notNull().default("queued"),
+  createdAt: timestamp("created_at").defaultNow(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  expiresAt: timestamp("expires_at").notNull(),
+}, (table) => [
+  index("idx_insight_jobs_client").on(table.clientId),
+  index("idx_insight_jobs_status").on(table.status),
+]);
+
+export const insertInsightJobSchema = createInsertSchema(insightJobs).omit({ id: true, createdAt: true, startedAt: true, completedAt: true });
+export type InsightJob = typeof insightJobs.$inferSelect;
+export type InsertInsightJob = z.infer<typeof insertInsightJobSchema>;
+
+export const aiUsageLog = pgTable("ai_usage_log", {
+  id: serial("id").primaryKey(),
+  jobId: integer("job_id").notNull(),
+  clientId: integer("client_id").notNull(),
+  type: text("type").notNull(),
+  model: text("model").notNull(),
+  promptTokens: integer("prompt_tokens").default(0),
+  completionTokens: integer("completion_tokens").default(0),
+  totalTokens: integer("total_tokens").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_ai_usage_client").on(table.clientId),
+  index("idx_ai_usage_job").on(table.jobId),
+]);
+
+export const insertAiUsageLogSchema = createInsertSchema(aiUsageLog).omit({ id: true, createdAt: true });
+export type AiUsageLog = typeof aiUsageLog.$inferSelect;
+export type InsertAiUsageLog = z.infer<typeof insertAiUsageLogSchema>;
+
 export interface ArticleQueryParams {
   search?: string;
   sourceId?: number;

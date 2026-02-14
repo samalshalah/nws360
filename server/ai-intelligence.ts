@@ -1,5 +1,5 @@
 import { storage } from "./storage";
-import { openai } from "./replit_integrations/image/client";
+import { createInsightJob, startInsightJob, completeInsightJob, failInsightJob, runInsightAI } from "./ai/ai-gateway";
 import type { Article, InsertArticleAiAnalysis, InsertEntityMention, InsertDetectedEvent, InsertTrendPrediction } from "@shared/schema";
 
 function truncate(text: string, maxLen: number): string {
@@ -8,14 +8,17 @@ function truncate(text: string, maxLen: number): string {
 }
 
 export async function deepAnalyzeArticle(article: Article): Promise<InsertArticleAiAnalysis | null> {
+  const effectiveClientId = article.clientId || 0;
+  const job = await createInsightJob(effectiveClientId, "classification");
+  await startInsightJob(job.id);
   try {
     const textToAnalyze = truncate(`${article.title}. ${article.content || ""}`, 3000);
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are a news intelligence analyst. Analyze this article and return JSON with:
+    const aiResult = await runInsightAI({
+      jobId: job.id,
+      clientId: effectiveClientId,
+      type: "classification",
+      payload: {
+        systemPrompt: `You are a news intelligence analyst. Analyze this article and return JSON with:
 "main_topic": primary topic (1-3 words),
 "subtopics": array of 2-4 related subtopics,
 "entities": array of objects with {"name", "type"} where type is "person", "organization", "location", or "other",
@@ -23,15 +26,15 @@ export async function deepAnalyzeArticle(article: Article): Promise<InsertArticl
 "importance_score": 0-100 integer rating newsworthiness,
 "narrative_summary": 2-3 sentences explaining what actually happened and its significance (interpret, don't paraphrase),
 "confidence_score": 0-100 your confidence in this analysis.
-Respond ONLY with valid JSON.`
-        },
-        { role: "user", content: textToAnalyze },
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 800,
+Respond ONLY with valid JSON.`,
+        userContent: textToAnalyze,
+        responseFormat: { type: "json_object" },
+      },
+      maxTokens: 800,
     });
 
-    const result = JSON.parse(completion.choices[0].message.content || "{}");
+    const result = JSON.parse(aiResult.content || "{}");
+    await completeInsightJob(job.id);
 
     return {
       articleId: article.id,
@@ -46,6 +49,7 @@ Respond ONLY with valid JSON.`
     };
   } catch (e) {
     console.error(`[AI Intelligence] Deep analysis failed for article ${article.id}:`, e);
+    await failInsightJob(job.id);
     return null;
   }
 }
@@ -125,25 +129,27 @@ export async function clusterArticles(clientId?: number | null): Promise<number>
   }
 
   if (unclustered.length >= 3) {
+    const effectiveClientId = (clientId ?? unclustered[0]?.article.clientId) || 0;
+    const clusterJob = await createInsightJob(effectiveClientId, "classification");
+    await startInsightJob(clusterJob.id);
     try {
       const summaries = unclustered.slice(0, 20).map((e, i) =>
         `[${i}] Topic: ${e.analysis.mainTopic} | Title: ${e.article.title}`
       ).join("\n");
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `Group these articles by related real-world events. Return JSON: {"groups": [{"indices": [0,2,5], "topic": "shared topic name"}]}. Only group articles about the SAME event or closely related developments. Articles that don't belong to any group should be omitted.`
-          },
-          { role: "user", content: summaries },
-        ],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 500,
+      const aiResult = await runInsightAI({
+        jobId: clusterJob.id,
+        clientId: effectiveClientId,
+        type: "classification",
+        payload: {
+          systemPrompt: `Group these articles by related real-world events. Return JSON: {"groups": [{"indices": [0,2,5], "topic": "shared topic name"}]}. Only group articles about the SAME event or closely related developments. Articles that don't belong to any group should be omitted.`,
+          userContent: summaries,
+          responseFormat: { type: "json_object" },
+        },
+        maxTokens: 500,
       });
 
-      const result = JSON.parse(completion.choices[0].message.content || "{}");
+      const result = JSON.parse(aiResult.content || "{}");
       if (Array.isArray(result.groups)) {
         for (const group of result.groups) {
           if (Array.isArray(group.indices) && group.indices.length >= 2) {
@@ -156,8 +162,10 @@ export async function clusterArticles(clientId?: number | null): Promise<number>
           }
         }
       }
+      await completeInsightJob(clusterJob.id);
     } catch (e) {
       console.error("[AI Intelligence] AI clustering failed:", e);
+      await failInsightJob(clusterJob.id);
     }
   }
 
@@ -220,31 +228,35 @@ export async function analyzeNarratives(clusterId: number): Promise<any> {
     summary: truncate(a.summary || a.content, 200),
   }));
 
+  const effectiveClientId = (cluster as any).clientId || 0;
+  const job = await createInsightJob(effectiveClientId, "summary");
+  await startInsightJob(job.id);
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `Analyze how different sources cover the same story. Return JSON with:
+    const aiResult = await runInsightAI({
+      jobId: job.id,
+      clientId: effectiveClientId,
+      type: "summary",
+      payload: {
+        systemPrompt: `Analyze how different sources cover the same story. Return JSON with:
 "variations": array of {"source": name, "framing": "positive"|"neutral"|"negative"|"mixed", "emphasis": what they emphasize, "tone": brief description},
 "consensus": what all sources agree on,
 "divergence": key areas of disagreement,
-"confidence_score": 0-100`
-        },
-        { role: "user", content: JSON.stringify(articleSummaries) },
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 600,
+"confidence_score": 0-100`,
+        userContent: JSON.stringify(articleSummaries),
+        responseFormat: { type: "json_object" },
+      },
+      maxTokens: 600,
     });
 
-    const result = JSON.parse(completion.choices[0].message.content || "{}");
+    const result = JSON.parse(aiResult.content || "{}");
     await storage.updateStoryCluster(clusterId, {
       narrativeVariations: result,
     });
+    await completeInsightJob(job.id);
     return result;
   } catch (e) {
     console.error(`[AI Intelligence] Narrative analysis failed for cluster ${clusterId}:`, e);
+    await failInsightJob(job.id);
     return null;
   }
 }
@@ -388,27 +400,29 @@ export async function generateDailyBrief(clientId?: number | null): Promise<any>
     })),
   };
 
+  const effectiveClientId = clientId || 0;
+  const job = await createInsightJob(effectiveClientId, "brief");
+  await startInsightJob(job.id);
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are a senior intelligence analyst writing a daily briefing. Write a professional, insightful brief that reads like an analyst report — NOT bullet points. Return JSON with:
+    const aiResult = await runInsightAI({
+      jobId: job.id,
+      clientId: effectiveClientId,
+      type: "brief",
+      payload: {
+        systemPrompt: `You are a senior intelligence analyst writing a daily briefing. Write a professional, insightful brief that reads like an analyst report — NOT bullet points. Return JSON with:
 "content": the full briefing text (3-5 paragraphs, professional analyst tone),
 "major_developments": array of {title, summary} for top 3-5 stories,
 "emerging_topics": array of topic strings that are gaining attention,
 "tone_shifts": array of {topic, direction, explanation} for any notable sentiment changes,
 "key_stories": array of article titles that are most significant.
-Make the content insightful and interpretive, not just a recap.`
-        },
-        { role: "user", content: JSON.stringify(briefInput) },
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 1500,
+Make the content insightful and interpretive, not just a recap.`,
+        userContent: JSON.stringify(briefInput),
+        responseFormat: { type: "json_object" },
+      },
+      maxTokens: 1500,
     });
 
-    const result = JSON.parse(completion.choices[0].message.content || "{}");
+    const result = JSON.parse(aiResult.content || "{}");
     const sources = new Set(topArticles.map(a => a.sourceId).filter(Boolean));
 
     const brief = await storage.upsertDailyBrief({
@@ -425,9 +439,11 @@ Make the content insightful and interpretive, not just a recap.`
     });
 
     console.log(`[AI Intelligence] Generated daily brief for ${today}`);
+    await completeInsightJob(job.id);
     return brief;
   } catch (e) {
     console.error("[AI Intelligence] Daily brief generation failed:", e);
+    await failInsightJob(job.id);
     return null;
   }
 }
@@ -453,13 +469,16 @@ export async function generateTrendPredictions(clientId?: number | null): Promis
     })),
   };
 
+  const effectiveClientId = clientId || 0;
+  const job = await createInsightJob(effectiveClientId, "prediction");
+  await startInsightJob(job.id);
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `Based on recent news patterns, generate trend predictions. Return JSON with:
+    const aiResult = await runInsightAI({
+      jobId: job.id,
+      clientId: effectiveClientId,
+      type: "prediction",
+      payload: {
+        systemPrompt: `Based on recent news patterns, generate trend predictions. Return JSON with:
 "predictions": array of {
   "topic": the topic/entity,
   "prediction_type": one of "escalation", "attention_decay", "media_amplification", "sentiment_shift",
@@ -468,15 +487,14 @@ export async function generateTrendPredictions(clientId?: number | null): Promis
   "timeframe": "24h" | "48h" | "1_week",
   "confidence_score": 0-100
 }
-Generate 3-5 most likely predictions based on the data.`
-        },
-        { role: "user", content: JSON.stringify(trendInput) },
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 800,
+Generate 3-5 most likely predictions based on the data.`,
+        userContent: JSON.stringify(trendInput),
+        responseFormat: { type: "json_object" },
+      },
+      maxTokens: 800,
     });
 
-    const result = JSON.parse(completion.choices[0].message.content || "{}");
+    const result = JSON.parse(aiResult.content || "{}");
     const predictions: InsertTrendPrediction[] = [];
 
     if (Array.isArray(result.predictions)) {
@@ -501,9 +519,11 @@ Generate 3-5 most likely predictions based on the data.`
     }
 
     console.log(`[AI Intelligence] Generated ${predictions.length} trend predictions`);
+    await completeInsightJob(job.id);
     return predictions.length;
   } catch (e) {
     console.error("[AI Intelligence] Trend predictions failed:", e);
+    await failInsightJob(job.id);
     return 0;
   }
 }
@@ -544,27 +564,27 @@ export async function answerIntelligenceQuery(question: string, clientId?: numbe
 
   const uniqueSources = new Set(recentArticles.items.map(a => a.sourceId).filter(Boolean));
 
+  const effectiveClientId = clientId || 0;
+  const job = await createInsightJob(effectiveClientId, "qa");
+  await startInsightJob(job.id);
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are an intelligence analyst assistant. Answer user questions using ONLY the provided ground-truth data (articles, entities, events). Do NOT use external knowledge. Do NOT speculate beyond what the data shows. If the data doesn't contain enough info to answer, say so honestly. Be specific, cite sources when possible, and give actionable insights. Return JSON with:
+    const aiResult = await runInsightAI({
+      jobId: job.id,
+      clientId: effectiveClientId,
+      type: "qa",
+      payload: {
+        systemPrompt: `You are an intelligence analyst assistant. Answer user questions using ONLY the provided ground-truth data (articles, entities, events). Do NOT use external knowledge. Do NOT speculate beyond what the data shows. If the data doesn't contain enough info to answer, say so honestly. Be specific, cite sources when possible, and give actionable insights. Return JSON with:
 "answer": your detailed answer (2-4 paragraphs),
 "sources": array of source names referenced,
-"confidence": 0-100 how confident you are in this answer based on available data`
-        },
-        {
-          role: "user",
-          content: `Question: ${question}\n\nAvailable Data:\n${JSON.stringify(context)}`,
-        },
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 1000,
+"confidence": 0-100 how confident you are in this answer based on available data`,
+        userContent: `Question: ${question}\n\nAvailable Data:\n${JSON.stringify(context)}`,
+        responseFormat: { type: "json_object" },
+      },
+      maxTokens: 1000,
     });
 
-    const result = JSON.parse(completion.choices[0].message.content || "{}");
+    const result = JSON.parse(aiResult.content || "{}");
+    await completeInsightJob(job.id);
     return {
       answer: result.answer || "Unable to generate an answer from available data.",
       sources: Array.isArray(result.sources) ? result.sources : [],
@@ -574,6 +594,7 @@ export async function answerIntelligenceQuery(question: string, clientId?: numbe
     };
   } catch (e) {
     console.error("[AI Intelligence] Query failed:", e);
+    await failInsightJob(job.id);
     return {
       answer: "An error occurred while processing your question. Please try again.",
       sources: [],
