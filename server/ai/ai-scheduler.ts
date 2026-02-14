@@ -98,9 +98,9 @@ async function promoteAndExecute(metrics: SchedulerTickMetrics): Promise<void> {
   const eligibleTenants = new Set<number>();
   const jobsToExecute: InsightJob[] = [];
 
-  for (const client of allClients) {
-    if (tickBudget <= 0) break;
+  const tenantQueues: Map<number, InsightJob[]> = new Map();
 
+  for (const client of allClients) {
     const budgetCheck = await checkClientAiBudget(client.id);
 
     if (!budgetCheck.allowed) {
@@ -109,20 +109,44 @@ async function promoteAndExecute(metrics: SchedulerTickMetrics): Promise<void> {
       continue;
     }
 
-    const queuedJobs = await storage.getQueuedJobsByTenant(client.id, tickBudget);
+    const queuedJobs = await storage.getQueuedJobsByTenant(client.id, MAX_JOBS_PER_TICK);
     if (queuedJobs.length === 0) continue;
 
-    console.log(`[AI Scheduler] DEBUG: client=${client.id} (${client.name}) has ${queuedJobs.length} queued, tickBudget=${tickBudget}, jobIds=[${queuedJobs.map(j => j.id).join(",")}]`);
+    tenantQueues.set(client.id, queuedJobs);
     eligibleTenants.add(client.id);
+  }
 
-    for (const job of queuedJobs) {
-      if (tickBudget <= 0) break;
+  if (tenantQueues.size > 0) {
+    const tenantIds = Array.from(tenantQueues.keys());
+    const tenantCursors = new Map<number, number>();
+    for (const id of tenantIds) tenantCursors.set(id, 0);
 
-      const perJobBudget = await checkClientAiBudget(client.id);
+    const exhausted = new Set<number>();
+    let roundRobinIdx = 0;
+
+    while (tickBudget > 0 && exhausted.size < tenantIds.length) {
+      const clientId = tenantIds[roundRobinIdx % tenantIds.length];
+      roundRobinIdx++;
+
+      if (exhausted.has(clientId)) continue;
+
+      const queue = tenantQueues.get(clientId)!;
+      const cursor = tenantCursors.get(clientId)!;
+
+      if (cursor >= queue.length) {
+        exhausted.add(clientId);
+        continue;
+      }
+
+      const job = queue[cursor];
+      tenantCursors.set(clientId, cursor + 1);
+
+      const perJobBudget = await checkClientAiBudget(clientId);
       if (!perJobBudget.allowed) {
         await storage.updateInsightJobStatus(job.id, "blocked_budget");
         metrics.jobsBlocked++;
-        break;
+        exhausted.add(clientId);
+        continue;
       }
 
       const promoted = await storage.updateInsightJobIfStatus(job.id, "queued", "scheduled");
@@ -132,6 +156,11 @@ async function promoteAndExecute(metrics: SchedulerTickMetrics): Promise<void> {
         metrics.jobsScheduled++;
       }
     }
+
+    tenantQueues.forEach((queue, clientId) => {
+      const cursor = tenantCursors.get(clientId)!;
+      console.log(`[AI Scheduler] DEBUG: client=${clientId} promoted ${cursor}/${queue.length} queued, tickBudget remaining=${tickBudget}`);
+    });
   }
 
   metrics.activeTenants = eligibleTenants.size;
