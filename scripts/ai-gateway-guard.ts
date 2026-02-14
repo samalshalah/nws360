@@ -5,9 +5,7 @@ const APPROVED_FILES = new Set([
   "server/ai/ai-gateway.ts",
 ]);
 
-const APPROVED_DIRS = [
-  "server/replit_integrations/",
-];
+const APPROVED_DIRS: string[] = [];
 
 const PATTERNS = [
   { regex: /from\s+["']openai["']/g, label: 'import from "openai"' },
