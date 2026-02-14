@@ -205,6 +205,34 @@ export async function registerRoutes(
 ): Promise<Server> {
   setupAuth(app);
 
+  if (process.env.NODE_ENV === "production") {
+    app.use("/replit_integrations", (_req, res) => res.sendStatus(404));
+    app.use("/api/replit_integrations", (_req, res) => res.sendStatus(404));
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    // AI_BYPASS_TEST_START
+    app.get("/dev/ai-bypass-test", async (_req, res) => {
+      try {
+        const OpenAI = (await import("openai")).default;
+        const ai = new OpenAI();
+        const completion = await ai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: "say ok" }],
+          max_tokens: 3,
+        });
+        if (completion.choices[0]?.message?.content) {
+          res.json({ ok: true, blocked: false, error: null });
+        } else {
+          res.json({ ok: false, blocked: true, error: "No completion returned" });
+        }
+      } catch (err: any) {
+        res.json({ ok: false, blocked: true, error: err.message || "Direct AI call blocked. Use ai-gateway." });
+      }
+    });
+    // AI_BYPASS_TEST_END
+  }
+
   app.use("/api/", apiLimiter);
   app.use("/api/login", authLimiter);
   app.use("/api/register", authLimiter);
