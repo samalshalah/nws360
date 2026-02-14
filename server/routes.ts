@@ -1774,10 +1774,13 @@ export async function registerRoutes(
 
   // === ADMIN: TRIGGER ANALYTICS COMPUTATION ===
   app.post("/api/admin/compute-analytics", async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+    if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
+    const clientId = resolveClientId(user, req);
     console.log(`[Analytics] Manual computation triggered by user ${user.id}`);
-    await storage.createAuditLog({ userId: user.id, action: "compute_analytics", entity: "analytics_cache", details: "Triggered analytics computation (background)" });
+    try {
+      await storage.createAuditLog({ userId: user.id, action: "compute_analytics", entity: "analytics_cache", details: "Triggered analytics computation (background)", clientId: clientId || user.clientId || 0 });
+    } catch (e) {}
     runAnalyticsComputation()
       .then(result => {
         console.log(`[Analytics] Manual computation complete: ${result.success ? "success" : "failed"}`);
@@ -3023,7 +3026,7 @@ export async function registerRoutes(
   });
 
   app.post("/api/admin/run-intelligence", async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+    if (!req.isAuthenticated()) return res.sendStatus(401);
     runIntelligencePipeline().catch(e => console.error("[Intelligence Pipeline] Error:", e));
     res.json({ message: "Intelligence pipeline started" });
   });
