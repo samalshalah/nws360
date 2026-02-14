@@ -640,6 +640,7 @@ export interface IStorage {
   getInsightJob(id: number): Promise<InsightJob | undefined>;
   updateInsightJobStatus(id: number, status: string, extra?: Partial<InsightJob>): Promise<InsightJob | undefined>;
   createAiUsageLog(data: InsertAiUsageLog): Promise<AiUsageLog>;
+  getDailyAiUsage(clientId: number): Promise<{ totalTokens: number; jobCount: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -3708,6 +3709,26 @@ export class DatabaseStorage implements IStorage {
   async createAiUsageLog(data: InsertAiUsageLog): Promise<AiUsageLog> {
     const [log] = await db.insert(aiUsageLog).values(data).returning();
     return log;
+  }
+
+  async getDailyAiUsage(clientId: number): Promise<{ totalTokens: number; jobCount: number }> {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const result = await db.select({
+      totalTokens: sql<number>`COALESCE(SUM(${aiUsageLog.totalTokens}), 0)`,
+      jobCount: sql<number>`COUNT(*)`,
+    })
+      .from(aiUsageLog)
+      .where(and(
+        eq(aiUsageLog.clientId, clientId),
+        gte(aiUsageLog.createdAt, todayStart),
+      ));
+
+    return {
+      totalTokens: Number(result[0]?.totalTokens ?? 0),
+      jobCount: Number(result[0]?.jobCount ?? 0),
+    };
   }
 
 }

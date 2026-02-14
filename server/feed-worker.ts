@@ -583,14 +583,13 @@ async function processItems(
       engagementComments: item.engagementComments ?? null,
       engagementShares: item.engagementShares ?? null,
       clientId: source.clientId ?? null,
-      aiAnalysisStatus: "pending" as const,
+      aiAnalysisStatus: "skipped" as const,
       aiRetryCount: 0,
     };
 
     try {
       const created = await storage.createArticle(article);
       newArticles++;
-      await enqueueJob("ANALYZE_ARTICLE", { articleId: created.id }, { maxAttempts: 3 });
     } catch (e) {
       console.error(`[Worker] STORE failed for article: ${item.url}`, e);
     }

@@ -28,7 +28,37 @@ export interface InsightAIResult {
 
 const DEFAULT_EXPIRY_MS = 10 * 60 * 1000;
 
+export async function checkClientAiBudget(clientId: number): Promise<{ allowed: boolean; reason?: string }> {
+  const client = await storage.getClient(clientId);
+  if (!client) return { allowed: false, reason: "Client not found" };
+  if (!client.aiEnabled) return { allowed: false, reason: `AI disabled for client ${client.name} (id=${clientId})` };
+
+  const budget = client.dailyTokenBudget ?? 0;
+  const limit = client.dailyJobLimit ?? 0;
+
+  if (budget <= 0 && limit <= 0) {
+    return { allowed: false, reason: `Client ${clientId} has no AI budget configured (dailyTokenBudget=0, dailyJobLimit=0)` };
+  }
+
+  const usage = await storage.getDailyAiUsage(clientId);
+
+  if (limit > 0 && usage.jobCount >= limit) {
+    return { allowed: false, reason: `Daily job limit reached: ${usage.jobCount}/${limit}` };
+  }
+  if (budget > 0 && usage.totalTokens >= budget) {
+    return { allowed: false, reason: `Daily token budget exhausted: ${usage.totalTokens}/${budget}` };
+  }
+
+  return { allowed: true };
+}
+
 export async function createInsightJob(clientId: number, type: InsightType): Promise<InsightJob> {
+  const budgetCheck = await checkClientAiBudget(clientId);
+  if (!budgetCheck.allowed) {
+    console.warn(`[AI Gateway] Job rejected for client ${clientId}: ${budgetCheck.reason}`);
+    throw new Error(`[AI Gateway] Budget rejected: ${budgetCheck.reason}`);
+  }
+
   const expiresAt = new Date(Date.now() + DEFAULT_EXPIRY_MS);
   return storage.createInsightJob({ clientId, type, status: "queued", expiresAt });
 }

@@ -11,6 +11,9 @@ export const clients = pgTable("clients", {
   defaultLanguage: text("default_language").default("en"),
   active: boolean("active").default(true),
   allowedRegions: text("allowed_regions").array(),
+  aiEnabled: boolean("ai_enabled").default(false),
+  dailyTokenBudget: integer("daily_token_budget").default(0),
+  dailyJobLimit: integer("daily_job_limit").default(0),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -88,7 +91,7 @@ export const articles = pgTable("articles", {
   engagementShares: integer("engagement_shares"),
   clientId: integer("client_id").notNull(),
   crossPosts: jsonb("cross_posts").$type<{ platform: string; url: string; sourceId: number }[]>().default([]),
-  aiAnalysisStatus: text("ai_analysis_status").default("success"),
+  aiAnalysisStatus: text("ai_analysis_status").default("skipped"),
   aiRetryCount: integer("ai_retry_count").default(0),
   aiLastRetryAt: timestamp("ai_last_retry_at"),
   createdAt: timestamp("created_at").defaultNow(),

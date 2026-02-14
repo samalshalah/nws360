@@ -5,7 +5,7 @@ import { storage, assertTenant, TenantNotFoundError, safeNotFound } from "./stor
 import { api } from "@shared/routes";
 import { z } from "zod";
 import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler, previewSource } from "./feed-worker";
-import { createInsightJob, startInsightJob, completeInsightJob, failInsightJob, runInsightAI } from "./ai/ai-gateway";
+import { createInsightJob, startInsightJob, completeInsightJob, failInsightJob, runInsightAI, checkClientAiBudget } from "./ai/ai-gateway";
 import { db } from "./db";
 import { articles, PLAN_LIMITS, SYSTEM_ROLES } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
@@ -1121,10 +1121,18 @@ export async function registerRoutes(
     try {
       const user = req.user as any;
       const clientId = resolveClientId(user, req);
+
+      if (!clientId) return res.status(400).json({ success: false, message: "No client context" });
+
+      const budgetCheck = await checkClientAiBudget(clientId);
+      if (!budgetCheck.allowed) {
+        return res.status(403).json({ success: false, message: `AI analysis blocked: ${budgetCheck.reason}` });
+      }
+
       const scopedSourceIds = await getUserSourceIds(user);
       const allArticles = await storage.getArticles({ limit: 500, sourceIds: scopedSourceIds, clientId: clientId || undefined });
       const unanalyzed = allArticles.items.filter(
-        a => (!a.sentimentLabel || a.sentimentLabel === "neutral") && a.sentimentScore === 0 && (!a.keywords || a.keywords.length === 0)
+        a => a.aiAnalysisStatus === "skipped" || ((!a.sentimentLabel || a.sentimentLabel === "neutral") && a.sentimentScore === 0 && (!a.keywords || a.keywords.length === 0))
       );
       
       const toEnqueue = unanalyzed.slice(0, 100);
@@ -1133,6 +1141,11 @@ export async function registerRoutes(
 
       for (const article of toEnqueue) {
         try {
+          const innerBudget = await checkClientAiBudget(clientId);
+          if (!innerBudget.allowed) {
+            console.warn(`[Reanalyze] Budget exhausted mid-batch after ${enqueued} articles: ${innerBudget.reason}`);
+            break;
+          }
           await db.update(articles)
             .set({ aiAnalysisStatus: "pending" })
             .where(eq(articles.id, article.id));
@@ -1616,7 +1629,7 @@ export async function registerRoutes(
     const user = req.user as any;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid client ID" });
-    const allowedFields = ['name', 'organizationType', 'defaultLanguage', 'active', 'allowedRegions'] as const;
+    const allowedFields = ['name', 'organizationType', 'defaultLanguage', 'active', 'allowedRegions', 'aiEnabled', 'dailyTokenBudget', 'dailyJobLimit'] as const;
     const cleanUpdates: Record<string, any> = {};
     for (const key of allowedFields) {
       if (key in req.body && req.body[key] !== undefined) cleanUpdates[key] = req.body[key];
@@ -1635,6 +1648,39 @@ export async function registerRoutes(
     await storage.deleteClient(id);
     await storage.createAuditLog({ userId: user.id, action: "deactivate", entity: "client", entityId: id, details: `Deactivated client #${id}` });
     res.sendStatus(204);
+  });
+
+  // === ADMIN: CLIENT AI CONFIG ===
+  app.put("/api/admin/clients/:id/ai-config", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid client ID" });
+
+    const { aiEnabled, dailyTokenBudget, dailyJobLimit } = req.body;
+    const updates: Record<string, any> = {};
+    if (typeof aiEnabled === "boolean") updates.aiEnabled = aiEnabled;
+    if (typeof dailyTokenBudget === "number" && dailyTokenBudget >= 0) updates.dailyTokenBudget = dailyTokenBudget;
+    if (typeof dailyJobLimit === "number" && dailyJobLimit >= 0) updates.dailyJobLimit = dailyJobLimit;
+
+    if (Object.keys(updates).length === 0) return res.status(400).json({ message: "No valid AI config fields provided" });
+
+    const client = await storage.updateClient(id, updates);
+    if (!client) return res.status(404).json({ message: "Client not found" });
+
+    await storage.createAuditLog({
+      userId: user.id,
+      action: "update",
+      entity: "client",
+      entityId: id,
+      details: `AI config updated: ${JSON.stringify(updates)}`,
+    });
+
+    const usage = await storage.getDailyAiUsage(id);
+    res.json({
+      client: { id: client.id, name: client.name, aiEnabled: client.aiEnabled, dailyTokenBudget: client.dailyTokenBudget, dailyJobLimit: client.dailyJobLimit },
+      todayUsage: usage,
+    });
   });
 
   // === ADMIN: CLIENT KEYWORDS ===
