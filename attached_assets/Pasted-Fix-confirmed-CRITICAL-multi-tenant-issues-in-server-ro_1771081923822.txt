@@ -1,0 +1,65 @@
+Fix confirmed CRITICAL multi-tenant issues in server/routes.ts + server/storage.ts.
+
+Goal:
+A client user from tenant A must NOT be able to read/modify/trigger anything from tenant B.
+Use consistent "404 Not found" for cross-tenant access (do not return 403 for ownership failures).
+
+Implement the following fixes:
+
+1) KEYWORDS hardening
+- GET /api/keywords must require authentication.
+- Decide ONE of these and implement it cleanly:
+  Option A (simple): keywords are GLOBAL and ADMIN-ONLY:
+    - require admin for GET/POST/DELETE keywords
+  Option B (better SaaS): keywords are tenant-scoped:
+    - add clientId column to keywords table (NOT NULL)
+    - update getKeywords(clientId), createKeyword(...clientId), deleteKeyword(id, clientId)
+    - routes use resolveClientId(user, req) and pass clientId always
+
+Choose Option B unless it breaks existing product assumptions.
+
+2) WEBHOOK DELIVERIES endpoint must be protected + tenant-scoped
+- GET /api/integrations/webhooks/:id/deliveries must require authentication.
+- It must only return deliveries for webhooks owned by the caller's tenant:
+  - Resolve clientId = resolveClientId(req.user, req)
+  - Fetch webhook by id WITH tenant check (storage.getWebhook(id, clientId))
+  - If not found -> return 404
+  - Then fetch deliveries for that webhookId
+
+3) WEBHOOK TEST endpoint must be tenant-safe
+- POST /api/integrations/webhooks/:id/test must NOT call storage.getWebhook(id) without client scope.
+- Add storage.getWebhook(id, clientId?) and enforce eq(clientId) in WHERE.
+- Route:
+  - clientId = resolveClientId(user, req)
+  - webhook = await storage.getWebhook(id, clientId || undefined)
+  - if not found -> 404
+  - then deliverWebhookEvent(webhook,...)
+
+4) SOURCES ARTICLE COUNTS must be tenant-scoped
+- GET /api/sources/article-counts must only return counts for sources belonging to the authenticated tenant.
+- Replace raw SQL with a tenant-safe query:
+  - Either: join sources on articles.sourceId and filter sources.clientId = clientId
+  - Or: get sourceIds for client and use WHERE source_id IN (...)
+- Admin (clientId null) can see global.
+
+5) COLLABORATION TASKS + ACTIVITY FEED must be tenant-safe
+- Tasks and activity feed must be scoped by workspace ownership.
+- Enforce:
+  - If workspaceId is provided: verify workspace belongs to clientId (storage.getWorkspace(id, clientId))
+    - if not found -> 404
+  - If workspaceId is NOT provided:
+    - return ONLY tasks/activity from workspaces owned by tenant
+    - never return global/all
+- Update storage:
+  - getTasks(params, clientId?) should join tasks -> workspaces and filter workspaces.clientId when clientId exists
+  - getActivityFeed(params, clientId?) same pattern
+- Routes must pass clientId from resolveClientId and never call unscoped storage in client mode.
+
+Also:
+- Add/adjust requireAdmin helper where necessary.
+- Ensure cross-tenant access always returns 404 (not 403) for resource ownership failures.
+- Add a short SECURITY.md note describing these fixes and the rule: "client-scoped by default, admin unscoped".
+
+After changes:
+- Provide a list of the exact files and key functions modified.
+- Provide a quick manual verification checklist (curl examples) proving tenant A cannot access tenant B for the fixed endpoints.

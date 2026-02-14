@@ -101,9 +101,12 @@ export const insertArticleSchema = createInsertSchema(articles).omit({ id: true,
 // === KEYWORDS (Client tracking) ===
 export const keywords = pgTable("keywords", {
   id: serial("id").primaryKey(),
-  term: text("term").notNull().unique(),
+  term: text("term").notNull(),
+  clientId: integer("client_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  uniqueIndex("keywords_term_client_idx").on(table.term, table.clientId),
+]);
 
 export const insertKeywordSchema = createInsertSchema(keywords).omit({ id: true, createdAt: true });
 
@@ -616,6 +619,7 @@ export const knowledgeEntries = pgTable("knowledge_entries", {
   questionPattern: text("question_pattern").notNull(),
   answerSummary: text("answer_summary").notNull(),
   queryCount: integer("query_count").notNull().default(1),
+  clientId: integer("client_id").notNull(),
   lastUsed: timestamp("last_used").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [

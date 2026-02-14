@@ -987,18 +987,23 @@ export async function registerRoutes(
     res.json(article);
   });
 
-  // === KEYWORDS ===
+  // === KEYWORDS (tenant-scoped) ===
   app.get(api.keywords.list.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    const keywords = await storage.getKeywords();
-    res.json(keywords);
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    const kws = await storage.getKeywords(clientId || undefined);
+    res.json(kws);
   });
 
   app.post(api.keywords.create.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
     try {
       const input = api.keywords.create.input.parse(req.body);
-      const keyword = await storage.createKeyword(input);
+      const keyword = await storage.createKeyword({ ...input, clientId });
       res.status(201).json(keyword);
     } catch (err) {
       res.status(400).json({ message: "Invalid Input" });
@@ -1007,8 +1012,10 @@ export async function registerRoutes(
 
   app.delete(api.keywords.delete.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
-    await storage.deleteKeyword(id);
+    await storage.deleteKeyword(id, clientId || undefined);
     res.sendStatus(204);
   });
 
@@ -1493,8 +1500,17 @@ export async function registerRoutes(
 
   app.get("/api/sources/article-counts", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const scopedSourceIds = await getUserSourceIds(user) || [];
     try {
-      const counts = await db.execute(sql`SELECT source_id, COUNT(*)::int as count FROM articles WHERE source_id IS NOT NULL GROUP BY source_id`);
+      let counts;
+      if (scopedSourceIds.length > 0) {
+        counts = await db.execute(sql`SELECT source_id, COUNT(*)::int as count FROM articles WHERE source_id IS NOT NULL AND source_id = ANY(${scopedSourceIds}) GROUP BY source_id`);
+      } else if (isSystemAdmin(user)) {
+        counts = await db.execute(sql`SELECT source_id, COUNT(*)::int as count FROM articles WHERE source_id IS NOT NULL GROUP BY source_id`);
+      } else {
+        return res.json({});
+      }
       const map: Record<number, number> = {};
       for (const row of counts.rows) {
         map[row.source_id as number] = row.count as number;
@@ -3165,9 +3181,10 @@ export async function registerRoutes(
 
   app.delete("/api/notifications/settings/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
-    await storage.deleteNotificationSetting(id);
+    await storage.deleteNotificationSetting(id, user.id);
     res.sendStatus(204);
   });
 
@@ -3397,19 +3414,24 @@ export async function registerRoutes(
     res.status(201).json(assignment);
   });
 
-  // === PRODUCT INTELLIGENCE: KNOWLEDGE BASE ===
+  // === PRODUCT INTELLIGENCE: KNOWLEDGE BASE (tenant-scoped) ===
   app.get("/api/knowledge", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
     const search = req.query.search as string | undefined;
     const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-    res.json(await storage.getKnowledgeEntries({ search, limit }));
+    res.json(await storage.getKnowledgeEntries({ search, limit }, clientId || undefined));
   });
 
   app.post("/api/knowledge", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
     const { questionPattern, answerSummary } = req.body;
     if (!questionPattern || !answerSummary) return res.status(400).json({ message: "Question pattern and answer required" });
-    const entry = await storage.upsertKnowledgeEntry({ questionPattern, answerSummary });
+    const entry = await storage.upsertKnowledgeEntry({ questionPattern, answerSummary, clientId });
     res.json(entry);
   });
 
@@ -3516,15 +3538,21 @@ export async function registerRoutes(
   });
 
   app.get("/api/integrations/webhooks/:id/deliveries", async (req, res) => {
-    const deliveries = await storage.getWebhookDeliveries(parseInt(req.params.id), { limit: 50 });
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = resolveClientId(user, req);
+    const webhook = await storage.getWebhook(parseInt(req.params.id), clientId || undefined);
+    if (!webhook) return res.status(404).json({ message: "Not found" });
+    const deliveries = await storage.getWebhookDeliveries(webhook.id, { limit: 50 });
     res.json(deliveries);
   });
 
   app.post("/api/integrations/webhooks/:id/test", async (req, res) => {
     const user = (req as any).user;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const webhook = await storage.getWebhook(parseInt(req.params.id));
-    if (!webhook) return res.status(404).json({ message: "Webhook not found" });
+    const clientId = resolveClientId(user, req);
+    const webhook = await storage.getWebhook(parseInt(req.params.id), clientId || undefined);
+    if (!webhook) return res.status(404).json({ message: "Not found" });
     const { deliverWebhookEvent } = await import("./webhook-worker");
     await deliverWebhookEvent(webhook, "test", { message: "Test delivery from NWS360", timestamp: new Date().toISOString() });
     res.json({ success: true, message: "Test webhook delivered" });
@@ -4161,25 +4189,28 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
-  // === TASKS & FOLLOW-UP TRACKING ===
+  // === TASKS & FOLLOW-UP TRACKING (tenant-scoped) ===
   app.get("/api/collaboration/tasks", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = resolveClientId(user, req);
     const wsId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
     const assignedTo = req.query.assignedTo ? parseInt(req.query.assignedTo as string) : undefined;
     const status = req.query.status as string | undefined;
-    const taskList = await storage.getTasks({ workspaceId: wsId, assignedTo, status });
+    const taskList = await storage.getTasks({ workspaceId: wsId, assignedTo, status }, clientId || undefined);
     res.json(taskList);
   });
 
   app.post("/api/collaboration/tasks", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = resolveClientId(user, req);
     const schema = z.object({ title: z.string().min(1), description: z.string().optional(), assignedTo: z.number().int().optional(), priority: z.enum(["low", "medium", "high", "critical"]).optional(), dueDate: z.string().optional(), workspaceId: z.number().int().optional() });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
-    const task = await storage.createTask({ ...parsed.data, createdBy: user.id });
-    await storage.createActivityEvent({ workspaceId: parsed.data.workspaceId, actorId: user.id, verb: "created_task", targetType: "task", targetId: task.id });
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+    const task = await storage.createTask({ ...parsed.data, createdBy: user.id, clientId });
+    await storage.createActivityEvent({ workspaceId: parsed.data.workspaceId, actorId: user.id, verb: "created_task", targetType: "task", targetId: task.id, clientId });
     res.status(201).json(task);
   });
 
@@ -4189,14 +4220,11 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const existingTask = await storage.getTask(parseInt(req.params.id));
     if (!existingTask) return res.status(404).json({ message: "Not found" });
-    if (existingTask.workspaceId && clientId) {
-      const ws = await storage.getWorkspace(existingTask.workspaceId);
-      if (ws && ws.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
-    }
+    if (clientId && existingTask.clientId !== clientId) return res.status(404).json({ message: "Not found" });
     const task = await storage.updateTask(parseInt(req.params.id), req.body);
     if (!task) return res.status(404).json({ message: "Not found" });
     if (req.body.status === "resolved") {
-      await storage.createActivityEvent({ workspaceId: task.workspaceId || undefined, actorId: user.id, verb: "resolved_task", targetType: "task", targetId: task.id });
+      await storage.createActivityEvent({ workspaceId: task.workspaceId || undefined, actorId: user.id, verb: "resolved_task", targetType: "task", targetId: task.id, clientId: clientId || existingTask.clientId });
     }
     res.json(task);
   });
@@ -4207,10 +4235,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const existingTask = await storage.getTask(parseInt(req.params.id));
     if (!existingTask) return res.status(404).json({ message: "Not found" });
-    if (existingTask.workspaceId && clientId) {
-      const ws = await storage.getWorkspace(existingTask.workspaceId);
-      if (ws && ws.clientId !== clientId) return res.status(403).json({ message: "Access denied" });
-    }
+    if (clientId && existingTask.clientId !== clientId) return res.status(404).json({ message: "Not found" });
     await storage.deleteTask(parseInt(req.params.id));
     res.json({ success: true });
   });
@@ -4268,13 +4293,14 @@ export async function registerRoutes(
     res.json(history);
   });
 
-  // === ACTIVITY FEED ===
+  // === ACTIVITY FEED (tenant-scoped) ===
   app.get("/api/collaboration/activity-feed", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = resolveClientId(user, req);
     const wsId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
-    const events = await storage.getActivityFeed({ workspaceId: wsId, limit });
+    const events = await storage.getActivityFeed({ workspaceId: wsId, limit }, clientId || undefined);
     res.json(events);
   });
 

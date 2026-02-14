@@ -123,9 +123,9 @@ export interface IStorage {
   getArticleByTitle(title: string, clientId?: number | null): Promise<Article | undefined>; // For cross-channel deduplication
 
   // Keywords
-  getKeywords(): Promise<Keyword[]>;
+  getKeywords(clientId?: number): Promise<Keyword[]>;
   createKeyword(keyword: InsertKeyword): Promise<Keyword>;
-  deleteKeyword(id: number): Promise<void>;
+  deleteKeyword(id: number, clientId?: number): Promise<void>;
   
   // Sources - update last fetched
   updateSourceLastFetched(id: number): Promise<void>;
@@ -333,7 +333,7 @@ export interface IStorage {
 
   getNotificationSettings(userId: number): Promise<NotificationSetting[]>;
   upsertNotificationSetting(data: InsertNotificationSetting): Promise<NotificationSetting>;
-  deleteNotificationSetting(id: number): Promise<void>;
+  deleteNotificationSetting(id: number, userId?: number): Promise<void>;
 
   getWhiteLabelSettings(clientId: number): Promise<WhiteLabelSetting | undefined>;
   upsertWhiteLabelSettings(data: InsertWhiteLabelSetting): Promise<WhiteLabelSetting>;
@@ -365,14 +365,14 @@ export interface IStorage {
   getUserExperiments(userId: number): Promise<ExperimentAssignment[]>;
   createExperimentAssignment(data: InsertExperimentAssignment): Promise<ExperimentAssignment>;
 
-  getKnowledgeEntries(params?: { search?: string; limit?: number }): Promise<KnowledgeEntry[]>;
+  getKnowledgeEntries(params?: { search?: string; limit?: number }, clientId?: number): Promise<KnowledgeEntry[]>;
   upsertKnowledgeEntry(data: InsertKnowledgeEntry): Promise<KnowledgeEntry>;
 
   getValueReports(clientId: number): Promise<ValueReport[]>;
   createValueReport(data: InsertValueReport): Promise<ValueReport>;
 
   getWebhooks(clientId?: number): Promise<IntegrationWebhook[]>;
-  getWebhook(id: number): Promise<IntegrationWebhook | undefined>;
+  getWebhook(id: number, clientId?: number): Promise<IntegrationWebhook | undefined>;
   createWebhook(data: InsertIntegrationWebhook): Promise<IntegrationWebhook>;
   updateWebhook(id: number, data: Partial<InsertIntegrationWebhook>, clientId?: number): Promise<IntegrationWebhook | undefined>;
   deleteWebhook(id: number, clientId?: number): Promise<void>;
@@ -456,7 +456,7 @@ export interface IStorage {
   deleteTagAssignment(id: number, userId?: number): Promise<void>;
 
   // Tasks
-  getTasks(params?: { workspaceId?: number; assignedTo?: number; createdBy?: number; status?: string }): Promise<Task[]>;
+  getTasks(params?: { workspaceId?: number; assignedTo?: number; createdBy?: number; status?: string }, clientId?: number): Promise<Task[]>;
   getTask(id: number): Promise<Task | undefined>;
   createTask(data: InsertTask): Promise<Task>;
   updateTask(id: number, data: Partial<InsertTask>): Promise<Task | undefined>;
@@ -477,7 +477,7 @@ export interface IStorage {
   createChangeHistory(data: InsertChangeHistory): Promise<ChangeHistoryEntry>;
 
   // Activity Feed
-  getActivityFeed(params?: { workspaceId?: number; limit?: number }): Promise<ActivityEvent[]>;
+  getActivityFeed(params?: { workspaceId?: number; limit?: number }, clientId?: number): Promise<ActivityEvent[]>;
   createActivityEvent(data: InsertActivityEvent): Promise<ActivityEvent>;
 
   // Knowledge Memory - Story Timelines
@@ -838,7 +838,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Keywords
-  async getKeywords(): Promise<Keyword[]> {
+  async getKeywords(clientId?: number): Promise<Keyword[]> {
+    if (clientId) return await db.select().from(keywords).where(eq(keywords.clientId, clientId));
     return await db.select().from(keywords);
   }
 
@@ -847,8 +848,10 @@ export class DatabaseStorage implements IStorage {
     return keyword;
   }
 
-  async deleteKeyword(id: number): Promise<void> {
-    await db.delete(keywords).where(eq(keywords.id, id));
+  async deleteKeyword(id: number, clientId?: number): Promise<void> {
+    const conditions = [eq(keywords.id, id)];
+    if (clientId) conditions.push(eq(keywords.clientId, clientId));
+    await db.delete(keywords).where(and(...conditions));
   }
 
   async getBookmarks(userId: number): Promise<number[]> {
@@ -2356,8 +2359,10 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async deleteNotificationSetting(id: number): Promise<void> {
-    await db.delete(notificationSettings).where(eq(notificationSettings.id, id));
+  async deleteNotificationSetting(id: number, userId?: number): Promise<void> {
+    const conditions = [eq(notificationSettings.id, id)];
+    if (userId) conditions.push(eq(notificationSettings.userId, userId));
+    await db.delete(notificationSettings).where(and(...conditions));
   }
 
   async getWhiteLabelSettings(clientId: number): Promise<WhiteLabelSetting | undefined> {
@@ -2519,11 +2524,14 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async getKnowledgeEntries(params?: { search?: string; limit?: number }): Promise<KnowledgeEntry[]> {
+  async getKnowledgeEntries(params?: { search?: string; limit?: number }, clientId?: number): Promise<KnowledgeEntry[]> {
     const limit = params?.limit || 50;
-    if (params?.search) {
+    const conditions = [];
+    if (clientId) conditions.push(eq(knowledgeEntries.clientId, clientId));
+    if (params?.search) conditions.push(like(knowledgeEntries.questionPattern, `%${params.search}%`));
+    if (conditions.length > 0) {
       return await db.select().from(knowledgeEntries)
-        .where(like(knowledgeEntries.questionPattern, `%${params.search}%`))
+        .where(and(...conditions))
         .orderBy(desc(knowledgeEntries.queryCount))
         .limit(limit);
     }
@@ -2563,8 +2571,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(integrationWebhooks).orderBy(desc(integrationWebhooks.createdAt));
   }
 
-  async getWebhook(id: number): Promise<IntegrationWebhook | undefined> {
-    const [row] = await db.select().from(integrationWebhooks).where(eq(integrationWebhooks.id, id));
+  async getWebhook(id: number, clientId?: number): Promise<IntegrationWebhook | undefined> {
+    const conditions = [eq(integrationWebhooks.id, id)];
+    if (clientId) conditions.push(eq(integrationWebhooks.clientId, clientId));
+    const [row] = await db.select().from(integrationWebhooks).where(and(...conditions));
     return row;
   }
 
@@ -2918,8 +2928,9 @@ export class DatabaseStorage implements IStorage {
     await db.delete(tagAssignments).where(and(...conditions));
   }
 
-  async getTasks(params?: { workspaceId?: number; assignedTo?: number; createdBy?: number; status?: string }): Promise<Task[]> {
+  async getTasks(params?: { workspaceId?: number; assignedTo?: number; createdBy?: number; status?: string }, clientId?: number): Promise<Task[]> {
     const conditions = [];
+    if (clientId) conditions.push(eq(tasks.clientId, clientId));
     if (params?.workspaceId) conditions.push(eq(tasks.workspaceId, params.workspaceId));
     if (params?.assignedTo) conditions.push(eq(tasks.assignedTo, params.assignedTo));
     if (params?.createdBy) conditions.push(eq(tasks.createdBy, params.createdBy));
@@ -2986,10 +2997,13 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async getActivityFeed(params?: { workspaceId?: number; limit?: number }): Promise<ActivityEvent[]> {
+  async getActivityFeed(params?: { workspaceId?: number; limit?: number }, clientId?: number): Promise<ActivityEvent[]> {
     const limit = params?.limit || 50;
-    if (params?.workspaceId) {
-      return db.select().from(activityEvents).where(eq(activityEvents.workspaceId, params.workspaceId)).orderBy(desc(activityEvents.createdAt)).limit(limit);
+    const conditions = [];
+    if (clientId) conditions.push(eq(activityEvents.clientId, clientId));
+    if (params?.workspaceId) conditions.push(eq(activityEvents.workspaceId, params.workspaceId));
+    if (conditions.length > 0) {
+      return db.select().from(activityEvents).where(and(...conditions)).orderBy(desc(activityEvents.createdAt)).limit(limit);
     }
     return db.select().from(activityEvents).orderBy(desc(activityEvents.createdAt)).limit(limit);
   }
