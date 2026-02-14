@@ -5,15 +5,17 @@ import type { InsightJob } from "@shared/schema";
 
 export type InsightType = "summary" | "brief" | "prediction" | "classification" | "qa";
 
+export interface AIJobPayload {
+  systemPrompt: string;
+  userContent: string;
+  responseFormat?: { type: "json_object" } | { type: "text" };
+}
+
 export interface RunInsightAIParams {
   jobId: number;
   clientId: number;
   type: InsightType;
-  payload: {
-    systemPrompt: string;
-    userContent: string;
-    responseFormat?: { type: "json_object" } | { type: "text" };
-  };
+  payload: AIJobPayload;
   maxTokens?: number;
 }
 
@@ -26,7 +28,9 @@ export interface InsightAIResult {
   };
 }
 
-const DEFAULT_EXPIRY_MS = 10 * 60 * 1000;
+const DEFAULT_EXPIRY_MS = 24 * 60 * 60 * 1000;
+const AWAIT_POLL_INTERVAL_MS = 500;
+const AWAIT_DEFAULT_TIMEOUT_MS = 120_000;
 
 export async function checkClientAiBudget(clientId: number): Promise<{ allowed: boolean; reason?: string }> {
   const client = await storage.getClient(clientId);
@@ -52,7 +56,12 @@ export async function checkClientAiBudget(clientId: number): Promise<{ allowed: 
   return { allowed: true };
 }
 
-export async function createInsightJob(clientId: number, type: InsightType): Promise<InsightJob> {
+export async function createInsightJob(
+  clientId: number,
+  type: InsightType,
+  jobPayload?: AIJobPayload,
+  maxTokens?: number,
+): Promise<InsightJob> {
   const budgetCheck = await checkClientAiBudget(clientId);
   if (!budgetCheck.allowed) {
     console.warn(`[AI Gateway] Job rejected for client ${clientId}: ${budgetCheck.reason}`);
@@ -60,24 +69,74 @@ export async function createInsightJob(clientId: number, type: InsightType): Pro
   }
 
   const expiresAt = new Date(Date.now() + DEFAULT_EXPIRY_MS);
-  return storage.createInsightJob({ clientId, type, status: "queued", expiresAt });
+  return storage.createInsightJob({
+    clientId,
+    type,
+    status: "queued",
+    expiresAt,
+    payload: jobPayload || null,
+    maxTokens: maxTokens || 500,
+  });
+}
+
+export async function enqueueAIJob(
+  clientId: number,
+  type: InsightType,
+  payload: AIJobPayload,
+  maxTokens?: number,
+): Promise<InsightJob> {
+  return createInsightJob(clientId, type, payload, maxTokens);
+}
+
+export async function awaitJobResult(jobId: number, timeoutMs?: number): Promise<InsightAIResult> {
+  const timeout = timeoutMs || AWAIT_DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + timeout;
+
+  while (Date.now() < deadline) {
+    const job = await storage.getInsightJob(jobId);
+    if (!job) throw new Error(`[AI Gateway] Job ${jobId} not found while awaiting result`);
+
+    if (job.status === "completed" && job.result) {
+      return job.result as InsightAIResult;
+    }
+    if (job.status === "failed") {
+      throw new Error(`[AI Gateway] Job ${jobId} failed during execution`);
+    }
+    if (job.status === "expired") {
+      throw new Error(`[AI Gateway] Job ${jobId} expired before execution`);
+    }
+    if (job.status === "blocked_budget") {
+      throw new Error(`[AI Gateway] Job ${jobId} blocked — tenant budget exceeded`);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, AWAIT_POLL_INTERVAL_MS));
+  }
+
+  throw new Error(`[AI Gateway] Timeout waiting for job ${jobId} after ${timeout}ms`);
 }
 
 export async function startInsightJob(jobId: number): Promise<InsightJob> {
   const job = await storage.getInsightJob(jobId);
   if (!job) throw new Error(`[AI Gateway] Insight job ${jobId} not found`);
-  if (job.status !== "queued") throw new Error(`[AI Gateway] Job ${jobId} cannot start — status is "${job.status}"`);
+  if (job.status !== "scheduled") throw new Error(`[AI Gateway] Job ${jobId} cannot start — status is "${job.status}" (must be "scheduled")`);
   if (new Date() > job.expiresAt) {
-    await storage.updateInsightJobStatus(jobId, "failed");
+    await storage.updateInsightJobStatus(jobId, "expired");
     throw new Error(`[AI Gateway] Job ${jobId} expired before starting`);
   }
-  const updated = await storage.updateInsightJobStatus(jobId, "running", { startedAt: new Date() });
-  if (!updated) throw new Error(`[AI Gateway] Failed to start job ${jobId}`);
+  const updated = await storage.updateInsightJobIfStatus(jobId, "scheduled", "running", { startedAt: new Date() });
+  if (!updated) throw new Error(`[AI Gateway] Failed to atomically start job ${jobId} — race condition`);
   return updated;
 }
 
-export async function completeInsightJob(jobId: number): Promise<InsightJob> {
-  const updated = await storage.updateInsightJobStatus(jobId, "completed", { completedAt: new Date() });
+export async function completeInsightJob(jobId: number, result?: InsightAIResult): Promise<InsightJob> {
+  const extra: Partial<InsightJob> = { completedAt: new Date() };
+  if (result) {
+    (extra as any).result = {
+      content: result.content,
+      usage: result.usage,
+    };
+  }
+  const updated = await storage.updateInsightJobStatus(jobId, "completed", extra);
   if (!updated) throw new Error(`[AI Gateway] Failed to complete job ${jobId}`);
   return updated;
 }
@@ -92,9 +151,6 @@ export async function runInsightAI(params: RunInsightAIParams): Promise<InsightA
   if (!jobId) {
     const msg = "[AI Gateway] BLOCKED: AI call attempted without jobId";
     console.error(msg);
-    if (process.env.NODE_ENV === "development") {
-      throw new Error(msg);
-    }
     throw new Error(msg);
   }
 
@@ -104,7 +160,7 @@ export async function runInsightAI(params: RunInsightAIParams): Promise<InsightA
   }
 
   if (job.status !== "running") {
-    throw new Error(`[AI Gateway] Job ${jobId} is not running (status="${job.status}")`);
+    throw new Error(`[AI Gateway] HARD ERROR: Job ${jobId} is not running (status="${job.status}"). AI execution BLOCKED — only scheduler-controlled jobs may run.`);
   }
 
   if (job.clientId !== clientId) {
@@ -112,7 +168,7 @@ export async function runInsightAI(params: RunInsightAIParams): Promise<InsightA
   }
 
   if (new Date() > job.expiresAt) {
-    await storage.updateInsightJobStatus(jobId, "failed");
+    await storage.updateInsightJobStatus(jobId, "expired");
     throw new Error(`[AI Gateway] Job ${jobId} has expired`);
   }
 

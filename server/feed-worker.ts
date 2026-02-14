@@ -1,6 +1,6 @@
 import RssParser from "rss-parser";
 import { storage } from "./storage";
-import { createInsightJob, startInsightJob, completeInsightJob, failInsightJob, runInsightAI } from "./ai/ai-gateway";
+import { enqueueAIJob, awaitJobResult } from "./ai/ai-gateway";
 import { scrapeWebsite, fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed, fetchTelegramFeed } from "./web-scraper";
 import { enqueueJob, registerJobHandler, openaiLimiter } from "./processing-queue";
 
@@ -53,27 +53,19 @@ export type AIAnalysisResult = {
 
 export async function analyzeWithAI(title: string, content: string, clientId?: number): Promise<AIAnalysisResult> {
   const effectiveClientId = clientId || 0;
-  const job = await createInsightJob(effectiveClientId, "classification");
-  await startInsightJob(job.id);
   try {
     const textToAnalyze = truncate(`${title}. ${content}`, 2000);
-    const aiResult = await runInsightAI({
-      jobId: job.id,
-      clientId: effectiveClientId,
-      type: "classification",
-      payload: {
-        systemPrompt: 'You analyze news articles. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "topics" (array of 1-3 topic labels like "economy", "elections", "climate", "cybersecurity", "AI", "conflict", "trade", "healthcare"), "summary" (1-2 sentence summary), "category" (exactly one of: political, health, tech, sports, business, entertainment, science, urgent, general), "country" (ISO 3166-1 alpha-2 code of the primary country the article is about, or null if unclear). Respond ONLY with valid JSON.',
-        userContent: textToAnalyze,
-        responseFormat: { type: "json_object" },
-      },
-      maxTokens: 500,
-    });
+    const job = await enqueueAIJob(effectiveClientId, "classification", {
+      systemPrompt: 'You analyze news articles. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "topics" (array of 1-3 topic labels like "economy", "elections", "climate", "cybersecurity", "AI", "conflict", "trade", "healthcare"), "summary" (1-2 sentence summary), "category" (exactly one of: political, health, tech, sports, business, entertainment, science, urgent, general), "country" (ISO 3166-1 alpha-2 code of the primary country the article is about, or null if unclear). Respond ONLY with valid JSON.',
+      userContent: textToAnalyze,
+      responseFormat: { type: "json_object" },
+    }, 500);
 
+    const aiResult = await awaitJobResult(job.id);
     const result = JSON.parse(aiResult.content || "{}");
     const cat = typeof result.category === "string" ? result.category.toLowerCase() : "general";
     const validSentiments = ["positive", "negative", "neutral"];
     const rawSentiment = typeof result.sentiment === "string" ? result.sentiment.toLowerCase() : "neutral";
-    await completeInsightJob(job.id);
     return {
       sentimentLabel: validSentiments.includes(rawSentiment) ? rawSentiment : "neutral",
       sentimentScore: typeof result.score === "number" ? result.score : 0,
@@ -86,7 +78,6 @@ export async function analyzeWithAI(title: string, content: string, clientId?: n
     };
   } catch (e) {
     console.error("AI analysis failed:", e);
-    await failInsightJob(job.id);
     return {
       sentimentLabel: null as any,
       sentimentScore: null as any,
@@ -640,22 +631,16 @@ async function handleTranslateArticle(payload: { articleId: number; targetLangua
   if (!existing) return { skipped: true, reason: "no translation record" };
 
   const effectiveClientId = article.clientId || 0;
-  const job = await createInsightJob(effectiveClientId, "summary");
-  await startInsightJob(job.id);
   try {
     const textToTranslate = `Title: ${article.title}\n\nContent: ${(article.content || "").substring(0, 3000)}${article.summary ? `\n\nSummary: ${article.summary}` : ""}`;
 
-    const aiResult = await runInsightAI({
-      jobId: job.id,
-      clientId: effectiveClientId,
-      type: "summary",
-      payload: {
-        systemPrompt: `You are a professional news translator. Translate the following news article to ${targetLangName}. Return JSON with: "title" (translated title), "content" (translated content), "summary" (translated summary). Respond ONLY with valid JSON.`,
-        userContent: textToTranslate,
-        responseFormat: { type: "json_object" },
-      },
-      maxTokens: 2000,
-    });
+    const job = await enqueueAIJob(effectiveClientId, "summary", {
+      systemPrompt: `You are a professional news translator. Translate the following news article to ${targetLangName}. Return JSON with: "title" (translated title), "content" (translated content), "summary" (translated summary). Respond ONLY with valid JSON.`,
+      userContent: textToTranslate,
+      responseFormat: { type: "json_object" },
+    }, 2000);
+
+    const aiResult = await awaitJobResult(job.id);
     const result = JSON.parse(aiResult.content || "{}");
 
     await storage.updateArticleTranslation(existing.id, {
@@ -665,11 +650,9 @@ async function handleTranslateArticle(payload: { articleId: number; targetLangua
       status: "completed",
     }, articleClientId);
 
-    await completeInsightJob(job.id);
     return { articleId: payload.articleId, targetLanguage: payload.targetLanguage, status: "completed" };
   } catch (e) {
     console.error(`Translation failed for article ${payload.articleId}:`, e);
-    await failInsightJob(job.id);
     await storage.updateArticleTranslation(existing.id, { status: "failed" }, articleClientId);
     throw e;
   }

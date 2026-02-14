@@ -639,6 +639,12 @@ export interface IStorage {
   createInsightJob(data: InsertInsightJob): Promise<InsightJob>;
   getInsightJob(id: number): Promise<InsightJob | undefined>;
   updateInsightJobStatus(id: number, status: string, extra?: Partial<InsightJob>): Promise<InsightJob | undefined>;
+  updateInsightJobIfStatus(id: number, fromStatus: string, toStatus: string, extra?: Partial<InsightJob>): Promise<InsightJob | undefined>;
+  getQueuedJobsByTenant(clientId: number, limit: number): Promise<InsightJob[]>;
+  getScheduledJobs(limit: number): Promise<InsightJob[]>;
+  bulkUpdateJobStatus(fromStatus: string, toStatus: string, clientId?: number): Promise<number>;
+  expireOldQueuedJobs(maxAgeMs: number): Promise<number>;
+  getJobCountsByStatus(): Promise<Record<string, number>>;
   createAiUsageLog(data: InsertAiUsageLog): Promise<AiUsageLog>;
   getDailyAiUsage(clientId: number): Promise<{ totalTokens: number; jobCount: number }>;
 }
@@ -3704,6 +3710,51 @@ export class DatabaseStorage implements IStorage {
     const updates: any = { status, ...extra };
     const [job] = await db.update(insightJobs).set(updates).where(eq(insightJobs.id, id)).returning();
     return job;
+  }
+
+  async updateInsightJobIfStatus(id: number, fromStatus: string, toStatus: string, extra?: Partial<InsightJob>): Promise<InsightJob | undefined> {
+    const updates: any = { status: toStatus, ...extra };
+    const [job] = await db.update(insightJobs).set(updates).where(and(eq(insightJobs.id, id), eq(insightJobs.status, fromStatus))).returning();
+    return job;
+  }
+
+  async getQueuedJobsByTenant(clientId: number, limit: number): Promise<InsightJob[]> {
+    return db.select().from(insightJobs)
+      .where(and(eq(insightJobs.clientId, clientId), eq(insightJobs.status, "queued")))
+      .orderBy(insightJobs.createdAt)
+      .limit(limit);
+  }
+
+  async getScheduledJobs(limit: number): Promise<InsightJob[]> {
+    return db.select().from(insightJobs)
+      .where(eq(insightJobs.status, "scheduled"))
+      .orderBy(insightJobs.createdAt)
+      .limit(limit);
+  }
+
+  async bulkUpdateJobStatus(fromStatus: string, toStatus: string, clientId?: number): Promise<number> {
+    const conditions = [eq(insightJobs.status, fromStatus)];
+    if (clientId !== undefined) conditions.push(eq(insightJobs.clientId, clientId));
+    const result = await db.update(insightJobs).set({ status: toStatus }).where(and(...conditions));
+    return result.rowCount ?? 0;
+  }
+
+  async expireOldQueuedJobs(maxAgeMs: number): Promise<number> {
+    const cutoff = new Date(Date.now() - maxAgeMs);
+    const result = await db.update(insightJobs)
+      .set({ status: "expired", completedAt: new Date() })
+      .where(and(eq(insightJobs.status, "queued"), lte(insightJobs.createdAt, cutoff)));
+    return result.rowCount ?? 0;
+  }
+
+  async getJobCountsByStatus(): Promise<Record<string, number>> {
+    const rows = await db.select({
+      status: insightJobs.status,
+      count: sql<number>`COUNT(*)`,
+    }).from(insightJobs).groupBy(insightJobs.status);
+    const counts: Record<string, number> = {};
+    for (const row of rows) counts[row.status] = Number(row.count);
+    return counts;
   }
 
   async createAiUsageLog(data: InsertAiUsageLog): Promise<AiUsageLog> {

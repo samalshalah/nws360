@@ -1682,11 +1682,24 @@ export type UpdateSourceRequest = Partial<InsertSource>;
 export type CreateKeywordRequest = InsertKeyword;
 
 // === INSIGHT JOBS (AI Cost Control) ===
+export const INSIGHT_JOB_STATUSES = ["queued", "scheduled", "running", "completed", "failed", "blocked_budget", "expired"] as const;
+export type InsightJobStatus = typeof INSIGHT_JOB_STATUSES[number];
+
 export const insightJobs = pgTable("insight_jobs", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").notNull(),
   type: text("type").notNull(),
   status: text("status").notNull().default("queued"),
+  payload: jsonb("payload").$type<{
+    systemPrompt: string;
+    userContent: string;
+    responseFormat?: { type: "json_object" } | { type: "text" };
+  }>(),
+  result: jsonb("result").$type<{
+    content: string;
+    usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+  }>(),
+  maxTokens: integer("max_tokens").default(500),
   createdAt: timestamp("created_at").defaultNow(),
   startedAt: timestamp("started_at"),
   completedAt: timestamp("completed_at"),
@@ -1694,6 +1707,7 @@ export const insightJobs = pgTable("insight_jobs", {
 }, (table) => [
   index("idx_insight_jobs_client").on(table.clientId),
   index("idx_insight_jobs_status").on(table.status),
+  index("idx_insight_jobs_status_created").on(table.status, table.createdAt),
 ]);
 
 export const insertInsightJobSchema = createInsertSchema(insightJobs).omit({ id: true, createdAt: true, startedAt: true, completedAt: true });

@@ -101,10 +101,14 @@ async function attack3_fakeJob() {
     }
   }
 
-  // 3b: Job belonging to another client (cross-tenant)
+  // 3b: Job belonging to another client (cross-tenant) — create directly via storage to bypass budget
   try {
-    const jobClientA = await createInsightJob(100, "qa");
-    await startInsightJob(jobClientA.id);
+    const jobClientA = await storage.createInsightJob({
+      clientId: 100,
+      type: "qa",
+      status: "running",
+      expiresAt: new Date(Date.now() + 600000),
+    });
 
     await runInsightAI({
       jobId: jobClientA.id,
@@ -147,9 +151,14 @@ async function attack3_fakeJob() {
     }
   }
 
-  // 3d: Job with status != running (queued)
+  // 3d: Job with status=queued (not running) — must be rejected
   try {
-    const queuedJob = await createInsightJob(1, "qa");
+    const queuedJob = await storage.createInsightJob({
+      clientId: 1,
+      type: "qa",
+      status: "queued",
+      expiresAt: new Date(Date.now() + 600000),
+    });
 
     await runInsightAI({
       jobId: queuedJob.id,
@@ -160,18 +169,46 @@ async function attack3_fakeJob() {
     });
     record("3d: Job status=queued (not running)", "CRITICAL", "Non-running job was accepted!");
   } catch (e: any) {
-    if (e.message.includes("not running")) {
+    if (e.message.includes("not running") || e.message.includes("HARD ERROR")) {
       record("3d: Job status=queued (not running)", "PASS", `Blocked: ${e.message}`);
     } else {
       record("3d: Job status=queued (not running)", "PASS", `Blocked (different msg): ${e.message}`);
     }
   }
 
-  // 3e: Job with status=completed (reuse attack)
+  // 3e: Job with status=scheduled (not running) — must be rejected
   try {
-    const reuseJob = await createInsightJob(1, "qa");
-    await startInsightJob(reuseJob.id);
-    await completeInsightJob(reuseJob.id);
+    const scheduledJob = await storage.createInsightJob({
+      clientId: 1,
+      type: "qa",
+      status: "scheduled",
+      expiresAt: new Date(Date.now() + 600000),
+    });
+
+    await runInsightAI({
+      jobId: scheduledJob.id,
+      clientId: 1,
+      type: "qa",
+      payload: { systemPrompt: "test", userContent: "test" },
+      maxTokens: 5,
+    });
+    record("3e: Job status=scheduled (not running)", "CRITICAL", "Scheduled (non-running) job was accepted!");
+  } catch (e: any) {
+    if (e.message.includes("not running") || e.message.includes("HARD ERROR")) {
+      record("3e: Job status=scheduled (not running)", "PASS", `Blocked: ${e.message}`);
+    } else {
+      record("3e: Job status=scheduled (not running)", "PASS", `Blocked (different msg): ${e.message}`);
+    }
+  }
+
+  // 3f: Job with status=completed (reuse attack)
+  try {
+    const reuseJob = await storage.createInsightJob({
+      clientId: 1,
+      type: "qa",
+      status: "completed",
+      expiresAt: new Date(Date.now() + 600000),
+    });
 
     await runInsightAI({
       jobId: reuseJob.id,
@@ -180,20 +217,23 @@ async function attack3_fakeJob() {
       payload: { systemPrompt: "test", userContent: "test" },
       maxTokens: 5,
     });
-    record("3e: Completed job reuse attack", "CRITICAL", "Completed job was reused!");
+    record("3f: Completed job reuse attack", "CRITICAL", "Completed job was reused!");
   } catch (e: any) {
-    if (e.message.includes("not running")) {
-      record("3e: Completed job reuse attack", "PASS", `Blocked: ${e.message}`);
+    if (e.message.includes("not running") || e.message.includes("HARD ERROR")) {
+      record("3f: Completed job reuse attack", "PASS", `Blocked: ${e.message}`);
     } else {
-      record("3e: Completed job reuse attack", "PASS", `Blocked (different msg): ${e.message}`);
+      record("3f: Completed job reuse attack", "PASS", `Blocked (different msg): ${e.message}`);
     }
   }
 
-  // 3f: Job with status=failed (resurrect attack)
+  // 3g: Job with status=failed (resurrect attack)
   try {
-    const failedJob = await createInsightJob(1, "qa");
-    await startInsightJob(failedJob.id);
-    await failInsightJob(failedJob.id);
+    const failedJob = await storage.createInsightJob({
+      clientId: 1,
+      type: "qa",
+      status: "failed",
+      expiresAt: new Date(Date.now() + 600000),
+    });
 
     await runInsightAI({
       jobId: failedJob.id,
@@ -202,12 +242,81 @@ async function attack3_fakeJob() {
       payload: { systemPrompt: "test", userContent: "test" },
       maxTokens: 5,
     });
-    record("3f: Failed job resurrect attack", "CRITICAL", "Failed job was resurrected!");
+    record("3g: Failed job resurrect attack", "CRITICAL", "Failed job was resurrected!");
   } catch (e: any) {
-    if (e.message.includes("not running")) {
-      record("3f: Failed job resurrect attack", "PASS", `Blocked: ${e.message}`);
+    if (e.message.includes("not running") || e.message.includes("HARD ERROR")) {
+      record("3g: Failed job resurrect attack", "PASS", `Blocked: ${e.message}`);
     } else {
-      record("3f: Failed job resurrect attack", "PASS", `Blocked (different msg): ${e.message}`);
+      record("3g: Failed job resurrect attack", "PASS", `Blocked (different msg): ${e.message}`);
+    }
+  }
+
+  // 3h: Job with status=blocked_budget — must be rejected
+  try {
+    const blockedJob = await storage.createInsightJob({
+      clientId: 1,
+      type: "qa",
+      status: "blocked_budget",
+      expiresAt: new Date(Date.now() + 600000),
+    });
+
+    await runInsightAI({
+      jobId: blockedJob.id,
+      clientId: 1,
+      type: "qa",
+      payload: { systemPrompt: "test", userContent: "test" },
+      maxTokens: 5,
+    });
+    record("3h: Blocked_budget job bypass", "CRITICAL", "Budget-blocked job was executed!");
+  } catch (e: any) {
+    if (e.message.includes("not running") || e.message.includes("HARD ERROR")) {
+      record("3h: Blocked_budget job bypass", "PASS", `Blocked: ${e.message}`);
+    } else {
+      record("3h: Blocked_budget job bypass", "PASS", `Blocked (different msg): ${e.message}`);
+    }
+  }
+
+  // 3i: Job with status=expired — must be rejected
+  try {
+    const expiredStatusJob = await storage.createInsightJob({
+      clientId: 1,
+      type: "qa",
+      status: "expired",
+      expiresAt: new Date(Date.now() + 600000),
+    });
+
+    await runInsightAI({
+      jobId: expiredStatusJob.id,
+      clientId: 1,
+      type: "qa",
+      payload: { systemPrompt: "test", userContent: "test" },
+      maxTokens: 5,
+    });
+    record("3i: Expired-status job bypass", "CRITICAL", "Expired-status job was executed!");
+  } catch (e: any) {
+    if (e.message.includes("not running") || e.message.includes("HARD ERROR")) {
+      record("3i: Expired-status job bypass", "PASS", `Blocked: ${e.message}`);
+    } else {
+      record("3i: Expired-status job bypass", "PASS", `Blocked (different msg): ${e.message}`);
+    }
+  }
+
+  // 3j: startInsightJob must reject queued status (requires scheduled)
+  try {
+    const queuedForStart = await storage.createInsightJob({
+      clientId: 1,
+      type: "qa",
+      status: "queued",
+      expiresAt: new Date(Date.now() + 600000),
+    });
+
+    await startInsightJob(queuedForStart.id);
+    record("3j: startInsightJob on queued job", "CRITICAL", "Queued job was started directly (bypasses scheduler)!");
+  } catch (e: any) {
+    if (e.message.includes("must be") || e.message.includes("cannot start")) {
+      record("3j: startInsightJob on queued job", "PASS", `Blocked: ${e.message}`);
+    } else {
+      record("3j: startInsightJob on queued job", "PASS", `Blocked (different msg): ${e.message}`);
     }
   }
 }
@@ -228,7 +337,6 @@ async function attack4_workerBypass() {
     record("4a: Static guard scan (all server files)", "CRITICAL", `Guard detected violations: ${e.stdout || e.message}`);
   }
 
-  // 4b: Simulate a worker bypass by writing a temp file with direct OpenAI usage
   const { writeFileSync, unlinkSync } = await import("fs");
   const tempFile = "server/temp-bypass-test.ts";
   try {
@@ -257,6 +365,7 @@ const res = await ai.chat.completions.create({ model: "gpt-4o-mini", messages: [
 async function runAllAttacks() {
   console.log("=======================================================");
   console.log("  AI GATEWAY HOSTILE DEVELOPER BYPASS TEST");
+  console.log("  (Updated for scheduler-controlled job lifecycle)");
   console.log("  Date: " + new Date().toISOString());
   console.log("=======================================================");
 
