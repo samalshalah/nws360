@@ -8,6 +8,7 @@ const JOB_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 let schedulerRunning = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
+let tickInProgress = false;
 
 export interface SchedulerTickMetrics {
   timestamp: string;
@@ -40,6 +41,9 @@ export function stopScheduler(): void {
 }
 
 async function schedulerTick(): Promise<void> {
+  if (tickInProgress) return;
+  tickInProgress = true;
+
   const metrics: SchedulerTickMetrics = {
     timestamp: new Date().toISOString(),
     jobsScheduled: 0,
@@ -57,9 +61,7 @@ async function schedulerTick(): Promise<void> {
 
     await recheckBlockedJobs(metrics);
 
-    await scheduleEligibleJobs(metrics);
-
-    await executeScheduledJobs(metrics);
+    const promoted = await promoteAndExecute(metrics);
 
     metrics.queueDepth = await storage.getJobCountsByStatus();
 
@@ -70,6 +72,8 @@ async function schedulerTick(): Promise<void> {
     }
   } catch (e) {
     console.error("[AI Scheduler] Tick failed:", e);
+  } finally {
+    tickInProgress = false;
   }
 }
 
@@ -88,13 +92,14 @@ async function recheckBlockedJobs(metrics: SchedulerTickMetrics): Promise<void> 
   }
 }
 
-async function scheduleEligibleJobs(metrics: SchedulerTickMetrics): Promise<void> {
+async function promoteAndExecute(metrics: SchedulerTickMetrics): Promise<void> {
   const allClients = await storage.getClients();
-  let totalScheduled = 0;
+  let tickBudget = MAX_JOBS_PER_TICK;
   const eligibleTenants = new Set<number>();
+  const jobsToExecute: InsightJob[] = [];
 
   for (const client of allClients) {
-    if (totalScheduled >= MAX_JOBS_PER_TICK) break;
+    if (tickBudget <= 0) break;
 
     const budgetCheck = await checkClientAiBudget(client.id);
 
@@ -104,14 +109,14 @@ async function scheduleEligibleJobs(metrics: SchedulerTickMetrics): Promise<void
       continue;
     }
 
-    const remaining = MAX_JOBS_PER_TICK - totalScheduled;
-    const queuedJobs = await storage.getQueuedJobsByTenant(client.id, remaining);
+    const queuedJobs = await storage.getQueuedJobsByTenant(client.id, tickBudget);
     if (queuedJobs.length === 0) continue;
 
+    console.log(`[AI Scheduler] DEBUG: client=${client.id} (${client.name}) has ${queuedJobs.length} queued, tickBudget=${tickBudget}, jobIds=[${queuedJobs.map(j => j.id).join(",")}]`);
     eligibleTenants.add(client.id);
 
     for (const job of queuedJobs) {
-      if (totalScheduled >= MAX_JOBS_PER_TICK) break;
+      if (tickBudget <= 0) break;
 
       const perJobBudget = await checkClientAiBudget(client.id);
       if (!perJobBudget.allowed) {
@@ -120,19 +125,22 @@ async function scheduleEligibleJobs(metrics: SchedulerTickMetrics): Promise<void
         break;
       }
 
-      await storage.updateInsightJobIfStatus(job.id, "queued", "scheduled");
-      totalScheduled++;
+      const promoted = await storage.updateInsightJobIfStatus(job.id, "queued", "scheduled");
+      if (promoted) {
+        jobsToExecute.push(promoted);
+        tickBudget--;
+        metrics.jobsScheduled++;
+      }
     }
   }
 
-  metrics.jobsScheduled = totalScheduled;
   metrics.activeTenants = eligibleTenants.size;
-}
 
-async function executeScheduledJobs(metrics: SchedulerTickMetrics): Promise<void> {
-  const scheduledJobs = await storage.getScheduledJobs(MAX_JOBS_PER_TICK);
+  if (jobsToExecute.length > MAX_JOBS_PER_TICK) {
+    console.error(`[AI Scheduler] BUG: jobsToExecute.length=${jobsToExecute.length} exceeds MAX_JOBS_PER_TICK=${MAX_JOBS_PER_TICK}`);
+  }
 
-  for (const job of scheduledJobs) {
+  for (const job of jobsToExecute) {
     try {
       const started = await startInsightJob(job.id);
       if (!started) continue;
@@ -158,6 +166,10 @@ async function executeScheduledJobs(metrics: SchedulerTickMetrics): Promise<void
       try { await failInsightJob(job.id); } catch {}
     }
   }
+}
+
+export function isTickInProgress(): boolean {
+  return tickInProgress;
 }
 
 export { schedulerTick as _schedulerTickForTesting };

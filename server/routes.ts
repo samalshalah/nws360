@@ -6,7 +6,7 @@ import { api } from "@shared/routes";
 import { z } from "zod";
 import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler, previewSource } from "./feed-worker";
 import { enqueueAIJob, awaitJobResult, checkClientAiBudget } from "./ai/ai-gateway";
-import { startScheduler } from "./ai/ai-scheduler";
+import { startScheduler, stopScheduler, _schedulerTickForTesting } from "./ai/ai-scheduler";
 import { db } from "./db";
 import { articles, PLAN_LIMITS, SYSTEM_ROLES } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
@@ -2921,6 +2921,24 @@ export async function registerRoutes(
         timeframe: "Unknown",
         explanation: "AI simulation is temporarily unavailable. Please try again later.",
       });
+    }
+  });
+
+  // === SCHEDULER CONTROL (for testing) ===
+  app.post("/api/admin/scheduler/stop", requireSystemAdmin, (_req, res) => {
+    stopScheduler();
+    res.json({ ok: true, message: "Scheduler stopped" });
+  });
+  app.post("/api/admin/scheduler/start", requireSystemAdmin, (_req, res) => {
+    startScheduler();
+    res.json({ ok: true, message: "Scheduler started" });
+  });
+  app.post("/api/admin/scheduler/tick", requireSystemAdmin, async (_req, res) => {
+    try {
+      await _schedulerTickForTesting();
+      res.json({ ok: true, message: "Tick completed" });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, message: e.message });
     }
   });
 
