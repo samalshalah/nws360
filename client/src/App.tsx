@@ -1,19 +1,19 @@
-import { Switch, Route, useLocation } from "wouter";
+import { Switch, Route, useLocation, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
-import { Sidebar, MobileBottomNav, MobileHeader } from "@/components/layout/Sidebar";
-import { RightPanel } from "@/components/layout/RightPanel";
+import { usePermissions } from "@/hooks/use-permissions";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useEffect } from "react";
 import { getDirection } from "@/i18n";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { isAdminOnlyRoute } from "@/lib/nav-config";
+import { AdminShell } from "@/components/layout/AdminShell";
+import { ClientShell } from "@/components/layout/ClientShell";
 
-import { BreakingNewsBanner } from "@/components/BreakingNewsBanner";
-import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Feed from "@/pages/Feed";
@@ -49,11 +49,24 @@ import Forecasting from "@/pages/Forecasting";
 import Landing from "@/pages/Landing";
 import NotFound from "@/pages/not-found";
 
-function ProtectedRoute({ component: Component, ...rest }: { component: any, path?: string }) {
+function AdminRouteGuard({ children }: { children: React.ReactNode }) {
+  const { isAdmin } = usePermissions();
+  const [, setLocation] = useLocation();
+
+  if (!isAdmin) {
+    setTimeout(() => setLocation("/"), 0);
+    return null;
+  }
+
+  return <>{children}</>;
+}
+
+function ShellGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
+  const { isAdmin, isLoading: permLoading } = usePermissions();
   const [location, setLocation] = useLocation();
 
-  if (isLoading) {
+  if (isLoading || (user && permLoading)) {
     return (
       <div className="flex items-center justify-center h-screen w-full bg-background">
         <Loader2 className="w-10 h-10 text-primary animate-spin" />
@@ -66,31 +79,23 @@ function ProtectedRoute({ component: Component, ...rest }: { component: any, pat
     return null;
   }
 
-  const showRightPanel = location === "/dashboard" || location === "/feed" || location.startsWith("/feed?");
+  if (!isAdmin && isAdminOnlyRoute(location)) {
+    setTimeout(() => setLocation("/"), 0);
+    return null;
+  }
 
+  if (isAdmin) {
+    return <AdminShell>{children}</AdminShell>;
+  }
+
+  return <ClientShell>{children}</ClientShell>;
+}
+
+function ProtectedPage({ component: Component }: { component: any }) {
   return (
-    <div className="flex h-screen bg-background">
-      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:bg-primary focus:text-primary-foreground focus:px-4 focus:py-2 focus:rounded-md" data-testid="link-skip-to-content">
-        Skip to content
-      </a>
-      <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0 h-screen">
-        <ImpersonationBanner />
-        <MobileHeader />
-        <BreakingNewsBanner />
-        <main id="main-content" className="flex-1 overflow-y-auto min-h-0 pb-16 md:pb-0" role="main" aria-label="Main content">
-          <div className="max-w-7xl mx-auto p-4 md:p-6">
-            <Component />
-          </div>
-        </main>
-      </div>
-      {showRightPanel && (
-        <aside className="hidden lg:flex flex-col w-72 border-l border-border bg-card h-screen sticky top-0 overflow-y-auto rtl:border-l-0 rtl:border-r" role="complementary" aria-label="Insights panel">
-          <RightPanel />
-        </aside>
-      )}
-      <MobileBottomNav />
-    </div>
+    <ShellGate>
+      <Component />
+    </ShellGate>
   );
 }
 
@@ -99,105 +104,131 @@ function Router() {
     <Switch>
       <Route path="/login" component={Login} />
       <Route path="/onboarding" component={OnboardingWizard} />
-      
+
       <Route path="/" component={Landing} />
+      <Route path="/demo" component={DemoPage} />
+
       <Route path="/dashboard">
-        <ProtectedRoute component={Dashboard} />
+        <ProtectedPage component={Dashboard} />
       </Route>
       <Route path="/feed">
-        <ProtectedRoute component={Feed} />
+        <ProtectedPage component={Feed} />
       </Route>
       <Route path="/saved">
-        <ProtectedRoute component={Saved} />
+        <ProtectedPage component={Saved} />
       </Route>
+
       <Route path="/analytics">
-        <ProtectedRoute component={Analytics} />
+        <ProtectedPage component={Analytics} />
       </Route>
       <Route path="/analytics/content-volume">
-        <ProtectedRoute component={ContentVolume} />
+        <ProtectedPage component={ContentVolume} />
       </Route>
       <Route path="/analytics/trending-topics">
-        <ProtectedRoute component={TrendingTopics} />
+        <ProtectedPage component={TrendingTopics} />
       </Route>
       <Route path="/analytics/keyword-analysis">
-        <ProtectedRoute component={KeywordAnalysis} />
+        <ProtectedPage component={KeywordAnalysis} />
       </Route>
       <Route path="/analytics/sentiment-reports">
-        <ProtectedRoute component={SentimentReports} />
+        <ProtectedPage component={SentimentReports} />
       </Route>
       <Route path="/analytics/source-behavior">
-        <ProtectedRoute component={SourceBehavior} />
+        <ProtectedPage component={SourceBehavior} />
       </Route>
       <Route path="/analytics/custom-reports">
-        <ProtectedRoute component={CustomReports} />
+        <ProtectedPage component={CustomReports} />
       </Route>
       <Route path="/analytics/network-mapping">
-        <ProtectedRoute component={NetworkMapping} />
+        <ProtectedPage component={NetworkMapping} />
       </Route>
       <Route path="/analytics/narrative-comparison">
-        <ProtectedRoute component={NarrativeComparison} />
+        <ProtectedPage component={NarrativeComparison} />
       </Route>
       <Route path="/analytics/daily-brief">
-        <ProtectedRoute component={DailyBrief} />
+        <ProtectedPage component={DailyBrief} />
       </Route>
       <Route path="/analytics/keyword-detail">
-        <ProtectedRoute component={KeywordDetail} />
+        <ProtectedPage component={KeywordDetail} />
       </Route>
+
       <Route path="/intelligence">
-        <ProtectedRoute component={IntelligencePage} />
-      </Route>
-      <Route path="/sources/add">
-        <ProtectedRoute component={() => <Admin tab="add" />} />
-      </Route>
-      <Route path="/sources/manage">
-        <ProtectedRoute component={() => <Admin tab="manage" />} />
-      </Route>
-      <Route path="/sources/keywords">
-        <ProtectedRoute component={() => <Admin tab="keywords" />} />
-      </Route>
-      <Route path="/sources/health">
-        <ProtectedRoute component={SourceHealth} />
-      </Route>
-      <Route path="/admin/dashboard">
-        <ProtectedRoute component={AdminDashboard} />
-      </Route>
-      <Route path="/admin/ops">
-        <ProtectedRoute component={OpsDashboard} />
-      </Route>
-      <Route path="/admin">
-        <ProtectedRoute component={Admin} />
-      </Route>
-      <Route path="/users">
-        <ProtectedRoute component={UserManagement} />
-      </Route>
-      <Route path="/usage-billing">
-        <ProtectedRoute component={UsageBilling} />
-      </Route>
-      <Route path="/executive">
-        <ProtectedRoute component={ExecutiveHome} />
-      </Route>
-      <Route path="/help">
-        <ProtectedRoute component={HelpCenter} />
-      </Route>
-      <Route path="/admin/product-analytics">
-        <ProtectedRoute component={ProductAnalytics} />
-      </Route>
-      <Route path="/integrations">
-        <ProtectedRoute component={Integrations} />
-      </Route>
-      <Route path="/admin/integrations">
-        <ProtectedRoute component={IntegrationMonitoring} />
-      </Route>
-      <Route path="/collaboration">
-        <ProtectedRoute component={Collaboration} />
-      </Route>
-      <Route path="/knowledge">
-        <ProtectedRoute component={Knowledge} />
+        <ProtectedPage component={IntelligencePage} />
       </Route>
       <Route path="/forecasting">
-        <ProtectedRoute component={Forecasting} />
+        <ProtectedPage component={Forecasting} />
       </Route>
-      <Route path="/demo" component={DemoPage} />
+
+      <Route path="/sources/add">
+        <ProtectedPage component={() => <Admin tab="add" />} />
+      </Route>
+      <Route path="/sources/manage">
+        <ProtectedPage component={() => <Admin tab="manage" />} />
+      </Route>
+      <Route path="/sources/keywords">
+        <ProtectedPage component={() => <Admin tab="keywords" />} />
+      </Route>
+
+      <Route path="/sources/health">
+        <ShellGate>
+          <AdminRouteGuard>
+            <SourceHealth />
+          </AdminRouteGuard>
+        </ShellGate>
+      </Route>
+      <Route path="/admin/dashboard">
+        <ShellGate>
+          <AdminRouteGuard>
+            <AdminDashboard />
+          </AdminRouteGuard>
+        </ShellGate>
+      </Route>
+      <Route path="/admin/ops">
+        <ShellGate>
+          <AdminRouteGuard>
+            <OpsDashboard />
+          </AdminRouteGuard>
+        </ShellGate>
+      </Route>
+      <Route path="/admin/product-analytics">
+        <ShellGate>
+          <AdminRouteGuard>
+            <ProductAnalytics />
+          </AdminRouteGuard>
+        </ShellGate>
+      </Route>
+      <Route path="/admin/integrations">
+        <ShellGate>
+          <AdminRouteGuard>
+            <IntegrationMonitoring />
+          </AdminRouteGuard>
+        </ShellGate>
+      </Route>
+      <Route path="/admin">
+        <ProtectedPage component={Admin} />
+      </Route>
+
+      <Route path="/users">
+        <ProtectedPage component={UserManagement} />
+      </Route>
+      <Route path="/usage-billing">
+        <ProtectedPage component={UsageBilling} />
+      </Route>
+      <Route path="/executive">
+        <ProtectedPage component={ExecutiveHome} />
+      </Route>
+      <Route path="/help">
+        <ProtectedPage component={HelpCenter} />
+      </Route>
+      <Route path="/integrations">
+        <ProtectedPage component={Integrations} />
+      </Route>
+      <Route path="/collaboration">
+        <ProtectedPage component={Collaboration} />
+      </Route>
+      <Route path="/knowledge">
+        <ProtectedPage component={Knowledge} />
+      </Route>
 
       <Route component={NotFound} />
     </Switch>

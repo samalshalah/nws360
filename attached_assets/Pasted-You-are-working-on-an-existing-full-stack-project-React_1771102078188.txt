@@ -1,0 +1,65 @@
+You are working on an existing full-stack project (React client + Express server). Do NOT rebuild the project. Keep all existing routes, pages, and API behavior. The goal is purely UX restructuring with strong role-based navigation.
+
+GOAL:
+Create two distinct application shells (layouts) with role-based navigation and consistent menu order, without changing core pages logic:
+1) Global Admin shell: "Control Center"
+2) Client shell: "Intelligence Feed"
+
+RULES:
+- Keep current React app structure.
+- Do NOT remove any existing pages.
+- Do NOT rename existing route paths unless you add redirects.
+- Do NOT add new backend features.
+- Only front-end layout/navigation/route guards + mild UI component refactor.
+
+ROLE MODEL (already exists in auth/me):
+- role: "admin" = global admin (powerful)
+- role: "client_admin" or "client" (or equivalent) = tenant admin
+- role: "user" (or equivalent) = tenant user
+If exact role strings differ, detect them from server/auth.ts and server/routes.ts and map safely.
+
+IMPLEMENTATION TASKS:
+A) Add two layout components:
+- client/src/components/layout/AdminShell.tsx
+- client/src/components/layout/ClientShell.tsx
+
+B) Add a single router gate at the top-level (App.tsx or routing entry) that selects shell:
+- AdminShell for admin
+- ClientShell for everyone else
+
+C) Menus must be role-based:
+- Admin sees the full current admin navigation menu and all existing pages/sub-pages.
+- Client Admin sees tenant management pages (users, sources, alerts, settings) but not global system pages.
+- Client User sees only feed + analytics + reports + bookmarks + profile/settings.
+
+D) Preserve ALL existing pages currently shown in the admin navigation menu. Do not miss any page or sub-page.
+- Read current navigation definitions and existing routes in client/src/pages and any nav config.
+- Build a single canonical nav tree with groups and ordering.
+- In AdminShell, show the full nav tree.
+- In ClientShell, show a filtered nav tree by permissions.
+
+E) Add an "Impersonation bar" in AdminShell header:
+- If admin is impersonating a tenant/user (based on existing session/impersonation support), show:
+  - dropdown for tenant
+  - dropdown for user
+  - “Exit impersonation” button
+- If the backend already has impersonation endpoints, wire them. If not, just display current impersonation state safely.
+
+F) Do NOT expose AI job pages to clients. Clients should never see scheduler/queue/AI-cost pages.
+- Keep those pages available for Admin only.
+
+G) Add route guards:
+- If a non-admin tries to access an admin route, redirect to / (client home feed).
+- If admin tries to access client route, allow it (especially during impersonation).
+
+DELIVERABLES:
+1) AdminShell and ClientShell created and used.
+2) Navigation tree centralized and role-filtered.
+3) Menu order stable and matches the existing admin menu.
+4) No backend changes.
+5) Build passes with TypeScript.
+
+After implementing, output a quick summary:
+- where the nav tree lives
+- how role filtering works
+- list of admin-only routes
