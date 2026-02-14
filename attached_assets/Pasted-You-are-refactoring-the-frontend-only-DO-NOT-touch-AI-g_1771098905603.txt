@@ -1,0 +1,247 @@
+You are refactoring the frontend only.
+
+DO NOT touch:
+
+AI gateway
+
+Scheduler
+
+Budget system
+
+Tenant isolation
+
+Database schema
+
+We are redesigning the UI into a clean Competitive Media Monitoring Platform.
+
+Goal:
+Simple, elegant, Apple News–style intelligence feed with keyword analytics.
+
+🧠 PRODUCT STRUCTURE
+
+Create 5 main pages:
+
+HomePage (Live Feed)
+
+TopicsPage
+
+AlertsPage
+
+ReportsPage
+
+SourcesPage
+
+Use existing React + Tailwind structure.
+Do NOT rewrite architecture.
+Only reorganize screens and components.
+
+🏗 APP SHELL
+
+Create a clean layout:
+
+AppShell
+
+Left Sidebar (fixed width 240px)
+
+Top Bar
+
+Main Content
+
+Right Drawer (collapsible)
+
+Sidebar Menu Items:
+
+• Home
+• Topics
+• Alerts
+• Reports
+• Sources
+
+No dropdown nesting.
+Keep simple.
+
+📰 HOMEPAGE — LIVE INTELLIGENCE FEED
+
+This is the default route.
+
+Layout:
+Center feed column (max width 720px)
+Optional right drawer for article details.
+
+ArticleCard Component
+
+Each article card must show:
+
+Source logo
+
+Source name
+
+Headline
+
+Short excerpt (2 lines max)
+
+Topic tags
+
+Sentiment badge (positive / neutral / negative)
+
+Published time
+
+Bookmark icon
+
+Clicking the card opens ArticleDrawer.
+
+ArticleDrawer (Right Panel)
+
+Drawer should include:
+
+Sections:
+
+Clean article text
+
+AI Summary (collapsed by default)
+
+Extracted keywords
+
+Sentiment breakdown
+
+Related articles list
+
+Topic timeline (simple vertical list for now)
+
+Drawer must slide from right.
+Use smooth animation.
+Keep clean white background.
+
+📊 TOPICS PAGE
+
+Grid layout.
+
+Each TopicCard includes:
+
+Topic name
+
+24h article count
+
+Trend sparkline (simple line chart placeholder)
+
+Sentiment ratio bar
+
+Top source
+
+Last updated
+
+Clicking topic opens TopicDetailPage:
+
+Include:
+
+Volume trend chart
+
+Sentiment trend chart
+
+Article list filtered by topic
+
+Charts can use placeholder data for now.
+
+🔔 ALERTS PAGE
+
+List layout.
+
+Show:
+
+Alert name
+
+Type (keyword / spike / sentiment)
+
+Delivery method
+
+Status toggle (on/off)
+
+Include:
+
+Create Alert button (modal placeholder)
+
+No backend changes needed yet.
+
+📑 REPORTS PAGE
+
+Simple layout for now:
+
+Sections:
+
+Weekly Summary (placeholder)
+
+Topic Export button
+
+Generate AI Brief button (disabled for now)
+
+Just build UI structure.
+
+🌍 SOURCES PAGE
+
+List monitored sources.
+
+Columns:
+
+Source Name
+
+Region
+
+Language
+
+Status toggle
+
+Add button:
+
+Add Source (modal placeholder)
+
+🎨 DESIGN RULES
+
+Light background
+
+Neutral typography
+
+No heavy gradients
+
+Accent color only for:
+
+Active menu
+
+Positive sentiment (green)
+
+Negative sentiment (red)
+
+Keep it calm.
+Minimal.
+Executive.
+
+🧩 STATE MANAGEMENT
+
+Use existing API hooks.
+If API not available, mock data temporarily.
+
+Create shared contexts:
+
+FilterContext
+SelectedArticleContext
+
+Do not mix API logic inside components.
+
+📦 OUTPUT REQUIREMENTS
+
+After implementation:
+
+Print new folder structure
+
+List all new components created
+
+Confirm no backend logic changed
+
+Confirm tenant isolation untouched
+
+Do not modify:
+server/
+ai/
+scheduler/
+budget/
+
+Only frontend.
