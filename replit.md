@@ -17,7 +17,7 @@ The backend is powered by **Express.js**, managing API routes and server-side lo
 
 Data persistence is achieved using **PostgreSQL** as the relational database, interfaced through **Drizzle ORM**.
 
-AI capabilities, including sentiment analysis, keyword/topic extraction, and country detection, are integrated via **OpenAI's gpt-4o-mini model** through Replit AI Integrations.
+AI capabilities, including sentiment analysis, keyword/topic extraction, and country detection, are integrated via **OpenAI's gpt-4o-mini model** through Replit AI Integrations. All OpenAI calls are routed through a centralized **AI Cost-Control Gateway** (`server/ai/ai-gateway.ts`) that enforces job-based access control — every AI call requires a tracked insight job with valid jobId, clientId, status="running", and expiry check. Token usage is logged to `ai_usage_log` for cost tracking. Direct OpenAI usage outside the gateway is blocked by an automated static scanner (`scripts/ai-gateway-guard.ts`).
 
 **Core Features and Design Principles:**
 - **News Ingestion**: Utilizes `rss-parser` for real RSS feed fetching, with auto-discovery of RSS feeds from website URLs. Dedicated social media scrapers handle content from YouTube, Facebook, Instagram, X/Twitter, and Telegram.
