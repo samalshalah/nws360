@@ -219,7 +219,7 @@ async function attack4_workerBypass() {
 
   try {
     const output = execSync("npx tsx scripts/ai-gateway-guard.ts 2>&1", { encoding: "utf-8" });
-    if (output.includes("No unauthorized OpenAI usage found")) {
+    if (output.includes("ALL CHECKS PASSED")) {
       record("4a: Static guard scan (all server files)", "PASS", "No unauthorized OpenAI calls in any worker/route file");
     } else {
       record("4a: Static guard scan (all server files)", "CRITICAL", `Guard found issues: ${output}`);
