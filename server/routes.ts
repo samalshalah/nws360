@@ -1381,10 +1381,16 @@ export async function registerRoutes(
   app.post("/api/users", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const currentUser = req.user as any;
-    const { username, password, role } = req.body;
+    const { username, password, role, clientId: bodyClientId } = req.body;
     if (!username || !password) return res.status(400).json({ message: "Username and password required" });
 
-    const resolvedClientId = resolveClientId(currentUser, req);
+    let resolvedClientId = resolveClientId(currentUser, req);
+    if (!resolvedClientId && isSystemAdmin(currentUser) && bodyClientId) {
+      resolvedClientId = Number(bodyClientId);
+    }
+    if (!resolvedClientId) {
+      return res.status(400).json({ message: "Please select a tenant/client to assign this user to" });
+    }
     if (resolvedClientId) {
       const sub = await storage.getSubscription(resolvedClientId);
       if (sub) {

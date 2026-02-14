@@ -41,9 +41,15 @@ export default function UserManagement() {
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState("client");
+  const [newClientId, setNewClientId] = useState("");
 
   const { data: users, isLoading } = useQuery<(User & { parentId?: number | null })[]>({
     queryKey: ["/api/users"],
+  });
+
+  const { data: clients } = useQuery<{ id: number; name: string; active: boolean }[]>({
+    queryKey: ["/api/admin/clients"],
+    enabled: currentUser?.role === "admin",
   });
 
   const { data: usage } = useQuery<{ plan: string; seats: { used: number; max: number } }>({
@@ -51,7 +57,7 @@ export default function UserManagement() {
   });
 
   const createUserMutation = useMutation({
-    mutationFn: async (data: { username: string; password: string; role: string }) => {
+    mutationFn: async (data: { username: string; password: string; role: string; clientId?: string }) => {
       const res = await apiRequest("POST", "/api/users", data);
       return res.json();
     },
@@ -100,7 +106,11 @@ export default function UserManagement() {
   const handleCreateUser = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUsername.trim() || !newPassword.trim()) return;
-    createUserMutation.mutate({ username: newUsername.trim(), password: newPassword, role: newRole });
+    const payload: any = { username: newUsername.trim(), password: newPassword, role: newRole };
+    if (currentUser?.role === "admin" && newClientId) {
+      payload.clientId = newClientId;
+    }
+    createUserMutation.mutate(payload);
   };
 
   const getParentUsername = (parentId: number | null | undefined) => {
@@ -193,6 +203,21 @@ export default function UserManagement() {
                   <SelectContent>
                     <SelectItem value="client" data-testid="select-item-client">{t("userManagement.client")}</SelectItem>
                     <SelectItem value="admin" data-testid="select-item-admin">{t("userManagement.admin")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {currentUser?.role === "admin" && clients && clients.length > 0 && (
+              <div className="min-w-[160px] space-y-1">
+                <label className="text-sm text-muted-foreground">Assign to Client</label>
+                <Select value={newClientId} onValueChange={setNewClientId} data-testid="select-new-client">
+                  <SelectTrigger data-testid="select-trigger-new-client">
+                    <SelectValue placeholder="Select client" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clients.filter(c => c.active).map(c => (
+                      <SelectItem key={c.id} value={String(c.id)} data-testid={`select-client-${c.id}`}>{c.name}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
