@@ -1690,6 +1690,7 @@ export const insightJobs = pgTable("insight_jobs", {
   clientId: integer("client_id").notNull(),
   type: text("type").notNull(),
   status: text("status").notNull().default("queued"),
+  attempt: integer("attempt").notNull().default(0),
   payload: jsonb("payload").$type<{
     systemPrompt: string;
     userContent: string;
@@ -1717,6 +1718,7 @@ export type InsertInsightJob = z.infer<typeof insertInsightJobSchema>;
 export const aiUsageLog = pgTable("ai_usage_log", {
   id: serial("id").primaryKey(),
   jobId: integer("job_id").notNull(),
+  attempt: integer("attempt").notNull().default(0),
   clientId: integer("client_id").notNull(),
   type: text("type").notNull(),
   model: text("model").notNull(),
@@ -1727,6 +1729,7 @@ export const aiUsageLog = pgTable("ai_usage_log", {
 }, (table) => [
   index("idx_ai_usage_client").on(table.clientId),
   index("idx_ai_usage_job").on(table.jobId),
+  uniqueIndex("uq_ai_usage_job_attempt").on(table.jobId, table.attempt),
 ]);
 
 export const insertAiUsageLogSchema = createInsertSchema(aiUsageLog).omit({ id: true, createdAt: true });
