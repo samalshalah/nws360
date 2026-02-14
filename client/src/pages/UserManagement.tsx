@@ -219,6 +219,7 @@ export default function UserManagement() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="client" data-testid="select-item-client">{t("userManagement.client")}</SelectItem>
+                    <SelectItem value="client_admin" data-testid="select-item-client-admin">Client Admin</SelectItem>
                     <SelectItem value="admin" data-testid="select-item-admin">{t("userManagement.admin")}</SelectItem>
                   </SelectContent>
                 </Select>
