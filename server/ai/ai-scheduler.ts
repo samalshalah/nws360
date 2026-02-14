@@ -142,6 +142,14 @@ async function promoteAndExecute(metrics: SchedulerTickMetrics): Promise<void> {
 
   for (const job of jobsToExecute) {
     try {
+      const preExecBudget = await checkClientAiBudget(job.clientId);
+      if (!preExecBudget.allowed) {
+        console.log(`[AI Scheduler] Job ${job.id} budget exceeded before execution — reverting to blocked_budget`);
+        await storage.updateInsightJobIfStatus(job.id, "scheduled", "blocked_budget");
+        metrics.jobsBlocked++;
+        continue;
+      }
+
       const started = await startInsightJob(job.id);
       if (!started) continue;
 
