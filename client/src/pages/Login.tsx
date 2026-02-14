@@ -18,7 +18,7 @@ export default function Login() {
 
   useEffect(() => {
     if (user) {
-      setLocation("/home");
+      setLocation("/dashboard");
     }
   }, [user, setLocation]);
 
