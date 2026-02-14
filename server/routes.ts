@@ -436,7 +436,7 @@ export async function registerRoutes(
         feeds: !readonlyUser,
         analytics: true,
         intelligence: !readonlyUser,
-        sources: !readonlyUser,
+        sources: clientAdmin,
         users: clientAdmin,
         billing: clientAdmin,
         systemAdmin: sysAdmin,
