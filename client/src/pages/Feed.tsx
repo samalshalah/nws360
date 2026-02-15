@@ -282,6 +282,176 @@ export default function Feed() {
   const activeSourceType = filters.sourceType || "all";
   const activeSentiment = filters.sentiment || "all";
 
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+
+  const activeFilterCount = [
+    filters.sourceName,
+    filters.sourceType,
+    filters.sentiment,
+    filters.category,
+    filters.dateRange !== "all" ? filters.dateRange : undefined,
+  ].filter(Boolean).length;
+
+  const searchBar = (
+    <div className="relative flex-1 min-w-0">
+      <Search className="absolute left-3 rtl:left-auto rtl:right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground z-10" />
+      <Input
+        ref={searchInputRef}
+        placeholder={t("feed.searchPlaceholder")}
+        className="ltr:pl-9 rtl:pr-9 bg-background"
+        value={searchInput}
+        onChange={(e) => {
+          const val = e.target.value;
+          setSearchInput(val);
+          setShowSuggestions(true);
+          if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+          searchDebounceRef.current = setTimeout(() => {
+            updateFilter("search", val);
+          }, 400);
+        }}
+        onFocus={() => setShowSuggestions(true)}
+        onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+        data-testid="input-search-articles"
+        aria-label={t("feed.searchPlaceholder")}
+      />
+      {searchInput && (
+        <button
+          onClick={() => { setSearchInput(""); updateFilter("search", ""); setShowSuggestions(false); }}
+          className="absolute right-3 rtl:right-auto rtl:left-3 top-1/2 -translate-y-1/2 z-10"
+          data-testid="button-clear-search"
+          aria-label="Clear search"
+        >
+          <X className="w-4 h-4 text-muted-foreground" />
+        </button>
+      )}
+      {showSuggestions && suggestions.length > 0 && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-md shadow-lg z-50 overflow-hidden" data-testid="search-suggestions">
+          {suggestions.map((s, i) => (
+            <button
+              key={i}
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-left hover:bg-muted transition-colors"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setSearchInput(s.text);
+                updateFilter("search", s.text);
+                setShowSuggestions(false);
+              }}
+              data-testid={`suggestion-${i}`}
+            >
+              {s.type === "trending" ? (
+                <TrendingUp className="w-3.5 h-3.5 text-primary shrink-0" />
+              ) : (
+                <Newspaper className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              )}
+              <span className="truncate">{s.text}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  const filterDropdowns = (
+    <>
+      <Select
+        value={filters.sourceName || "all"}
+        onValueChange={(val) => updateFilter("sourceName", val === "all" ? undefined : val)}
+      >
+        <SelectTrigger className="w-full sm:w-[180px] bg-background" data-testid="select-filter-source">
+          <SelectValue placeholder={t("feed.allSources")} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">{t("feed.allSources")}</SelectItem>
+          {uniqueSourceNames.map(name => (
+            <SelectItem key={name} value={name}>
+              {name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <Select
+        value={filters.sourceType || "all"}
+        onValueChange={(val) => updateFilter("sourceType", val === "all" ? undefined : val)}
+      >
+        <SelectTrigger className="w-full sm:w-[170px] bg-background" data-testid="select-filter-channel-type">
+          <SelectValue placeholder={t("feed.allChannels")} />
+        </SelectTrigger>
+        <SelectContent>
+          {visibleChannels.map(ch => {
+            const Icon = ch.icon;
+            return (
+              <SelectItem key={ch.key} value={ch.key}>
+                <span className="flex items-center gap-1.5">
+                  <Icon className={cn("w-3.5 h-3.5", ch.color)} />
+                  {ch.label}
+                </span>
+              </SelectItem>
+            );
+          })}
+        </SelectContent>
+      </Select>
+
+      <Select
+        value={filters.dateRange}
+        onValueChange={(val) => updateFilter("dateRange", val)}
+      >
+        <SelectTrigger className="w-full sm:w-[150px] bg-background" data-testid="select-filter-date-range">
+          <SelectValue placeholder={t("feed.allDates")} />
+        </SelectTrigger>
+        <SelectContent>
+          {timeRangePills.map(pill => (
+            <SelectItem key={pill.key} value={pill.key}>{pill.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <Select
+        value={filters.sentiment || "all"}
+        onValueChange={(val) => updateFilter("sentiment", val === "all" ? undefined : val)}
+      >
+        <SelectTrigger className="w-full sm:w-[150px] bg-background" data-testid="select-filter-sentiment">
+          <SelectValue placeholder={t("feed.allSentiment")} />
+        </SelectTrigger>
+        <SelectContent>
+          {sentimentPills.map(pill => (
+            <SelectItem key={pill.key} value={pill.key}>
+              <span className="flex items-center gap-1.5">
+                {pill.dot && <span className={cn("w-2 h-2 rounded-full inline-block", pill.dot)} />}
+                {pill.label}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <Select
+        value={filters.category || "all"}
+        onValueChange={(val) => updateFilter("category", val === "all" ? undefined : val)}
+      >
+        <SelectTrigger className="w-full sm:w-[170px] bg-background" data-testid="select-filter-category">
+          <SelectValue placeholder={t("feed.allCategories")} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">{t("feed.allCategories")}</SelectItem>
+          {CATEGORIES.map(cat => (
+            <SelectItem key={cat} value={cat}>
+              {t(`feed.categories.${cat}`)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {hasActiveFilters && (
+        <Button variant="ghost" size="sm" onClick={clearFilters} data-testid="button-clear-filters">
+          <X className="w-3.5 h-3.5 mr-1" />
+          {t("feed.clearFilters")}
+        </Button>
+      )}
+    </>
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -297,6 +467,31 @@ export default function Feed() {
           )}
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="md:hidden flex items-center gap-1">
+            <Button
+              variant={mobileSearchOpen ? "default" : "ghost"}
+              size="icon"
+              onClick={() => { setMobileSearchOpen(!mobileSearchOpen); if (!mobileSearchOpen) setMobileFiltersOpen(false); }}
+              data-testid="button-mobile-search-toggle"
+            >
+              <Search className="w-4 h-4" />
+            </Button>
+            <div className="relative">
+              <Button
+                variant={mobileFiltersOpen ? "default" : "ghost"}
+                size="icon"
+                onClick={() => { setMobileFiltersOpen(!mobileFiltersOpen); if (!mobileFiltersOpen) setMobileSearchOpen(false); }}
+                data-testid="button-mobile-filters-toggle"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+              </Button>
+              {activeFilterCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center rounded-full" data-testid="badge-active-filter-count">
+                  {activeFilterCount}
+                </span>
+              )}
+            </div>
+          </div>
           <Button variant="ghost" size="icon" onClick={handleExport} data-testid="button-export">
             <Download className="w-4 h-4" />
           </Button>
@@ -312,160 +507,27 @@ export default function Feed() {
         </div>
       </div>
 
-      <div className="space-y-4">
+      {mobileSearchOpen && (
+        <div className="md:hidden" data-testid="mobile-search-panel">
+          {searchBar}
+        </div>
+      )}
+
+      {mobileFiltersOpen && (
+        <div className="md:hidden space-y-2" data-testid="mobile-filters-panel">
+          <div className="grid grid-cols-2 gap-2">
+            {filterDropdowns}
+          </div>
+        </div>
+      )}
+
+      <div className="hidden md:block">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full sm:w-[180px]">
-            <Search className="absolute left-3 rtl:left-auto rtl:right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground z-10" />
-            <Input
-              ref={searchInputRef}
-              placeholder={t("feed.searchPlaceholder")}
-              className="ltr:pl-9 rtl:pr-9 bg-background"
-              value={searchInput}
-              onChange={(e) => {
-                const val = e.target.value;
-                setSearchInput(val);
-                setShowSuggestions(true);
-                if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-                searchDebounceRef.current = setTimeout(() => {
-                  updateFilter("search", val);
-                }, 400);
-              }}
-              onFocus={() => setShowSuggestions(true)}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-              data-testid="input-search-articles"
-              aria-label={t("feed.searchPlaceholder")}
-            />
-            {searchInput && (
-              <button
-                onClick={() => { setSearchInput(""); updateFilter("search", ""); setShowSuggestions(false); }}
-                className="absolute right-3 rtl:right-auto rtl:left-3 top-1/2 -translate-y-1/2 z-10"
-                data-testid="button-clear-search"
-                aria-label="Clear search"
-              >
-                <X className="w-4 h-4 text-muted-foreground" />
-              </button>
-            )}
-            {showSuggestions && suggestions.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-md shadow-lg z-50 overflow-hidden" data-testid="search-suggestions">
-                {suggestions.map((s, i) => (
-                  <button
-                    key={i}
-                    className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-left hover:bg-muted transition-colors"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      setSearchInput(s.text);
-                      updateFilter("search", s.text);
-                      setShowSuggestions(false);
-                    }}
-                    data-testid={`suggestion-${i}`}
-                  >
-                    {s.type === "trending" ? (
-                      <TrendingUp className="w-3.5 h-3.5 text-primary shrink-0" />
-                    ) : (
-                      <Newspaper className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                    )}
-                    <span className="truncate">{s.text}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+          <div className="relative w-[180px]">
+            {searchBar}
           </div>
 
-          <Select
-            value={filters.sourceName || "all"}
-            onValueChange={(val) => updateFilter("sourceName", val === "all" ? undefined : val)}
-          >
-            <SelectTrigger className="w-full sm:w-[180px] bg-background" data-testid="select-filter-source">
-              <SelectValue placeholder={t("feed.allSources")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("feed.allSources")}</SelectItem>
-              {uniqueSourceNames.map(name => (
-                <SelectItem key={name} value={name}>
-                  {name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={filters.sourceType || "all"}
-            onValueChange={(val) => updateFilter("sourceType", val === "all" ? undefined : val)}
-          >
-            <SelectTrigger className="w-full sm:w-[170px] bg-background" data-testid="select-filter-channel-type">
-              <SelectValue placeholder={t("feed.allChannels")} />
-            </SelectTrigger>
-            <SelectContent>
-              {visibleChannels.map(ch => {
-                const Icon = ch.icon;
-                return (
-                  <SelectItem key={ch.key} value={ch.key}>
-                    <span className="flex items-center gap-1.5">
-                      <Icon className={cn("w-3.5 h-3.5", ch.color)} />
-                      {ch.label}
-                    </span>
-                  </SelectItem>
-                );
-              })}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={filters.dateRange}
-            onValueChange={(val) => updateFilter("dateRange", val)}
-          >
-            <SelectTrigger className="w-full sm:w-[150px] bg-background" data-testid="select-filter-date-range">
-              <SelectValue placeholder={t("feed.allDates")} />
-            </SelectTrigger>
-            <SelectContent>
-              {timeRangePills.map(pill => (
-                <SelectItem key={pill.key} value={pill.key}>{pill.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={filters.sentiment || "all"}
-            onValueChange={(val) => updateFilter("sentiment", val === "all" ? undefined : val)}
-          >
-            <SelectTrigger className="w-full sm:w-[150px] bg-background" data-testid="select-filter-sentiment">
-              <SelectValue placeholder={t("feed.allSentiment")} />
-            </SelectTrigger>
-            <SelectContent>
-              {sentimentPills.map(pill => (
-                <SelectItem key={pill.key} value={pill.key}>
-                  <span className="flex items-center gap-1.5">
-                    {pill.dot && <span className={cn("w-2 h-2 rounded-full inline-block", pill.dot)} />}
-                    {pill.label}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={filters.category || "all"}
-            onValueChange={(val) => updateFilter("category", val === "all" ? undefined : val)}
-          >
-            <SelectTrigger className="w-full sm:w-[170px] bg-background" data-testid="select-filter-category">
-              <SelectValue placeholder={t("feed.allCategories")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("feed.allCategories")}</SelectItem>
-              {CATEGORIES.map(cat => (
-                <SelectItem key={cat} value={cat}>
-                  {t(`feed.categories.${cat}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {hasActiveFilters && (
-            <Button variant="ghost" size="sm" onClick={clearFilters} data-testid="button-clear-filters">
-              <X className="w-3.5 h-3.5 mr-1" />
-              {t("feed.clearFilters")}
-            </Button>
-          )}
+          {filterDropdowns}
 
           <div className="flex items-center gap-0.5 ml-auto border border-border rounded-md p-0.5">
             <Button
