@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useTranslation } from "react-i18next";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -14,15 +15,41 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Progress } from "@/components/ui/progress";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Shield, ShieldOff, Trash2, UserPlus, Users, Crown, Info, KeyRound } from "lucide-react";
+import { Shield, ShieldOff, Trash2, UserPlus, Users, Crown, Info, KeyRound, Briefcase } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { SYSTEM_ROLES, USER_TYPES } from "@shared/schema";
 import type { User } from "@shared/schema";
+
+const USER_TYPE_LABELS: Record<string, string> = {
+  reader: "Reader",
+  analyst: "Analyst",
+  editor: "Editor",
+  monitor: "Monitor",
+  executive: "Executive",
+  integrations_manager: "Integrations",
+};
+
+const USER_TYPE_DESCRIPTIONS: Record<string, string> = {
+  reader: "View articles and saved items",
+  analyst: "Full analytics and intelligence access",
+  editor: "Content curation and source management",
+  monitor: "Operations monitoring and alerts",
+  executive: "High-level briefs and executive dashboards",
+  integrations_manager: "API keys, webhooks, and integrations",
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  [SYSTEM_ROLES.SYSTEM_ADMIN]: "System Admin",
+  [SYSTEM_ROLES.CLIENT_ADMIN]: "Client Admin",
+  [SYSTEM_ROLES.CLIENT_USER]: "User",
+  [SYSTEM_ROLES.READONLY_USER]: "Read Only",
+};
 
 function CardInfo({ description }: { description: string }) {
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" data-testid="button-card-info">
+        <Button variant="ghost" size="icon" data-testid="button-card-info">
           <Info className="w-4 h-4" />
         </Button>
       </PopoverTrigger>
@@ -36,23 +63,25 @@ function CardInfo({ description }: { description: string }) {
 export default function UserManagement() {
   const { t } = useTranslation();
   const { user: currentUser } = useAuth();
+  const { isAdmin } = usePermissions();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [newRole, setNewRole] = useState("client");
+  const [newRole, setNewRole] = useState<string>(SYSTEM_ROLES.CLIENT_USER);
+  const [newUserType, setNewUserType] = useState("reader");
   const [newClientId, setNewClientId] = useState("");
   const [passwordResetUser, setPasswordResetUser] = useState<{ id: number; username: string } | null>(null);
   const [resetPassword, setResetPassword] = useState("");
 
-  const { data: users, isLoading } = useQuery<(User & { parentId?: number | null })[]>({
+  const { data: users, isLoading } = useQuery<any[]>({
     queryKey: ["/api/users"],
   });
 
   const { data: clients } = useQuery<{ id: number; name: string; active: boolean }[]>({
     queryKey: ["/api/admin/clients"],
-    enabled: currentUser?.role === "admin",
+    enabled: isAdmin,
   });
 
   const { data: usage } = useQuery<{ plan: string; seats: { used: number; max: number } }>({
@@ -60,7 +89,7 @@ export default function UserManagement() {
   });
 
   const createUserMutation = useMutation({
-    mutationFn: async (data: { username: string; password: string; role: string; clientId?: string }) => {
+    mutationFn: async (data: { username: string; password: string; role: string; userType: string; clientId?: string }) => {
       const res = await apiRequest("POST", "/api/users", data);
       return res.json();
     },
@@ -69,7 +98,8 @@ export default function UserManagement() {
       toast({ title: t("userManagement.userCreated") });
       setNewUsername("");
       setNewPassword("");
-      setNewRole("client");
+      setNewRole(SYSTEM_ROLES.CLIENT_USER);
+      setNewUserType("reader");
     },
     onError: (error) => {
       toast({ variant: "destructive", title: t("common.error"), description: error.message });
@@ -82,6 +112,19 @@ export default function UserManagement() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: t("common.error"), description: error.message });
+    },
+  });
+
+  const updateUserTypeMutation = useMutation({
+    mutationFn: async ({ id, userType }: { id: number; userType: string }) => {
+      await apiRequest("PATCH", `/api/users/${id}/user-type`, { userType });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "User type updated" });
     },
     onError: (error) => {
       toast({ variant: "destructive", title: t("common.error"), description: error.message });
@@ -123,8 +166,8 @@ export default function UserManagement() {
   const handleCreateUser = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUsername.trim() || !newPassword.trim()) return;
-    const payload: any = { username: newUsername.trim(), password: newPassword, role: newRole };
-    if (currentUser?.role === "admin" && newClientId) {
+    const payload: any = { username: newUsername.trim(), password: newPassword, role: newRole, userType: newUserType };
+    if (isAdmin && newClientId) {
       payload.clientId = newClientId;
     }
     createUserMutation.mutate(payload);
@@ -132,8 +175,14 @@ export default function UserManagement() {
 
   const getParentUsername = (parentId: number | null | undefined) => {
     if (!parentId || !users) return "-";
-    const parent = users.find(u => u.id === parentId);
+    const parent = users.find((u: any) => u.id === parentId);
     return parent ? parent.username : "-";
+  };
+
+  const canManageUser = (u: any) => {
+    if (isAdmin) return true;
+    if (currentUser?.role === SYSTEM_ROLES.CLIENT_ADMIN && u.parentId === currentUser.id) return true;
+    return false;
   };
 
   return (
@@ -185,65 +234,90 @@ export default function UserManagement() {
           <CardTitle className="flex items-center gap-2">
             <UserPlus className="w-5 h-5" />
             {t("userManagement.createUser")}
-            <CardInfo description="Manage sub-user accounts under your organization. Create users, assign permissions, and control who has access to which features." />
+            <CardInfo description="Create new team members with specific roles and access levels. The User Type determines which features they can access." />
           </CardTitle>
           <CardDescription>{t("userManagement.createUserSubtitle")}</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleCreateUser} className="flex flex-col sm:flex-row items-end gap-3 flex-wrap" data-testid="form-create-user">
-            <div className="flex-1 min-w-[180px] space-y-1">
-              <label className="text-sm text-muted-foreground">{t("userManagement.newUsername")}</label>
-              <Input
-                value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
-                placeholder={t("userManagement.newUsername")}
-                data-testid="input-new-username"
-              />
-            </div>
-            <div className="flex-1 min-w-[180px] space-y-1">
-              <label className="text-sm text-muted-foreground">{t("userManagement.newPassword")}</label>
-              <Input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder={t("userManagement.newPassword")}
-                data-testid="input-new-password"
-              />
-            </div>
-            {currentUser?.role === "admin" && (
-              <div className="min-w-[140px] space-y-1">
-                <label className="text-sm text-muted-foreground">{t("userManagement.role")}</label>
-                <Select value={newRole} onValueChange={setNewRole} data-testid="select-new-role">
-                  <SelectTrigger data-testid="select-trigger-new-role">
-                    <SelectValue placeholder={t("userManagement.selectRole")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="client" data-testid="select-item-client">{t("userManagement.client")}</SelectItem>
-                    <SelectItem value="client_admin" data-testid="select-item-client-admin">Client Admin</SelectItem>
-                    <SelectItem value="admin" data-testid="select-item-admin">{t("userManagement.admin")}</SelectItem>
-                  </SelectContent>
-                </Select>
+          <form onSubmit={handleCreateUser} className="space-y-4" data-testid="form-create-user">
+            <div className="flex flex-col sm:flex-row items-end gap-3 flex-wrap">
+              <div className="flex-1 min-w-[180px] space-y-1">
+                <label className="text-sm text-muted-foreground">{t("userManagement.newUsername")}</label>
+                <Input
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  placeholder={t("userManagement.newUsername")}
+                  data-testid="input-new-username"
+                />
               </div>
-            )}
-            {currentUser?.role === "admin" && clients && clients.length > 0 && (
-              <div className="min-w-[160px] space-y-1">
-                <label className="text-sm text-muted-foreground">Assign to Client</label>
-                <Select value={newClientId} onValueChange={setNewClientId} data-testid="select-new-client">
-                  <SelectTrigger data-testid="select-trigger-new-client">
-                    <SelectValue placeholder="Select client" />
+              <div className="flex-1 min-w-[180px] space-y-1">
+                <label className="text-sm text-muted-foreground">{t("userManagement.newPassword")}</label>
+                <Input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder={t("userManagement.newPassword")}
+                  data-testid="input-new-password"
+                />
+              </div>
+              {isAdmin && (
+                <div className="min-w-[140px] space-y-1">
+                  <label className="text-sm text-muted-foreground">{t("userManagement.role")}</label>
+                  <Select value={newRole} onValueChange={setNewRole}>
+                    <SelectTrigger data-testid="select-trigger-new-role">
+                      <SelectValue placeholder={t("userManagement.selectRole")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={SYSTEM_ROLES.SYSTEM_ADMIN} data-testid="select-item-admin">System Admin</SelectItem>
+                      <SelectItem value={SYSTEM_ROLES.CLIENT_ADMIN} data-testid="select-item-client-admin">Client Admin</SelectItem>
+                      <SelectItem value={SYSTEM_ROLES.CLIENT_USER} data-testid="select-item-client">User</SelectItem>
+                      <SelectItem value={SYSTEM_ROLES.READONLY_USER} data-testid="select-item-readonly">Read Only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              <div className="min-w-[150px] space-y-1">
+                <label className="text-sm text-muted-foreground">User Type</label>
+                <Select value={newUserType} onValueChange={setNewUserType}>
+                  <SelectTrigger data-testid="select-trigger-new-user-type">
+                    <SelectValue placeholder="Select type" />
                   </SelectTrigger>
                   <SelectContent>
-                    {clients.filter(c => c.active).map(c => (
-                      <SelectItem key={c.id} value={String(c.id)} data-testid={`select-client-${c.id}`}>{c.name}</SelectItem>
+                    {Object.entries(USER_TYPE_LABELS).map(([value, label]) => (
+                      <SelectItem key={value} value={value} data-testid={`select-item-usertype-${value}`}>
+                        {label}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-            )}
-            <Button type="submit" disabled={createUserMutation.isPending || !newUsername.trim() || !newPassword.trim()} data-testid="button-create-user">
-              <UserPlus className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
-              {createUserMutation.isPending ? t("userManagement.creating") : t("userManagement.createUser")}
-            </Button>
+              {isAdmin && clients && clients.length > 0 && (
+                <div className="min-w-[160px] space-y-1">
+                  <label className="text-sm text-muted-foreground">Assign to Client</label>
+                  <Select value={newClientId} onValueChange={setNewClientId}>
+                    <SelectTrigger data-testid="select-trigger-new-client">
+                      <SelectValue placeholder="Select client" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clients.filter(c => c.active).map(c => (
+                        <SelectItem key={c.id} value={String(c.id)} data-testid={`select-client-${c.id}`}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <Button type="submit" disabled={createUserMutation.isPending || !newUsername.trim() || !newPassword.trim()} data-testid="button-create-user">
+                <UserPlus className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
+                {createUserMutation.isPending ? t("userManagement.creating") : t("userManagement.createUser")}
+              </Button>
+              {newUserType && (
+                <span className="text-xs text-muted-foreground" data-testid="text-usertype-description">
+                  {USER_TYPE_DESCRIPTIONS[newUserType]}
+                </span>
+              )}
+            </div>
           </form>
         </CardContent>
       </Card>
@@ -273,14 +347,15 @@ export default function UserManagement() {
                     <TableRow>
                       <TableHead>{t("userManagement.username")}</TableHead>
                       <TableHead>{t("userManagement.role")}</TableHead>
-                      <TableHead>{t("userManagement.parent")}</TableHead>
+                      <TableHead>Type</TableHead>
                       <TableHead>{t("userManagement.joined")}</TableHead>
                       <TableHead className="text-right rtl:text-left">{t("userManagement.actions")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {users.map((u) => {
+                    {users.map((u: any) => {
                       const isCurrentUser = currentUser?.id === u.id;
+                      const canManage = canManageUser(u);
                       return (
                         <TableRow key={u.id} data-testid={`row-user-${u.id}`}>
                           <TableCell className="font-medium">
@@ -288,37 +363,58 @@ export default function UserManagement() {
                             {isCurrentUser && (
                               <span className="text-muted-foreground text-xs ml-2 rtl:ml-0 rtl:mr-2">{t("userManagement.you")}</span>
                             )}
+                            {u.disabled && (
+                              <Badge variant="outline" className="ml-2 text-[10px] no-default-hover-elevate">Disabled</Badge>
+                            )}
                           </TableCell>
                           <TableCell>
-                            <Badge variant={u.role === "admin" ? "default" : "secondary"} data-testid={`badge-role-${u.id}`}>
-                              {u.role === "admin" ? t("userManagement.admin") : t("userManagement.client")}
+                            <Badge variant={u.role === SYSTEM_ROLES.SYSTEM_ADMIN ? "default" : "secondary"} data-testid={`badge-role-${u.id}`}>
+                              {ROLE_LABELS[u.role] || u.role}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-muted-foreground text-sm" data-testid={`text-parent-${u.id}`}>
-                            {getParentUsername(u.parentId)}
+                          <TableCell>
+                            {canManage && !isCurrentUser ? (
+                              <Select
+                                value={u.userType || "reader"}
+                                onValueChange={(val) => updateUserTypeMutation.mutate({ id: u.id, userType: val })}
+                              >
+                                <SelectTrigger className="h-8 w-32 text-xs" data-testid={`select-usertype-${u.id}`}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {Object.entries(USER_TYPE_LABELS).map(([value, label]) => (
+                                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <span className="text-sm text-muted-foreground" data-testid={`text-usertype-${u.id}`}>
+                                {USER_TYPE_LABELS[u.userType || "reader"] || u.userType || "Reader"}
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="text-muted-foreground text-sm">
                             {u.createdAt ? formatDistanceToNow(new Date(u.createdAt), { addSuffix: true }) : "-"}
                           </TableCell>
                           <TableCell className="text-right rtl:text-left">
-                            {isCurrentUser ? null : (
+                            {isCurrentUser ? null : canManage ? (
                               <div className="flex items-center gap-2 justify-end rtl:justify-start flex-wrap">
-                                {currentUser?.role === "admin" && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={updateRoleMutation.isPending}
-                                    onClick={() => updateRoleMutation.mutate({ id: u.id, role: u.role === "admin" ? "client" : "admin" })}
-                                    data-testid={`button-toggle-role-${u.id}`}
+                                {isAdmin && (
+                                  <Select
+                                    value={u.role}
+                                    onValueChange={(val) => updateRoleMutation.mutate({ id: u.id, role: val })}
                                   >
-                                    {u.role === "admin" ? (
-                                      <><ShieldOff className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />{t("userManagement.makeClient")}</>
-                                    ) : (
-                                      <><Shield className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />{t("userManagement.makeAdmin")}</>
-                                    )}
-                                  </Button>
+                                    <SelectTrigger className="h-8 w-28 text-xs" data-testid={`select-role-${u.id}`}>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                                        <SelectItem key={value} value={value}>{label}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
                                 )}
-                                {currentUser?.role === "admin" && (
+                                {isAdmin && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -326,7 +422,7 @@ export default function UserManagement() {
                                     data-testid={`button-change-password-${u.id}`}
                                   >
                                     <KeyRound className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
-                                    Change Password
+                                    Password
                                   </Button>
                                 )}
                                 <Button
@@ -337,11 +433,10 @@ export default function UserManagement() {
                                   className="text-destructive"
                                   data-testid={`button-delete-user-${u.id}`}
                                 >
-                                  <Trash2 className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
-                                  {t("userManagement.deleteUser")}
+                                  <Trash2 className="w-4 h-4" />
                                 </Button>
                               </div>
-                            )}
+                            ) : null}
                           </TableCell>
                         </TableRow>
                       );
@@ -351,8 +446,9 @@ export default function UserManagement() {
               </div>
 
               <div className="md:hidden space-y-3">
-                {users.map((u) => {
+                {users.map((u: any) => {
                   const isCurrentUser = currentUser?.id === u.id;
+                  const canManage = canManageUser(u);
                   return (
                     <Card key={u.id} className="overflow-visible" data-testid={`card-user-${u.id}`}>
                       <CardContent className="p-4 space-y-3">
@@ -363,55 +459,59 @@ export default function UserManagement() {
                               <span className="text-muted-foreground text-xs ml-2 rtl:ml-0 rtl:mr-2">{t("userManagement.you")}</span>
                             )}
                           </div>
-                          <Badge variant={u.role === "admin" ? "default" : "secondary"}>
-                            {u.role === "admin" ? t("userManagement.admin") : t("userManagement.client")}
-                          </Badge>
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {t("userManagement.parent")}: {getParentUsername(u.parentId)}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Badge variant={u.role === SYSTEM_ROLES.SYSTEM_ADMIN ? "default" : "secondary"}>
+                              {ROLE_LABELS[u.role] || u.role}
+                            </Badge>
+                            <Badge variant="outline" className="no-default-hover-elevate">
+                              <Briefcase className="w-3 h-3 mr-1" />
+                              {USER_TYPE_LABELS[u.userType || "reader"] || "Reader"}
+                            </Badge>
+                          </div>
                         </div>
                         <div className="text-xs text-muted-foreground">
                           {t("userManagement.joined")}: {u.createdAt ? formatDistanceToNow(new Date(u.createdAt), { addSuffix: true }) : "-"}
                         </div>
-                        {!isCurrentUser && (
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {currentUser?.role === "admin" && (
+                        {!isCurrentUser && canManage && (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Select
+                                value={u.userType || "reader"}
+                                onValueChange={(val) => updateUserTypeMutation.mutate({ id: u.id, userType: val })}
+                              >
+                                <SelectTrigger className="h-8 w-32 text-xs" data-testid={`select-usertype-mobile-${u.id}`}>
+                                  <Briefcase className="w-3 h-3 mr-1" />
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {Object.entries(USER_TYPE_LABELS).map(([value, label]) => (
+                                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              {isAdmin && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => { setPasswordResetUser({ id: u.id, username: u.username }); setResetPassword(""); }}
+                                  data-testid={`button-change-password-mobile-${u.id}`}
+                                >
+                                  <KeyRound className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
+                                  Password
+                                </Button>
+                              )}
                               <Button
                                 variant="outline"
                                 size="sm"
-                                disabled={updateRoleMutation.isPending}
-                                onClick={() => updateRoleMutation.mutate({ id: u.id, role: u.role === "admin" ? "client" : "admin" })}
-                                data-testid={`button-toggle-role-mobile-${u.id}`}
+                                disabled={deleteUserMutation.isPending}
+                                onClick={() => handleDelete(u.id)}
+                                className="text-destructive"
+                                data-testid={`button-delete-user-mobile-${u.id}`}
                               >
-                                {u.role === "admin" ? (
-                                  <><ShieldOff className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />{t("userManagement.makeClient")}</>
-                                ) : (
-                                  <><Shield className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />{t("userManagement.makeAdmin")}</>
-                                )}
+                                <Trash2 className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
+                                {t("userManagement.deleteUser")}
                               </Button>
-                            )}
-                            {currentUser?.role === "admin" && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => { setPasswordResetUser({ id: u.id, username: u.username }); setResetPassword(""); }}
-                                data-testid={`button-change-password-mobile-${u.id}`}
-                              >
-                                <KeyRound className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
-                                Change Password
-                              </Button>
-                            )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={deleteUserMutation.isPending}
-                              onClick={() => handleDelete(u.id)}
-                              className="text-destructive"
-                              data-testid={`button-delete-user-mobile-${u.id}`}
-                            >
-                              <Trash2 className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
-                              {t("userManagement.deleteUser")}
-                            </Button>
+                            </div>
                           </div>
                         )}
                       </CardContent>
@@ -423,6 +523,7 @@ export default function UserManagement() {
           )}
         </CardContent>
       </Card>
+
       <Dialog open={!!passwordResetUser} onOpenChange={(open) => { if (!open) setPasswordResetUser(null); }}>
         <DialogContent>
           <DialogHeader>

@@ -12,6 +12,8 @@ export const clients = pgTable("clients", {
   active: boolean("active").default(true),
   allowedRegions: text("allowed_regions").array(),
   aiEnabled: boolean("ai_enabled").default(false),
+  aiTier: text("ai_tier").notNull().default("none"),
+  planTier: text("plan_tier").notNull().default("starter"),
   dailyTokenBudget: integer("daily_token_budget").default(0),
   dailyJobLimit: integer("daily_job_limit").default(0),
   createdAt: timestamp("created_at").defaultNow(),
@@ -25,9 +27,11 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   role: text("role").notNull().default("client"),
+  userType: text("user_type"),
   parentId: integer("parent_id"),
   clientId: integer("client_id").notNull(),
   disabled: boolean("disabled").default(false),
+  capabilities: text("capabilities").array(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1626,7 +1630,320 @@ export type InsertUserPermission = z.infer<typeof insertUserPermissionSchema>;
 export type ImpersonationLog = typeof impersonationLogs.$inferSelect;
 export type InsertImpersonationLog = z.infer<typeof insertImpersonationLogSchema>;
 
-// Default Permission Codes
+// === SYSTEM ROLES ===
+export const SYSTEM_ROLES = {
+  SYSTEM_ADMIN: "admin",
+  CLIENT_ADMIN: "client_admin",
+  CLIENT_USER: "client",
+  READONLY_USER: "viewer",
+} as const;
+
+export type SystemRole = (typeof SYSTEM_ROLES)[keyof typeof SYSTEM_ROLES];
+
+// === USER TYPES (sub-roles under CLIENT_USER) ===
+export const USER_TYPES = {
+  READER: "reader",
+  ANALYST: "analyst",
+  EDITOR: "editor",
+  MONITOR: "monitor",
+  EXECUTIVE: "executive",
+  INTEGRATIONS_MANAGER: "integrations_manager",
+} as const;
+
+export type UserType = (typeof USER_TYPES)[keyof typeof USER_TYPES];
+
+export const USER_TYPE_LABELS: Record<string, string> = {
+  reader: "Reader",
+  analyst: "Analyst",
+  editor: "Editor",
+  monitor: "Monitor",
+  executive: "Executive",
+  integrations_manager: "Integrations Manager",
+};
+
+// === PLAN TIERS ===
+export const PLAN_TIERS = {
+  STARTER: "starter",
+  PRO: "pro",
+  ENTERPRISE: "enterprise",
+} as const;
+
+export type PlanTier = (typeof PLAN_TIERS)[keyof typeof PLAN_TIERS];
+
+export const PLAN_TIER_LABELS: Record<string, string> = {
+  starter: "Starter",
+  pro: "Pro",
+  enterprise: "Enterprise",
+};
+
+// === AI TIERS ===
+export const AI_TIERS = {
+  NONE: "none",
+  BASIC: "basic_ai",
+  PRO: "pro_ai",
+} as const;
+
+export type AiTier = (typeof AI_TIERS)[keyof typeof AI_TIERS];
+
+// === CAPABILITIES (granular permission codes) ===
+export const CAPS = {
+  FEED_VIEW: "feed_view",
+  FEED_SEARCH: "feed_search",
+  FEED_FILTER: "feed_filter",
+  ARTICLE_VIEW: "article_view",
+  ARTICLE_SAVE: "article_save",
+  ARTICLE_EXPORT: "article_export",
+
+  SOURCES_VIEW: "sources_view",
+  SOURCES_ADD: "sources_add",
+  SOURCES_EDIT: "sources_edit",
+  SOURCES_DELETE: "sources_delete",
+  SOURCE_HEALTH_VIEW: "source_health_view",
+
+  KEYWORDS_VIEW: "keywords_view",
+  KEYWORDS_ADD: "keywords_add",
+  KEYWORDS_EDIT: "keywords_edit",
+  KEYWORDS_DELETE: "keywords_delete",
+
+  ANALYTICS_VIEW: "analytics_view",
+  ANALYTICS_OVERVIEW: "analytics_overview",
+  ANALYTICS_CONTENT_VOLUME: "analytics_content_volume",
+  ANALYTICS_TRENDING_TOPICS: "analytics_trending_topics",
+  ANALYTICS_KEYWORD_ANALYSIS: "analytics_keyword_analysis",
+  ANALYTICS_TONE_REPORTS: "analytics_tone_reports",
+  ANALYTICS_SOURCE_BEHAVIOR: "analytics_source_behavior",
+  ANALYTICS_NETWORK_MAPPING: "analytics_network_mapping",
+  ANALYTICS_NARRATIVE_COMPARISON: "analytics_narrative_comparison",
+  ANALYTICS_CUSTOM_REPORTS: "analytics_custom_reports",
+  ANALYTICS_EXPORT: "analytics_export",
+
+  INTELLIGENCE_VIEW: "intelligence_view",
+  INTELLIGENCE_DAILY_BRIEF: "intelligence_daily_brief",
+  INTELLIGENCE_PREDICTIONS: "intelligence_predictions",
+  INTELLIGENCE_QA: "intelligence_qa",
+  EXECUTIVE_HOME: "executive_home",
+
+  COLLAB_VIEW: "collab_view",
+  COLLAB_COMMENTS: "collab_comments",
+  COLLAB_ANNOTATIONS: "collab_annotations",
+  COLLAB_TASKS: "collab_tasks",
+
+  INTEGRATIONS_VIEW: "integrations_view",
+  INTEGRATIONS_MANAGE: "integrations_manage",
+  INTEGRATION_MONITOR_VIEW: "integration_monitor_view",
+
+  USERS_VIEW: "users_view",
+  USERS_INVITE: "users_invite",
+  USERS_EDIT: "users_edit",
+  USERS_DISABLE: "users_disable",
+  USERS_ASSIGN_ROLES: "users_assign_roles",
+  PERMISSIONS_MANAGE: "permissions_manage",
+
+  BILLING_VIEW: "billing_view",
+  BILLING_MANAGE: "billing_manage",
+  AI_USAGE_VIEW: "ai_usage_view",
+
+  KNOWLEDGE_VIEW: "knowledge_view",
+  KNOWLEDGE_MANAGE: "knowledge_manage",
+
+  ADMIN_SYSTEM_DASHBOARD: "admin_system_dashboard",
+  ADMIN_TENANT_SWITCH: "admin_tenant_switch",
+  ADMIN_IMPERSONATE: "admin_impersonate",
+  ADMIN_AUDIT_LOGS: "admin_audit_logs",
+  ADMIN_OPERATIONS: "admin_operations",
+  ADMIN_JOB_MONITOR: "admin_job_monitor",
+  ADMIN_PRODUCT_ANALYTICS: "admin_product_analytics",
+} as const;
+
+export type Cap = (typeof CAPS)[keyof typeof CAPS];
+
+// === DEFAULT CAPABILITY SETS BY USER TYPE ===
+const READER_CAPS: Cap[] = [
+  CAPS.FEED_VIEW, CAPS.FEED_SEARCH, CAPS.FEED_FILTER,
+  CAPS.ARTICLE_VIEW, CAPS.ARTICLE_SAVE,
+];
+
+const ANALYST_CAPS: Cap[] = [
+  ...READER_CAPS,
+  CAPS.ANALYTICS_VIEW, CAPS.ANALYTICS_OVERVIEW, CAPS.ANALYTICS_CONTENT_VOLUME,
+  CAPS.ANALYTICS_TRENDING_TOPICS, CAPS.ANALYTICS_KEYWORD_ANALYSIS,
+  CAPS.ANALYTICS_TONE_REPORTS, CAPS.ANALYTICS_SOURCE_BEHAVIOR,
+  CAPS.ANALYTICS_NETWORK_MAPPING, CAPS.ANALYTICS_NARRATIVE_COMPARISON,
+  CAPS.ANALYTICS_CUSTOM_REPORTS, CAPS.ANALYTICS_EXPORT,
+  CAPS.KEYWORDS_VIEW,
+  CAPS.AI_USAGE_VIEW,
+];
+
+const EDITOR_CAPS: Cap[] = [
+  ...READER_CAPS,
+  CAPS.KEYWORDS_VIEW, CAPS.KEYWORDS_ADD, CAPS.KEYWORDS_EDIT,
+  CAPS.COLLAB_VIEW, CAPS.COLLAB_COMMENTS, CAPS.COLLAB_ANNOTATIONS,
+  CAPS.ANALYTICS_CUSTOM_REPORTS,
+];
+
+const MONITOR_CAPS: Cap[] = [
+  CAPS.FEED_VIEW,
+  CAPS.SOURCE_HEALTH_VIEW,
+  CAPS.INTEGRATION_MONITOR_VIEW,
+  CAPS.ADMIN_JOB_MONITOR,
+];
+
+const EXECUTIVE_CAPS: Cap[] = [
+  CAPS.FEED_VIEW, CAPS.ARTICLE_VIEW,
+  CAPS.EXECUTIVE_HOME,
+  CAPS.INTELLIGENCE_DAILY_BRIEF,
+];
+
+const INTEGRATIONS_MANAGER_CAPS: Cap[] = [
+  CAPS.INTEGRATIONS_VIEW, CAPS.INTEGRATIONS_MANAGE,
+  CAPS.INTEGRATION_MONITOR_VIEW,
+  CAPS.SOURCES_VIEW,
+];
+
+const CLIENT_ADMIN_CAPS: Cap[] = [
+  ...READER_CAPS,
+  CAPS.ARTICLE_EXPORT,
+  CAPS.SOURCES_VIEW, CAPS.SOURCES_ADD, CAPS.SOURCES_EDIT, CAPS.SOURCES_DELETE,
+  CAPS.SOURCE_HEALTH_VIEW,
+  CAPS.KEYWORDS_VIEW, CAPS.KEYWORDS_ADD, CAPS.KEYWORDS_EDIT, CAPS.KEYWORDS_DELETE,
+  CAPS.ANALYTICS_VIEW, CAPS.ANALYTICS_OVERVIEW, CAPS.ANALYTICS_CONTENT_VOLUME,
+  CAPS.ANALYTICS_TRENDING_TOPICS, CAPS.ANALYTICS_KEYWORD_ANALYSIS,
+  CAPS.ANALYTICS_TONE_REPORTS, CAPS.ANALYTICS_SOURCE_BEHAVIOR,
+  CAPS.ANALYTICS_NETWORK_MAPPING, CAPS.ANALYTICS_NARRATIVE_COMPARISON,
+  CAPS.ANALYTICS_CUSTOM_REPORTS, CAPS.ANALYTICS_EXPORT,
+  CAPS.COLLAB_VIEW, CAPS.COLLAB_COMMENTS, CAPS.COLLAB_ANNOTATIONS, CAPS.COLLAB_TASKS,
+  CAPS.INTEGRATIONS_VIEW, CAPS.INTEGRATIONS_MANAGE, CAPS.INTEGRATION_MONITOR_VIEW,
+  CAPS.USERS_VIEW, CAPS.USERS_INVITE, CAPS.USERS_EDIT, CAPS.USERS_DISABLE,
+  CAPS.USERS_ASSIGN_ROLES, CAPS.PERMISSIONS_MANAGE,
+  CAPS.BILLING_VIEW, CAPS.BILLING_MANAGE, CAPS.AI_USAGE_VIEW,
+  CAPS.KNOWLEDGE_VIEW, CAPS.KNOWLEDGE_MANAGE,
+  CAPS.EXECUTIVE_HOME,
+];
+
+const GLOBAL_ADMIN_CAPS: Cap[] = [
+  ...CLIENT_ADMIN_CAPS,
+  CAPS.INTELLIGENCE_VIEW, CAPS.INTELLIGENCE_DAILY_BRIEF,
+  CAPS.INTELLIGENCE_PREDICTIONS, CAPS.INTELLIGENCE_QA,
+  CAPS.ADMIN_SYSTEM_DASHBOARD, CAPS.ADMIN_TENANT_SWITCH,
+  CAPS.ADMIN_IMPERSONATE, CAPS.ADMIN_AUDIT_LOGS,
+  CAPS.ADMIN_OPERATIONS, CAPS.ADMIN_JOB_MONITOR,
+  CAPS.ADMIN_PRODUCT_ANALYTICS,
+];
+
+export const DEFAULT_CAPS_BY_USER_TYPE: Record<string, Cap[]> = {
+  [USER_TYPES.READER]: READER_CAPS,
+  [USER_TYPES.ANALYST]: ANALYST_CAPS,
+  [USER_TYPES.EDITOR]: EDITOR_CAPS,
+  [USER_TYPES.MONITOR]: MONITOR_CAPS,
+  [USER_TYPES.EXECUTIVE]: EXECUTIVE_CAPS,
+  [USER_TYPES.INTEGRATIONS_MANAGER]: INTEGRATIONS_MANAGER_CAPS,
+};
+
+export const DEFAULT_CAPS_BY_ROLE: Record<string, Cap[]> = {
+  [SYSTEM_ROLES.SYSTEM_ADMIN]: GLOBAL_ADMIN_CAPS,
+  [SYSTEM_ROLES.CLIENT_ADMIN]: CLIENT_ADMIN_CAPS,
+  [SYSTEM_ROLES.CLIENT_USER]: READER_CAPS,
+  [SYSTEM_ROLES.READONLY_USER]: READER_CAPS,
+};
+
+// === PLAN TIER FEATURE GATES ===
+export const PLAN_FEATURES: Record<string, Cap[]> = {
+  [PLAN_TIERS.STARTER]: [
+    CAPS.FEED_VIEW, CAPS.FEED_SEARCH, CAPS.FEED_FILTER,
+    CAPS.ARTICLE_VIEW, CAPS.ARTICLE_SAVE,
+    CAPS.SOURCES_VIEW, CAPS.SOURCES_ADD, CAPS.SOURCES_EDIT, CAPS.SOURCES_DELETE,
+    CAPS.KEYWORDS_VIEW, CAPS.KEYWORDS_ADD, CAPS.KEYWORDS_EDIT, CAPS.KEYWORDS_DELETE,
+    CAPS.ANALYTICS_VIEW, CAPS.ANALYTICS_OVERVIEW, CAPS.ANALYTICS_CONTENT_VOLUME,
+    CAPS.USERS_VIEW, CAPS.USERS_INVITE, CAPS.USERS_EDIT, CAPS.USERS_DISABLE,
+    CAPS.USERS_ASSIGN_ROLES, CAPS.PERMISSIONS_MANAGE,
+    CAPS.BILLING_VIEW, CAPS.BILLING_MANAGE,
+    CAPS.SOURCE_HEALTH_VIEW,
+  ],
+  [PLAN_TIERS.PRO]: [
+    CAPS.FEED_VIEW, CAPS.FEED_SEARCH, CAPS.FEED_FILTER,
+    CAPS.ARTICLE_VIEW, CAPS.ARTICLE_SAVE, CAPS.ARTICLE_EXPORT,
+    CAPS.SOURCES_VIEW, CAPS.SOURCES_ADD, CAPS.SOURCES_EDIT, CAPS.SOURCES_DELETE,
+    CAPS.SOURCE_HEALTH_VIEW,
+    CAPS.KEYWORDS_VIEW, CAPS.KEYWORDS_ADD, CAPS.KEYWORDS_EDIT, CAPS.KEYWORDS_DELETE,
+    CAPS.ANALYTICS_VIEW, CAPS.ANALYTICS_OVERVIEW, CAPS.ANALYTICS_CONTENT_VOLUME,
+    CAPS.ANALYTICS_TRENDING_TOPICS, CAPS.ANALYTICS_KEYWORD_ANALYSIS,
+    CAPS.ANALYTICS_TONE_REPORTS, CAPS.ANALYTICS_SOURCE_BEHAVIOR,
+    CAPS.ANALYTICS_NETWORK_MAPPING, CAPS.ANALYTICS_NARRATIVE_COMPARISON,
+    CAPS.ANALYTICS_CUSTOM_REPORTS, CAPS.ANALYTICS_EXPORT,
+    CAPS.COLLAB_VIEW, CAPS.COLLAB_COMMENTS, CAPS.COLLAB_ANNOTATIONS, CAPS.COLLAB_TASKS,
+    CAPS.INTEGRATIONS_VIEW, CAPS.INTEGRATIONS_MANAGE,
+    CAPS.USERS_VIEW, CAPS.USERS_INVITE, CAPS.USERS_EDIT, CAPS.USERS_DISABLE,
+    CAPS.USERS_ASSIGN_ROLES, CAPS.PERMISSIONS_MANAGE,
+    CAPS.BILLING_VIEW, CAPS.BILLING_MANAGE,
+    CAPS.AI_USAGE_VIEW,
+    CAPS.KNOWLEDGE_VIEW, CAPS.KNOWLEDGE_MANAGE,
+    CAPS.INTEGRATION_MONITOR_VIEW,
+  ],
+  [PLAN_TIERS.ENTERPRISE]: Object.values(CAPS).filter(c =>
+    !c.startsWith("admin_")
+  ) as Cap[],
+};
+
+// AI-gated capabilities (only available if tenant.aiEnabled)
+export const AI_GATED_CAPS: Cap[] = [
+  CAPS.INTELLIGENCE_VIEW, CAPS.INTELLIGENCE_DAILY_BRIEF,
+  CAPS.INTELLIGENCE_PREDICTIONS, CAPS.INTELLIGENCE_QA,
+  CAPS.AI_USAGE_VIEW,
+];
+
+// Resolve effective capabilities for a user
+export function resolveEffectiveCaps(
+  role: string,
+  userType: string | null,
+  planTier: string,
+  aiEnabled: boolean,
+  userOverrides?: string[] | null,
+): Cap[] {
+  if (role === SYSTEM_ROLES.SYSTEM_ADMIN) {
+    return GLOBAL_ADMIN_CAPS;
+  }
+
+  let baseCaps: Cap[];
+  if (role === SYSTEM_ROLES.CLIENT_ADMIN) {
+    baseCaps = [...CLIENT_ADMIN_CAPS];
+  } else if (role === SYSTEM_ROLES.CLIENT_USER && userType && DEFAULT_CAPS_BY_USER_TYPE[userType]) {
+    baseCaps = [...DEFAULT_CAPS_BY_USER_TYPE[userType]];
+  } else {
+    baseCaps = [...READER_CAPS];
+  }
+
+  if (userOverrides && userOverrides.length > 0) {
+    for (const cap of userOverrides) {
+      if (!baseCaps.includes(cap as Cap)) {
+        baseCaps.push(cap as Cap);
+      }
+    }
+  }
+
+  const planAllowed = PLAN_FEATURES[planTier] || PLAN_FEATURES[PLAN_TIERS.STARTER];
+  const adminCaps = baseCaps.filter(c => c.startsWith("admin_"));
+  let filtered = baseCaps.filter(c => planAllowed.includes(c as Cap) || adminCaps.includes(c as Cap));
+
+  if (!aiEnabled) {
+    filtered = filtered.filter(c => !AI_GATED_CAPS.includes(c as Cap));
+  }
+
+  if (aiEnabled && role === SYSTEM_ROLES.CLIENT_ADMIN) {
+    if (!filtered.includes(CAPS.INTELLIGENCE_VIEW)) filtered.push(CAPS.INTELLIGENCE_VIEW);
+    if (!filtered.includes(CAPS.INTELLIGENCE_DAILY_BRIEF)) filtered.push(CAPS.INTELLIGENCE_DAILY_BRIEF);
+    if (!filtered.includes(CAPS.AI_USAGE_VIEW)) filtered.push(CAPS.AI_USAGE_VIEW);
+  }
+
+  if (aiEnabled && userType === USER_TYPES.ANALYST) {
+    if (!filtered.includes(CAPS.INTELLIGENCE_VIEW)) filtered.push(CAPS.INTELLIGENCE_VIEW);
+    if (!filtered.includes(CAPS.INTELLIGENCE_DAILY_BRIEF)) filtered.push(CAPS.INTELLIGENCE_DAILY_BRIEF);
+    if (!filtered.includes(CAPS.INTELLIGENCE_PREDICTIONS)) filtered.push(CAPS.INTELLIGENCE_PREDICTIONS);
+  }
+
+  return Array.from(new Set(filtered));
+}
+
+// Legacy compat
 export const PERMISSION_CODES = {
   ARTICLES_READ: "articles:read:org",
   ARTICLES_MANAGE: "articles:manage:org",
@@ -1644,7 +1961,10 @@ export const PERMISSION_CODES = {
   SETTINGS_MANAGE: "settings:manage:org",
   INTELLIGENCE_VIEW: "intelligence:view:org",
   INTELLIGENCE_MANAGE: "intelligence:manage:org",
+  BILLING_VIEW: "billing:view:org",
+  BILLING_MANAGE: "billing:manage:org",
   COLLABORATION_VIEW: "collaboration:view:org",
+  COLLABORATION_CONTRIBUTE: "collaboration:contribute:org",
   COLLABORATION_MANAGE: "collaboration:manage:org",
   INTEGRATIONS_VIEW: "integrations:view:org",
   INTEGRATIONS_MANAGE: "integrations:manage:org",
@@ -1655,16 +1975,6 @@ export const PERMISSION_CODES = {
 
 export type PermissionCode = (typeof PERMISSION_CODES)[keyof typeof PERMISSION_CODES];
 
-export const SYSTEM_ROLES = {
-  SYSTEM_ADMIN: "admin",
-  CLIENT_ADMIN: "client_admin",
-  CLIENT_USER: "client",
-  READONLY_USER: "viewer",
-} as const;
-
-export type SystemRole = (typeof SYSTEM_ROLES)[keyof typeof SYSTEM_ROLES];
-
-// Default Permission Groups (roles)
 export const DEFAULT_PERMISSION_GROUPS = {
   PLATFORM_ADMIN: "platform_admin",
   ORG_ADMIN: "org_admin",

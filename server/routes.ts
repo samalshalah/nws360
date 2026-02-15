@@ -8,7 +8,7 @@ import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registe
 import { enqueueAIJob, awaitJobResult, checkClientAiBudget } from "./ai/ai-gateway";
 import { startScheduler, stopScheduler, _schedulerTickForTesting } from "./ai/ai-scheduler";
 import { db } from "./db";
-import { articles, PLAN_LIMITS, SYSTEM_ROLES } from "@shared/schema";
+import { articles, PLAN_LIMITS, SYSTEM_ROLES, CAPS, resolveEffectiveCaps } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
 import sanitizeHtml from "sanitize-html";
@@ -160,6 +160,38 @@ function requireWriteAccess() {
       return res.status(403).json({ message: "Read-only users cannot modify data" });
     }
     next();
+  };
+}
+
+async function resolveUserCaps(user: any): Promise<string[]> {
+  if (isSystemAdmin(user)) return Object.values(CAPS);
+  const client = user.clientId ? await storage.getClient(user.clientId) : null;
+  const aiEnabled = client?.aiEnabled || false;
+  const planTier = (client?.planTier as any) || "starter";
+  return resolveEffectiveCaps(
+    user.role,
+    user.userType || "reader",
+    planTier,
+    aiEnabled,
+    user.capabilities || [],
+  );
+}
+
+function requireCapability(...caps: string[]) {
+  return async (req: any, res: any, next: any) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (isSystemAdmin(user)) return next();
+    try {
+      const userCaps = await resolveUserCaps(user);
+      const hasRequired = caps.some(c => userCaps.includes(c));
+      if (!hasRequired) {
+        return res.status(403).json({ message: "Insufficient permissions" });
+      }
+      next();
+    } catch (e) {
+      return res.status(500).json({ message: "Permission check failed" });
+    }
   };
 }
 
@@ -412,42 +444,62 @@ export async function registerRoutes(
 
     const role = user.role;
     const sysAdmin = isSystemAdmin(user);
-    const clientAdmin = isClientAdmin(user) || sysAdmin;
-    const readonlyUser = isReadonly(user);
 
     let impersonatingUsername: string | null = null;
     let tenantName: string | null = null;
+    let planTier = "enterprise";
+    let aiEnabled = false;
+    let aiTier = "none";
+
     if (ctx.isImpersonating && req.session?.impersonation?.activeUserId) {
       const impUser = await storage.getUser(req.session.impersonation.activeUserId);
       if (impUser) impersonatingUsername = impUser.username;
     }
     if (ctx.tenantId) {
       const tenant = await storage.getClient(ctx.tenantId);
-      if (tenant) tenantName = tenant.name;
+      if (tenant) {
+        tenantName = tenant.name;
+        planTier = (tenant as any).planTier || "enterprise";
+        aiEnabled = tenant.aiEnabled || false;
+        aiTier = (tenant as any).aiTier || "none";
+      }
     }
+
+    const effectiveCaps = resolveEffectiveCaps(
+      role,
+      user.userType || null,
+      sysAdmin ? "enterprise" : planTier,
+      sysAdmin ? true : aiEnabled,
+      user.capabilities || null,
+    );
 
     res.json({
       role,
+      userType: user.userType || null,
       tenantId: ctx.tenantId,
       tenantName,
+      planTier,
+      aiEnabled,
+      aiTier,
       isImpersonating: ctx.isImpersonating,
       impersonatingUsername,
+      capabilities: effectiveCaps,
       permissions: {
-        feeds: !readonlyUser,
-        analytics: true,
-        intelligence: !readonlyUser,
-        sources: clientAdmin,
-        users: clientAdmin,
-        billing: clientAdmin,
+        feeds: effectiveCaps.includes(CAPS.FEED_VIEW),
+        analytics: effectiveCaps.includes(CAPS.ANALYTICS_VIEW),
+        intelligence: effectiveCaps.includes(CAPS.INTELLIGENCE_VIEW),
+        sources: effectiveCaps.includes(CAPS.SOURCES_VIEW),
+        users: effectiveCaps.includes(CAPS.USERS_VIEW),
+        billing: effectiveCaps.includes(CAPS.BILLING_VIEW),
         systemAdmin: sysAdmin,
-        collaboration: !readonlyUser,
-        integrations: clientAdmin,
-        settings: clientAdmin,
-        exports: !readonlyUser,
-        readOnly: readonlyUser,
-        executive: clientAdmin,
-        knowledgeMemory: !readonlyUser,
-        predictiveIntelligence: !readonlyUser,
+        collaboration: effectiveCaps.includes(CAPS.COLLAB_VIEW),
+        integrations: effectiveCaps.includes(CAPS.INTEGRATIONS_VIEW),
+        settings: sysAdmin || effectiveCaps.includes(CAPS.PERMISSIONS_MANAGE),
+        exports: effectiveCaps.includes(CAPS.ARTICLE_EXPORT) || effectiveCaps.includes(CAPS.ANALYTICS_EXPORT),
+        readOnly: role === SYSTEM_ROLES.READONLY_USER,
+        executive: effectiveCaps.includes(CAPS.EXECUTIVE_HOME),
+        knowledgeMemory: effectiveCaps.includes(CAPS.KNOWLEDGE_VIEW),
+        predictiveIntelligence: effectiveCaps.includes(CAPS.INTELLIGENCE_PREDICTIONS),
       },
     });
   });
@@ -1374,14 +1426,13 @@ export async function registerRoutes(
     } else {
       allUsers = await storage.getUsers(user.id);
     }
-    const safeUsers = allUsers.map((u: any) => ({ id: u.id, username: u.username, role: u.role, parentId: u.parentId, createdAt: u.createdAt }));
+    const safeUsers = allUsers.map((u: any) => ({ id: u.id, username: u.username, role: u.role, userType: u.userType || null, parentId: u.parentId, clientId: u.clientId, disabled: u.disabled || false, createdAt: u.createdAt }));
     res.json(safeUsers);
   });
 
-  app.post("/api/users", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/users", requireCapability(CAPS.USERS_MANAGE), async (req, res) => {
     const currentUser = req.user as any;
-    const { username, password, role, clientId: bodyClientId } = req.body;
+    const { username, password, role, clientId: bodyClientId, userType: bodyUserType } = req.body;
     if (!username || !password) return res.status(400).json({ message: "Username and password required" });
 
     let resolvedClientId = resolveClientId(currentUser, req);
@@ -1413,19 +1464,22 @@ export async function registerRoutes(
     const buf = (await scryptAsync(password, salt, 64)) as Buffer;
     const hashedPassword = `${salt}:${buf.toString("hex")}`;
 
+    const validUserTypes = ["reader", "analyst", "editor", "monitor", "executive", "integrations_manager"];
+    const resolvedUserType = bodyUserType && validUserTypes.includes(bodyUserType) ? bodyUserType : "reader";
+
     const newUser = await storage.createUser({
       username,
       password: hashedPassword,
       role: assignedRole,
       parentId: currentUser.id,
       clientId: resolvedClientId,
+      userType: resolvedUserType,
     });
 
-    res.status(201).json({ id: newUser.id, username: newUser.username, role: newUser.role, parentId: newUser.parentId, createdAt: newUser.createdAt });
+    res.status(201).json({ id: newUser.id, username: newUser.username, role: newUser.role, userType: newUser.userType, parentId: newUser.parentId, clientId: newUser.clientId, createdAt: newUser.createdAt });
   });
 
-  app.patch("/api/users/:id/role", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.patch("/api/users/:id/role", requireCapability(CAPS.USERS_MANAGE), async (req, res) => {
     const currentUser = req.user as any;
     const id = parseInt(req.params.id);
     if (id === currentUser.id) return res.status(400).json({ message: "Cannot change your own role" });
@@ -1442,7 +1496,28 @@ export async function registerRoutes(
     if (!role || !validRoles.includes(role)) return res.status(400).json({ message: "Invalid role" });
     const updated = await storage.updateUserRole(id, role);
     if (!updated) return res.status(404).json({ message: "User not found" });
-    res.json({ id: updated.id, username: updated.username, role: updated.role, parentId: updated.parentId, createdAt: updated.createdAt });
+    res.json({ id: updated.id, username: updated.username, role: updated.role, userType: updated.userType, parentId: updated.parentId, clientId: updated.clientId, createdAt: updated.createdAt });
+  });
+
+  app.patch("/api/users/:id/user-type", requireCapability(CAPS.USERS_MANAGE), async (req, res) => {
+    const currentUser = req.user as any;
+    const id = parseInt(req.params.id);
+    if (id === currentUser.id) return res.status(400).json({ message: "Cannot change your own user type" });
+
+    if (!isSystemAdmin(currentUser)) {
+      const targetUser = await storage.getUser(id);
+      if (!targetUser || targetUser.parentId !== currentUser.id) {
+        return safeNotFound(res);
+      }
+    }
+
+    const { userType } = req.body;
+    const validUserTypes = ["reader", "analyst", "editor", "monitor", "executive", "integrations_manager"];
+    if (!userType || !validUserTypes.includes(userType)) return res.status(400).json({ message: "Invalid user type" });
+
+    const updated = await storage.updateUserType(id, userType);
+    if (!updated) return res.status(404).json({ message: "User not found" });
+    res.json({ id: updated.id, username: updated.username, role: updated.role, userType: updated.userType, parentId: updated.parentId, clientId: updated.clientId, createdAt: updated.createdAt });
   });
 
   app.patch("/api/users/:id/password", async (req, res) => {
@@ -1464,8 +1539,7 @@ export async function registerRoutes(
     res.json({ message: "Password updated successfully" });
   });
 
-  app.delete("/api/users/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.delete("/api/users/:id", requireCapability(CAPS.USERS_MANAGE), async (req, res) => {
     const currentUser = req.user as any;
     const id = parseInt(req.params.id);
     if (id === currentUser.id) return res.status(400).json({ message: "Cannot delete yourself" });
@@ -1482,8 +1556,7 @@ export async function registerRoutes(
   });
 
   // === SOURCE HEALTH ===
-  app.get("/api/source-health", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/source-health", requireCapability(CAPS.SOURCE_HEALTH_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
     const health = await storage.getSourceHealth(scopedSourceIds);

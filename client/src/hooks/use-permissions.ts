@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { SYSTEM_ROLES } from "@shared/schema";
+import { SYSTEM_ROLES, CAPS, type Cap } from "@shared/schema";
 
 interface AuthContext {
   user: {
     id: number;
     username: string;
     role: string;
+    userType: string | null;
     clientId: number | null;
     disabled: boolean;
     createdAt: string;
@@ -26,32 +27,39 @@ interface AuthContext {
   };
 }
 
-interface Capabilities {
-  role: string;
-  tenantId: number | null;
-  tenantName: string | null;
-  isImpersonating: boolean;
-  impersonatingUsername: string | null;
-  permissions: {
-    feeds: boolean;
-    analytics: boolean;
-    intelligence: boolean;
-    sources: boolean;
-    users: boolean;
-    billing: boolean;
-    systemAdmin: boolean;
-    collaboration: boolean;
-    integrations: boolean;
-    settings: boolean;
-    exports: boolean;
-    readOnly: boolean;
-    executive: boolean;
-    knowledgeMemory: boolean;
-    predictiveIntelligence: boolean;
-  };
+interface LegacyPermissions {
+  feeds: boolean;
+  analytics: boolean;
+  intelligence: boolean;
+  sources: boolean;
+  users: boolean;
+  billing: boolean;
+  systemAdmin: boolean;
+  collaboration: boolean;
+  integrations: boolean;
+  settings: boolean;
+  exports: boolean;
+  readOnly: boolean;
+  executive: boolean;
+  knowledgeMemory: boolean;
+  predictiveIntelligence: boolean;
 }
 
-export { SYSTEM_ROLES };
+interface Capabilities {
+  role: string;
+  userType: string | null;
+  tenantId: number | null;
+  tenantName: string | null;
+  planTier: string;
+  aiEnabled: boolean;
+  aiTier: string;
+  isImpersonating: boolean;
+  impersonatingUsername: string | null;
+  capabilities: string[];
+  permissions: LegacyPermissions;
+}
+
+export { SYSTEM_ROLES, CAPS };
 
 export function usePermissions() {
   const { data: authContext, isLoading } = useQuery<AuthContext>({
@@ -97,7 +105,19 @@ export function usePermissions() {
     return codes.every((code) => authContext.permissions.includes(code));
   };
 
-  const canAccess = (capability: keyof Capabilities["permissions"]): boolean => {
+  const hasCap = (cap: string): boolean => {
+    if (!capabilities) return false;
+    if (capabilities.role === SYSTEM_ROLES.SYSTEM_ADMIN) return true;
+    return capabilities.capabilities.includes(cap);
+  };
+
+  const hasAnyCap = (...caps: string[]): boolean => {
+    if (!capabilities) return false;
+    if (capabilities.role === SYSTEM_ROLES.SYSTEM_ADMIN) return true;
+    return caps.some((c) => capabilities.capabilities.includes(c));
+  };
+
+  const canAccess = (capability: keyof LegacyPermissions): boolean => {
     if (!capabilities) return false;
     return capabilities.permissions[capability];
   };
@@ -112,11 +132,16 @@ export function usePermissions() {
     hasPermission,
     hasAnyPermission,
     hasAllPermissions,
+    hasCap,
+    hasAnyCap,
     canAccess,
     isAdmin: authContext?.user?.role === SYSTEM_ROLES.SYSTEM_ADMIN,
     isClientAdmin: authContext?.user?.role === SYSTEM_ROLES.CLIENT_ADMIN,
     isClient: authContext?.user?.role === SYSTEM_ROLES.CLIENT_USER,
     isReadonly: authContext?.user?.role === SYSTEM_ROLES.READONLY_USER,
+    userType: authContext?.user?.userType || null,
     tenantId: capabilities?.tenantId || authContext?.organization?.id || null,
+    planTier: capabilities?.planTier || "starter",
+    aiEnabled: capabilities?.aiEnabled || false,
   };
 }

@@ -1,4 +1,4 @@
-import { Switch, Route, useLocation, Redirect } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -10,9 +10,8 @@ import { useTranslation } from "react-i18next";
 import { useEffect } from "react";
 import { getDirection } from "@/i18n";
 import { ThemeProvider } from "@/components/ThemeProvider";
-import { isAdminOnlyRoute } from "@/lib/nav-config";
-import { AdminShell } from "@/components/layout/AdminShell";
-import { ClientShell } from "@/components/layout/ClientShell";
+import { canAccessRoute } from "@/lib/nav-config";
+import { UniversalShell } from "@/components/layout/UniversalShell";
 
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
@@ -48,22 +47,11 @@ import Knowledge from "@/pages/Knowledge";
 import Forecasting from "@/pages/Forecasting";
 import Landing from "@/pages/Landing";
 import NotFound from "@/pages/not-found";
-
-function AdminRouteGuard({ children }: { children: React.ReactNode }) {
-  const { isAdmin } = usePermissions();
-  const [, setLocation] = useLocation();
-
-  if (!isAdmin) {
-    setTimeout(() => setLocation("/"), 0);
-    return null;
-  }
-
-  return <>{children}</>;
-}
+import NotAuthorized from "@/pages/NotAuthorized";
 
 function ShellGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
-  const { isAdmin, isLoading: permLoading } = usePermissions();
+  const { hasCap, isAdmin, isLoading: permLoading } = usePermissions();
   const [location, setLocation] = useLocation();
 
   if (isLoading || (user && permLoading)) {
@@ -79,16 +67,12 @@ function ShellGate({ children }: { children: React.ReactNode }) {
     return null;
   }
 
-  if (!isAdmin && isAdminOnlyRoute(location)) {
-    setTimeout(() => setLocation("/"), 0);
+  if (!canAccessRoute(location, hasCap, isAdmin)) {
+    setTimeout(() => setLocation("/not-authorized"), 0);
     return null;
   }
 
-  if (isAdmin) {
-    return <AdminShell>{children}</AdminShell>;
-  }
-
-  return <ClientShell>{children}</ClientShell>;
+  return <UniversalShell>{children}</UniversalShell>;
 }
 
 function ProtectedPage({ component: Component }: { component: any }) {
@@ -107,6 +91,12 @@ function Router() {
 
       <Route path="/" component={Landing} />
       <Route path="/demo" component={DemoPage} />
+
+      <Route path="/not-authorized">
+        <ShellGate>
+          <NotAuthorized />
+        </ShellGate>
+      </Route>
 
       <Route path="/dashboard">
         <ProtectedPage component={Dashboard} />
@@ -170,39 +160,19 @@ function Router() {
       </Route>
 
       <Route path="/sources/health">
-        <ShellGate>
-          <AdminRouteGuard>
-            <SourceHealth />
-          </AdminRouteGuard>
-        </ShellGate>
+        <ProtectedPage component={SourceHealth} />
       </Route>
       <Route path="/admin/dashboard">
-        <ShellGate>
-          <AdminRouteGuard>
-            <AdminDashboard />
-          </AdminRouteGuard>
-        </ShellGate>
+        <ProtectedPage component={AdminDashboard} />
       </Route>
       <Route path="/admin/ops">
-        <ShellGate>
-          <AdminRouteGuard>
-            <OpsDashboard />
-          </AdminRouteGuard>
-        </ShellGate>
+        <ProtectedPage component={OpsDashboard} />
       </Route>
       <Route path="/admin/product-analytics">
-        <ShellGate>
-          <AdminRouteGuard>
-            <ProductAnalytics />
-          </AdminRouteGuard>
-        </ShellGate>
+        <ProtectedPage component={ProductAnalytics} />
       </Route>
       <Route path="/admin/integrations">
-        <ShellGate>
-          <AdminRouteGuard>
-            <IntegrationMonitoring />
-          </AdminRouteGuard>
-        </ShellGate>
+        <ProtectedPage component={IntegrationMonitoring} />
       </Route>
       <Route path="/admin">
         <ProtectedPage component={Admin} />
