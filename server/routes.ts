@@ -3661,17 +3661,15 @@ export async function registerRoutes(
   });
 
   // === INTEGRATION: WEBHOOKS ===
-  app.get("/api/integrations/webhooks", async (req, res) => {
+  app.get("/api/integrations/webhooks", requireCapability(CAPS.INTEGRATIONS_VIEW), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const webhooks = await storage.getWebhooks(clientId || undefined);
     res.json(webhooks);
   });
 
-  app.post("/api/integrations/webhooks", async (req, res) => {
+  app.post("/api/integrations/webhooks", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const { url, eventTypes, description } = req.body;
     if (!url || !eventTypes || !eventTypes.length) return res.status(400).json({ message: "URL and event types required" });
@@ -3687,25 +3685,22 @@ export async function registerRoutes(
     res.status(201).json(webhook);
   });
 
-  app.patch("/api/integrations/webhooks/:id", async (req, res) => {
+  app.patch("/api/integrations/webhooks/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const webhook = await storage.updateWebhook(parseInt(req.params.id), req.body, clientId || undefined);
     res.json(webhook);
   });
 
-  app.delete("/api/integrations/webhooks/:id", async (req, res) => {
+  app.delete("/api/integrations/webhooks/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.deleteWebhook(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
   });
 
-  app.get("/api/integrations/webhooks/:id/deliveries", async (req, res) => {
+  app.get("/api/integrations/webhooks/:id/deliveries", requireCapability(CAPS.INTEGRATIONS_VIEW), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const webhook = await storage.getWebhook(parseInt(req.params.id), clientId || undefined);
     if (!webhook) return res.status(404).json({ message: "Not found" });
@@ -3713,9 +3708,8 @@ export async function registerRoutes(
     res.json(deliveries);
   });
 
-  app.post("/api/integrations/webhooks/:id/test", async (req, res) => {
+  app.post("/api/integrations/webhooks/:id/test", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const webhook = await storage.getWebhook(parseInt(req.params.id), clientId || undefined);
     if (!webhook) return res.status(404).json({ message: "Not found" });
@@ -3725,79 +3719,69 @@ export async function registerRoutes(
   });
 
   // === INTEGRATION: EMAIL SUBSCRIPTIONS ===
-  app.get("/api/integrations/email-subscriptions", async (req, res) => {
+  app.get("/api/integrations/email-subscriptions", requireCapability(CAPS.INTEGRATIONS_VIEW), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const subs = await storage.getEmailSubscriptions(user.id);
     res.json(subs);
   });
 
-  app.post("/api/integrations/email-subscriptions", async (req, res) => {
+  app.post("/api/integrations/email-subscriptions", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const sub = await storage.createEmailSubscription({ ...req.body, userId: user.id });
     res.status(201).json(sub);
   });
 
-  app.patch("/api/integrations/email-subscriptions/:id", async (req, res) => {
+  app.patch("/api/integrations/email-subscriptions/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const sub = await storage.updateEmailSubscription(parseInt(req.params.id), req.body, user.id);
     res.json(sub);
   });
 
-  app.delete("/api/integrations/email-subscriptions/:id", async (req, res) => {
+  app.delete("/api/integrations/email-subscriptions/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     await storage.deleteEmailSubscription(parseInt(req.params.id), user.id);
     res.json({ success: true });
   });
 
   // === INTEGRATION: COMMUNICATION (Slack/Teams) ===
-  app.get("/api/integrations/communication", async (req, res) => {
+  app.get("/api/integrations/communication", requireCapability(CAPS.INTEGRATIONS_VIEW), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const configs = await storage.getIntegrationConfigs(clientId || undefined);
     res.json(configs);
   });
 
-  app.post("/api/integrations/communication", async (req, res) => {
+  app.post("/api/integrations/communication", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const config = await storage.createIntegrationConfig({ ...req.body, clientId: clientId || 0 });
     res.status(201).json(config);
   });
 
-  app.patch("/api/integrations/communication/:id", async (req, res) => {
+  app.patch("/api/integrations/communication/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const config = await storage.updateIntegrationConfig(parseInt(req.params.id), req.body, clientId || undefined);
     res.json(config);
   });
 
-  app.delete("/api/integrations/communication/:id", async (req, res) => {
+  app.delete("/api/integrations/communication/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.deleteIntegrationConfig(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
   });
 
   // === INTEGRATION: EMBED WIDGETS ===
-  app.get("/api/integrations/embeds", async (req, res) => {
+  app.get("/api/integrations/embeds", requireCapability(CAPS.INTEGRATIONS_VIEW), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const tokens = await storage.getEmbedTokens(clientId || undefined);
     res.json(tokens);
   });
 
-  app.post("/api/integrations/embeds", async (req, res) => {
+  app.post("/api/integrations/embeds", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const token = randomBytes(24).toString("hex");
     const embed = await storage.createEmbedToken({
@@ -3811,9 +3795,8 @@ export async function registerRoutes(
     res.status(201).json(embed);
   });
 
-  app.delete("/api/integrations/embeds/:id", async (req, res) => {
+  app.delete("/api/integrations/embeds/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.deleteEmbedToken(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
@@ -3849,9 +3832,8 @@ export async function registerRoutes(
   });
 
   // === INTEGRATION: EXPORTS ===
-  app.post("/api/integrations/export", async (req, res) => {
+  app.post("/api/integrations/export", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const exportClientId = resolveClientId(user, req);
     const { exportType, format, filters } = req.body;
     if (!exportType || !format) return res.status(400).json({ message: "Export type and format required" });
@@ -3902,58 +3884,51 @@ export async function registerRoutes(
     res.json({ job, data: resultData });
   });
 
-  app.get("/api/integrations/exports", async (req, res) => {
+  app.get("/api/integrations/exports", requireCapability(CAPS.INTEGRATIONS_VIEW), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const jobs = await storage.getExportJobs(user.id);
     res.json(jobs);
   });
 
   // === INTEGRATION: SSO CONFIG ===
-  app.get("/api/integrations/sso", async (req, res) => {
+  app.get("/api/integrations/sso", requireCapability(CAPS.INTEGRATIONS_VIEW), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const configs = await storage.getSsoConfigs(clientId || undefined);
     res.json(configs);
   });
 
-  app.post("/api/integrations/sso", async (req, res) => {
+  app.post("/api/integrations/sso", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const config = await storage.createSsoConfig({ ...req.body, clientId: clientId || 0 });
     res.status(201).json(config);
   });
 
-  app.patch("/api/integrations/sso/:id", async (req, res) => {
+  app.patch("/api/integrations/sso/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const config = await storage.updateSsoConfig(parseInt(req.params.id), req.body, clientId || undefined);
     res.json(config);
   });
 
-  app.delete("/api/integrations/sso/:id", async (req, res) => {
+  app.delete("/api/integrations/sso/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.deleteSsoConfig(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
   });
 
   // === INTEGRATION: DATA IMPORT CONNECTORS ===
-  app.get("/api/integrations/import-connectors", async (req, res) => {
+  app.get("/api/integrations/import-connectors", requireCapability(CAPS.INTEGRATIONS_VIEW), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const connectors = await storage.getImportConnectors(clientId || undefined);
     res.json(connectors);
   });
 
-  app.post("/api/integrations/import-connectors", async (req, res) => {
+  app.post("/api/integrations/import-connectors", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const connector = await storage.createImportConnector({ ...req.body, clientId: clientId || 0 });
     if (connector.connectorType === "private_rss" && connector.url) {
@@ -3969,33 +3944,29 @@ export async function registerRoutes(
     res.status(201).json(connector);
   });
 
-  app.patch("/api/integrations/import-connectors/:id", async (req, res) => {
+  app.patch("/api/integrations/import-connectors/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const connector = await storage.updateImportConnector(parseInt(req.params.id), req.body, clientId || undefined);
     res.json(connector);
   });
 
-  app.delete("/api/integrations/import-connectors/:id", async (req, res) => {
+  app.delete("/api/integrations/import-connectors/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.deleteImportConnector(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
   });
 
   // === INTEGRATION: MOBILE NOTIFICATION PREFS ===
-  app.get("/api/integrations/mobile-notifications", async (req, res) => {
+  app.get("/api/integrations/mobile-notifications", requireCapability(CAPS.INTEGRATIONS_VIEW), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const prefs = await storage.getMobileNotificationPrefs(user.id);
     res.json(prefs || { criticalAlerts: true, briefingReady: true, entityChanges: false, severityLevel: "high" });
   });
 
-  app.put("/api/integrations/mobile-notifications", async (req, res) => {
+  app.put("/api/integrations/mobile-notifications", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const prefs = await storage.upsertMobileNotificationPrefs({ ...req.body, userId: user.id });
     res.json(prefs);
   });
@@ -4041,8 +4012,7 @@ export async function registerRoutes(
   });
 
   // === ADMIN: INTEGRATION MONITORING ===
-  app.get("/api/admin/integration-monitoring", async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+  app.get("/api/admin/integration-monitoring", requireSystemAdmin(), async (req, res) => {
     const webhooks = await storage.getWebhooks();
     const deliveries = await storage.getWebhookDeliveries(undefined, { limit: 100 });
     const configs = await storage.getIntegrationConfigs();
