@@ -1746,6 +1746,11 @@ export const CAPS = {
 
   KNOWLEDGE_VIEW: "knowledge_view",
   KNOWLEDGE_MANAGE: "knowledge_manage",
+  KNOWLEDGE_COMPUTE: "knowledge_compute",
+
+  FORECAST_VIEW: "forecast_view",
+  FORECAST_MANAGE: "forecast_manage",
+  FORECAST_COMPUTE: "forecast_compute",
 
   ADMIN_SYSTEM_DASHBOARD: "admin_system_dashboard",
   ADMIN_TENANT_SWITCH: "admin_tenant_switch",
@@ -1774,6 +1779,8 @@ const ANALYST_CAPS: Cap[] = [
   CAPS.KEYWORDS_VIEW,
   CAPS.AI_USAGE_VIEW,
   CAPS.INTELLIGENCE_RUN,
+  CAPS.KNOWLEDGE_VIEW,
+  CAPS.FORECAST_VIEW,
 ];
 
 const EDITOR_CAPS: Cap[] = [
@@ -1819,7 +1826,8 @@ const CLIENT_ADMIN_CAPS: Cap[] = [
   CAPS.USERS_VIEW, CAPS.USERS_INVITE, CAPS.USERS_EDIT, CAPS.USERS_DISABLE,
   CAPS.USERS_ASSIGN_ROLES, CAPS.PERMISSIONS_MANAGE,
   CAPS.BILLING_VIEW, CAPS.BILLING_MANAGE, CAPS.AI_USAGE_VIEW,
-  CAPS.KNOWLEDGE_VIEW, CAPS.KNOWLEDGE_MANAGE,
+  CAPS.KNOWLEDGE_VIEW, CAPS.KNOWLEDGE_MANAGE, CAPS.KNOWLEDGE_COMPUTE,
+  CAPS.FORECAST_VIEW, CAPS.FORECAST_MANAGE, CAPS.FORECAST_COMPUTE,
   CAPS.EXECUTIVE_HOME,
 ];
 
@@ -1881,6 +1889,7 @@ export const PLAN_FEATURES: Record<string, Cap[]> = {
     CAPS.BILLING_VIEW, CAPS.BILLING_MANAGE,
     CAPS.AI_USAGE_VIEW,
     CAPS.KNOWLEDGE_VIEW, CAPS.KNOWLEDGE_MANAGE,
+    CAPS.FORECAST_VIEW,
     CAPS.INTEGRATION_MONITOR_VIEW,
   ],
   [PLAN_TIERS.ENTERPRISE]: Object.values(CAPS).filter(c =>
@@ -1893,6 +1902,8 @@ export const AI_GATED_CAPS: Cap[] = [
   CAPS.INTELLIGENCE_VIEW, CAPS.INTELLIGENCE_DAILY_BRIEF,
   CAPS.INTELLIGENCE_PREDICTIONS, CAPS.INTELLIGENCE_QA,
   CAPS.INTELLIGENCE_RUN, CAPS.AI_USAGE_VIEW,
+  CAPS.KNOWLEDGE_COMPUTE,
+  CAPS.FORECAST_COMPUTE,
 ];
 
 // Resolve effective capabilities for a user
@@ -1936,12 +1947,16 @@ export function resolveEffectiveCaps(
     if (!filtered.includes(CAPS.INTELLIGENCE_VIEW)) filtered.push(CAPS.INTELLIGENCE_VIEW);
     if (!filtered.includes(CAPS.INTELLIGENCE_DAILY_BRIEF)) filtered.push(CAPS.INTELLIGENCE_DAILY_BRIEF);
     if (!filtered.includes(CAPS.AI_USAGE_VIEW)) filtered.push(CAPS.AI_USAGE_VIEW);
+    if (!filtered.includes(CAPS.KNOWLEDGE_COMPUTE)) filtered.push(CAPS.KNOWLEDGE_COMPUTE);
+    if (!filtered.includes(CAPS.FORECAST_COMPUTE)) filtered.push(CAPS.FORECAST_COMPUTE);
   }
 
   if (aiEnabled && userType === USER_TYPES.ANALYST) {
     if (!filtered.includes(CAPS.INTELLIGENCE_VIEW)) filtered.push(CAPS.INTELLIGENCE_VIEW);
     if (!filtered.includes(CAPS.INTELLIGENCE_DAILY_BRIEF)) filtered.push(CAPS.INTELLIGENCE_DAILY_BRIEF);
     if (!filtered.includes(CAPS.INTELLIGENCE_PREDICTIONS)) filtered.push(CAPS.INTELLIGENCE_PREDICTIONS);
+    if (!filtered.includes(CAPS.KNOWLEDGE_COMPUTE)) filtered.push(CAPS.KNOWLEDGE_COMPUTE);
+    if (!filtered.includes(CAPS.FORECAST_COMPUTE)) filtered.push(CAPS.FORECAST_COMPUTE);
   }
 
   return Array.from(new Set(filtered));
