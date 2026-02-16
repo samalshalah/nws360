@@ -1780,10 +1780,12 @@ export async function registerRoutes(
       details: `AI config updated: ${JSON.stringify(updates)}`,
     });
 
-    const usage = await storage.getDailyAiUsage(id);
+    const budgetStatus = await checkClientAiBudget(id);
     res.json({
       client: { id: client.id, name: client.name, aiEnabled: client.aiEnabled, dailyTokenBudget: client.dailyTokenBudget, dailyJobLimit: client.dailyJobLimit },
-      todayUsage: usage,
+      todayUsage: { totalTokens: budgetStatus.todayTokens, jobCount: budgetStatus.todayJobs },
+      remainingTokens: budgetStatus.remainingTokens,
+      remainingJobs: budgetStatus.remainingJobs,
     });
   });
 

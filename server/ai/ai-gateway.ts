@@ -37,28 +37,41 @@ const DEFAULT_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const AWAIT_POLL_INTERVAL_MS = 500;
 const AWAIT_DEFAULT_TIMEOUT_MS = 120_000;
 
-export async function checkClientAiBudget(clientId: number): Promise<{ allowed: boolean; reason?: string }> {
+export interface AiBudgetStatus {
+  allowed: boolean;
+  reason?: string;
+  remainingTokens: number;
+  remainingJobs: number;
+  dailyTokenBudget: number;
+  dailyJobLimit: number;
+  todayTokens: number;
+  todayJobs: number;
+}
+
+export async function checkClientAiBudget(clientId: number): Promise<AiBudgetStatus> {
   const client = await storage.getClient(clientId);
-  if (!client) return { allowed: false, reason: "Client not found" };
-  if (!client.aiEnabled) return { allowed: false, reason: `AI disabled for client ${client.name} (id=${clientId})` };
+  if (!client) return { allowed: false, reason: "Client not found", remainingTokens: 0, remainingJobs: 0, dailyTokenBudget: 0, dailyJobLimit: 0, todayTokens: 0, todayJobs: 0 };
+  if (!client.aiEnabled) return { allowed: false, reason: `AI disabled for client ${client.name} (id=${clientId})`, remainingTokens: 0, remainingJobs: 0, dailyTokenBudget: 0, dailyJobLimit: 0, todayTokens: 0, todayJobs: 0 };
 
-  const budget = client.dailyTokenBudget ?? 0;
-  const limit = client.dailyJobLimit ?? 0;
+  const dailyTokenBudget = client.dailyTokenBudget ?? 0;
+  const dailyJobLimit = client.dailyJobLimit ?? 0;
 
-  if (budget <= 0 && limit <= 0) {
-    return { allowed: false, reason: `Client ${clientId} has no AI budget configured (dailyTokenBudget=0, dailyJobLimit=0)` };
+  if (dailyTokenBudget <= 0 && dailyJobLimit <= 0) {
+    return { allowed: false, reason: `Client ${clientId} has no AI budget configured (dailyTokenBudget=0, dailyJobLimit=0)`, remainingTokens: 0, remainingJobs: 0, dailyTokenBudget, dailyJobLimit, todayTokens: 0, todayJobs: 0 };
   }
 
   const usage = await storage.getDailyAiUsage(clientId);
+  const remainingTokens = dailyTokenBudget > 0 ? Math.max(0, dailyTokenBudget - usage.totalTokens) : Infinity;
+  const remainingJobs = dailyJobLimit > 0 ? Math.max(0, dailyJobLimit - usage.jobCount) : Infinity;
 
-  if (limit > 0 && usage.jobCount >= limit) {
-    return { allowed: false, reason: `Daily job limit reached: ${usage.jobCount}/${limit}` };
+  if (dailyJobLimit > 0 && usage.jobCount >= dailyJobLimit) {
+    return { allowed: false, reason: `Daily job limit reached: ${usage.jobCount}/${dailyJobLimit}`, remainingTokens, remainingJobs: 0, dailyTokenBudget, dailyJobLimit, todayTokens: usage.totalTokens, todayJobs: usage.jobCount };
   }
-  if (budget > 0 && usage.totalTokens >= budget) {
-    return { allowed: false, reason: `Daily token budget exhausted: ${usage.totalTokens}/${budget}` };
+  if (dailyTokenBudget > 0 && usage.totalTokens >= dailyTokenBudget) {
+    return { allowed: false, reason: `Daily token budget exhausted: ${usage.totalTokens}/${dailyTokenBudget}`, remainingTokens: 0, remainingJobs, dailyTokenBudget, dailyJobLimit, todayTokens: usage.totalTokens, todayJobs: usage.jobCount };
   }
 
-  return { allowed: true };
+  return { allowed: true, remainingTokens, remainingJobs, dailyTokenBudget, dailyJobLimit, todayTokens: usage.totalTokens, todayJobs: usage.jobCount };
 }
 
 export async function createInsightJob(
