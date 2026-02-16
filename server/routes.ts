@@ -1235,24 +1235,21 @@ export async function registerRoutes(
   });
 
   // === ANALYTICS ===
-  app.get(api.analytics.stats.path, async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get(api.analytics.stats.path, requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
     const stats = await storage.getStats(scopedSourceIds);
     res.json(stats);
   });
 
-  app.get(api.analytics.sentimentTrend.path, async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get(api.analytics.sentimentTrend.path, requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
     const trend = await storage.getSentimentTrend(scopedSourceIds);
     res.json(trend);
   });
 
-  app.get("/api/analytics/content-volume", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/analytics/content-volume", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
     const clientId = resolveClientId(user, req);
@@ -1263,8 +1260,7 @@ export async function registerRoutes(
     res.json(data);
   });
 
-  app.get("/api/analytics/trending-topics", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/analytics/trending-topics", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
     const clientId = resolveClientId(user, req);
@@ -1275,8 +1271,7 @@ export async function registerRoutes(
     res.json(data);
   });
 
-  app.get("/api/analytics/keyword-analysis", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/analytics/keyword-analysis", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
     const clientId = resolveClientId(user, req);
@@ -1287,8 +1282,7 @@ export async function registerRoutes(
     res.json(data);
   });
 
-  app.get("/api/analytics/sentiment-reports", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/analytics/sentiment-reports", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
     const clientId = resolveClientId(user, req);
@@ -1299,8 +1293,7 @@ export async function registerRoutes(
     res.json(data);
   });
 
-  app.get("/api/analytics/source-behavior", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/analytics/source-behavior", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
     const clientId = resolveClientId(user, req);
@@ -1311,8 +1304,7 @@ export async function registerRoutes(
     res.json(data);
   });
 
-  app.get("/api/analytics/narrative-comparison", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/analytics/narrative-comparison", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
     const clientId = resolveClientId(user, req);
@@ -1345,8 +1337,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/analytics/keyword-detail", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/analytics/keyword-detail", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
     const clientId = resolveClientId(user, req);
@@ -1607,8 +1598,7 @@ export async function registerRoutes(
   });
 
   // === ANALYTICS EXPORT CSV ===
-  app.get("/api/analytics/export", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/analytics/export", requireCapability(CAPS.ANALYTICS_EXPORT), async (req, res) => {
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
@@ -1964,8 +1954,7 @@ export async function registerRoutes(
   });
 
   // === ADMIN: TRIGGER ANALYTICS COMPUTATION ===
-  app.post("/api/admin/compute-analytics", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/admin/compute-analytics", requireSystemAdmin(), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     console.log(`[Analytics] Manual computation triggered by user ${user.id}`);
