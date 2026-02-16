@@ -2320,26 +2320,23 @@ export async function registerRoutes(
   // ===================================================================
 
   // === STORY TIMELINES ===
-  app.get("/api/knowledge/timelines", async (req, res) => {
+  app.get("/api/knowledge/timelines", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const items = await storage.getStoryTimelines(clientId || undefined);
     res.json(items);
   });
 
-  app.get("/api/knowledge/timelines/:id", async (req, res) => {
+  app.get("/api/knowledge/timelines/:id", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const timeline = await storage.getStoryTimeline(parseInt(req.params.id), clientId || undefined);
     if (!timeline) return res.status(404).json({ message: "Not found" });
     res.json(timeline);
   });
 
-  app.post("/api/knowledge/timelines", async (req, res) => {
+  app.post("/api/knowledge/timelines", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const schema = z.object({ mainTopic: z.string().min(1), summary: z.string().optional(), status: z.enum(["active", "dormant", "recurring"]).optional(), storyClusterId: z.number().int().optional() });
     const parsed = schema.safeParse(req.body);
@@ -2348,27 +2345,24 @@ export async function registerRoutes(
     res.status(201).json(item);
   });
 
-  app.patch("/api/knowledge/timelines/:id", async (req, res) => {
+  app.patch("/api/knowledge/timelines/:id", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const item = await storage.updateStoryTimeline(parseInt(req.params.id), req.body, clientId || undefined);
     if (!item) return res.status(404).json({ message: "Not found" });
     res.json(item);
   });
 
-  app.delete("/api/knowledge/timelines/:id", async (req, res) => {
+  app.delete("/api/knowledge/timelines/:id", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.deleteStoryTimeline(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
   });
 
   // === TIMELINE EVENTS ===
-  app.get("/api/knowledge/timelines/:id/events", async (req, res) => {
+  app.get("/api/knowledge/timelines/:id/events", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const timelineId = parseInt(req.params.id);
     const timeline = await storage.getStoryTimeline(timelineId, clientId || undefined);
@@ -2377,9 +2371,8 @@ export async function registerRoutes(
     res.json(events);
   });
 
-  app.post("/api/knowledge/timelines/:id/events", async (req, res) => {
+  app.post("/api/knowledge/timelines/:id/events", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const timelineId = parseInt(req.params.id);
     const timeline = await storage.getStoryTimeline(timelineId, clientId || undefined);
@@ -2392,9 +2385,8 @@ export async function registerRoutes(
     res.status(201).json(item);
   });
 
-  app.delete("/api/knowledge/timeline-events/:id", async (req, res) => {
+  app.delete("/api/knowledge/timeline-events/:id", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const event = await storage.getTimelineEvent(parseInt(req.params.id));
     if (!event) return res.status(404).json({ message: "Not found" });
@@ -2405,17 +2397,15 @@ export async function registerRoutes(
   });
 
   // === RECURRING PATTERNS ===
-  app.get("/api/knowledge/patterns", async (req, res) => {
+  app.get("/api/knowledge/patterns", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const items = await storage.getRecurringPatterns(clientId || undefined);
     res.json(items);
   });
 
-  app.post("/api/knowledge/patterns", async (req, res) => {
+  app.post("/api/knowledge/patterns", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const schema = z.object({ topic: z.string().min(1), recurrenceInterval: z.string().optional(), confidence: z.number().int().min(0).max(100).optional(), occurrenceCount: z.number().int().optional() });
     const parsed = schema.safeParse(req.body);
@@ -2424,44 +2414,39 @@ export async function registerRoutes(
     res.status(201).json(item);
   });
 
-  app.patch("/api/knowledge/patterns/:id", async (req, res) => {
+  app.patch("/api/knowledge/patterns/:id", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const item = await storage.updateRecurringPattern(parseInt(req.params.id), req.body, clientId || undefined);
     if (!item) return res.status(404).json({ message: "Not found" });
     res.json(item);
   });
 
-  app.delete("/api/knowledge/patterns/:id", async (req, res) => {
+  app.delete("/api/knowledge/patterns/:id", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.deleteRecurringPattern(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
   });
 
   // === ENTITY MEMORY ===
-  app.get("/api/knowledge/entity-memory", async (req, res) => {
+  app.get("/api/knowledge/entity-memory", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const items = await storage.getEntityMemories(clientId || undefined);
     res.json(items);
   });
 
-  app.get("/api/knowledge/entity-memory/by-name/:name", async (req, res) => {
+  app.get("/api/knowledge/entity-memory/by-name/:name", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const item = await storage.getEntityMemoryByName(decodeURIComponent(req.params.name), clientId || undefined);
     if (!item) return res.status(404).json({ message: "Not found" });
     res.json(item);
   });
 
-  app.post("/api/knowledge/entity-memory", async (req, res) => {
+  app.post("/api/knowledge/entity-memory", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const schema = z.object({ entityName: z.string().min(1), entityType: z.string().optional(), biography: z.string().optional(), associatedTopics: z.array(z.string()).optional() });
     const parsed = schema.safeParse(req.body);
@@ -2470,36 +2455,32 @@ export async function registerRoutes(
     res.status(201).json(item);
   });
 
-  app.patch("/api/knowledge/entity-memory/:id", async (req, res) => {
+  app.patch("/api/knowledge/entity-memory/:id", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const item = await storage.updateEntityMemory(parseInt(req.params.id), req.body, clientId || undefined);
     if (!item) return res.status(404).json({ message: "Not found" });
     res.json(item);
   });
 
-  app.delete("/api/knowledge/entity-memory/:id", async (req, res) => {
+  app.delete("/api/knowledge/entity-memory/:id", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.deleteEntityMemory(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
   });
 
   // === NARRATIVE SHIFTS ===
-  app.get("/api/knowledge/narrative-shifts", async (req, res) => {
+  app.get("/api/knowledge/narrative-shifts", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const topic = req.query.topic as string | undefined;
     const items = await storage.getNarrativeShifts({ topic, clientId: clientId || undefined });
     res.json(items);
   });
 
-  app.post("/api/knowledge/narrative-shifts", async (req, res) => {
+  app.post("/api/knowledge/narrative-shifts", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const schema = z.object({ topic: z.string().min(1), framingTerms: z.array(z.string()).optional(), sentimentDelta: z.number().int().optional(), summary: z.string().optional(), storyClusterId: z.number().int().optional() });
     const parsed = schema.safeParse(req.body);
@@ -2508,27 +2489,24 @@ export async function registerRoutes(
     res.status(201).json(item);
   });
 
-  app.delete("/api/knowledge/narrative-shifts/:id", async (req, res) => {
+  app.delete("/api/knowledge/narrative-shifts/:id", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.deleteNarrativeShift(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
   });
 
   // === INSTITUTIONAL / ORG NOTES ===
-  app.get("/api/knowledge/org-notes", async (req, res) => {
+  app.get("/api/knowledge/org-notes", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const topic = req.query.topic as string | undefined;
     const items = await storage.getInstitutionalNotes(clientId || undefined, topic);
     res.json(items);
   });
 
-  app.post("/api/knowledge/org-notes", async (req, res) => {
+  app.post("/api/knowledge/org-notes", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const schema = z.object({ relatedTopic: z.string().min(1), content: z.string().min(1), noteType: z.enum(["context", "policy", "decision", "reference"]).optional(), targetType: z.string().optional(), targetId: z.number().int().optional() });
     const parsed = schema.safeParse(req.body);
@@ -2537,26 +2515,23 @@ export async function registerRoutes(
     res.status(201).json(item);
   });
 
-  app.delete("/api/knowledge/org-notes/:id", async (req, res) => {
+  app.delete("/api/knowledge/org-notes/:id", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.deleteInstitutionalNote(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
   });
 
   // === HISTORICAL MATCHES ===
-  app.get("/api/knowledge/historical-matches", async (req, res) => {
+  app.get("/api/knowledge/historical-matches", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const items = await storage.getHistoricalMatches(clientId || undefined);
     res.json(items);
   });
 
-  app.post("/api/knowledge/historical-matches", async (req, res) => {
+  app.post("/api/knowledge/historical-matches", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const schema = z.object({ currentStoryId: z.number().int().optional(), pastStoryId: z.number().int().optional(), similarityScore: z.number().int().min(0).max(100).optional(), matchReason: z.string().optional() });
     const parsed = schema.safeParse(req.body);
@@ -2565,26 +2540,23 @@ export async function registerRoutes(
     res.status(201).json(item);
   });
 
-  app.patch("/api/knowledge/historical-matches/:id/acknowledge", async (req, res) => {
+  app.patch("/api/knowledge/historical-matches/:id/acknowledge", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.acknowledgeHistoricalMatch(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
   });
 
   // === TREND LIFECYCLES ===
-  app.get("/api/knowledge/trends", async (req, res) => {
+  app.get("/api/knowledge/trends", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const items = await storage.getTrendLifecycles(clientId || undefined);
     res.json(items);
   });
 
-  app.post("/api/knowledge/trends", async (req, res) => {
+  app.post("/api/knowledge/trends", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const schema = z.object({ topic: z.string().min(1), stage: z.enum(["emergence", "growth", "peak", "decline", "dormant", "reactivation"]).optional() });
     const parsed = schema.safeParse(req.body);
@@ -2593,36 +2565,32 @@ export async function registerRoutes(
     res.status(201).json(item);
   });
 
-  app.patch("/api/knowledge/trends/:id", async (req, res) => {
+  app.patch("/api/knowledge/trends/:id", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const item = await storage.updateTrendLifecycle(parseInt(req.params.id), req.body, clientId || undefined);
     if (!item) return res.status(404).json({ message: "Not found" });
     res.json(item);
   });
 
-  app.delete("/api/knowledge/trends/:id", async (req, res) => {
+  app.delete("/api/knowledge/trends/:id", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.deleteTrendLifecycle(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
   });
 
   // === LONG-RANGE BRIEFINGS ===
-  app.get("/api/knowledge/briefings", async (req, res) => {
+  app.get("/api/knowledge/briefings", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const periodType = req.query.periodType as string | undefined;
     const items = await storage.getLongRangeBriefings(clientId || undefined, periodType);
     res.json(items);
   });
 
-  app.post("/api/knowledge/briefings", async (req, res) => {
+  app.post("/api/knowledge/briefings", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const schema = z.object({ periodType: z.enum(["monthly", "quarterly", "yearly"]), summary: z.string().optional(), findings: z.any().optional() });
     const parsed = schema.safeParse(req.body);
@@ -2631,26 +2599,23 @@ export async function registerRoutes(
     res.status(201).json(item);
   });
 
-  app.delete("/api/knowledge/briefings/:id", async (req, res) => {
+  app.delete("/api/knowledge/briefings/:id", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     await storage.deleteLongRangeBriefing(parseInt(req.params.id), clientId || undefined);
     res.json({ success: true });
   });
 
   // === AI MEMORY ANSWERS ===
-  app.get("/api/knowledge/ai-answers", async (req, res) => {
+  app.get("/api/knowledge/ai-answers", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const items = await storage.getAiMemoryAnswers(clientId || undefined, 50);
     res.json(items);
   });
 
-  app.post("/api/knowledge/ai-answers", async (req, res) => {
+  app.post("/api/knowledge/ai-answers", requireAiEnabled(), requireCapability(CAPS.KNOWLEDGE_COMPUTE), async (req, res) => {
     const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
     const schema = z.object({ query: z.string().min(1) });
     const parsed = schema.safeParse(req.body);
@@ -2702,16 +2667,14 @@ export async function registerRoutes(
   // === PREDICTIVE INTELLIGENCE & FORECASTING ===
 
   // Topic Forecasts
-  app.get("/api/forecast/topics", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/forecast/topics", requireCapability(CAPS.FORECAST_VIEW), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const forecasts = await storage.getTopicForecasts(clientId || undefined);
     res.json(forecasts);
   });
 
-  app.post("/api/forecast/topics", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/forecast/topics", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const schema = z.object({
@@ -2732,8 +2695,7 @@ export async function registerRoutes(
     res.status(201).json(forecast);
   });
 
-  app.delete("/api/forecast/topics/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.delete("/api/forecast/topics/:id", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
@@ -2744,16 +2706,14 @@ export async function registerRoutes(
   });
 
   // Early Signals
-  app.get("/api/forecast/signals", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/forecast/signals", requireCapability(CAPS.FORECAST_VIEW), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const signals = await storage.getEarlySignals(clientId || undefined);
     res.json(signals);
   });
 
-  app.post("/api/forecast/signals", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/forecast/signals", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const schema = z.object({
@@ -2768,8 +2728,7 @@ export async function registerRoutes(
     res.status(201).json(signal);
   });
 
-  app.delete("/api/forecast/signals/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.delete("/api/forecast/signals/:id", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
@@ -2780,16 +2739,14 @@ export async function registerRoutes(
   });
 
   // Risk Scores
-  app.get("/api/forecast/risks", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/forecast/risks", requireCapability(CAPS.FORECAST_VIEW), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const risks = await storage.getRiskScores(clientId || undefined);
     res.json(risks);
   });
 
-  app.post("/api/forecast/risks", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/forecast/risks", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const schema = z.object({
@@ -2807,8 +2764,7 @@ export async function registerRoutes(
     res.status(201).json(risk);
   });
 
-  app.delete("/api/forecast/risks/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.delete("/api/forecast/risks/:id", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
@@ -2819,16 +2775,14 @@ export async function registerRoutes(
   });
 
   // Influence Graph
-  app.get("/api/forecast/influence", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/forecast/influence", requireCapability(CAPS.FORECAST_VIEW), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const graph = await storage.getInfluenceGraph(clientId || undefined);
     res.json(graph);
   });
 
-  app.post("/api/forecast/influence", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/forecast/influence", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const schema = z.object({
@@ -2844,8 +2798,7 @@ export async function registerRoutes(
     res.status(201).json(entry);
   });
 
-  app.delete("/api/forecast/influence/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.delete("/api/forecast/influence/:id", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
@@ -2856,16 +2809,14 @@ export async function registerRoutes(
   });
 
   // Attention Decay
-  app.get("/api/forecast/attention", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/forecast/attention", requireCapability(CAPS.FORECAST_VIEW), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const decay = await storage.getAttentionDecay(clientId || undefined);
     res.json(decay);
   });
 
-  app.post("/api/forecast/attention", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/forecast/attention", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const schema = z.object({
@@ -2880,8 +2831,7 @@ export async function registerRoutes(
     res.status(201).json(entry);
   });
 
-  app.delete("/api/forecast/attention/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.delete("/api/forecast/attention/:id", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
@@ -2892,16 +2842,14 @@ export async function registerRoutes(
   });
 
   // Alert Priority Scores
-  app.get("/api/forecast/alert-priority", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/forecast/alert-priority", requireCapability(CAPS.FORECAST_VIEW), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const scores = await storage.getAlertPriorityScores(clientId || undefined);
     res.json(scores);
   });
 
-  app.post("/api/forecast/alert-priority", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/forecast/alert-priority", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const schema = z.object({
@@ -2920,16 +2868,14 @@ export async function registerRoutes(
   });
 
   // Forecast Results (Accuracy Tracking)
-  app.get("/api/forecast/results", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/forecast/results", requireCapability(CAPS.FORECAST_VIEW), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const results = await storage.getForecastResults(clientId || undefined);
     res.json(results);
   });
 
-  app.post("/api/forecast/results", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/forecast/results", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const schema = z.object({
@@ -2946,16 +2892,14 @@ export async function registerRoutes(
   });
 
   // Future Briefings
-  app.get("/api/forecast/future-briefings", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/forecast/future-briefings", requireCapability(CAPS.FORECAST_VIEW), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const briefings = await storage.getFutureBriefings(clientId || undefined);
     res.json(briefings);
   });
 
-  app.post("/api/forecast/future-briefings", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/forecast/future-briefings", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const schema = z.object({
@@ -2971,8 +2915,7 @@ export async function registerRoutes(
     res.status(201).json(briefing);
   });
 
-  app.delete("/api/forecast/future-briefings/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.delete("/api/forecast/future-briefings/:id", requireCapability(CAPS.FORECAST_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
@@ -2983,8 +2926,7 @@ export async function registerRoutes(
   });
 
   // Scenario Simulation (AI-powered What-If Analysis)
-  app.post("/api/forecast/simulate", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/forecast/simulate", requireAiEnabled(), requireCapability(CAPS.FORECAST_COMPUTE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const schema = z.object({
@@ -3581,8 +3523,7 @@ export async function registerRoutes(
   });
 
   // === PRODUCT INTELLIGENCE: KNOWLEDGE BASE (tenant-scoped) ===
-  app.get("/api/knowledge", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/knowledge", requireCapability(CAPS.KNOWLEDGE_VIEW), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const search = req.query.search as string | undefined;
@@ -3590,8 +3531,7 @@ export async function registerRoutes(
     res.json(await storage.getKnowledgeEntries({ search, limit }, clientId || undefined));
   });
 
-  app.post("/api/knowledge", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/knowledge", requireCapability(CAPS.KNOWLEDGE_MANAGE), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     if (!clientId) return res.status(400).json({ message: "Tenant context required" });
