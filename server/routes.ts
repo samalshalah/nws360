@@ -195,6 +195,23 @@ function requireCapability(...caps: string[]) {
   };
 }
 
+function requireAiEnabled() {
+  return async (req: any, res: any, next: any) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (isSystemAdmin(user)) return next();
+    try {
+      const client = user.clientId ? await storage.getClient(user.clientId) : null;
+      if (!client || !client.aiEnabled) {
+        return res.status(400).json({ message: "AI features are not enabled for your organization" });
+      }
+      next();
+    } catch (e) {
+      return res.status(500).json({ message: "AI enablement check failed" });
+    }
+  };
+}
+
 function getSourceLogoUrl(sourceUrl: string, sourceName?: string): string | null {
   try {
     const hostname = new URL(sourceUrl).hostname.replace(/^www\./, "");
@@ -1168,8 +1185,7 @@ export async function registerRoutes(
   });
 
   // === RE-ANALYZE ARTICLES ===
-  app.post("/api/reanalyze", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/reanalyze", requireAiEnabled(), requireCapability(CAPS.INTELLIGENCE_RUN), async (req, res) => {
     
     try {
       const user = req.user as any;
@@ -1314,8 +1330,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/analytics/daily-brief", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/analytics/daily-brief", requireAiEnabled(), requireCapability(CAPS.INTELLIGENCE_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user);
     const clientId = resolveClientId(user, req);
@@ -3105,8 +3120,7 @@ export async function registerRoutes(
     res.json(result);
   });
 
-  app.get("/api/briefs", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/briefs", requireAiEnabled(), requireCapability(CAPS.INTELLIGENCE_VIEW), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
@@ -3114,8 +3128,7 @@ export async function registerRoutes(
     res.json(briefs);
   });
 
-  app.get("/api/briefs/:date", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/briefs/:date", requireAiEnabled(), requireCapability(CAPS.INTELLIGENCE_VIEW), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const brief = await storage.getDailyBrief(req.params.date, clientId || undefined);
@@ -3175,8 +3188,7 @@ export async function registerRoutes(
     res.json({ entityName: name, mentions, timeline });
   });
 
-  app.get("/api/predictions", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.get("/api/predictions", requireAiEnabled(), requireCapability(CAPS.INTELLIGENCE_VIEW), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const predictions = await storage.getTrendPredictions({
@@ -3187,8 +3199,7 @@ export async function registerRoutes(
     res.json(predictions);
   });
 
-  app.post("/api/ai/query", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/ai/query", requireAiEnabled(), requireCapability(CAPS.INTELLIGENCE_RUN), async (req, res) => {
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const { question } = req.body;
@@ -3208,8 +3219,7 @@ export async function registerRoutes(
     res.json(analysis);
   });
 
-  app.post("/api/admin/run-intelligence", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/admin/run-intelligence", requireSystemAdmin(), async (req, res) => {
     runIntelligencePipeline().catch(e => console.error("[Intelligence Pipeline] Error:", e));
     res.json({ message: "Intelligence pipeline started" });
   });
