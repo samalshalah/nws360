@@ -1074,19 +1074,20 @@ export function startFeedWorker(intervalMinutes?: number) {
   }, 60 * 60 * 1000);
   workerIntervals.push(retentionInterval);
 
-  import("./ai-retry-worker").then(({ runAIRetryQueue }) => {
-    setTimeout(async () => {
-      try { await runAIRetryQueue(); } catch (e) { console.error("[Worker] Initial AI retry error:", e); }
-    }, 30000);
-    const retryInterval = setInterval(async () => {
-      try {
-        await runAIRetryQueue();
-      } catch (e) {
-        console.error("[Worker] AI retry error:", e);
-      }
-    }, 10 * 60 * 1000);
-    workerIntervals.push(retryInterval);
-  });
+  // AI retry worker disabled
+  // import("./ai-retry-worker").then(({ runAIRetryQueue }) => {
+  //   setTimeout(async () => {
+  //     try { await runAIRetryQueue(); } catch (e) { console.error("[Worker] Initial AI retry error:", e); }
+  //   }, 30000);
+  //   const retryInterval = setInterval(async () => {
+  //     try {
+  //       await runAIRetryQueue();
+  //     } catch (e) {
+  //       console.error("[Worker] AI retry error:", e);
+  //     }
+  //   }, 10 * 60 * 1000);
+  //   workerIntervals.push(retryInterval);
+  // });
 }
 
 export function stopFeedWorker() {

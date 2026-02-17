@@ -2990,9 +2990,9 @@ export async function registerRoutes(
 
   // === SEED & START WORKERS ===
   await seed();
-  registerArticleAnalysisHandler();
+  // registerArticleAnalysisHandler(); // AI disabled
   startFeedWorker();
-  await startScheduler();
+  // await startScheduler(); // AI disabled
   registerJobHandler("COMPUTE_ANALYTICS", async () => {
     await runAnalyticsComputation();
     return { completed: true };
@@ -3005,14 +3005,14 @@ export async function registerRoutes(
   // === AI INTELLIGENCE ROUTES ===
   const { answerIntelligenceQuery, runIntelligencePipeline, analyzeNarratives } = await import("./ai-intelligence");
 
-  registerJobHandler("INTELLIGENCE_PIPELINE", async () => {
-    await runIntelligencePipeline();
-    return { completed: true };
-  });
+  // registerJobHandler("INTELLIGENCE_PIPELINE", async () => { // AI disabled
+  //   await runIntelligencePipeline();
+  //   return { completed: true };
+  // });
 
   startQueueProcessor();
   startPeriodicJobs();
-  startLearningWorker();
+  // startLearningWorker(); // AI disabled
 
   setTimeout(() => {
     runAnalyticsComputation().catch(e => console.error("[Analytics] Initial computation error:", e));
