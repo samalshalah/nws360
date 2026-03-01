@@ -1411,6 +1411,18 @@ export async function registerRoutes(
     res.json({ deleted });
   });
 
+  app.post("/api/articles/delete-all", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    if (!isSystemAdmin(user)) return res.status(403).json({ message: "Admin access required" });
+    const clientId = resolveClientId(user, req);
+    const deleted = await storage.deleteAllArticles(clientId || undefined);
+    if (deleted > 0) {
+      runAnalyticsComputation().catch(e => console.error("[Analytics] Post-delete-all recomputation error:", e));
+    }
+    res.json({ deleted });
+  });
+
   app.post("/api/articles/bulk-categorize", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;

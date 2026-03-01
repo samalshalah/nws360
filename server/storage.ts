@@ -174,6 +174,7 @@ export interface IStorage {
 
   // Bulk article operations
   deleteArticles(ids: number[], clientId?: number): Promise<number>;
+  deleteAllArticles(clientId?: number): Promise<number>;
   updateArticlesCategory(ids: number[], category: string, clientId?: number): Promise<number>;
 
   // Cleanup
@@ -1087,6 +1088,26 @@ export class DatabaseStorage implements IStorage {
     await this.cleanupArticleDependents(scopedIds);
     const result = await db.delete(articles).where(inArray(articles.id, scopedIds)).returning({ id: articles.id });
     return result.length;
+  }
+
+  async deleteAllArticles(clientId?: number): Promise<number> {
+    const conditions: any[] = [];
+    if (clientId) conditions.push(eq(articles.clientId, clientId));
+    const allArticleIds = await db
+      .select({ id: articles.id })
+      .from(articles)
+      .where(conditions.length > 0 ? and(...conditions) : undefined);
+    const ids = allArticleIds.map(a => a.id);
+    if (ids.length === 0) return 0;
+    const batchSize = 500;
+    let totalDeleted = 0;
+    for (let i = 0; i < ids.length; i += batchSize) {
+      const batch = ids.slice(i, i + batchSize);
+      await this.cleanupArticleDependents(batch);
+      const result = await db.delete(articles).where(inArray(articles.id, batch)).returning({ id: articles.id });
+      totalDeleted += result.length;
+    }
+    return totalDeleted;
   }
 
   async updateArticlesCategory(ids: number[], category: string, clientId?: number): Promise<number> {

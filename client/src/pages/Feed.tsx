@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe, LayoutGrid, List } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useTranslation } from "react-i18next";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -191,6 +192,21 @@ export default function Feed() {
       setSelectedArticles(new Set());
       resetScroll();
       queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
+    },
+    onError: () => {
+      toast({ title: t("common.error"), variant: "destructive" });
+    },
+  });
+
+  const deleteAllMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/articles/delete-all"),
+    onSuccess: async (res) => {
+      const data = await res.json();
+      toast({ title: "All articles deleted", description: `${data.deleted} articles removed` });
+      setSelectedArticles(new Set());
+      resetScroll();
+      queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/analytics"] });
     },
     onError: () => {
       toast({ title: t("common.error"), variant: "destructive" });
@@ -504,6 +520,42 @@ export default function Feed() {
           >
             <RefreshCw className={cn("w-4 h-4", reanalyzeMutation.isPending && "animate-spin")} />
           </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={deleteAllMutation.isPending || !articlesData?.total}
+                data-testid="button-delete-all"
+                title="Delete all articles"
+              >
+                <Trash2 className={cn("w-4 h-4 text-destructive", deleteAllMutation.isPending && "animate-pulse")} />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete all articles?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will permanently delete all {articlesData?.total || 0} articles. This action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="button-cancel-delete-all">Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => deleteAllMutation.mutate()}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  data-testid="button-confirm-delete-all"
+                >
+                  {deleteAllMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <Trash2 className="w-4 h-4 mr-2" />
+                  )}
+                  Delete All
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
 
