@@ -57,8 +57,8 @@ interface UsageData {
 }
 
 const PLAN_DETAILS = {
-  basic: {
-    label: "Basic",
+  starter: {
+    label: "Starter",
     icon: Shield,
     color: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
     badgeVariant: "secondary" as const,
@@ -216,7 +216,7 @@ export default function UsageBilling() {
   }
 
   const currentPlan = data.plan as keyof typeof PLAN_DETAILS;
-  const planInfo = PLAN_DETAILS[currentPlan] || PLAN_DETAILS.basic;
+  const planInfo = PLAN_DETAILS[currentPlan] || PLAN_DETAILS.starter;
   const PlanIcon = planInfo.icon;
 
   const planFeatures = [
@@ -309,7 +309,7 @@ export default function UsageBilling() {
             <TableHeader>
               <TableRow>
                 <TableHead>Feature</TableHead>
-                {(["basic", "pro", "enterprise"] as const).map((plan) => (
+                {(["starter", "pro", "enterprise"] as const).map((plan) => (
                   <TableHead
                     key={plan}
                     className={plan === currentPlan ? "bg-primary/5" : ""}
@@ -335,7 +335,7 @@ export default function UsageBilling() {
                       <span>{row.feature}</span>
                     </div>
                   </TableCell>
-                  {(["basic", "pro", "enterprise"] as const).map((plan) => {
+                  {(["starter", "pro", "enterprise"] as const).map((plan) => {
                     const planData = PLAN_DETAILS[plan];
                     const val = planData[row.key as "users" | "keywords" | "sources" | "analytics" | "aiBrief" | "apiAccess"];
                     return (
@@ -360,7 +360,7 @@ export default function UsageBilling() {
               ))}
               <TableRow>
                 <TableCell />
-                {(["basic", "pro", "enterprise"] as const).map((plan) => (
+                {(["starter", "pro", "enterprise"] as const).map((plan) => (
                   <TableCell key={plan} className={`text-center ${plan === currentPlan ? "bg-primary/5" : ""}`}>
                     {plan !== currentPlan && (
                       <Button

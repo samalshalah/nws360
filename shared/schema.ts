@@ -424,7 +424,7 @@ export const insertTrendPredictionSchema = createInsertSchema(trendPredictions).
 export const subscriptions = pgTable("subscriptions", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").references(() => clients.id).notNull(),
-  plan: text("plan").notNull().default("basic"),
+  plan: text("plan").notNull().default("starter"),
   maxUsers: integer("max_users").notNull().default(3),
   maxKeywords: integer("max_keywords").notNull().default(10),
   maxSources: integer("max_sources").notNull().default(5),
@@ -922,7 +922,7 @@ export type SupportTicket = typeof supportTickets.$inferSelect;
 export type InsertSupportTicket = z.infer<typeof insertSupportTicketSchema>;
 
 export const PLAN_LIMITS = {
-  basic: { maxUsers: 3, maxKeywords: 10, maxSources: 5, analyticsLevel: "standard", aiBriefLevel: "summary", apiAccess: false },
+  starter: { maxUsers: 3, maxKeywords: 10, maxSources: 5, analyticsLevel: "standard", aiBriefLevel: "summary", apiAccess: false },
   pro: { maxUsers: 10, maxKeywords: 50, maxSources: 20, analyticsLevel: "advanced", aiBriefLevel: "full", apiAccess: true },
   enterprise: { maxUsers: -1, maxKeywords: -1, maxSources: -1, analyticsLevel: "full", aiBriefLevel: "custom", apiAccess: true },
 } as const;

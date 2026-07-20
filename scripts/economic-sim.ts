@@ -10,7 +10,7 @@ const DRY_RUN_TOKENS = 1000;
 interface TenantProfile {
   clientId: number;
   name: string;
-  tier: "basic" | "pro" | "enterprise";
+  tier: "starter" | "pro" | "enterprise";
   dailyTokenBudget: number;
   dailyJobLimit: number;
   jobsToSubmit: number;
@@ -19,7 +19,7 @@ interface TenantProfile {
 
 const TENANTS: TenantProfile[] = [
   { clientId: 9001, name: "Acme Corp",       tier: "enterprise", dailyTokenBudget: 20000, dailyJobLimit: 50, jobsToSubmit: 40, submitPattern: "burst" },
-  { clientId: 9002, name: "StartupCo",       tier: "basic",      dailyTokenBudget: 5000,  dailyJobLimit: 10, jobsToSubmit: 15, submitPattern: "steady" },
+  { clientId: 9002, name: "StartupCo",       tier: "starter",    dailyTokenBudget: 5000,  dailyJobLimit: 10, jobsToSubmit: 15, submitPattern: "steady" },
   { clientId: 9003, name: "MediaGroup",       tier: "pro",        dailyTokenBudget: 10000, dailyJobLimit: 25, jobsToSubmit: 25, submitPattern: "backloaded" },
 ];
 

@@ -3659,21 +3659,21 @@ export async function registerRoutes(
     if (!clientId) return res.json(null);
     const sub = await storage.getSubscription(clientId);
     const activeUsers = await storage.getActiveUserCount(clientId);
-    res.json({ subscription: sub, activeUsers, planLimits: sub ? PLAN_LIMITS[sub.plan as keyof typeof PLAN_LIMITS] : PLAN_LIMITS.basic });
+    res.json({ subscription: sub, activeUsers, planLimits: sub ? PLAN_LIMITS[sub.plan as keyof typeof PLAN_LIMITS] : PLAN_LIMITS.starter });
   });
 
   app.get("/api/subscription/usage", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
-    if (!clientId) return res.json({ plan: "basic", seats: { used: 0, max: 0 }, keywords: { used: 0, max: 0 }, sources: { used: 0, max: 0 } });
+    if (!clientId) return res.json({ plan: "starter", seats: { used: 0, max: 0 }, keywords: { used: 0, max: 0 }, sources: { used: 0, max: 0 } });
     const sub = await storage.getSubscription(clientId);
-    const limits = sub ? PLAN_LIMITS[sub.plan as keyof typeof PLAN_LIMITS] : PLAN_LIMITS.basic;
+    const limits = sub ? PLAN_LIMITS[sub.plan as keyof typeof PLAN_LIMITS] : PLAN_LIMITS.starter;
     const activeUsers = await storage.getActiveUserCount(clientId);
     const clientKws = await storage.getClientKeywords(clientId);
     const userSources = await storage.getSources(clientId);
     res.json({
-      plan: sub?.plan || "basic",
+      plan: sub?.plan || "starter",
       status: sub?.status || "trial",
       seats: { used: activeUsers, max: limits.maxUsers },
       keywords: { used: clientKws.length, max: limits.maxKeywords },
@@ -3688,7 +3688,7 @@ export async function registerRoutes(
     if (!requireAdmin(req, res)) return;
     const { clientId, plan } = req.body;
     if (!clientId || !plan) return res.status(400).json({ message: "Client ID and plan required" });
-    if (!["basic", "pro", "enterprise"].includes(plan)) return res.status(400).json({ message: "Invalid plan" });
+    if (!["starter", "pro", "enterprise"].includes(plan)) return res.status(400).json({ message: "Invalid plan" });
     const limits = PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS];
     const existing = await storage.getSubscription(clientId);
     if (existing) {
@@ -3703,7 +3703,7 @@ export async function registerRoutes(
     if (!requireAdmin(req, res)) return;
     const { clientId, plan } = req.body;
     if (!clientId || !plan) return res.status(400).json({ message: "Client ID and plan required" });
-    if (!["basic", "pro", "enterprise"].includes(plan)) return res.status(400).json({ message: "Invalid plan" });
+    if (!["starter", "pro", "enterprise"].includes(plan)) return res.status(400).json({ message: "Invalid plan" });
     const limits = PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS];
     const updated = await storage.updateSubscription(clientId, { plan, maxUsers: limits.maxUsers === -1 ? 999 : limits.maxUsers, maxKeywords: limits.maxKeywords === -1 ? 999 : limits.maxKeywords, maxSources: limits.maxSources === -1 ? 999 : limits.maxSources, analyticsLevel: limits.analyticsLevel, aiBriefLevel: limits.aiBriefLevel, apiAccess: limits.apiAccess });
     if (!updated) return res.status(404).json({ message: "Subscription not found" });
