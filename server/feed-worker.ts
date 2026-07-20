@@ -10,7 +10,7 @@ import {
   normalizeSourceFilterConfig,
   type SourceFilterConfig,
 } from "@shared/source-filter";
-import { collectWebsite, inspectArticleImage } from "./website-collector";
+import { collectWebsite, extractArticleContent, inspectArticleImage } from "./website-collector";
 
 type FeedSource = {
   id: number;
@@ -59,6 +59,8 @@ function truncate(text: string, maxLen: number): string {
 }
 
 const VALID_CATEGORIES = ["political", "health", "tech", "sports", "business", "entertainment", "science", "urgent", "general"];
+const MAX_STORED_CONTENT_CHARS = 50_000;
+const MIN_FULL_ARTICLE_GAIN_CHARS = 250;
 
 export type AIAnalysisResult = {
   sentimentLabel: string;
@@ -386,7 +388,7 @@ async function resolveGoogleNewsArticleUrl(title: string, subSource?: string): P
     if (targetDomain) {
       const escapedDomain = targetDomain.replace(".", "\\.");
       const pattern = new RegExp(`href="(https?://[^"]*${escapedDomain}[^"]+)"`, "g");
-      const matches = [...html.matchAll(pattern)];
+      const matches = Array.from(html.matchAll(pattern));
       for (const m of matches) {
         const url = m[1];
         if (url.length > 40 && !url.includes("/search") && !url.includes("brave.com")) {
@@ -396,7 +398,7 @@ async function resolveGoogleNewsArticleUrl(title: string, subSource?: string): P
     }
 
     const genericPattern = /href="(https?:\/\/(?!search\.brave\.com)[^"]+)"/g;
-    const genericMatches = [...html.matchAll(genericPattern)];
+    const genericMatches = Array.from(html.matchAll(genericPattern));
     for (const m of genericMatches) {
       const url = m[1];
       if (url.length > 60 && !url.includes("brave.com") && !url.includes("google.com") && !url.includes("/search")) {
@@ -549,9 +551,54 @@ function detectPlatform(url: string): string | null {
   return null;
 }
 
+type FeedItem = {
+  title: string;
+  url: string;
+  content: string;
+  publishedAt: Date;
+  image?: string;
+  imageTitle?: string;
+  subSource?: string;
+  engagementLikes?: number;
+  engagementComments?: number;
+  engagementShares?: number;
+  fullContentExtracted?: boolean;
+};
+
+async function enrichItemWithFullArticle(item: FeedItem): Promise<FeedItem> {
+  if (item.fullContentExtracted) return item;
+
+  const platform = detectPlatform(item.url);
+  if (platform && platform !== "google_news") return item;
+
+  try {
+    const extracted = await extractArticleContent(item.url);
+    if (!extracted) return item;
+
+    const currentContent = cleanText(item.content || "");
+    const extractedContent = cleanText(extracted.content || "");
+    const shouldUseExtracted =
+      extractedContent.length >= 180 &&
+      (currentContent.length < 800 || extractedContent.length > currentContent.length + MIN_FULL_ARTICLE_GAIN_CHARS);
+
+    return {
+      ...item,
+      title: item.title === "Untitled" && extracted.title ? extracted.title : item.title,
+      url: extracted.finalUrl || item.url,
+      content: shouldUseExtracted ? extractedContent : item.content,
+      publishedAt: extracted.publishedAt || item.publishedAt,
+      image: item.image || extracted.image,
+      imageTitle: item.imageTitle || extracted.imageTitle,
+    };
+  } catch (e: any) {
+    console.warn(`[Worker] Full article extraction skipped for ${item.url}: ${e?.message || e}`);
+    return item;
+  }
+}
+
 async function processItems(
   source: FeedSource,
-  items: { title: string; url: string; content: string; publishedAt: Date; image?: string; imageTitle?: string; subSource?: string; engagementLikes?: number; engagementComments?: number; engagementShares?: number }[]
+  items: FeedItem[]
 ): Promise<number> {
   let newArticles = 0;
 
@@ -565,7 +612,8 @@ async function processItems(
   const rejectedCount = items.length - filteredItems.length;
   if (rejectedCount > 0) console.log(`[Worker] ${source.name}: feed filters rejected ${rejectedCount} article(s)`);
 
-  for (const item of filteredItems.slice(0, source.maxArticlesPerFetch || 10)) {
+  for (const rawItem of filteredItems.slice(0, source.maxArticlesPerFetch || 10)) {
+    let item = rawItem;
     if (!item.url) continue;
 
     const clientId = source.clientId;
@@ -580,6 +628,19 @@ async function processItems(
         await storage.updateArticle(existing.id, { category: sourceCategory, sourceId: source.id });
       }
       continue;
+    }
+
+    item = await enrichItemWithFullArticle(item);
+    if (!item.url) continue;
+
+    if (item.url !== rawItem.url) {
+      const finalUrlExisting = await storage.getArticleByUrl(item.url, clientId);
+      if (finalUrlExisting) {
+        if (sourceCategory !== "general" && finalUrlExisting.category === "general") {
+          await storage.updateArticle(finalUrlExisting.id, { category: sourceCategory, sourceId: source.id });
+        }
+        continue;
+      }
     }
 
     const title = item.title || "Untitled";
@@ -609,8 +670,8 @@ async function processItems(
 
     const article = {
       title,
-      content: truncate(contentRaw, 5000),
-      contentClean: truncate(contentClean, 5000),
+      content: truncate(contentRaw, MAX_STORED_CONTENT_CHARS),
+      contentClean: truncate(contentClean, MAX_STORED_CONTENT_CHARS),
       summary: truncate(contentClean, 200),
       url: item.url,
       sourceId: source.id,
@@ -794,7 +855,7 @@ export async function fetchSourceFeed(sourceId: number): Promise<number> {
         await storage.updateSource(sourceId, { active: false });
         try {
           const { logSystemError } = await import("./processing-queue");
-          await logSystemError("feed-worker", `Source "${source.name}" auto-paused after ${failures} consecutive failures. Last error: ${errorMsg.substring(0, 200)}`, "warning", sourceId);
+          await logSystemError("feed-worker", `Source "${source.name}" auto-paused after ${failures} consecutive failures. Last error: ${errorMsg.substring(0, 200)}`, "warning", { sourceId });
         } catch {}
       }
       console.error(`[Worker] FAILED | source=${source.name} | error=${errorMsg} | retries=${MAX_RETRIES} | duration=${durationMs}ms | consecutive=${failures}`);

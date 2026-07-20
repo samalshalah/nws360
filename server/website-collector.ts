@@ -1,6 +1,8 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { Readability } from "@mozilla/readability";
 import * as cheerio from "cheerio";
+import { JSDOM } from "jsdom";
 import RssParser from "rss-parser";
 import {
   normalizeWebsiteCollectorConfig,
@@ -14,6 +16,7 @@ export interface CollectedWebsiteArticle {
   publishedAt: Date;
   image?: string;
   imageTitle?: string;
+  fullContentExtracted?: boolean;
 }
 
 export interface WebsiteCollectionResult {
@@ -22,6 +25,17 @@ export interface WebsiteCollectionResult {
   feedUrl?: string;
   rendered: boolean;
   warnings: string[];
+}
+
+export interface ExtractedArticleContent {
+  title?: string;
+  content: string;
+  excerpt?: string;
+  image?: string;
+  imageTitle?: string;
+  publishedAt?: Date;
+  finalUrl: string;
+  method: "readability" | "selectors";
 }
 
 const parser = new RssParser({
@@ -43,8 +57,10 @@ const REQUEST_HEADERS = {
 } as const;
 
 const MAX_RESPONSE_BYTES = 6 * 1024 * 1024;
+const MAX_EXTRACTED_CONTENT_CHARS = 50_000;
 const UNWANTED_PATH = /\/(?:login|signin|signup|account|privacy|terms|cookie|contact|about|advertis|subscribe|newsletter|author|tag|search)(?:\/|$)/i;
 const ARTICLE_TYPES = new Set(["article", "newsarticle", "reportagenewsarticle", "analysisnewsarticle", "blogposting"]);
+const NON_CONTENT_TEXT = /(?:cookie|privacy policy|terms of use|subscribe|newsletter|advertisement|share this|follow us|sign in|sign up|all rights reserved)/i;
 
 function cleanText(value: string): string {
   return value
@@ -368,6 +384,120 @@ function articleMetadata(html: string, url: string): Partial<CollectedWebsiteArt
   };
 }
 
+function googleNewsPublisherUrl(html: string, baseUrl: string): string | null {
+  const baseHost = new URL(baseUrl).hostname.replace(/^www\./, "").toLowerCase();
+  if (!baseHost.endsWith("google.com")) return null;
+  const $ = cheerio.load(html);
+  const candidates = new Map<string, number>();
+  $("a[href]").each((_, element) => {
+    const href = $(element).attr("href") || "";
+    const normalized = normalizeUrl(href, baseUrl);
+    if (!normalized) return;
+    const url = new URL(normalized);
+    const host = url.hostname.replace(/^www\./, "").toLowerCase();
+    if (host.endsWith("google.com") || host.endsWith("gstatic.com") || host.endsWith("googleusercontent.com")) return;
+    if (UNWANTED_PATH.test(url.pathname)) return;
+    const score = cleanText($(element).text()).length + Math.max(url.pathname.split("/").filter(Boolean).length, 1) * 10;
+    candidates.set(normalized, Math.max(candidates.get(normalized) || 0, score));
+  });
+  return Array.from(candidates.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+}
+
+function paragraphText($: cheerio.CheerioAPI, root: cheerio.Cheerio<any>): string {
+  root.find("script, style, noscript, iframe, svg, nav, header, footer, aside, form, button").remove();
+  const parts: string[] = [];
+  root.find("p, h2, h3, blockquote, li").each((_, element) => {
+    const text = cleanText($(element).text());
+    if (text.length < 30 || NON_CONTENT_TEXT.test(text)) return;
+    parts.push(text);
+  });
+  return parts.join("\n\n");
+}
+
+function fallbackArticleBody(html: string): string {
+  const $ = cheerio.load(html);
+  const selectors = [
+    "article",
+    "[role='article']",
+    "main article",
+    "[class*='article-body']",
+    "[class*='article-content']",
+    "[class*='story-body']",
+    "[class*='story-content']",
+    "[class*='entry-content']",
+    "[class*='post-content']",
+    "main",
+  ];
+
+  let best = "";
+  for (const selector of selectors) {
+    $(selector).each((_, element) => {
+      const text = paragraphText($, $(element));
+      if (text.length > best.length) best = text;
+    });
+  }
+  return cleanText(best);
+}
+
+function extractArticleContentFromHtml(html: string, finalUrl: string): ExtractedArticleContent | null {
+  const metadata = articleMetadata(html, finalUrl);
+  try {
+    const dom = new JSDOM(html, { url: finalUrl });
+    const article = new Readability(dom.window.document, {
+      charThreshold: 180,
+      keepClasses: false,
+    }).parse();
+    const text = cleanText(article?.textContent || "");
+    if (text.length >= 180) {
+      return {
+        title: cleanText(article?.title || "") || metadata.title,
+        content: truncate(text, MAX_EXTRACTED_CONTENT_CHARS),
+        excerpt: cleanText(article?.excerpt || "") || metadata.content,
+        image: metadata.image,
+        imageTitle: metadata.imageTitle,
+        publishedAt: parseDate(article?.publishedTime || "") || metadata.publishedAt,
+        finalUrl,
+        method: "readability",
+      };
+    }
+  } catch {}
+
+  const fallback = fallbackArticleBody(html);
+  if (fallback.length >= 180) {
+    return {
+      title: metadata.title,
+      content: truncate(fallback, MAX_EXTRACTED_CONTENT_CHARS),
+      excerpt: metadata.content,
+      image: metadata.image,
+      imageTitle: metadata.imageTitle,
+      publishedAt: metadata.publishedAt,
+      finalUrl,
+      method: "selectors",
+    };
+  }
+
+  return null;
+}
+
+export async function extractArticleContent(url: string): Promise<ExtractedArticleContent | null> {
+  const first = await fetchText(url, REQUEST_HEADERS.Accept, 12_000);
+  let html = first.html;
+  let finalUrl = first.finalUrl;
+
+  const publisherUrl = googleNewsPublisherUrl(html, finalUrl);
+  if (publisherUrl) {
+    try {
+      const publisher = await fetchText(publisherUrl, REQUEST_HEADERS.Accept, 12_000);
+      html = publisher.html;
+      finalUrl = publisher.finalUrl;
+    } catch {
+      // Keep the Google News page fallback if publisher resolution fails.
+    }
+  }
+
+  return extractArticleContentFromHtml(html, finalUrl);
+}
+
 async function enrichArticles(articles: CollectedWebsiteArticle[], limit: number): Promise<CollectedWebsiteArticle[]> {
   const selected = articles.slice(0, Math.min(Math.max(limit * 2, limit), 40));
   const enriched: CollectedWebsiteArticle[] = [];
@@ -375,16 +505,19 @@ async function enrichArticles(articles: CollectedWebsiteArticle[], limit: number
     const batch = selected.slice(index, index + 4);
     const results = await Promise.all(batch.map(async (article) => {
       try {
-        const { html, finalUrl } = await fetchText(article.url, REQUEST_HEADERS.Accept, 10_000);
-        const metadata = articleMetadata(html, finalUrl);
+        const extracted = await extractArticleContent(article.url);
+        const originalContent = cleanText(article.content || "");
+        const extractedContent = cleanText(extracted?.content || "");
+        const useExtractedContent = extractedContent.length > originalContent.length;
         return {
           ...article,
-          title: metadata.title && article.title === "Untitled" ? metadata.title : article.title,
-          content: metadata.content && article.content === article.title ? truncate(metadata.content, 1200) : article.content,
-          publishedAt: metadata.publishedAt || article.publishedAt,
-          image: article.image || metadata.image,
-          imageTitle: article.imageTitle || metadata.imageTitle,
-          url: finalUrl,
+          title: extracted?.title && article.title === "Untitled" ? extracted.title : article.title,
+          content: useExtractedContent ? extractedContent : article.content,
+          publishedAt: extracted?.publishedAt || article.publishedAt,
+          image: article.image || extracted?.image,
+          imageTitle: article.imageTitle || extracted?.imageTitle,
+          url: extracted?.finalUrl || article.url,
+          fullContentExtracted: useExtractedContent,
         };
       } catch {
         return article;
@@ -529,6 +662,10 @@ export async function collectWebsite(
 export async function inspectArticleImage(url: string): Promise<string | undefined> {
   const { html, finalUrl } = await fetchText(url, REQUEST_HEADERS.Accept, 10_000);
   return articleMetadata(html, finalUrl).image;
+}
+
+export function extractArticleContentFromHtmlForTest(html: string, url: string): ExtractedArticleContent | null {
+  return extractArticleContentFromHtml(html, url);
 }
 
 export function collectWebsiteFromHtmlForTest(html: string, baseUrl: string, rawConfig?: WebsiteCollectorConfig): CollectedWebsiteArticle[] {

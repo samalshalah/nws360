@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { collectWebsite, collectWebsiteFromHtmlForTest } from "../server/website-collector";
+import {
+  collectWebsite,
+  collectWebsiteFromHtmlForTest,
+  extractArticleContentFromHtmlForTest,
+} from "../server/website-collector";
 
 const automaticHtml = `
   <html><body><main>
@@ -46,6 +50,34 @@ assert.equal(custom.length, 1);
 assert.equal(custom[0].url, "https://publisher.example/custom/story-three");
 assert.equal(custom[0].image, "https://publisher.example/images/large.jpg");
 assert.equal(custom[0].publishedAt.toISOString(), "2026-07-19T12:00:00.000Z");
+
+const articlePageHtml = `
+  <!doctype html>
+  <html>
+    <head>
+      <title>Full article extraction story</title>
+      <meta property="og:description" content="Short metadata description only." />
+      <meta property="article:published_time" content="2026-07-19T11:00:00Z" />
+    </head>
+    <body>
+      <nav>Navigation and unrelated links</nav>
+      <article>
+        <h1>Full article extraction story</h1>
+        <p>The first paragraph explains the full event with enough specific detail to be useful for downstream analysis.</p>
+        <p>The second paragraph adds background, context, affected organizations, and important source details.</p>
+        <p>The third paragraph gives implications and follow-up information that would be missing from an RSS description.</p>
+        <p>The fourth paragraph is included to make sure the extraction returns the article body rather than only metadata.</p>
+      </article>
+      <aside>Advertisement and signup prompt</aside>
+    </body>
+  </html>`;
+
+const extracted = extractArticleContentFromHtmlForTest(articlePageHtml, "https://publisher.example/news/full-story");
+assert.ok(extracted);
+assert.equal(extracted.method, "readability");
+assert.ok(extracted.content.includes("The third paragraph gives implications"));
+assert.ok(extracted.content.length > "Short metadata description only.".length);
+assert.equal(extracted.publishedAt?.toISOString(), "2026-07-19T11:00:00.000Z");
 
 await assert.rejects(
   () => collectWebsite("http://127.0.0.1/private", { strategy: "scrape", renderJavascript: false, selectors: {} }, 1),
