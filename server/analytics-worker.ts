@@ -3,6 +3,7 @@ import { articles, sources, analyticsCache } from "@shared/schema";
 import { sql, and, gte, lte, eq, desc, or, isNull, ne } from "drizzle-orm";
 import { logSystemError } from "./processing-queue";
 import { storage } from "./storage";
+import { isGenericAnalyticsTerm } from "./analytics-noise";
 
 const AI_SUCCESS_FILTER = sql`(${articles.aiAnalysisStatus} = 'success' OR ${articles.aiAnalysisStatus} IS NULL)`;
 
@@ -38,7 +39,7 @@ async function upsertCache(metricType: string, metricKey: string, data: any, per
       periodStart,
       periodEnd,
       clientId: clientId ?? null,
-    });
+    } as any);
   }
 }
 
@@ -112,7 +113,10 @@ async function computeTrendingTopics(periodStart: Date, periodEnd: Date, clientI
     .where(and(...conditions))
     .groupBy(sql`unnest(${articles.topics})`)
     .orderBy(desc(sql`count(*)`))
-    .limit(30);
+    .limit(100);
+  const filteredTopics = topics
+    .filter((row) => !isGenericAnalyticsTerm(row.topic))
+    .slice(0, 30);
 
   const byCategory = await db
     .select({
@@ -125,7 +129,7 @@ async function computeTrendingTopics(periodStart: Date, periodEnd: Date, clientI
     .orderBy(desc(sql`count(*)`));
 
   const key = clientId ? `client_${clientId}` : "global";
-  await upsertCache("trending_topics", key, { topics, byCategory }, periodStart, periodEnd, clientId);
+  await upsertCache("trending_topics", key, { topics: filteredTopics, byCategory }, periodStart, periodEnd, clientId);
 }
 
 async function computeSentimentMetrics(periodStart: Date, periodEnd: Date, clientId?: number | null) {
@@ -173,10 +177,13 @@ async function computeKeywordMetrics(periodStart: Date, periodEnd: Date, clientI
     .where(and(...conditions))
     .groupBy(sql`unnest(${articles.keywords})`)
     .orderBy(desc(sql`count(*)`))
-    .limit(50);
+    .limit(150);
+  const filteredTopKeywords = topKeywords
+    .filter((row) => !isGenericAnalyticsTerm(row.keyword))
+    .slice(0, 50);
 
   const key = clientId ? `client_${clientId}` : "global";
-  await upsertCache("keywords", key, { topKeywords }, periodStart, periodEnd, clientId);
+  await upsertCache("keywords", key, { topKeywords: filteredTopKeywords }, periodStart, periodEnd, clientId);
 }
 
 async function computeMetricsForClient(sevenDaysAgo: Date, thirtyDaysAgo: Date, now: Date, clientId?: number | null) {

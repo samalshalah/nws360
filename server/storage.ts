@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { isGenericAnalyticsTerm } from "./analytics-noise";
 import {
   users, sources, articles, keywords, bookmarks, sourceFetchLogs,
   clients, clientKeywords, systemSettings, adminAuditLogs,
@@ -123,6 +124,19 @@ const ANALYTICS_STOP_WORDS = new Set([
   "هي", "ولا", "وقد", "وهو", "وهي", "يكون",
 ]);
 
+function isAnalyticsSignalTerm(value: unknown): boolean {
+  const term = String(value || "").trim();
+  if (!term) return false;
+  const normalized = term
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/\u0640/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return !ANALYTICS_STOP_WORDS.has(normalized) && !isGenericAnalyticsTerm(term);
+}
+
 type AnalyticsTextRow = {
   title: string | null;
   publishedAt: Date | string | null;
@@ -135,11 +149,11 @@ function extractAnalyticsTerms(value: string | null | undefined): string[] {
     .toLowerCase()
     .replace(/[\u064B-\u065F\u0670]/g, "")
     .replace(/\u0640/g, "");
-  const tokens = normalized.match(/[A-Za-z0-9\u0600-\u06FF]{3,}/g) || [];
-  return Array.from(new Set(tokens.filter((token) => !ANALYTICS_STOP_WORDS.has(token)))).slice(0, 24);
+  const tokens = normalized.match(/[A-Za-z0-9\u0600-\u06FF]{2,}/g) || [];
+  return Array.from(new Set(tokens.filter(isAnalyticsSignalTerm))).slice(0, 24);
 }
 
-function buildAnalyticsTermSnapshot(rows: AnalyticsTextRow[], topLimit = 25, timelineLimit = 10) {
+function buildAnalyticsTermSnapshot(rows: AnalyticsTextRow[], topLimit = 25, timelineLimit = 10, minCount = 2) {
   const counts = new Map<string, number>();
   const countsByDate = new Map<string, Map<string, number>>();
 
@@ -161,6 +175,7 @@ function buildAnalyticsTermSnapshot(rows: AnalyticsTextRow[], topLimit = 25, tim
   });
 
   const top = Array.from(counts.entries())
+    .filter(([, count]) => count >= minCount)
     .map(([term, count]) => ({ term, count }))
     .sort((a, b) => b.count - a.count || a.term.localeCompare(b.term))
     .slice(0, topLimit);
@@ -1249,12 +1264,15 @@ export class DatabaseStorage implements IStorage {
       WHERE keywords IS NOT NULL ${sourceFilter} ${aiFilter}
       GROUP BY kw
       ORDER BY count DESC
-      LIMIT 10
+      LIMIT 50
     `);
-    const trendingKeywords = (keywordRows.rows as any[]).map((r: any) => ({
-      text: String(r.keyword),
-      value: Number(r.count),
-    }));
+    const trendingKeywords = (keywordRows.rows as any[])
+      .filter((r: any) => isAnalyticsSignalTerm(r.keyword))
+      .slice(0, 10)
+      .map((r: any) => ({
+        text: String(r.keyword),
+        value: Number(r.count),
+      }));
 
     const topSourceRows = await db.execute(sql`
       SELECT s.name, COUNT(a.id)::int as count
@@ -1387,38 +1405,7 @@ export class DatabaseStorage implements IStorage {
     const start = new Date(startDate);
     const end = new Date(endDate);
     const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
-    const sourceFilterA = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
-    const sourceFilterA2 = sourceIds ? sql`AND a2.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
-    const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
-    const clientFilterA2 = clientId ? sql`AND a2.client_id = ${clientId}` : sql``;
-
-    const aiFilter = sql`AND (ai_analysis_status = 'success' OR ai_analysis_status IS NULL)`;
-    const aiFilterA = sql`AND (a.ai_analysis_status = 'success' OR a.ai_analysis_status IS NULL)`;
-    const aiFilterA2 = sql`AND (a2.ai_analysis_status = 'success' OR a2.ai_analysis_status IS NULL)`;
-
-    const topicRows = await db.execute(sql`
-      SELECT kw as topic, COUNT(*)::int as count,
-        MODE() WITHIN GROUP (ORDER BY sentiment_label) as sentiment
-      FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter}
-      GROUP BY kw
-      ORDER BY count DESC
-      LIMIT 20
-    `);
-
-    const topicTimelineRows = await db.execute(sql`
-      SELECT TO_CHAR(a.published_at, 'YYYY-MM-DD') as date, kw as topic, COUNT(*)::int as count
-      FROM articles a, unnest(a.keywords) as kw
-      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${aiFilterA}
-      AND kw IN (
-        SELECT kw2 FROM articles a2, unnest(a2.keywords) as kw2
-        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end} ${sourceFilterA2} ${clientFilterA2} ${aiFilterA2}
-        GROUP BY kw2 ORDER BY COUNT(*) DESC LIMIT 5
-      )
-      GROUP BY TO_CHAR(a.published_at, 'YYYY-MM-DD'), kw
-      ORDER BY date ASC
-    `);
 
     const termRows = await db.execute(sql`
       SELECT title, published_at as "publishedAt"
@@ -1436,7 +1423,7 @@ export class DatabaseStorage implements IStorage {
     `);
 
     return {
-      topics: termStats.top.map(({ term, count }) => ({ topic: term, count })),
+      topics: termStats.top.map(({ term, count }) => ({ topic: term, count, sentiment: "neutral" })),
       topicTimeline: termStats.timeline.map(({ date, term, count }) => ({ date, topic: term, count })),
       byCategory: (categoryRows.rows as any[]).map(r => ({
         category: String(r.category),
@@ -1453,38 +1440,7 @@ export class DatabaseStorage implements IStorage {
     const start = new Date(startDate);
     const end = new Date(endDate);
     const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
-    const sourceFilterA = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
-    const sourceFilterA2 = sourceIds ? sql`AND a2.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
-    const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
-    const clientFilterA2 = clientId ? sql`AND a2.client_id = ${clientId}` : sql``;
-
-    const aiFilter = sql`AND (ai_analysis_status = 'success' OR ai_analysis_status IS NULL)`;
-    const aiFilterA = sql`AND (a.ai_analysis_status = 'success' OR a.ai_analysis_status IS NULL)`;
-    const aiFilterA2 = sql`AND (a2.ai_analysis_status = 'success' OR a2.ai_analysis_status IS NULL)`;
-
-    const topKeywordsRows = await db.execute(sql`
-      SELECT kw as keyword, COUNT(*)::int as count,
-        COALESCE(AVG(sentiment_score), 0)::int as "avgSentiment"
-      FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL AND published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter}
-      GROUP BY kw
-      ORDER BY count DESC
-      LIMIT 25
-    `);
-
-    const keywordTimelineRows = await db.execute(sql`
-      SELECT TO_CHAR(a.published_at, 'YYYY-MM-DD') as date, kw as keyword, COUNT(*)::int as count
-      FROM articles a, unnest(a.keywords) as kw
-      WHERE a.keywords IS NOT NULL AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${aiFilterA}
-      AND kw IN (
-        SELECT kw2 FROM articles a2, unnest(a2.keywords) as kw2
-        WHERE a2.keywords IS NOT NULL AND a2.published_at >= ${start} AND a2.published_at <= ${end} ${sourceFilterA2} ${clientFilterA2} ${aiFilterA2}
-        GROUP BY kw2 ORDER BY COUNT(*) DESC LIMIT 10
-      )
-      GROUP BY TO_CHAR(a.published_at, 'YYYY-MM-DD'), kw
-      ORDER BY date ASC
-    `);
 
     const termRows = await db.execute(sql`
       SELECT title, published_at as "publishedAt"
@@ -1494,7 +1450,7 @@ export class DatabaseStorage implements IStorage {
     const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 25, 10);
 
     return {
-      topKeywords: termStats.top.map(({ term, count }) => ({ keyword: term, count })),
+      topKeywords: termStats.top.map(({ term, count }) => ({ keyword: term, count, avgSentiment: 0 })),
       keywordTimeline: termStats.timeline.map(({ date, term, count }) => ({ date, keyword: term, count })),
       method: "title-terms",
     };
