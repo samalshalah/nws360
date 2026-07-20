@@ -8,6 +8,7 @@ export type JobType =
   | "COMPUTE_ANALYTICS"
   | "DATA_RETENTION"
   | "BACKFILL_IMAGES"
+  | "EXTRACT_ARTICLE_CONTENT"
   | "ANALYZE_ARTICLE"
   | "TRANSLATE_ARTICLE"
   | "INTELLIGENCE_PIPELINE";
@@ -20,6 +21,7 @@ export const JOB_PRIORITIES: Record<string, number> = {
   FETCH_SOURCE: 5,
   FETCH_ALL_PRIORITY: 5,
   BACKFILL_IMAGES: 5,
+  EXTRACT_ARTICLE_CONTENT: 6,
   ANALYZE_ARTICLE: 5,
 };
 
@@ -219,19 +221,6 @@ async function claimBatch(limit: number): Promise<(typeof processingJobs.$inferS
   const reservedSlots = 1;
   const maxAnalyze = Math.max(1, limit - reservedSlots);
 
-  const nonAnalyzeJobs = await db
-    .select()
-    .from(processingJobs)
-    .where(
-      and(
-        eq(processingJobs.status, "pending"),
-        lte(processingJobs.runAt, now),
-        sql`${processingJobs.type} != 'ANALYZE_ARTICLE'`
-      )
-    )
-    .orderBy(asc(processingJobs.priority), asc(processingJobs.runAt))
-    .limit(reservedSlots);
-
   const analyzeJobs = await db
     .select()
     .from(processingJobs)
@@ -244,6 +233,20 @@ async function claimBatch(limit: number): Promise<(typeof processingJobs.$inferS
     )
     .orderBy(asc(processingJobs.priority), asc(processingJobs.runAt))
     .limit(maxAnalyze);
+
+  const nonAnalyzeLimit = Math.max(reservedSlots, limit - analyzeJobs.length);
+  const nonAnalyzeJobs = await db
+    .select()
+    .from(processingJobs)
+    .where(
+      and(
+        eq(processingJobs.status, "pending"),
+        lte(processingJobs.runAt, now),
+        sql`${processingJobs.type} != 'ANALYZE_ARTICLE'`
+      )
+    )
+    .orderBy(asc(processingJobs.priority), asc(processingJobs.runAt))
+    .limit(nonAnalyzeLimit);
 
   const selected = [...nonAnalyzeJobs, ...analyzeJobs]
     .sort((a, b) => (a.priority ?? 5) - (b.priority ?? 5) || (a.runAt?.getTime() ?? 0) - (b.runAt?.getTime() ?? 0))

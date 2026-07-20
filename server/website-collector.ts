@@ -498,36 +498,6 @@ export async function extractArticleContent(url: string): Promise<ExtractedArtic
   return extractArticleContentFromHtml(html, finalUrl);
 }
 
-async function enrichArticles(articles: CollectedWebsiteArticle[], limit: number): Promise<CollectedWebsiteArticle[]> {
-  const selected = articles.slice(0, Math.min(Math.max(limit * 2, limit), 40));
-  const enriched: CollectedWebsiteArticle[] = [];
-  for (let index = 0; index < selected.length; index += 4) {
-    const batch = selected.slice(index, index + 4);
-    const results = await Promise.all(batch.map(async (article) => {
-      try {
-        const extracted = await extractArticleContent(article.url);
-        const originalContent = cleanText(article.content || "");
-        const extractedContent = cleanText(extracted?.content || "");
-        const useExtractedContent = extractedContent.length > originalContent.length;
-        return {
-          ...article,
-          title: extracted?.title && article.title === "Untitled" ? extracted.title : article.title,
-          content: useExtractedContent ? extractedContent : article.content,
-          publishedAt: extracted?.publishedAt || article.publishedAt,
-          image: article.image || extracted?.image,
-          imageTitle: article.imageTitle || extracted?.imageTitle,
-          url: extracted?.finalUrl || article.url,
-          fullContentExtracted: useExtractedContent,
-        };
-      } catch {
-        return article;
-      }
-    }));
-    enriched.push(...results);
-  }
-  return enriched.slice(0, limit);
-}
-
 function feedCandidates(html: string, pageUrl: string, storedFeedUrl?: string): string[] {
   const $ = cheerio.load(html);
   const candidates = new Set<string>();
@@ -628,7 +598,7 @@ export async function collectWebsite(
     if (feed) {
       return {
         method: "rss",
-        articles: await enrichArticles(feed.articles, limit),
+        articles: feed.articles.slice(0, limit),
         feedUrl: feed.feedUrl,
         rendered: false,
         warnings,
@@ -654,9 +624,8 @@ export async function collectWebsite(
   const method = config.selectors?.item
     ? "selectors"
     : combined.some((article) => structuredUrls.has(article.url)) ? "structured" : extracted.method;
-  const enriched = await enrichArticles(combined, limit);
-  enriched.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
-  return { method, articles: enriched.slice(0, limit), rendered: false, warnings };
+  combined.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+  return { method, articles: combined.slice(0, limit), rendered: false, warnings };
 }
 
 export async function inspectArticleImage(url: string): Promise<string | undefined> {

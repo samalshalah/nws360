@@ -61,6 +61,7 @@ function truncate(text: string, maxLen: number): string {
 const VALID_CATEGORIES = ["political", "health", "tech", "sports", "business", "entertainment", "science", "urgent", "general"];
 const MAX_STORED_CONTENT_CHARS = 50_000;
 const MIN_FULL_ARTICLE_GAIN_CHARS = 250;
+const FULL_ARTICLE_JOB_PRIORITY = 6;
 
 export type AIAnalysisResult = {
   sentimentLabel: string;
@@ -565,37 +566,6 @@ type FeedItem = {
   fullContentExtracted?: boolean;
 };
 
-async function enrichItemWithFullArticle(item: FeedItem): Promise<FeedItem> {
-  if (item.fullContentExtracted) return item;
-
-  const platform = detectPlatform(item.url);
-  if (platform && platform !== "google_news") return item;
-
-  try {
-    const extracted = await extractArticleContent(item.url);
-    if (!extracted) return item;
-
-    const currentContent = cleanText(item.content || "");
-    const extractedContent = cleanText(extracted.content || "");
-    const shouldUseExtracted =
-      extractedContent.length >= 180 &&
-      (currentContent.length < 800 || extractedContent.length > currentContent.length + MIN_FULL_ARTICLE_GAIN_CHARS);
-
-    return {
-      ...item,
-      title: item.title === "Untitled" && extracted.title ? extracted.title : item.title,
-      url: extracted.finalUrl || item.url,
-      content: shouldUseExtracted ? extractedContent : item.content,
-      publishedAt: extracted.publishedAt || item.publishedAt,
-      image: item.image || extracted.image,
-      imageTitle: item.imageTitle || extracted.imageTitle,
-    };
-  } catch (e: any) {
-    console.warn(`[Worker] Full article extraction skipped for ${item.url}: ${e?.message || e}`);
-    return item;
-  }
-}
-
 async function processItems(
   source: FeedSource,
   items: FeedItem[]
@@ -628,19 +598,6 @@ async function processItems(
         await storage.updateArticle(existing.id, { category: sourceCategory, sourceId: source.id });
       }
       continue;
-    }
-
-    item = await enrichItemWithFullArticle(item);
-    if (!item.url) continue;
-
-    if (item.url !== rawItem.url) {
-      const finalUrlExisting = await storage.getArticleByUrl(item.url, clientId);
-      if (finalUrlExisting) {
-        if (sourceCategory !== "general" && finalUrlExisting.category === "general") {
-          await storage.updateArticle(finalUrlExisting.id, { category: sourceCategory, sourceId: source.id });
-        }
-        continue;
-      }
     }
 
     const title = item.title || "Untitled";
@@ -696,12 +653,97 @@ async function processItems(
     try {
       const created = await storage.createArticle(article);
       newArticles++;
+      await enqueueFullArticleExtraction(created.id, clientId, item.url, source.id);
     } catch (e) {
       console.error(`[Worker] STORE failed for article: ${item.url}`, e);
     }
   }
 
   return newArticles;
+}
+
+async function enqueueFullArticleExtraction(
+  articleId: number,
+  clientId: number,
+  url: string,
+  sourceId: number,
+): Promise<void> {
+  const platform = detectPlatform(url);
+  if (platform && platform !== "google_news") return;
+
+  try {
+    await enqueueJob(
+      "EXTRACT_ARTICLE_CONTENT",
+      { articleId, clientId, sourceId, url },
+      { priority: FULL_ARTICLE_JOB_PRIORITY, maxAttempts: 2 },
+    );
+  } catch (e: any) {
+    console.warn(`[Worker] Full article extraction job not queued for article=${articleId}: ${e?.message || e}`);
+  }
+}
+
+async function handleExtractArticleContent(payload: {
+  articleId?: number;
+  clientId?: number;
+  sourceId?: number;
+  url?: string;
+}): Promise<any> {
+  const articleId = Number(payload.articleId);
+  const clientId = Number(payload.clientId);
+  if (!Number.isInteger(articleId) || articleId <= 0) throw new Error("Invalid articleId");
+  if (!Number.isInteger(clientId) || clientId <= 0) throw new Error("Invalid clientId");
+
+  const article = await storage.getArticle(articleId, clientId);
+  if (!article?.url) return { status: "skipped", reason: "article_not_found" };
+
+  const platform = detectPlatform(article.url);
+  if (platform && platform !== "google_news") {
+    return { status: "skipped", reason: `platform_${platform}` };
+  }
+
+  const extracted = await extractArticleContent(article.url);
+  if (!extracted) return { status: "skipped", reason: "no_extractable_content" };
+
+  const currentContent = cleanText(article.contentClean || article.content || "");
+  const extractedContent = cleanText(extracted.content || "");
+  const shouldUseExtracted =
+    extractedContent.length >= 180 &&
+    (currentContent.length < 800 || extractedContent.length > currentContent.length + MIN_FULL_ARTICLE_GAIN_CHARS);
+
+  const updates: Record<string, any> = {};
+  if (shouldUseExtracted) {
+    updates.content = truncate(extractedContent, MAX_STORED_CONTENT_CHARS);
+    updates.contentClean = truncate(extractedContent, MAX_STORED_CONTENT_CHARS);
+    updates.summary = truncate(extracted.excerpt || extractedContent, 200);
+  }
+  if (article.title === "Untitled" && extracted.title) updates.title = extracted.title;
+  if (!article.imageUrl && extracted.image) updates.imageUrl = extracted.image;
+  if (extracted.publishedAt) updates.publishedAt = extracted.publishedAt;
+
+  if (extracted.finalUrl && extracted.finalUrl !== article.url) {
+    const existing = await storage.getArticleByUrl(extracted.finalUrl, clientId);
+    if (!existing || existing.id === article.id) {
+      updates.url = extracted.finalUrl;
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return {
+      status: "unchanged",
+      articleId,
+      method: extracted.method,
+      extractedChars: extractedContent.length,
+    };
+  }
+
+  await storage.updateArticle(articleId, updates);
+  return {
+    status: "updated",
+    articleId,
+    method: extracted.method,
+    fullContentUsed: shouldUseExtracted,
+    extractedChars: extractedContent.length,
+  };
 }
 
 async function handleAnalyzeArticle(payload: { articleId: number }): Promise<any> {
@@ -776,6 +818,7 @@ async function handleTranslateArticle(payload: { articleId: number; targetLangua
 export function registerArticleAnalysisHandler() {
   registerJobHandler("ANALYZE_ARTICLE", handleAnalyzeArticle);
   registerJobHandler("TRANSLATE_ARTICLE", handleTranslateArticle);
+  registerJobHandler("EXTRACT_ARTICLE_CONTENT", handleExtractArticleContent);
 }
 
 const MAX_RETRIES = 3;
@@ -1120,6 +1163,7 @@ async function fetchByPriority(priority: string) {
 }
 
 export function startFeedWorker(intervalMinutes?: number) {
+  registerJobHandler("EXTRACT_ARTICLE_CONTENT", handleExtractArticleContent);
   stopFeedWorker();
 
   console.log(`[Worker] Starting smart feed worker with priority-based scheduling`);
