@@ -1282,11 +1282,11 @@ export class DatabaseStorage implements IStorage {
       }));
 
     const topSourceRows = await db.execute(sql`
-      SELECT s.name, COUNT(a.id)::int as count
-      FROM sources s
-      JOIN articles a ON a.source_id = s.id
+      SELECT COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as name, COUNT(a.id)::int as count
+      FROM articles a
+      LEFT JOIN sources s ON a.source_id = s.id
       WHERE 1=1 ${joinedSourceIdFilter}
-      GROUP BY s.name
+      GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       ORDER BY count DESC
       LIMIT 5
     `);
@@ -1368,11 +1368,14 @@ export class DatabaseStorage implements IStorage {
     `);
 
     const bySourceRows = await db.execute(sql`
-      SELECT a.source_id as "sourceId", s.name as "sourceName", COUNT(*)::int as count
+      SELECT
+        MIN(a.source_id)::int as "sourceId",
+        COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as "sourceName",
+        COUNT(*)::int as count
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
       WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA}
-      GROUP BY a.source_id, s.name
+      GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       ORDER BY count DESC
       LIMIT 20
     `);
@@ -1802,12 +1805,12 @@ export class DatabaseStorage implements IStorage {
     `);
 
     const sourceRows = await db.execute(sql`
-      SELECT s.name as "sourceName", COUNT(*)::int as count
+      SELECT COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as "sourceName", COUNT(*)::int as count
       FROM articles a
       JOIN sources s ON a.source_id = s.id
       WHERE POSITION(${keyword.toLowerCase()} IN LOWER(CONCAT_WS(' ', a.title, a.summary, a.content))) > 0
         AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilter} ${clientFilter}
-      GROUP BY s.name
+      GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       ORDER BY count DESC
       LIMIT 10
     `);
@@ -1823,7 +1826,12 @@ export class DatabaseStorage implements IStorage {
     `);
 
     const headlineRows = await db.execute(sql`
-      SELECT a.title, a.url, s.name as "sourceName", a.published_at as "publishedAt", a.sentiment_label as sentiment
+      SELECT
+        a.title,
+        a.url,
+        COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as "sourceName",
+        a.published_at as "publishedAt",
+        a.sentiment_label as sentiment
       FROM articles a
       JOIN sources s ON a.source_id = s.id
       WHERE POSITION(${keyword.toLowerCase()} IN LOWER(CONCAT_WS(' ', a.title, a.summary, a.content))) > 0

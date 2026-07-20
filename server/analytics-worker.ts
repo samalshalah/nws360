@@ -82,14 +82,14 @@ async function computeVolumeMetrics(periodStart: Date, periodEnd: Date, clientId
 
   const bySource = await db
     .select({
-      sourceId: articles.sourceId,
-      sourceName: sources.name,
+      sourceId: sql<number>`MIN(${articles.sourceId})::int`,
+      sourceName: sql<string>`COALESCE(NULLIF(${articles.subSource}, ''), ${sources.name}, 'Unknown')`,
       count: sql<number>`count(*)`,
     })
     .from(articles)
     .leftJoin(sources, eq(articles.sourceId, sources.id))
     .where(and(...conditions))
-    .groupBy(articles.sourceId, sources.name)
+    .groupBy(sql`COALESCE(NULLIF(${articles.subSource}, ''), ${sources.name}, 'Unknown')`)
     .orderBy(desc(sql`count(*)`))
     .limit(20);
 
