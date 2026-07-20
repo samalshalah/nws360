@@ -12,12 +12,26 @@ interface ScrapedArticle {
   engagementShares?: number;
 }
 
+const FACEBOOK_FALLBACK_MAX_AGE_DAYS = 30;
+const FACEBOOK_FALLBACK_MAX_AGE_MS = FACEBOOK_FALLBACK_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+
 function resolveUrl(base: string, relative: string): string {
   try {
     return new URL(relative, base).href;
   } catch {
     return relative;
   }
+}
+
+function isRecentFacebookDate(value: Date | null | undefined): value is Date {
+  if (!value || Number.isNaN(value.getTime())) return false;
+  const timestamp = value.getTime();
+  const now = Date.now();
+  return timestamp <= now + 24 * 60 * 60 * 1000 && timestamp >= now - FACEBOOK_FALLBACK_MAX_AGE_MS;
+}
+
+function filterRecentFacebookArticles(articles: ScrapedArticle[]): ScrapedArticle[] {
+  return articles.filter((article) => isRecentFacebookDate(article.publishedAt));
 }
 
 function parseEngagementCount(text: string, pattern: RegExp): number | undefined {
@@ -460,8 +474,9 @@ export async function fetchFacebookFeed(input: string, options: { originalUrl?: 
     try {
       const feedArticles = await fetchSocialRssFeed(feedUrl, identity.pageUrl);
       if (feedArticles.length > 0) {
-        console.log(`[Facebook] Got ${feedArticles.length} posts from configured feed`);
-        return feedArticles;
+        const recentArticles = filterRecentFacebookArticles(feedArticles);
+        console.log(`[Facebook] Got ${recentArticles.length}/${feedArticles.length} recent posts from configured feed`);
+        return recentArticles;
       }
     } catch (e) {
       console.log(`[Facebook] Configured feed failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -481,8 +496,9 @@ export async function fetchFacebookFeed(input: string, options: { originalUrl?: 
       console.log(`[Facebook] Trying RSS bridge: ${bridgeUrl}`);
       const articles = await fetchSocialRssFeed(bridgeUrl, pageUrl);
       if (articles.length > 0) {
-        console.log(`[Facebook] Got ${articles.length} posts from RSS bridge`);
-        return articles;
+        const recentArticles = filterRecentFacebookArticles(articles);
+        console.log(`[Facebook] Got ${recentArticles.length}/${articles.length} recent posts from RSS bridge`);
+        return recentArticles;
       }
     } catch (e) {
       console.log(`[Facebook] Bridge failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -543,8 +559,9 @@ export async function fetchFacebookFeed(input: string, options: { originalUrl?: 
       });
 
       if (articles.length > 0) {
-        console.log(`[Facebook] Scraped ${articles.length} posts from mbasic`);
-        return articles;
+        const recentArticles = filterRecentFacebookArticles(articles);
+        console.log(`[Facebook] Scraped ${recentArticles.length}/${articles.length} recent posts from mbasic`);
+        return recentArticles;
       }
     } else {
       console.log(`[Facebook] mbasic returned ${response.status}`);
@@ -566,13 +583,15 @@ export async function fetchFacebookFeed(input: string, options: { originalUrl?: 
     });
     const fallbackSearchTerm = /^\d+$/.test(pageName) ? searchName : pageName;
     if (fallbackSearchTerm.length < 3) return [];
-    const googleNewsUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(`"${fallbackSearchTerm}" site:facebook.com`)}&hl=en&gl=US&ceid=US:en`;
+    const googleNewsUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(`"${fallbackSearchTerm}" site:facebook.com when:${FACEBOOK_FALLBACK_MAX_AGE_DAYS}d`)}&hl=en&gl=US&ceid=US:en`;
     const feed = await parser.parseURL(googleNewsUrl);
     const articles: ScrapedArticle[] = [];
 
     for (const item of (feed.items || []) as any[]) {
       if (articles.length >= 20) break;
       if (!item.title) continue;
+      const publishedAt = item.pubDate ? new Date(item.pubDate) : null;
+      if (!isRecentFacebookDate(publishedAt)) continue;
 
       let subSource: string | undefined;
       if (item.source) {
@@ -623,7 +642,7 @@ export async function fetchFacebookFeed(input: string, options: { originalUrl?: 
         title: cleanTitle,
         url: realUrl || pageUrl,
         content,
-        publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+        publishedAt,
         image,
         subSource,
       });

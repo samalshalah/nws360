@@ -16,6 +16,7 @@ type FeedSource = {
   id: number;
   name: string;
   url: string;
+  type?: string | null;
   clientId?: number | null;
   country?: string | null;
   category?: string | null;
@@ -62,6 +63,8 @@ const VALID_CATEGORIES = ["political", "health", "tech", "sports", "business", "
 const MAX_STORED_CONTENT_CHARS = 50_000;
 const MIN_FULL_ARTICLE_GAIN_CHARS = 250;
 const FULL_ARTICLE_JOB_PRIORITY = 6;
+const FACEBOOK_MAX_ARTICLE_AGE_DAYS = 30;
+const FACEBOOK_MAX_ARTICLE_AGE_MS = FACEBOOK_MAX_ARTICLE_AGE_DAYS * 24 * 60 * 60 * 1000;
 
 export type AIAnalysisResult = {
   sentimentLabel: string;
@@ -567,6 +570,13 @@ type FeedItem = {
   fullContentExtracted?: boolean;
 };
 
+function isRecentFacebookArticleDate(value: Date | null | undefined): value is Date {
+  if (!value || Number.isNaN(value.getTime())) return false;
+  const timestamp = value.getTime();
+  const now = Date.now();
+  return timestamp <= now + 24 * 60 * 60 * 1000 && timestamp >= now - FACEBOOK_MAX_ARTICLE_AGE_MS;
+}
+
 async function processItems(
   source: FeedSource,
   items: FeedItem[]
@@ -579,8 +589,14 @@ async function processItems(
     return dateB - dateA;
   });
 
-  const filteredItems = filterSourceItems(items, source.filterConfig);
-  const rejectedCount = items.length - filteredItems.length;
+  const recencyFilteredItems = source.type === "facebook"
+    ? items.filter((item) => isRecentFacebookArticleDate(item.publishedAt))
+    : items;
+  const oldFacebookCount = items.length - recencyFilteredItems.length;
+  if (oldFacebookCount > 0) console.log(`[Worker] ${source.name}: rejected ${oldFacebookCount} old Facebook article(s)`);
+
+  const filteredItems = filterSourceItems(recencyFilteredItems, source.filterConfig);
+  const rejectedCount = recencyFilteredItems.length - filteredItems.length;
   if (rejectedCount > 0) console.log(`[Worker] ${source.name}: feed filters rejected ${rejectedCount} article(s)`);
 
   for (const rawItem of filteredItems.slice(0, source.maxArticlesPerFetch || 10)) {
