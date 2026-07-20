@@ -1952,7 +1952,10 @@ export class DatabaseStorage implements IStorage {
 
   // === ADMIN AUDIT LOGS ===
   async createAuditLog(log: InsertAdminAuditLog): Promise<AdminAuditLog> {
-    const [entry] = await db.insert(adminAuditLogs).values(log).returning();
+    const [entry] = await db.insert(adminAuditLogs).values({
+      ...log,
+      clientId: (log as any).clientId ?? 9000,
+    }).returning();
     return entry;
   }
 

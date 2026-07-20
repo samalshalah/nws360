@@ -8,7 +8,8 @@ export type CreateSourceRequest = Omit<
   "clientId" | "userId" | "logoUrl" | "active" | "refreshPriority" | "feedToken"
 >;
 export type UpdateSourceRequest = Partial<CreateSourceRequest> & { active?: boolean };
-export type CreateKeywordRequest = Omit<z.infer<typeof insertKeywordSchema>, "clientId">;
+export const createKeywordRequestSchema = insertKeywordSchema.omit({ clientId: true });
+export type CreateKeywordRequest = z.infer<typeof createKeywordRequestSchema>;
 
 // Shared Error Schemas
 export const errorSchemas = {
@@ -143,7 +144,7 @@ export const api = {
     create: {
       method: 'POST' as const,
       path: '/api/keywords' as const,
-      input: insertKeywordSchema,
+      input: createKeywordRequestSchema,
       responses: {
         201: z.custom<typeof keywords.$inferSelect>(),
         400: errorSchemas.validation,
