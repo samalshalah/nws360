@@ -1496,14 +1496,16 @@ export class DatabaseStorage implements IStorage {
     const overall = overallRows.rows[0] as any;
 
     const bySourceRows = await db.execute(sql`
-      SELECT a.source_id as "sourceId", s.name as "sourceName",
+      SELECT
+        MIN(a.source_id)::int as "sourceId",
+        COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as "sourceName",
         COUNT(*) FILTER (WHERE a.sentiment_label = 'positive')::int as positive,
         COUNT(*) FILTER (WHERE a.sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE a.sentiment_label = 'neutral' OR a.sentiment_label IS NULL)::int as neutral
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
       WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${aiFilterA}
-      GROUP BY a.source_id, s.name
+      GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       ORDER BY (COUNT(*) FILTER (WHERE a.sentiment_label = 'positive') + COUNT(*) FILTER (WHERE a.sentiment_label = 'negative') + COUNT(*) FILTER (WHERE a.sentiment_label = 'neutral' OR a.sentiment_label IS NULL)) DESC
       LIMIT 15
     `);
@@ -1646,17 +1648,18 @@ export class DatabaseStorage implements IStorage {
 
     const rows = await db.execute(sql`
       SELECT 
-        s.id as "sourceId", s.name as "sourceName",
+        MIN(a.source_id)::int as "sourceId",
+        COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as "sourceName",
         COUNT(*) FILTER (WHERE a.sentiment_label = 'positive')::int as positive,
         COUNT(*) FILTER (WHERE a.sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE a.sentiment_label = 'neutral' OR a.sentiment_label IS NULL)::int as neutral,
         COUNT(*)::int as total
       FROM articles a
-      JOIN sources s ON a.source_id = s.id
+      LEFT JOIN sources s ON a.source_id = s.id
       WHERE (a.keywords IS NOT NULL AND ${topic} = ANY(a.keywords))
         AND a.published_at >= ${start} AND a.published_at <= ${end}
         ${sourceFilter} ${clientFilterA}
-      GROUP BY s.id, s.name
+      GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       HAVING COUNT(*) >= 1
       ORDER BY total DESC
       LIMIT 10
@@ -1713,9 +1716,13 @@ export class DatabaseStorage implements IStorage {
     const clientFilterPlain = clientId ? sql`AND client_id = ${clientId}` : sql``;
 
     const topStoriesRows = await db.execute(sql`
-      SELECT a.title, a.url, s.name as "sourceName", a.sentiment_label as sentiment
+      SELECT
+        a.title,
+        a.url,
+        COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as "sourceName",
+        a.sentiment_label as sentiment
       FROM articles a
-      JOIN sources s ON a.source_id = s.id
+      LEFT JOIN sources s ON a.source_id = s.id
       WHERE a.published_at >= ${dayStart} AND a.published_at <= ${dayEnd} ${sourceFilter} ${clientFilter}
       ORDER BY a.published_at DESC
       LIMIT 5
@@ -1747,13 +1754,13 @@ export class DatabaseStorage implements IStorage {
     `);
 
     const spikeRows = await db.execute(sql`
-      SELECT s.name as "sourceName",
+      SELECT COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as "sourceName",
         COUNT(*) FILTER (WHERE a.published_at >= ${dayStart} AND a.published_at <= ${dayEnd})::int as "todayCount",
         COUNT(*) FILTER (WHERE a.published_at >= ${prevDayStart} AND a.published_at < ${dayStart})::int as "yesterdayCount"
       FROM articles a
-      JOIN sources s ON a.source_id = s.id
+      LEFT JOIN sources s ON a.source_id = s.id
       WHERE a.published_at >= ${prevDayStart} AND a.published_at <= ${dayEnd} ${sourceFilter} ${clientFilter}
-      GROUP BY s.name
+      GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       HAVING COUNT(*) FILTER (WHERE a.published_at >= ${dayStart} AND a.published_at <= ${dayEnd}) > 0
       ORDER BY "todayCount" DESC
       LIMIT 1
@@ -2304,7 +2311,7 @@ export class DatabaseStorage implements IStorage {
       imageUrl: articles.imageUrl,
       subSource: articles.subSource,
       createdAt: articles.createdAt,
-      sourceName: sources.name,
+      sourceName: sql<string>`COALESCE(NULLIF(${articles.subSource}, ''), ${sources.name}, 'Unknown')`,
     })
       .from(articles)
       .innerJoin(articleAiAnalysis, eq(articles.id, articleAiAnalysis.articleId))

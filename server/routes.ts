@@ -1273,15 +1273,16 @@ export async function registerRoutes(
       limit: 1000,
     };
     const result = await storage.getArticles(params);
-    const csvHeader = "ID,Title,Source,Category,Sentiment,Published,URL\n";
+    const csvHeader = "ID,Title,Source,Collected Via,Category,Sentiment,Published,URL\n";
     const csvRows = result.items.map(a => {
       const title = `"${(a.title || "").replace(/"/g, '""')}"`;
-      const source = `"${(a.source?.name || "").replace(/"/g, '""')}"`;
+      const source = `"${(a.subSource || a.source?.name || "").replace(/"/g, '""')}"`;
+      const collectedVia = `"${(a.subSource ? a.source?.name || "" : "").replace(/"/g, '""')}"`;
       const cat = a.category || "general";
       const sentiment = a.sentimentLabel || "neutral";
       const published = a.publishedAt ? new Date(a.publishedAt).toISOString() : "";
       const url = a.url || "";
-      return `${a.id},${title},${source},${cat},${sentiment},${published},${url}`;
+      return `${a.id},${title},${source},${collectedVia},${cat},${sentiment},${published},${url}`;
     }).join("\n");
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=nws360-articles.csv");
