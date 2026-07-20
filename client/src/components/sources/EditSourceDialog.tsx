@@ -51,7 +51,7 @@ const INTERVAL_OPTIONS = [
 ];
 
 const PUBLIC_APP_URL = (import.meta.env.VITE_PUBLIC_APP_URL || "https://nws360.com").replace(/\/$/, "");
-const RSS_BACKED_SOCIAL_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram"]);
+const CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram"]);
 
 interface SourceForm {
   name: string;
@@ -69,7 +69,7 @@ interface SourceForm {
 type TestStatus = "idle" | "testing" | "success" | "error";
 
 function supportsConfiguredFeed(type: string): boolean {
-  return type === "website" || RSS_BACKED_SOCIAL_SOURCE_TYPES.has(type);
+  return type === "website" || CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES.has(type);
 }
 
 function sourceToForm(source: Source): SourceForm {
@@ -125,7 +125,7 @@ export function EditSourceDialog({
 
   const isGoogleNews = source.type === "google_news";
   const isWebsite = source.type === "website";
-  const isRssBackedSocial = RSS_BACKED_SOCIAL_SOURCE_TYPES.has(source.type);
+  const isConfigurableSocialFeed = CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES.has(source.type);
   const canConfigureFeed = supportsConfiguredFeed(source.type);
   const originalCollectorConfig = canConfigureFeed
     ? { ...DEFAULT_WEBSITE_COLLECTOR_CONFIG, ...(source.collectorConfig || {}) }
@@ -309,7 +309,7 @@ export function EditSourceDialog({
             />
           )}
 
-          {isRssBackedSocial && (
+          {isConfigurableSocialFeed && (
             <div className="space-y-2">
               <Label htmlFor="edit-source-feed-url">Collection feed URL</Label>
               <Input
@@ -322,11 +322,11 @@ export function EditSourceDialog({
                     feedUrl: event.target.value.trim() || undefined,
                   },
                 }, true)}
-                placeholder="https://rss.app/feeds/example.xml"
+                placeholder="https://example.com/feed.xml"
                 data-testid="input-edit-source-feed-url"
               />
               <p className="text-xs text-muted-foreground">
-                Optional RSS.app or bridge feed used before direct social fallback.
+                Optional RSS or bridge feed used before direct social fallback.
               </p>
             </div>
           )}

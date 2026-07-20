@@ -93,10 +93,6 @@ function isRssAppFeed(value: string): boolean {
   return /^https?:\/\/rss\.app\/feeds\//i.test(value);
 }
 
-function isRssBackedSocialType(type: ImportableSourceType): boolean {
-  return type === "facebook" || type === "instagram" || type === "twitter" || type === "telegram";
-}
-
 export function classifyFeedImportRow(row: FeedImportInputRow, rowIndex: number): ClassifiedFeedImportRow {
   const title = cleanText(row.title);
   const description = cleanText(row.description);
@@ -107,9 +103,7 @@ export function classifyFeedImportRow(row: FeedImportInputRow, rowIndex: number)
   if (sourceUrl) {
     const classified = classifyOriginalUrl(sourceUrl, title);
     if (isRssAppFeed(xmlUrl)) {
-      warnings.push(isRssBackedSocialType(classified.type)
-        ? "RSS.app feed will be used as the collection feed for this social source."
-        : "RSS.app export detected; importing original source URL.");
+      warnings.push("RSS.app export detected; importing original source URL.");
     }
     return {
       rowIndex,

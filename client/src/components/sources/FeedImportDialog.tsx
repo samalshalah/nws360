@@ -141,10 +141,6 @@ function typeLabel(type: string): string {
   return labels[type] || type;
 }
 
-function isRssBackedSocialType(type: string): boolean {
-  return type === "facebook" || type === "instagram" || type === "twitter" || type === "telegram";
-}
-
 export function FeedImportDialog({
   open,
   onOpenChange,
@@ -172,7 +168,6 @@ export function FeedImportDialog({
     }, {} as Record<string, number>);
   }, [rows]);
   const rssAppCount = rows.filter(row => row.xmlUrl?.includes("rss.app/feeds")).length;
-  const rssBackedSocialCount = rows.filter(row => row.xmlUrl?.includes("rss.app/feeds") && isRssBackedSocialType(row.type)).length;
 
   const reset = () => {
     setRows([]);
@@ -327,8 +322,7 @@ export function FeedImportDialog({
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>
                     {rssAppCount} RSS.app feed link{rssAppCount === 1 ? "" : "s"} detected.
-                    {rssBackedSocialCount > 0 ? ` ${rssBackedSocialCount} social source${rssBackedSocialCount === 1 ? "" : "s"} will use RSS.app as the collection feed.` : ""}
-                    {rssBackedSocialCount < rssAppCount ? " Website rows with original URLs will import the original source URL." : ""}
+                    {" "}Rows with original URLs will import the original website or account URL instead.
                   </span>
                 </div>
               )}

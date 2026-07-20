@@ -27,10 +27,10 @@ import { startLearningWorker } from "./learning-worker";
 
 const scryptAsync = promisify(scrypt);
 const SYSTEM_CLIENT_ID = 9000;
-const RSS_BACKED_SOCIAL_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram"]);
+const CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram"]);
 
 function sourceTypeSupportsCollectorConfig(type: string): boolean {
-  return type === "website" || RSS_BACKED_SOCIAL_SOURCE_TYPES.has(type);
+  return type === "website" || CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES.has(type);
 }
 
 const workerMiddleware = (_req: any, _res: any, next: any) => next();
@@ -966,12 +966,6 @@ export async function registerRoutes(
         }
 
         try {
-          const importedFeedUrl = classified.xmlUrl && /^https?:\/\/rss\.app\/feeds\//i.test(classified.xmlUrl)
-            ? classified.xmlUrl
-            : null;
-          const collectorConfig = importedFeedUrl && RSS_BACKED_SOCIAL_SOURCE_TYPES.has(classified.type)
-            ? normalizeWebsiteCollectorConfig({ strategy: "rss", feedUrl: importedFeedUrl })
-            : null;
           const source = await storage.createSource({
             name: sanitizeInput(classified.name).slice(0, 200) || "Imported source",
             url: classified.url,
@@ -982,7 +976,7 @@ export async function registerRoutes(
             retentionDays: input.retentionDays,
             country,
             category: input.category && isSourceCategoryCode(input.category) ? input.category : null,
-            collectorConfig,
+            collectorConfig: null,
             filterConfig: normalizeSourceFilterConfig(null),
             refreshPriority: "medium",
             userId: user.id,
