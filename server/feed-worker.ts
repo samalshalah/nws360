@@ -292,7 +292,8 @@ async function fetchYouTubeArticles(source: FeedSource): Promise<number> {
 
 async function fetchFacebookArticles(source: FeedSource): Promise<number> {
   console.log(`[Worker] Fetching Facebook: ${source.url} for source: ${source.name}`);
-  const posts = await fetchFacebookFeed(source.url);
+  const feedUrl = source.collectorConfig?.feedUrl?.trim();
+  const posts = await fetchFacebookFeed(feedUrl || source.url, { originalUrl: source.url, sourceName: source.name });
   posts.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${posts.length} Facebook posts from ${source.name}`);
   return await processItems(source, posts);
@@ -995,6 +996,34 @@ export async function previewSource(
       }
     } catch {}
     return { success: false, method: "none", articles: [], error: "Unable to parse RSS feed from this URL" };
+  }
+
+  if (["twitter", "youtube", "facebook", "instagram", "telegram"].includes(type)) {
+    try {
+      const socialInput = collectorConfig?.feedUrl || (/^https?:\/\//i.test(url) ? normalized : url.trim());
+      const candidates =
+        type === "twitter" ? await fetchTwitterFeed(socialInput) :
+        type === "youtube" ? await fetchYouTubeFeed(socialInput) :
+        type === "facebook" ? await fetchFacebookFeed(socialInput, collectorConfig?.feedUrl ? { originalUrl: normalized } : undefined) :
+        type === "instagram" ? await fetchInstagramFeed(socialInput) :
+        await fetchTelegramFeed(socialInput);
+      const articles = filterSourceItems(candidates, filterConfig).slice(0, maxArticles);
+      if (articles.length > 0) {
+        return {
+          success: true,
+          method: collectorConfig?.feedUrl ? "configured_feed" : type,
+          articles: articles.map((article) => ({ ...article, content: article.content.substring(0, 300) })),
+        };
+      }
+      if (candidates.length > 0) {
+        return { success: false, method: type, articles: [], error: "No recent posts matched the feed filters" };
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : `${type} collection failed`;
+      console.log(`[Preview] ${type} collection failed for ${url}: ${message}`);
+      return { success: false, method: "none", articles: [], error: message };
+    }
+    return { success: false, method: "none", articles: [], error: `Unable to fetch recent posts from this ${type} source` };
   }
 
   try {

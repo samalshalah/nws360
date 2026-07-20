@@ -27,6 +27,11 @@ import { startLearningWorker } from "./learning-worker";
 
 const scryptAsync = promisify(scrypt);
 const SYSTEM_CLIENT_ID = 9000;
+const RSS_BACKED_SOCIAL_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram"]);
+
+function sourceTypeSupportsCollectorConfig(type: string): boolean {
+  return type === "website" || RSS_BACKED_SOCIAL_SOURCE_TYPES.has(type);
+}
 
 const workerMiddleware = (_req: any, _res: any, next: any) => next();
 const apiLimiter = process.env.CF_WORKER === "1"
@@ -741,7 +746,7 @@ export async function registerRoutes(
         ...input,
         country: input.type === "google_news" ? input.country!.toUpperCase() : null,
         category: input.category && isSourceCategoryCode(input.category) ? input.category : null,
-        collectorConfig: input.type === "website" ? normalizeWebsiteCollectorConfig(input.collectorConfig) : null,
+        collectorConfig: sourceTypeSupportsCollectorConfig(input.type) ? normalizeWebsiteCollectorConfig(input.collectorConfig) : null,
         filterConfig: normalizeSourceFilterConfig(input.filterConfig),
       };
       const logoUrl = getSourceLogoUrl(normalizedInput.url, normalizedInput.name);
@@ -800,7 +805,7 @@ export async function registerRoutes(
       cleanUpdates.country = null;
     }
     if (cleanUpdates.collectorConfig !== undefined) {
-      cleanUpdates.collectorConfig = existingSource.type === "website"
+      cleanUpdates.collectorConfig = sourceTypeSupportsCollectorConfig(existingSource.type)
         ? normalizeWebsiteCollectorConfig(cleanUpdates.collectorConfig)
         : null;
     }
@@ -961,6 +966,12 @@ export async function registerRoutes(
         }
 
         try {
+          const importedFeedUrl = classified.xmlUrl && /^https?:\/\/rss\.app\/feeds\//i.test(classified.xmlUrl)
+            ? classified.xmlUrl
+            : null;
+          const collectorConfig = importedFeedUrl && RSS_BACKED_SOCIAL_SOURCE_TYPES.has(classified.type)
+            ? normalizeWebsiteCollectorConfig({ strategy: "rss", feedUrl: importedFeedUrl })
+            : null;
           const source = await storage.createSource({
             name: sanitizeInput(classified.name).slice(0, 200) || "Imported source",
             url: classified.url,
@@ -971,7 +982,7 @@ export async function registerRoutes(
             retentionDays: input.retentionDays,
             country,
             category: input.category && isSourceCategoryCode(input.category) ? input.category : null,
-            collectorConfig: null,
+            collectorConfig,
             filterConfig: normalizeSourceFilterConfig(null),
             refreshPriority: "medium",
             userId: user.id,

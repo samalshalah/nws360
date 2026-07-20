@@ -40,6 +40,194 @@ function extractBaseUrl(url: string): string {
   }
 }
 
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseDate(value: string): Date {
+  const parsed = value ? new Date(value) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
+}
+
+function parseSocialRssXml(xml: string, fallbackUrl: string, limit = 20): ScrapedArticle[] {
+  const $ = cheerio.load(xml, { xmlMode: true });
+  const articles: ScrapedArticle[] = [];
+
+  $("item, entry").each((_, el) => {
+    if (articles.length >= limit) return false;
+    const $item = $(el);
+    const title = $item.find("title").first().text().trim();
+    const rawDescription =
+      $item.find("content\\:encoded").first().text().trim() ||
+      $item.find("content").first().text().trim() ||
+      $item.find("summary").first().text().trim() ||
+      $item.find("description").first().text().trim();
+    const content = stripHtml(rawDescription || title);
+    const link =
+      $item.find("link").first().text().trim() ||
+      $item.find("link").first().attr("href") ||
+      $item.find("guid").first().text().trim() ||
+      fallbackUrl;
+    const pubDate =
+      $item.find("pubDate").first().text().trim() ||
+      $item.find("published").first().text().trim() ||
+      $item.find("updated").first().text().trim();
+
+    if (!title && !content) return;
+
+    let image: string | undefined;
+    image =
+      $item.find("enclosure[type^='image']").first().attr("url") ||
+      $item.find("media\\:content[url]").first().attr("url") ||
+      $item.find("media\\:thumbnail[url]").first().attr("url");
+    if (!image) {
+      const imgMatch = rawDescription.match(/<img[^>]+src=["']([^"']+)["']/i);
+      if (imgMatch) image = imgMatch[1];
+    }
+
+    articles.push({
+      title: title || content.substring(0, 150),
+      url: link,
+      content: content || title,
+      publishedAt: parseDate(pubDate),
+      image,
+    });
+  });
+
+  return articles;
+}
+
+function isLikelyFeedUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    const host = url.hostname.replace(/^www\./, "").toLowerCase();
+    const path = url.pathname.toLowerCase();
+    return host === "rss.app" ||
+      host === "rsshub.app" ||
+      path.endsWith(".xml") ||
+      path.endsWith(".rss") ||
+      path.endsWith(".atom") ||
+      path.includes("/feed") ||
+      path.includes("/rss");
+  } catch {
+    return false;
+  }
+}
+
+async function fetchSocialRssFeed(feedUrl: string, fallbackUrl: string): Promise<ScrapedArticle[]> {
+  console.log(`[Social RSS] Fetching feed: ${feedUrl}`);
+  const response = await fetch(feedUrl, {
+    headers: { "User-Agent": "NWS360/1.0 (RSS Reader)", "Accept": "application/rss+xml, application/xml, text/xml, */*" },
+    signal: AbortSignal.timeout(15000),
+    redirect: "follow",
+  });
+  if (!response.ok) {
+    console.log(`[Social RSS] Feed returned ${response.status}`);
+    return [];
+  }
+
+  const xml = await response.text();
+  if (!xml.includes("<item") && !xml.includes("<entry")) return [];
+  return parseSocialRssXml(xml, fallbackUrl);
+}
+
+function decodePathSegment(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function extractFacebookIdentity(input: string): { pageName: string; searchName: string; pageUrl: string } {
+  const trimmed = input.trim();
+  let pageName = trimmed.replace(/^@/, "").replace(/\/$/, "");
+  let searchName = pageName;
+  let pageUrl = /^https?:\/\//i.test(trimmed) ? trimmed : `https://www.facebook.com/${pageName}`;
+
+  try {
+    const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://www.facebook.com/${trimmed.replace(/^@/, "")}`);
+    const host = url.hostname.replace(/^www\./, "").toLowerCase();
+    if (host !== "facebook.com" && host !== "fb.com" && !host.endsWith(".facebook.com")) {
+      return { pageName, searchName, pageUrl };
+    }
+
+    pageUrl = url.href;
+    const segments = url.pathname.split("/").filter(Boolean).map(decodePathSegment);
+    const first = (segments[0] || "").toLowerCase();
+
+    if (first === "profile.php") {
+      const id = url.searchParams.get("id");
+      pageName = id || pageName;
+      searchName = id || pageName;
+    } else if (first === "pages" && segments.length >= 2) {
+      const last = segments[segments.length - 1];
+      const id = /^\d{8,}$/.test(last) ? last : null;
+      pageName = id || segments[segments.length - 1] || segments[1];
+      searchName = (id ? segments[segments.length - 2] : pageName) || pageName;
+    } else if (first === "p" && segments.length >= 2) {
+      const slug = segments[1];
+      const id = slug.match(/(\d{8,})$/)?.[1];
+      const label = slug.replace(/-\d{8,}$/, "").replace(/[-_]+/g, " ").trim();
+      pageName = id || slug;
+      searchName = label || id || slug;
+    } else if (segments[0]) {
+      pageName = segments[0];
+      searchName = pageName;
+    }
+  } catch {}
+
+  pageName = pageName.replace(/^@/, "").replace(/\/$/, "").split("?")[0].split("#")[0];
+  searchName = searchName.replace(/^@/, "").replace(/[._-]+/g, " ").replace(/official$/i, "").trim() || pageName;
+  return { pageName, searchName, pageUrl };
+}
+
+function compactForIdentityMatch(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function cleanFacebookSourceName(value: string): string {
+  return value
+    .replace(/\b(?:facebook|page|posts?)\b/gi, " ")
+    .trim();
+}
+
+function facebookResultMatchesIdentity(
+  title: string,
+  content: string,
+  identity: { pageName: string; searchName: string },
+  sourceName?: string,
+): boolean {
+  const titleMatch = compactForIdentityMatch(title);
+  const haystack = compactForIdentityMatch(`${title} ${content}`);
+  const sourceTerm = sourceName ? compactForIdentityMatch(cleanFacebookSourceName(sourceName)) : "";
+  if (sourceTerm.length >= 4) {
+    const sourceHasNonAscii = Boolean(sourceName && /[^\x00-\x7F]/.test(sourceName));
+    if (sourceHasNonAscii ? titleMatch.includes(sourceTerm) : titleMatch.startsWith(sourceTerm)) return true;
+  }
+
+  const terms = Array.from(new Set([identity.pageName, identity.searchName]))
+    .map(compactForIdentityMatch)
+    .filter((term) => term.length >= 3 && !/^\d+$/.test(term));
+  if (terms.length === 0) return true;
+  if (sourceName) return terms.some((term) => titleMatch.startsWith(term));
+  return terms.some((term) => haystack.includes(term));
+}
+
 export async function scrapeWebsite(url: string): Promise<ScrapedArticle[]> {
   const response = await fetch(url, {
     headers: {
@@ -264,14 +452,23 @@ export async function fetchYouTubeFeed(input: string): Promise<ScrapedArticle[]>
   }
 }
 
-export async function fetchFacebookFeed(input: string): Promise<ScrapedArticle[]> {
-  let pageName = input.trim();
-  const fbMatch = pageName.match(/(?:facebook\.com|fb\.com)\/(?:pages\/[^/]+\/|profile\.php\?id=)?([A-Za-z0-9._-]+)/);
-  if (fbMatch) {
-    pageName = fbMatch[1];
-  }
-  pageName = pageName.replace(/^@/, "").replace(/\/$/, "");
+export async function fetchFacebookFeed(input: string, options: { originalUrl?: string; sourceName?: string } = {}): Promise<ScrapedArticle[]> {
+  const identity = extractFacebookIdentity(options.originalUrl || input);
+  const feedUrl = isLikelyFeedUrl(input) ? input.trim() : null;
 
+  if (feedUrl) {
+    try {
+      const feedArticles = await fetchSocialRssFeed(feedUrl, identity.pageUrl);
+      if (feedArticles.length > 0) {
+        console.log(`[Facebook] Got ${feedArticles.length} posts from configured feed`);
+        return feedArticles;
+      }
+    } catch (e) {
+      console.log(`[Facebook] Configured feed failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  const { pageName, searchName, pageUrl } = identity;
   console.log(`[Facebook] Fetching page: ${pageName}`);
 
   const rssBridges = [
@@ -282,46 +479,7 @@ export async function fetchFacebookFeed(input: string): Promise<ScrapedArticle[]
   for (const bridgeUrl of rssBridges) {
     try {
       console.log(`[Facebook] Trying RSS bridge: ${bridgeUrl}`);
-      const response = await fetch(bridgeUrl, {
-        headers: { "User-Agent": "NWS360/1.0 (RSS Reader)" },
-        signal: AbortSignal.timeout(15000),
-      });
-
-      if (!response.ok) continue;
-
-      const xml = await response.text();
-      if (!xml.includes("<item>") && !xml.includes("<entry>")) continue;
-
-      const $ = cheerio.load(xml, { xmlMode: true });
-      const articles: ScrapedArticle[] = [];
-
-      $("item, entry").each((_, el) => {
-        if (articles.length >= 20) return false;
-        const $item = $(el);
-        const title = $item.find("title").text().trim();
-        const link = $item.find("link").text().trim() || $item.find("link").attr("href") || "";
-        const description = $item.find("description, content").text().trim();
-        const pubDate = $item.find("pubDate, published, updated").text().trim();
-
-        if (!title && !description) return;
-
-        let image: string | undefined;
-        const enclosure = $item.find("enclosure[type^='image']").first();
-        if (enclosure.length) image = enclosure.attr("url");
-        if (!image) {
-          const imgMatch = description.match(/<img[^>]+src=["']([^"']+)["']/i);
-          if (imgMatch) image = imgMatch[1];
-        }
-
-        articles.push({
-          title: title || description.substring(0, 150),
-          url: link || `https://www.facebook.com/${pageName}`,
-          content: description || title,
-          publishedAt: pubDate ? new Date(pubDate) : new Date(),
-          image,
-        });
-      });
-
+      const articles = await fetchSocialRssFeed(bridgeUrl, pageUrl);
       if (articles.length > 0) {
         console.log(`[Facebook] Got ${articles.length} posts from RSS bridge`);
         return articles;
@@ -395,7 +553,7 @@ export async function fetchFacebookFeed(input: string): Promise<ScrapedArticle[]
     console.log(`[Facebook] mbasic scraping failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  console.log(`[Facebook] All direct methods failed, using Google News fallback for ${pageName}`);
+  console.log(`[Facebook] All direct methods failed, trying Facebook-only Google News fallback for ${pageName}`);
   try {
     const RssParser = (await import("rss-parser")).default;
     const parser = new RssParser({
@@ -406,9 +564,10 @@ export async function fetchFacebookFeed(input: string): Promise<ScrapedArticle[]
         ],
       },
     });
-    const searchName = pageName.replace(/[._-]/g, " ").replace(/official$/i, "").trim();
-    const feedUrl = `https://news.google.com/rss/search?q=%22${encodeURIComponent(searchName)}%22&hl=en&gl=US&ceid=US:en`;
-    const feed = await parser.parseURL(feedUrl);
+    const fallbackSearchTerm = /^\d+$/.test(pageName) ? searchName : pageName;
+    if (fallbackSearchTerm.length < 3) return [];
+    const googleNewsUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(`"${fallbackSearchTerm}" site:facebook.com`)}&hl=en&gl=US&ceid=US:en`;
+    const feed = await parser.parseURL(googleNewsUrl);
     const articles: ScrapedArticle[] = [];
 
     for (const item of (feed.items || []) as any[]) {
@@ -446,27 +605,31 @@ export async function fetchFacebookFeed(input: string): Promise<ScrapedArticle[]
 
       if (image && (image.includes("lh3.googleusercontent.com") || image.includes("gstatic.com"))) image = undefined;
 
-      let realUrl = item.link || "";
+      const content = item.contentSnippet || item.content || item.title || "";
+      const sourceLabel = String(subSource || "").toLowerCase();
+      const realUrl = item.link || "";
+      const looksFacebook = sourceLabel.includes("facebook") || String(realUrl).includes("facebook.com") || String(content).toLowerCase().includes("facebook.com");
+      if (!looksFacebook) continue;
+      if (!facebookResultMatchesIdentity(cleanTitle, content, identity, options.sourceName)) continue;
 
       if (!image && subSource) {
         const resolved = await resolveArticleFromPublisher(cleanTitle, subSource);
         if (resolved) {
           if (resolved.image) image = resolved.image;
-          if (resolved.url) realUrl = resolved.url;
         }
       }
 
       articles.push({
         title: cleanTitle,
-        url: realUrl || `https://www.facebook.com/${pageName}`,
-        content: item.contentSnippet || item.content || item.title,
+        url: realUrl || pageUrl,
+        content,
         publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
         image,
         subSource,
       });
     }
 
-    console.log(`[Facebook] Got ${articles.length} articles via Google News for "${searchName}"`);
+    console.log(`[Facebook] Got ${articles.length} articles via Google News for "${fallbackSearchTerm}"`);
     return articles;
   } catch (e) {
     console.error(`[Facebook] Google News fallback failed:`, e instanceof Error ? e.message : String(e));
@@ -600,7 +763,7 @@ async function fetchOgImageFromArticleSearch(title: string, publisher: string): 
     if (!resp.ok) return null;
     const html = await resp.text();
 
-    const articleLinks = [...html.matchAll(/href="(https?:\/\/[^"]*(?:\/\d{4}\/\d{2}\/|\/article|\/story|\/news\/)[^"]+)"/g)];
+    const articleLinks = Array.from(html.matchAll(/href="(https?:\/\/[^"]*(?:\/\d{4}\/\d{2}\/|\/article|\/story|\/news\/)[^"]+)"/g));
     for (const match of articleLinks.slice(0, 3)) {
       const articleUrl = match[1];
       if (articleUrl.includes("search") || articleUrl.includes("javascript")) continue;

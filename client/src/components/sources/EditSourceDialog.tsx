@@ -51,6 +51,7 @@ const INTERVAL_OPTIONS = [
 ];
 
 const PUBLIC_APP_URL = (import.meta.env.VITE_PUBLIC_APP_URL || "https://nws360.com").replace(/\/$/, "");
+const RSS_BACKED_SOCIAL_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram"]);
 
 interface SourceForm {
   name: string;
@@ -67,6 +68,10 @@ interface SourceForm {
 
 type TestStatus = "idle" | "testing" | "success" | "error";
 
+function supportsConfiguredFeed(type: string): boolean {
+  return type === "website" || RSS_BACKED_SOCIAL_SOURCE_TYPES.has(type);
+}
+
 function sourceToForm(source: Source): SourceForm {
   return {
     name: source.name,
@@ -77,7 +82,7 @@ function sourceToForm(source: Source): SourceForm {
     intervalMinutes: source.intervalMinutes || 15,
     maxArticlesPerFetch: source.maxArticlesPerFetch || 10,
     retentionDays: source.retentionDays || 30,
-    collectorConfig: source.type === "website"
+    collectorConfig: supportsConfiguredFeed(source.type)
       ? { ...DEFAULT_WEBSITE_COLLECTOR_CONFIG, ...(source.collectorConfig || {}) }
       : DEFAULT_WEBSITE_COLLECTOR_CONFIG,
     filterConfig: {
@@ -120,12 +125,14 @@ export function EditSourceDialog({
 
   const isGoogleNews = source.type === "google_news";
   const isWebsite = source.type === "website";
-  const originalCollectorConfig = isWebsite
+  const isRssBackedSocial = RSS_BACKED_SOCIAL_SOURCE_TYPES.has(source.type);
+  const canConfigureFeed = supportsConfiguredFeed(source.type);
+  const originalCollectorConfig = canConfigureFeed
     ? { ...DEFAULT_WEBSITE_COLLECTOR_CONFIG, ...(source.collectorConfig || {}) }
     : DEFAULT_WEBSITE_COLLECTOR_CONFIG;
   const connectionChanged = form.url.trim() !== source.url
     || (isGoogleNews && form.country !== (source.country || ""))
-    || (isWebsite && JSON.stringify(form.collectorConfig) !== JSON.stringify(originalCollectorConfig));
+    || (canConfigureFeed && JSON.stringify(form.collectorConfig) !== JSON.stringify(originalCollectorConfig));
   const isSubmitting = updateSource.isPending || rebuildSource.isPending;
   const canSave = form.name.trim().length > 0
     && form.url.trim().length > 0
@@ -153,7 +160,7 @@ export function EditSourceDialog({
           type: source.type,
           country: isGoogleNews ? form.country : undefined,
           maxArticles: Math.min(5, form.maxArticlesPerFetch),
-          collectorConfig: isWebsite ? form.collectorConfig : undefined,
+          collectorConfig: canConfigureFeed ? form.collectorConfig : undefined,
           filterConfig: form.filterConfig,
         }),
       });
@@ -162,7 +169,7 @@ export function EditSourceDialog({
       if (!response.ok || !result.success || !Array.isArray(result.articles) || result.articles.length === 0 || fallbackOnly) {
         throw new Error(result.error || "No articles were found at this address.");
       }
-      if (isWebsite && result.feedUrl) {
+      if (canConfigureFeed && result.feedUrl) {
         setForm((current) => current ? {
           ...current,
           collectorConfig: { ...current.collectorConfig, feedUrl: result.feedUrl },
@@ -186,7 +193,7 @@ export function EditSourceDialog({
     intervalMinutes: clamp(form.intervalMinutes, 5, 1440, 15),
     maxArticlesPerFetch: clamp(form.maxArticlesPerFetch, 1, 50, 10),
     retentionDays: clamp(form.retentionDays, 1, 30, 30),
-    collectorConfig: isWebsite ? form.collectorConfig : null,
+    collectorConfig: canConfigureFeed ? form.collectorConfig : null,
     filterConfig: form.filterConfig,
   });
 
@@ -300,6 +307,28 @@ export function EditSourceDialog({
               onChange={(collectorConfig) => updateForm({ collectorConfig }, true)}
               detectedFeedUrl={form.collectorConfig.feedUrl}
             />
+          )}
+
+          {isRssBackedSocial && (
+            <div className="space-y-2">
+              <Label htmlFor="edit-source-feed-url">Collection feed URL</Label>
+              <Input
+                id="edit-source-feed-url"
+                value={form.collectorConfig.feedUrl || ""}
+                onChange={(event) => updateForm({
+                  collectorConfig: {
+                    ...form.collectorConfig,
+                    strategy: "rss",
+                    feedUrl: event.target.value.trim() || undefined,
+                  },
+                }, true)}
+                placeholder="https://rss.app/feeds/example.xml"
+                data-testid="input-edit-source-feed-url"
+              />
+              <p className="text-xs text-muted-foreground">
+                Optional RSS.app or bridge feed used before direct social fallback.
+              </p>
+            </div>
           )}
 
           <SourceFilterFields
