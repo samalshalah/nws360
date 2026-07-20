@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe, LayoutGrid, List } from "lucide-react";
+import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe, LayoutGrid, List, ArrowDownUp } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -23,6 +23,20 @@ import { cn } from "@/lib/utils";
 const CATEGORIES = ["political", "health", "tech", "sports", "business", "entertainment", "science", "urgent", "general"] as const;
 const SOURCE_TYPES = ["rss", "website", "google_news", "twitter", "youtube", "facebook", "instagram", "telegram"] as const;
 const PAGE_SIZE = 20;
+type FeedSort = "newest" | "oldest" | "recently_added" | "source_az" | "title_az" | "engagement";
+const DEFAULT_SORT: FeedSort = "newest";
+const SORT_OPTIONS: { value: FeedSort; label: string }[] = [
+  { value: "newest", label: "Newest published" },
+  { value: "oldest", label: "Oldest published" },
+  { value: "recently_added", label: "Recently added" },
+  { value: "source_az", label: "Source A-Z" },
+  { value: "title_az", label: "Title A-Z" },
+  { value: "engagement", label: "Highest engagement" },
+];
+
+function parseFeedSort(value: string | null | undefined): FeedSort {
+  return SORT_OPTIONS.some((option) => option.value === value) ? value as FeedSort : DEFAULT_SORT;
+}
 
 export default function Feed() {
   const { t, i18n } = useTranslation();
@@ -54,6 +68,7 @@ export default function Feed() {
       category: undefined as string | undefined,
       sourceType: undefined as string | undefined,
       dateRange: "all" as string,
+      sort: parseFeedSort(params.get("sort")),
     };
   });
 
@@ -64,13 +79,15 @@ export default function Feed() {
     const sourceIdParam = params.get("sourceId");
     const sourceTypeParam = params.get("sourceType");
     const categoryParam = params.get("category");
+    const sortParam = params.get("sort");
     const focusParam = params.get("focus");
-    const updates: Record<string, string> = {};
+    const updates: Partial<typeof filters> = {};
     if (searchParam) updates.search = searchParam;
     if (sentimentParam) updates.sentiment = sentimentParam;
     if (sourceIdParam) updates.sourceId = sourceIdParam;
     if (sourceTypeParam) updates.sourceType = sourceTypeParam;
     if (categoryParam) updates.category = categoryParam;
+    if (sortParam) updates.sort = parseFeedSort(sortParam);
     if (Object.keys(updates).length > 0) {
       setFilters(prev => ({ ...prev, ...updates }));
       if (updates.search) setSearchInput(updates.search);
@@ -115,6 +132,7 @@ export default function Feed() {
     search: filters.search,
     sourceId: filters.sourceId ? parseInt(filters.sourceId) : undefined,
     sourceName: filters.sourceName,
+    sort: filters.sort,
     sentiment: filters.sentiment,
     category: filters.category,
     sourceType: filters.sourceType,
@@ -238,6 +256,7 @@ export default function Feed() {
     if (filters.search) params.set("search", filters.search);
     if (filters.sourceId) params.set("sourceId", filters.sourceId);
     if (filters.sourceName) params.set("sourceName", filters.sourceName);
+    if (filters.sort && filters.sort !== DEFAULT_SORT) params.set("sort", filters.sort);
     if (filters.sentiment) params.set("sentiment", filters.sentiment);
     if (filters.category) params.set("category", filters.category);
     if (filters.sourceType) params.set("sourceType", filters.sourceType);
@@ -252,7 +271,7 @@ export default function Feed() {
   const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sentiment || filters.category || filters.sourceType || filters.dateRange !== "all";
 
   const clearFilters = () => {
-    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sentiment: undefined, category: undefined, sourceType: undefined, dateRange: "all" });
+    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sentiment: undefined, category: undefined, sourceType: undefined, dateRange: "all", sort: DEFAULT_SORT });
     setSearchInput("");
     resetScroll();
   };
@@ -376,6 +395,21 @@ export default function Feed() {
 
   const filterDropdowns = (
     <>
+      <Select
+        value={filters.sort}
+        onValueChange={(val) => updateFilter("sort", parseFeedSort(val))}
+      >
+        <SelectTrigger className="w-full sm:w-[190px] bg-background" data-testid="select-sort-articles">
+          <ArrowDownUp className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+          <SelectValue placeholder="Sort" />
+        </SelectTrigger>
+        <SelectContent>
+          {SORT_OPTIONS.map(option => (
+            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
       <Select
         value={filters.sourceName || "all"}
         onValueChange={(val) => updateFilter("sourceName", val === "all" ? undefined : val)}

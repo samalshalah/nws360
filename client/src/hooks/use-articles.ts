@@ -16,6 +16,7 @@ export function useArticles(params?: ArticleQueryParams) {
         if (params.category) searchParams.set("category", params.category);
         if (params.sourceType) searchParams.set("sourceType", params.sourceType);
         if (params.sourceName) searchParams.set("sourceName", params.sourceName);
+        if (params.sort) searchParams.set("sort", params.sort);
         if (params.lang) searchParams.set("lang", params.lang);
         if (params.startDate) searchParams.set("startDate", params.startDate);
         if (params.endDate) searchParams.set("endDate", params.endDate);

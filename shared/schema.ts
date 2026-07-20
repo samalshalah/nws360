@@ -2078,6 +2078,7 @@ export interface ArticleQueryParams {
   sourceId?: number;
   sourceIds?: number[];
   sourceName?: string;
+  sort?: "newest" | "oldest" | "recently_added" | "source_az" | "title_az" | "engagement";
   sentiment?: string;
   category?: string;
   sourceType?: string;

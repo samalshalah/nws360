@@ -109,7 +109,12 @@ export const api = {
       input: z.object({
         search: z.string().optional(),
         sourceId: z.coerce.number().optional(),
+        sourceName: z.string().optional(),
+        sourceType: z.string().optional(),
+        category: z.string().optional(),
+        sort: z.enum(["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"]).optional(),
         sentiment: z.enum(['positive', 'negative', 'neutral']).optional(),
+        lang: z.string().optional(),
         startDate: z.string().optional(),
         endDate: z.string().optional(),
         page: z.coerce.number().optional(),

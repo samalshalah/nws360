@@ -891,6 +891,17 @@ export class DatabaseStorage implements IStorage {
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
     const limit = params?.limit || 20;
     const offset = ((params?.page || 1) - 1) * limit;
+    const sort = params?.sort || "newest";
+    const publishedSort = sql`COALESCE(${articles.publishedAt}, ${articles.ingestedAt}, ${articles.createdAt})`;
+    const sourceNameSort = sql`LOWER(COALESCE(NULLIF(${articles.subSource}, ''), ${sources.name}, 'Unknown'))`;
+    const engagementSort = sql`COALESCE(${articles.engagementLikes}, 0) + COALESCE(${articles.engagementComments}, 0) + COALESCE(${articles.engagementShares}, 0)`;
+    const orderBy =
+      sort === "oldest" ? [asc(publishedSort), asc(articles.id)] :
+      sort === "recently_added" ? [desc(articles.ingestedAt), desc(articles.id)] :
+      sort === "source_az" ? [asc(sourceNameSort), desc(publishedSort), desc(articles.id)] :
+      sort === "title_az" ? [asc(sql`LOWER(${articles.title})`), desc(publishedSort), desc(articles.id)] :
+      sort === "engagement" ? [desc(engagementSort), desc(publishedSort), desc(articles.id)] :
+      [desc(publishedSort), desc(articles.id)];
 
     const countQuery = db.select({ count: sql<number>`count(*)` }).from(articles);
     if (needsSourceJoin) {
@@ -928,7 +939,7 @@ export class DatabaseStorage implements IStorage {
     .from(articles)
     .leftJoin(sources, eq(articles.sourceId, sources.id))
     .where(whereClause)
-    .orderBy(desc(articles.publishedAt))
+    .orderBy(...orderBy)
     .limit(limit)
     .offset(offset);
 

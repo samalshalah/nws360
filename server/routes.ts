@@ -1343,11 +1343,16 @@ export async function registerRoutes(
           .map(s => s.id);
         filteredSourceIds = matchingIds.length > 0 ? matchingIds : [-1];
       }
+      const sortParam = req.query.sort as string | undefined;
+      const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
+        ? sortParam as any
+        : "newest";
       const params = {
         search: req.query.search as string,
         sourceId: req.query.sourceId && !isNaN(parseInt(req.query.sourceId as string)) ? parseInt(req.query.sourceId as string) : undefined,
         sourceIds: filteredSourceIds,
         clientId: clientId || undefined,
+        sort,
         sentiment: req.query.sentiment as string,
         category: req.query.category as string,
         sourceType: req.query.sourceType as string,
@@ -1445,6 +1450,7 @@ export async function registerRoutes(
       sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
       sourceIds: scopedSourceIds,
       clientId: clientId || undefined,
+      sort: req.query.sort as any,
       sentiment: req.query.sentiment as string,
       category: req.query.category as string,
       sourceType: req.query.sourceType as string,
