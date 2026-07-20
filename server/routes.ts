@@ -1346,7 +1346,7 @@ export async function registerRoutes(
       const sortParam = req.query.sort as string | undefined;
       const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
         ? sortParam as any
-        : "newest";
+        : "recently_added";
       const params = {
         search: req.query.search as string,
         sourceId: req.query.sourceId && !isNaN(parseInt(req.query.sourceId as string)) ? parseInt(req.query.sourceId as string) : undefined,
@@ -1445,12 +1445,16 @@ export async function registerRoutes(
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const scopedSourceIds = await getUserSourceIds(user, req);
+    const sortParam = req.query.sort as string | undefined;
+    const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
+      ? sortParam as any
+      : "recently_added";
     const params = {
       search: req.query.search as string,
       sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
       sourceIds: scopedSourceIds,
       clientId: clientId || undefined,
-      sort: req.query.sort as any,
+      sort,
       sentiment: req.query.sentiment as string,
       category: req.query.category as string,
       sourceType: req.query.sourceType as string,
