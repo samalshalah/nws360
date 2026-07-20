@@ -2379,7 +2379,9 @@ export async function registerRoutes(
         title: a.title,
         summary: a.summary,
         url: a.url,
-        source: a.source?.name || null,
+        source: a.subSource || a.source?.name || null,
+        subSource: a.subSource || null,
+        collectedVia: a.subSource ? a.source?.name || null : null,
         sourceType: a.source?.type || null,
         category: a.category,
         sentimentLabel: a.sentimentLabel,
@@ -4075,7 +4077,10 @@ export async function registerRoutes(
       const result = await storage.getArticles({ ...(filters || {}), clientId: exportClientId || undefined });
       resultData = result.items.map(a => ({
         id: a.id, title: a.title, url: a.url, summary: a.summary,
-        source: a.source?.name, category: a.category,
+        source: a.subSource || a.source?.name,
+        subSource: a.subSource,
+        collectedVia: a.subSource ? a.source?.name : null,
+        category: a.category,
         sentiment: a.sentimentLabel, score: a.sentimentScore,
         keywords: a.keywords, topics: a.topics, country: a.country,
         publishedAt: a.publishedAt,

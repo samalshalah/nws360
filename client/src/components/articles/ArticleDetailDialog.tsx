@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 interface ArticleDetailDialogProps {
   article: Article & { source: Source | null };
@@ -29,8 +30,10 @@ export function ArticleDetailDialog({
   onBookmark,
   onShare,
 }: ArticleDetailDialogProps) {
+  const { t } = useTranslation();
   const publishedAt = article.publishedAt ? new Date(article.publishedAt) : null;
   const sourceName = article.subSource || article.source?.name || "Unknown source";
+  const collectedVia = article.subSource ? article.source?.name : null;
   const topics = Array.from(new Set([...(article.topics || []), ...(article.keywords || [])]));
   const content = article.content.trim();
   const summary = article.summary?.trim();
@@ -52,6 +55,11 @@ export function ArticleDetailDialog({
             <DialogHeader className="pr-7 text-left">
               <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <span className="font-semibold text-foreground/80">{sourceName}</span>
+                {collectedVia ? (
+                  <span>
+                    {t("common.via")} <span className="font-medium text-muted-foreground">{collectedVia}</span>
+                  </span>
+                ) : null}
                 {publishedAt ? (
                   <span className="inline-flex items-center gap-1.5">
                     <Calendar className="h-3.5 w-3.5" />

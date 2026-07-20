@@ -316,6 +316,13 @@ export interface IStorage {
       dominantSentiment: string;
       uniqueKeywords: number;
     }[];
+    publishers: {
+      publisherName: string;
+      collectorSourceName: string;
+      collectorSourceType: string;
+      articleCount: number;
+      avgArticlesPerDay: number;
+    }[];
     diversity: { sourceType: string; count: number }[];
   }>;
 
@@ -1551,7 +1558,7 @@ export class DatabaseStorage implements IStorage {
 
   async getSourceBehavior(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
-      return { sources: [], diversity: [] };
+      return { sources: [], publishers: [], diversity: [] };
     }
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -1575,6 +1582,23 @@ export class DatabaseStorage implements IStorage {
       ORDER BY "articleCount" DESC
     `);
 
+    const publisherRows = await db.execute(sql`
+      SELECT
+        COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as "publisherName",
+        MIN(s.name) as "collectorSourceName",
+        CASE
+          WHEN COUNT(DISTINCT s.type) = 1 THEN MIN(s.type)
+          ELSE 'mixed'
+        END as "collectorSourceType",
+        COUNT(DISTINCT a.id)::int as "articleCount"
+      FROM articles a
+      LEFT JOIN sources s ON a.source_id = s.id
+      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA}
+      GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
+      ORDER BY "articleCount" DESC, "publisherName" ASC
+      LIMIT 20
+    `);
+
     const diversityRows = await db.execute(sql`
       SELECT s.type as "sourceType", COUNT(DISTINCT a.id)::int as count
       FROM articles a
@@ -1593,6 +1617,13 @@ export class DatabaseStorage implements IStorage {
         avgArticlesPerDay: Math.round((Number(r.articleCount) / daysDiff) * 10) / 10,
         dominantSentiment: String(r.dominantSentiment || "neutral"),
         uniqueKeywords: Number(r.uniqueKeywords),
+      })),
+      publishers: (publisherRows.rows as any[]).map(r => ({
+        publisherName: String(r.publisherName || "Unknown"),
+        collectorSourceName: String(r.collectorSourceName || "Unknown"),
+        collectorSourceType: String(r.collectorSourceType || "unknown"),
+        articleCount: Number(r.articleCount),
+        avgArticlesPerDay: Math.round((Number(r.articleCount) / daysDiff) * 10) / 10,
       })),
       diversity: (diversityRows.rows as any[]).map(r => ({
         sourceType: String(r.sourceType || "unknown"),

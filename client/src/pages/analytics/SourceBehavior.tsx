@@ -23,10 +23,30 @@ export default function SourceBehavior() {
       dominantSentiment: string;
       uniqueKeywords: number;
     }[];
+    publishers?: {
+      publisherName: string;
+      collectorSourceName: string;
+      collectorSourceType: string;
+      articleCount: number;
+      avgArticlesPerDay: number;
+    }[];
     diversity: { sourceType: string; count: number }[];
   }>({
     queryKey: [`/api/analytics/source-behavior?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
+
+  const topPublishers = (data?.publishers && data.publishers.length > 0
+    ? data.publishers
+    : (data?.sources || [])
+        .filter(s => s.articleCount > 0)
+        .map(s => ({
+          publisherName: s.sourceName,
+          collectorSourceName: s.sourceName,
+          collectorSourceType: s.sourceType,
+          articleCount: s.articleCount,
+          avgArticlesPerDay: s.avgArticlesPerDay,
+        }))
+  ).filter(p => p.articleCount > 0);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -117,20 +137,30 @@ export default function SourceBehavior() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {data?.sources.filter(s => s.articleCount > 0).slice(0, 10).map((source, i) => {
-                  const maxCount = data.sources[0]?.articleCount || 1;
-                  const pct = Math.round((source.articleCount / maxCount) * 100);
+                {topPublishers.slice(0, 10).map((publisher, i) => {
+                  const maxCount = topPublishers[0]?.articleCount || 1;
+                  const pct = Math.round((publisher.articleCount / maxCount) * 100);
                   return (
-                    <div key={source.sourceId} className="flex items-center gap-3">
+                    <div key={`${publisher.publisherName}-${publisher.collectorSourceName}`} className="flex items-center gap-3">
                       <span className="text-xs text-muted-foreground w-4 shrink-0">{i + 1}</span>
-                      <span className="w-24 text-sm font-medium truncate shrink-0">{source.sourceName}</span>
+                      <div className="w-28 shrink-0">
+                        <p className="truncate text-sm font-medium">{publisher.publisherName}</p>
+                        {publisher.publisherName !== publisher.collectorSourceName ? (
+                          <p className="truncate text-[10px] text-muted-foreground">
+                            {t("common.via")} {publisher.collectorSourceName}
+                          </p>
+                        ) : null}
+                      </div>
                       <div className="flex-1 h-4 bg-muted rounded-sm overflow-hidden">
                         <div className="h-full bg-primary rounded-sm transition-all" style={{ width: `${pct}%` }} />
                       </div>
-                      <span className="text-xs text-muted-foreground shrink-0">{source.avgArticlesPerDay}/day</span>
+                      <span className="text-xs text-muted-foreground shrink-0">{publisher.avgArticlesPerDay}/day</span>
                     </div>
                   );
                 })}
+                {topPublishers.length === 0 && (
+                  <p className="text-muted-foreground text-sm">{t("analytics.noData")}</p>
+                )}
               </div>
             </CardContent>
           </Card>

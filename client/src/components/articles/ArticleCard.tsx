@@ -29,6 +29,7 @@ const sourceTypeIcons: Record<string, typeof Rss> = {
   facebook: Facebook,
   instagram: Instagram,
   telegram: Send,
+  google_news: Search,
 };
 
 const platformIcons: Record<string, { icon: typeof Rss; label: string; color: string }> = {
@@ -124,7 +125,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
   const hasImage = article.imageUrl && article.imageUrl !== "none" && !imgError;
   const sourceLogoUrl = article.source?.logoUrl || null;
   const subSourceFavicon = article.subSource ? getSubSourceFaviconUrl(article.subSource) : null;
-  const faviconUrl = sourceLogoUrl || subSourceFavicon;
+  const faviconUrl = subSourceFavicon || sourceLogoUrl;
   const crossPosts = (Array.isArray((article as any).crossPosts) ? (article as any).crossPosts : []) as { platform: string; url: string; sourceId: number }[];
 
   const sentimentBadge = article.sentimentLabel ? (
