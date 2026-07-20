@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, CheckCircle2, Copy, Loader2, Search, TriangleAlert } from "lucide-react";
+import { Check, CheckCircle2, Copy, Loader2, RefreshCw, Search, TriangleAlert } from "lucide-react";
 import type { Source } from "@shared/schema";
 import type { WebsiteCollectorConfig } from "@shared/source-collector";
 import { DEFAULT_SOURCE_FILTER_CONFIG, type SourceFilterConfig } from "@shared/source-filter";
@@ -8,11 +8,22 @@ import { SOURCE_CATEGORIES } from "@shared/source-categories";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { useUpdateSource } from "@/hooks/use-sources";
+import { useRebuildSource, useUpdateSource } from "@/hooks/use-sources";
 import { DEFAULT_WEBSITE_COLLECTOR_CONFIG, WebsiteCollectorFields } from "./WebsiteCollectorFields";
 import { SourceFilterFields } from "./SourceFilterFields";
 
@@ -91,6 +102,7 @@ export function EditSourceDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const updateSource = useUpdateSource();
+  const rebuildSource = useRebuildSource();
   const [form, setForm] = useState<SourceForm | null>(source ? sourceToForm(source) : null);
   const [testStatus, setTestStatus] = useState<TestStatus>("idle");
   const [testMessage, setTestMessage] = useState("");
@@ -114,11 +126,12 @@ export function EditSourceDialog({
   const connectionChanged = form.url.trim() !== source.url
     || (isGoogleNews && form.country !== (source.country || ""))
     || (isWebsite && JSON.stringify(form.collectorConfig) !== JSON.stringify(originalCollectorConfig));
+  const isSubmitting = updateSource.isPending || rebuildSource.isPending;
   const canSave = form.name.trim().length > 0
     && form.url.trim().length > 0
     && (!isGoogleNews || form.country.length === 2)
     && (!connectionChanged || testStatus === "success")
-    && !updateSource.isPending;
+    && !isSubmitting;
 
   const updateForm = (updates: Partial<SourceForm>, resetsConnection = false) => {
     setForm((current) => current ? { ...current, ...updates } : current);
@@ -163,21 +176,29 @@ export function EditSourceDialog({
     }
   };
 
+  const buildPayload = () => ({
+    id: source.id,
+    name: form.name.trim(),
+    url: form.url.trim(),
+    country: isGoogleNews ? form.country : null,
+    category: form.category || null,
+    active: form.active,
+    intervalMinutes: clamp(form.intervalMinutes, 5, 1440, 15),
+    maxArticlesPerFetch: clamp(form.maxArticlesPerFetch, 1, 50, 10),
+    retentionDays: clamp(form.retentionDays, 1, 30, 30),
+    collectorConfig: isWebsite ? form.collectorConfig : null,
+    filterConfig: form.filterConfig,
+  });
+
   const save = async () => {
     if (!canSave) return;
-    await updateSource.mutateAsync({
-      id: source.id,
-      name: form.name.trim(),
-      url: form.url.trim(),
-      country: isGoogleNews ? form.country : null,
-      category: form.category || null,
-      active: form.active,
-      intervalMinutes: clamp(form.intervalMinutes, 5, 1440, 15),
-      maxArticlesPerFetch: clamp(form.maxArticlesPerFetch, 1, 50, 10),
-      retentionDays: clamp(form.retentionDays, 1, 30, 30),
-      collectorConfig: isWebsite ? form.collectorConfig : null,
-      filterConfig: form.filterConfig,
-    });
+    await updateSource.mutateAsync(buildPayload());
+    onOpenChange(false);
+  };
+
+  const saveAndRebuild = async () => {
+    if (!canSave) return;
+    await rebuildSource.mutateAsync(buildPayload());
     onOpenChange(false);
   };
 
@@ -371,6 +392,47 @@ export function EditSourceDialog({
               </div>
             </div>
           )}
+
+          <div className="space-y-3 border-t pt-5" data-testid="source-maintenance-section">
+            <div>
+              <Label>Maintenance</Label>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Rebuild clears this source's collected articles and immediately fetches again with the saved settings.
+              </p>
+            </div>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  disabled={!canSave}
+                  data-testid="button-open-rebuild-source"
+                >
+                  {rebuildSource.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  Save & Rebuild Source
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Rebuild this source?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will save the current settings for {source.name}, delete all articles collected from this source, then run a fresh fetch. The source itself and its settings will stay.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    onClick={saveAndRebuild}
+                    data-testid="button-confirm-rebuild-source"
+                  >
+                    Rebuild source
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
         </div>
 
         <div className="flex flex-col-reverse gap-2 border-t bg-background px-6 py-4 sm:flex-row sm:justify-end">

@@ -217,6 +217,7 @@ export interface IStorage {
   getSource(id: number, clientId?: number): Promise<Source | undefined>;
   createSource(source: InsertSource): Promise<Source>;
   updateSource(id: number, source: Partial<InsertSource>, clientId?: number): Promise<Source | undefined>;
+  clearSourceArticles(id: number, clientId?: number): Promise<number>;
   deleteSource(id: number, clientId?: number): Promise<void>;
 
   // Articles
@@ -798,8 +799,37 @@ export class DatabaseStorage implements IStorage {
     if (articleIds.length === 0) return;
     await db.delete(comments).where(and(eq(comments.targetType, "article"), inArray(comments.targetId, articleIds)));
     await db.delete(annotations).where(and(eq(annotations.targetType, "article"), inArray(annotations.targetId, articleIds)));
+    await db.delete(tagAssignments).where(and(eq(tagAssignments.targetType, "article"), inArray(tagAssignments.targetId, articleIds)));
     await db.delete(timelineEvents).where(inArray(timelineEvents.articleId, articleIds));
     await db.delete(bookmarks).where(inArray(bookmarks.articleId, articleIds));
+  }
+
+  async clearSourceArticles(id: number, clientId?: number): Promise<number> {
+    const articleConditions = [eq(articles.sourceId, id)];
+    if (clientId) articleConditions.push(eq(articles.clientId, clientId));
+    const sourceArticles = await db.select({ id: articles.id }).from(articles).where(and(...articleConditions));
+    const articleIds = sourceArticles.map(a => a.id);
+    if (articleIds.length === 0) return 0;
+
+    const clusterRows = await db
+      .select({ clusterId: articleAiAnalysis.clusterId })
+      .from(articleAiAnalysis)
+      .where(and(inArray(articleAiAnalysis.articleId, articleIds), isNotNull(articleAiAnalysis.clusterId)));
+    const clusterIds = Array.from(new Set(clusterRows.map(row => row.clusterId).filter((id): id is number => typeof id === "number")));
+
+    await this.cleanupArticleDependents(articleIds);
+    await db.delete(articles).where(inArray(articles.id, articleIds));
+
+    if (clusterIds.length > 0) {
+      const clusterConditions = [
+        inArray(storyClusters.id, clusterIds),
+        sql`NOT EXISTS (SELECT 1 FROM ${articleAiAnalysis} ai WHERE ai.cluster_id = ${storyClusters.id})`,
+      ];
+      if (clientId) clusterConditions.push(eq(storyClusters.clientId, clientId));
+      await db.delete(storyClusters).where(and(...clusterConditions));
+    }
+
+    return articleIds.length;
   }
 
   async deleteSource(id: number, clientId?: number): Promise<void> {
@@ -807,10 +837,7 @@ export class DatabaseStorage implements IStorage {
     if (clientId) conditions.push(eq(sources.clientId, clientId));
     const [source] = await db.select().from(sources).where(and(...conditions));
     if (!source) return;
-    const sourceArticles = await db.select({ id: articles.id }).from(articles).where(eq(articles.sourceId, id));
-    const articleIds = sourceArticles.map(a => a.id);
-    await this.cleanupArticleDependents(articleIds);
-    await db.delete(articles).where(eq(articles.sourceId, id));
+    await this.clearSourceArticles(id, source.clientId);
     await db.delete(sources).where(eq(sources.id, id));
   }
 

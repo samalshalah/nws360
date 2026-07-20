@@ -777,6 +777,41 @@ export async function registerRoutes(
     filterConfig: sourceFilterConfigSchema.nullable().optional(),
   }).strict();
 
+  function normalizeSourceUpdatePayload(
+    input: z.infer<typeof sourceUpdateInput>,
+    existingSource: any,
+    options: { allowEmpty?: boolean } = {},
+  ): { cleanUpdates?: Record<string, any>; error?: string } {
+    const cleanUpdates: Record<string, any> = { ...input };
+    if (Object.keys(cleanUpdates).length === 0 && !options.allowEmpty) {
+      return { error: "No valid fields to update" };
+    }
+    if (cleanUpdates.category !== undefined && cleanUpdates.category !== null && !isSourceCategoryCode(cleanUpdates.category)) {
+      return { error: "A supported source category is required" };
+    }
+    if (existingSource.type === "google_news") {
+      const country = cleanUpdates.country === undefined ? existingSource.country : cleanUpdates.country;
+      if (!country || !isGoogleNewsEditionCode(country)) {
+        return { error: "A supported Google News region is required" };
+      }
+      cleanUpdates.country = String(country).toUpperCase();
+    } else if (cleanUpdates.country !== undefined) {
+      cleanUpdates.country = null;
+    }
+    if (cleanUpdates.collectorConfig !== undefined) {
+      cleanUpdates.collectorConfig = existingSource.type === "website"
+        ? normalizeWebsiteCollectorConfig(cleanUpdates.collectorConfig)
+        : null;
+    }
+    if (cleanUpdates.filterConfig !== undefined) {
+      cleanUpdates.filterConfig = normalizeSourceFilterConfig(cleanUpdates.filterConfig);
+    }
+    if (cleanUpdates.url || cleanUpdates.name) {
+      cleanUpdates.logoUrl = getSourceLogoUrl(cleanUpdates.url || existingSource.url, cleanUpdates.name || existingSource.name);
+    }
+    return { cleanUpdates };
+  }
+
   app.patch(api.sources.update.path, requireCapability(CAPS.SOURCES_EDIT), async (req, res) => {
     try {
       if (!req.isAuthenticated()) return res.sendStatus(401);
@@ -789,33 +824,8 @@ export async function registerRoutes(
         return safeNotFound(res);
       }
       const input = sourceUpdateInput.parse(req.body);
-      const cleanUpdates: Record<string, any> = { ...input };
-      if (Object.keys(cleanUpdates).length === 0) {
-        return res.status(400).json({ message: "No valid fields to update" });
-      }
-      if (cleanUpdates.category !== undefined && cleanUpdates.category !== null && !isSourceCategoryCode(cleanUpdates.category)) {
-        return res.status(400).json({ message: "A supported source category is required" });
-      }
-      if (existingSource.type === "google_news") {
-        const country = cleanUpdates.country === undefined ? existingSource.country : cleanUpdates.country;
-        if (!country || !isGoogleNewsEditionCode(country)) {
-          return res.status(400).json({ message: "A supported Google News region is required" });
-        }
-        cleanUpdates.country = country.toUpperCase();
-      } else if (cleanUpdates.country !== undefined) {
-        cleanUpdates.country = null;
-      }
-      if (cleanUpdates.collectorConfig !== undefined) {
-        cleanUpdates.collectorConfig = existingSource.type === "website"
-          ? normalizeWebsiteCollectorConfig(cleanUpdates.collectorConfig)
-          : null;
-      }
-      if (cleanUpdates.filterConfig !== undefined) {
-        cleanUpdates.filterConfig = normalizeSourceFilterConfig(cleanUpdates.filterConfig);
-      }
-      if (cleanUpdates.url || cleanUpdates.name) {
-        cleanUpdates.logoUrl = getSourceLogoUrl(cleanUpdates.url || existingSource.url, cleanUpdates.name || existingSource.name);
-      }
+      const { cleanUpdates, error } = normalizeSourceUpdatePayload(input, existingSource);
+      if (error || !cleanUpdates) return res.status(400).json({ message: error || "Invalid source settings" });
       const source = await storage.updateSource(id, cleanUpdates, clientId);
       if (!source) return res.status(404).json({ message: "Source not found" });
       if (input.category !== undefined) {
@@ -832,8 +842,9 @@ export async function registerRoutes(
     }
   });
 
-  app.delete(api.sources.delete.path, requireCapability(CAPS.SOURCES_DELETE), async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+  app.post("/api/sources/:id/rebuild", requireCapability(CAPS.SOURCES_EDIT), async (req, res) => {
+    try {
+      if (!req.isAuthenticated()) return res.sendStatus(401);
       const user = req.user as any;
       const id = parseInt(req.params.id);
       const clientId = resolveClientId(user, req);
@@ -842,6 +853,48 @@ export async function registerRoutes(
       if (!existingSource) {
         return safeNotFound(res);
       }
+
+      const input = sourceUpdateInput.parse(req.body || {});
+      const { cleanUpdates, error } = normalizeSourceUpdatePayload(input, existingSource, { allowEmpty: true });
+      if (error || !cleanUpdates) return res.status(400).json({ message: error || "Invalid source settings" });
+
+      const source = Object.keys(cleanUpdates).length > 0
+        ? await storage.updateSource(id, cleanUpdates, clientId)
+        : existingSource;
+      if (!source) return res.status(404).json({ message: "Source not found" });
+
+      const deletedArticles = await storage.clearSourceArticles(id, clientId);
+      try {
+        const newArticles = await fetchSourceFeed(id);
+        res.json({ success: true, source, deletedArticles, newArticles });
+      } catch (fetchError) {
+        const msg = fetchError instanceof Error ? fetchError.message : "Fetch failed";
+        res.status(500).json({
+          success: false,
+          source,
+          deletedArticles,
+          newArticles: 0,
+          message: `Source settings were saved and ${deletedArticles} old article(s) were cleared, but the fresh fetch failed: ${msg}`,
+        });
+      }
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid source settings" });
+      }
+      res.status(400).json({ message: "Invalid source rebuild request" });
+    }
+  });
+
+  app.delete(api.sources.delete.path, requireCapability(CAPS.SOURCES_DELETE), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+    const existingSource = await storage.getSource(id, clientId);
+    if (!existingSource) {
+      return safeNotFound(res);
+    }
     await storage.deleteSource(id, clientId);
     runAnalyticsComputation().catch(e => console.error("[Analytics] Post-source-delete recomputation error:", e));
     res.sendStatus(204);

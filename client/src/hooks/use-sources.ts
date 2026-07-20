@@ -73,6 +73,41 @@ export function useUpdateSource() {
   });
 }
 
+export function useRebuildSource() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ id, ...updates }: { id: number } & UpdateSourceRequest) => {
+      const res = await fetch(`/api/sources/${id}/rebuild`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to rebuild source");
+      }
+      return data as { success: boolean; deletedArticles: number; newArticles: number };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: [api.sources.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sources/article-counts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/analytics/stats"] });
+      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] || "").startsWith("/api/analytics") });
+      toast({
+        title: "Source rebuilt",
+        description: `${data.deletedArticles} old article(s) cleared. ${data.newArticles} article(s) fetched with the new settings.`,
+      });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Rebuild failed", description: error.message });
+    },
+  });
+}
+
 export function useFetchSource() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
