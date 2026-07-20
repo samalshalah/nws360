@@ -4,7 +4,6 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Toolti
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "react-i18next";
 import { TimeRangeFilter, useTimeRange } from "@/components/analytics/TimeRangeFilter";
-import { Badge } from "@/components/ui/badge";
 import { useLocation } from "wouter";
 
 const KEYWORD_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16'];
@@ -76,14 +75,11 @@ export default function KeywordAnalysis() {
                       <span className="w-28 text-sm font-medium truncate shrink-0">{kw.keyword}</span>
                       <div className="flex-1 h-5 bg-muted rounded-sm overflow-hidden">
                         <div
-                          className="h-full rounded-sm transition-all"
-                          style={{ width: `${pct}%`, backgroundColor: getSentimentColor(kw.avgSentiment) }}
+                          className="h-full rounded-sm bg-primary transition-all"
+                          style={{ width: `${pct}%` }}
                         />
                       </div>
                       <span className="text-xs text-muted-foreground w-8 text-right shrink-0">{kw.count}</span>
-                      <Badge variant={kw.avgSentiment > 20 ? "default" : kw.avgSentiment < -20 ? "destructive" : "secondary"} className="shrink-0 text-xs">
-                        {kw.avgSentiment > 0 ? '+' : ''}{kw.avgSentiment}
-                      </Badge>
                     </button>
                   );
                 })}

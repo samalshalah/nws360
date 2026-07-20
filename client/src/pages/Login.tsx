@@ -18,7 +18,8 @@ export default function Login() {
 
   useEffect(() => {
     if (user) {
-      setLocation("/dashboard");
+      const isPlatformUser = user.userScope === "platform" || (user.role === "admin" && user.clientId === 9000);
+      setLocation(isPlatformUser ? "/admin" : "/feed");
     }
   }, [user, setLocation]);
 

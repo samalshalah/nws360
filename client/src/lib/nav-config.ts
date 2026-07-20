@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Newspaper, BarChart3, ChevronDown,
   FileBarChart, TrendingUp, Search, MessageSquare, Shield,
-  FileText, Network, Plus, List, Hash, Bookmark, Users,
+  FileText, Network, List, Hash, Bookmark, Users,
   Activity, GitCompare, Zap, Tag, Brain, Eye, CreditCard,
   HelpCircle, Lightbulb, Plug, Monitor, UsersRound, ExternalLink,
   Home, Bell, Settings, Rss, ClipboardList, Lock, Building2
@@ -33,7 +33,7 @@ export interface RouteCapConfig {
   adminOnly?: boolean;
 }
 
-export function buildUniversalNavTree(t: any): NavGroup[] {
+export function buildTenantNavTree(t: any): NavGroup[] {
   return [
     {
       key: "home",
@@ -45,20 +45,6 @@ export function buildUniversalNavTree(t: any): NavGroup[] {
         { key: "saved", label: t("nav.saved", "Saved"), href: "/saved", icon: Bookmark, caps: [CAPS.ARTICLE_SAVE] },
       ],
       collapsible: false,
-    },
-    {
-      key: "admin",
-      label: t("nav.admin", "Admin"),
-      icon: LayoutDashboard,
-      adminOnly: true,
-      items: [
-        { key: "adminDashboard", label: t("nav.adminDashboard", "System Dashboard"), href: "/admin/dashboard", icon: LayoutDashboard, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
-        { key: "opsDashboard", label: t("nav.opsDashboard", "Queue & Jobs"), href: "/admin/ops", icon: Activity, caps: [CAPS.ADMIN_OPERATIONS] },
-        { key: "sourceHealth", label: t("nav.sourceHealth", "Source Health"), href: "/sources/health", icon: Monitor, caps: [CAPS.SOURCE_HEALTH_VIEW] },
-        { key: "productIntelligence", label: t("nav.productIntelligence", "Product Analytics"), href: "/admin/product-analytics", icon: Lightbulb, caps: [CAPS.ADMIN_PRODUCT_ANALYTICS] },
-        { key: "integrationMonitor", label: t("nav.integrationMonitor", "Integration Monitor"), href: "/admin/integrations", icon: Plug, caps: [CAPS.INTEGRATION_MONITOR_VIEW] },
-      ],
-      collapsible: true,
     },
     {
       key: "analytics",
@@ -99,7 +85,6 @@ export function buildUniversalNavTree(t: any): NavGroup[] {
       caps: [CAPS.SOURCES_VIEW],
       items: [
         { key: "manageSources", label: t("nav.manageSources", "My Sources"), href: "/sources/manage", icon: List, caps: [CAPS.SOURCES_VIEW] },
-        { key: "addSource", label: t("nav.addSource", "Add Source"), href: "/sources/add", icon: Plus, caps: [CAPS.SOURCES_ADD] },
         { key: "keywords", label: t("nav.keywords", "Keywords"), href: "/sources/keywords", icon: Hash, caps: [CAPS.KEYWORDS_VIEW] },
       ],
       collapsible: true,
@@ -119,6 +104,29 @@ export function buildUniversalNavTree(t: any): NavGroup[] {
       collapsible: true,
     },
   ];
+}
+
+export function buildPlatformAdminNavTree(t: any): NavGroup[] {
+  return [
+    {
+      key: "platform",
+      label: "",
+      icon: LayoutDashboard,
+      adminOnly: true,
+      items: [
+        { key: "adminDashboard", label: t("nav.adminDashboard", "SaaS Dashboard"), href: "/admin", icon: LayoutDashboard, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
+        { key: "opsDashboard", label: t("nav.opsDashboard", "Queue & Jobs"), href: "/admin/ops", icon: Activity, caps: [CAPS.ADMIN_OPERATIONS] },
+        { key: "sourceHealth", label: t("nav.sourceHealth", "Source Health"), href: "/sources/health", icon: Monitor, caps: [CAPS.SOURCE_HEALTH_VIEW] },
+        { key: "productIntelligence", label: t("nav.productIntelligence", "Product Analytics"), href: "/admin/product-analytics", icon: Lightbulb, caps: [CAPS.ADMIN_PRODUCT_ANALYTICS] },
+        { key: "integrationMonitor", label: t("nav.integrationMonitor", "Integration Monitor"), href: "/admin/integrations", icon: Plug, caps: [CAPS.INTEGRATION_MONITOR_VIEW] },
+      ],
+      collapsible: false,
+    },
+  ];
+}
+
+export function buildUniversalNavTree(t: any): NavGroup[] {
+  return buildTenantNavTree(t);
 }
 
 export function filterNavByCaps(
@@ -170,6 +178,7 @@ export const ROUTE_CAPS: RouteCapConfig[] = [
   { path: "/integrations", caps: [CAPS.INTEGRATIONS_VIEW] },
   { path: "/collaboration", caps: [CAPS.COLLAB_VIEW] },
   { path: "/knowledge", caps: [CAPS.KNOWLEDGE_VIEW] },
+  { path: "/admin", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin/dashboard", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin/ops", caps: [CAPS.ADMIN_OPERATIONS], adminOnly: true },
   { path: "/admin/product-analytics", caps: [CAPS.ADMIN_PRODUCT_ANALYTICS], adminOnly: true },
@@ -181,7 +190,11 @@ export function canAccessRoute(
   hasCap: (cap: string) => boolean,
   isAdmin: boolean,
 ): boolean {
-  const config = ROUTE_CAPS.find(r => path === r.path || path.startsWith(r.path + "/"));
+  const config =
+    ROUTE_CAPS.find((r) => path === r.path) ||
+    ROUTE_CAPS
+      .filter((r) => path.startsWith(r.path + "/"))
+      .sort((a, b) => b.path.length - a.path.length)[0];
   if (!config) return true;
   if (config.adminOnly && !isAdmin) return false;
   if (config.caps && config.caps.length > 0) {
@@ -200,11 +213,11 @@ export const ADMIN_ONLY_ROUTES = [
 ];
 
 export function buildClientNavTree(t: any): NavGroup[] {
-  return buildUniversalNavTree(t);
+  return buildTenantNavTree(t);
 }
 
 export function buildAdminNavTree(t: any): NavGroup[] {
-  return buildUniversalNavTree(t);
+  return buildPlatformAdminNavTree(t);
 }
 
 export function filterNavByCapabilities(

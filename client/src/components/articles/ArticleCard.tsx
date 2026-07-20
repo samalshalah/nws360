@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { ArticleDetailDialog } from "@/components/articles/ArticleDetailDialog";
 
 interface ArticleCardProps {
   article: Article & { source: Source | null };
@@ -73,6 +74,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [imgError, setImgError] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   const { data: bookmarkedIds = [] } = useQuery<number[]>({
     queryKey: ["/api/bookmarks"],
@@ -187,7 +189,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
       <Button
         size="icon"
         variant="ghost"
-        onClick={handleBookmarkToggle}
+        onClick={(e) => { e.stopPropagation(); handleBookmarkToggle(); }}
         title={isBookmarked ? t("feed.unbookmark") : t("feed.bookmark")}
         data-testid={`button-bookmark-${article.id}`}
       >
@@ -196,7 +198,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
       <Button
         size="icon"
         variant="ghost"
-        onClick={handleShare}
+        onClick={(e) => { e.stopPropagation(); handleShare(); }}
         title={t("feed.share")}
         data-testid={`button-share-${article.id}`}
       >
@@ -206,6 +208,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
         href={article.url || "#"}
         target="_blank"
         rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
         className="flex items-center gap-1.5 text-sm font-semibold text-primary hover:text-primary/80 transition-colors"
         data-testid={`link-read-article-${article.id}`}
       >
@@ -260,14 +263,35 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
     </button>
   ) : null;
 
+  const articleDialog = (
+    <ArticleDetailDialog
+      article={article}
+      open={detailOpen}
+      isBookmarked={isBookmarked}
+      onOpenChange={setDetailOpen}
+      onBookmark={handleBookmarkToggle}
+      onShare={handleShare}
+    />
+  );
+
   if (layout === "list") {
     return (
+      <>
       <motion.div
         initial={{ opacity: 0, x: -10 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.15 }}
+        role="button"
+        tabIndex={0}
+        onClick={() => setDetailOpen(true)}
+        onKeyDown={(e) => {
+          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            setDetailOpen(true);
+          }
+        }}
         className={cn(
-          "bg-card border rounded-md shadow-sm hover:shadow-md transition-all duration-200 group flex relative",
+          "bg-card border rounded-md shadow-sm hover:shadow-md transition-all duration-200 group flex relative cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
           selected ? "border-primary ring-1 ring-primary/30" : "border-border/50"
         )}
         data-testid={`card-article-${article.id}`}
@@ -320,17 +344,29 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
           </div>
         </div>
       </motion.div>
+      {articleDialog}
+      </>
     );
   }
 
   return (
+    <>
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       whileHover={{ y: -4 }}
       transition={{ duration: 0.2 }}
+      role="button"
+      tabIndex={0}
+      onClick={() => setDetailOpen(true)}
+      onKeyDown={(e) => {
+        if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          setDetailOpen(true);
+        }
+      }}
       className={cn(
-        "bg-card border rounded-md overflow-hidden shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 group flex flex-col relative",
+        "bg-card border rounded-md overflow-hidden shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 group flex flex-col relative cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
         selected ? "border-primary ring-1 ring-primary/30" : "border-border/50"
       )}
       data-testid={`card-article-${article.id}`}
@@ -388,5 +424,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
         </div>
       </div>
     </motion.div>
+    {articleDialog}
+    </>
   );
 }

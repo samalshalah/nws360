@@ -48,6 +48,31 @@ import Forecasting from "@/pages/Forecasting";
 import Landing from "@/pages/Landing";
 import NotFound from "@/pages/not-found";
 import NotAuthorized from "@/pages/NotAuthorized";
+import { AIStagePage } from "@/components/analytics/AIStagePage";
+
+const sentimentPage = () => (
+  <AIStagePage
+    title="Sentiment analysis"
+    description="This feature requires language models that can interpret tone reliably across Arabic and English. It will be enabled with the AI stage."
+    capabilities={["Positive, neutral, and negative classification", "Tone by source and topic", "Confidence scoring", "Arabic and English analysis"]}
+  />
+);
+
+const narrativePage = () => (
+  <AIStagePage
+    title="Narrative comparison"
+    description="Comparing framing and meaning requires semantic analysis. The current non-AI analytics do not claim to infer narratives."
+    capabilities={["Framing differences", "Source position comparison", "Narrative shifts", "Evidence and confidence"]}
+  />
+);
+
+const intelligencePage = () => (
+  <AIStagePage
+    title="Intelligence"
+    description="Interpretation, forecasting, and generated briefings are reserved for the AI stage."
+    capabilities={["Event interpretation", "Generated briefings", "Predictions", "Question answering"]}
+  />
+);
 
 function ShellGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -121,7 +146,7 @@ function Router() {
         <ProtectedPage component={KeywordAnalysis} />
       </Route>
       <Route path="/analytics/sentiment-reports">
-        <ProtectedPage component={SentimentReports} />
+        <ProtectedPage component={sentimentPage} />
       </Route>
       <Route path="/analytics/source-behavior">
         <ProtectedPage component={SourceBehavior} />
@@ -133,7 +158,7 @@ function Router() {
         <ProtectedPage component={NetworkMapping} />
       </Route>
       <Route path="/analytics/narrative-comparison">
-        <ProtectedPage component={NarrativeComparison} />
+        <ProtectedPage component={narrativePage} />
       </Route>
       <Route path="/analytics/daily-brief">
         <ProtectedPage component={DailyBrief} />
@@ -143,14 +168,14 @@ function Router() {
       </Route>
 
       <Route path="/intelligence">
-        <ProtectedPage component={IntelligencePage} />
+        <ProtectedPage component={intelligencePage} />
       </Route>
       <Route path="/forecasting">
-        <ProtectedPage component={Forecasting} />
+        <ProtectedPage component={intelligencePage} />
       </Route>
 
       <Route path="/sources/add">
-        <ProtectedPage component={() => <Admin tab="add" />} />
+        <ProtectedPage component={() => <Admin tab="manage" initialAddOpen />} />
       </Route>
       <Route path="/sources/manage">
         <ProtectedPage component={() => <Admin tab="manage" />} />
@@ -175,9 +200,8 @@ function Router() {
         <ProtectedPage component={IntegrationMonitoring} />
       </Route>
       <Route path="/admin">
-        <ProtectedPage component={Admin} />
+        <ProtectedPage component={AdminDashboard} />
       </Route>
-
       <Route path="/users">
         <ProtectedPage component={UserManagement} />
       </Route>

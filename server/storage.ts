@@ -104,6 +104,76 @@ import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } f
 
 const AUTO_PAUSE_THRESHOLD_DB = 5;
 
+function sqlNumberList(values: number[]) {
+  return sql.join(values.map(value => sql`${value}`), sql`, `);
+}
+
+const ANALYTICS_STOP_WORDS = new Set([
+  "about", "after", "again", "against", "also", "among", "and", "are", "because", "been",
+  "before", "being", "between", "but", "can", "could", "during", "for", "from", "had", "has",
+  "have", "her", "here", "him", "his", "into", "its", "more", "new", "not", "now", "off",
+  "one", "only", "other", "our", "out", "over", "said", "say", "says", "she", "should", "some",
+  "than", "that", "the", "their", "them", "then", "there", "these", "they", "this", "those",
+  "through", "under", "until", "very", "was", "were", "what", "when", "where", "which", "while",
+  "who", "will", "with", "would", "you", "your",
+  "الى", "إلى", "الا", "إلا", "التي", "الذي", "الذين", "اللذين", "ان", "إن", "أن", "او", "أو",
+  "اي", "أي", "بعد", "بين", "تلك", "تم", "ثم", "حتى", "حول", "حيث", "خلال", "ذلك", "على",
+  "عليها", "عليه", "عن", "عند", "غير", "فإن", "فقط", "في", "فيه", "كان", "كانت", "كل", "كما",
+  "لا", "لدى", "لم", "لن", "له", "لها", "ما", "مع", "من", "منذ", "نحو", "هذه", "هذا", "هو",
+  "هي", "ولا", "وقد", "وهو", "وهي", "يكون",
+]);
+
+type AnalyticsTextRow = {
+  title: string | null;
+  publishedAt: Date | string | null;
+};
+
+function extractAnalyticsTerms(value: string | null | undefined): string[] {
+  if (!value) return [];
+  const normalized = value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/\u0640/g, "");
+  const tokens = normalized.match(/[A-Za-z0-9\u0600-\u06FF]{3,}/g) || [];
+  return Array.from(new Set(tokens.filter((token) => !ANALYTICS_STOP_WORDS.has(token)))).slice(0, 24);
+}
+
+function buildAnalyticsTermSnapshot(rows: AnalyticsTextRow[], topLimit = 25, timelineLimit = 10) {
+  const counts = new Map<string, number>();
+  const countsByDate = new Map<string, Map<string, number>>();
+
+  rows.forEach((row) => {
+    const terms = extractAnalyticsTerms(row.title);
+    let date = "";
+    if (row.publishedAt) {
+      const parsed = new Date(row.publishedAt);
+      if (!Number.isNaN(parsed.getTime())) date = parsed.toISOString().slice(0, 10);
+    }
+
+    terms.forEach((term) => {
+      counts.set(term, (counts.get(term) || 0) + 1);
+      if (!date) return;
+      const dayCounts = countsByDate.get(date) || new Map<string, number>();
+      dayCounts.set(term, (dayCounts.get(term) || 0) + 1);
+      countsByDate.set(date, dayCounts);
+    });
+  });
+
+  const top = Array.from(counts.entries())
+    .map(([term, count]) => ({ term, count }))
+    .sort((a, b) => b.count - a.count || a.term.localeCompare(b.term))
+    .slice(0, topLimit);
+  const timelineTerms = new Set(top.slice(0, timelineLimit).map((item) => item.term));
+  const timeline = Array.from(countsByDate.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .flatMap(([date, dayCounts]) => Array.from(dayCounts.entries())
+      .filter(([term]) => timelineTerms.has(term))
+      .map(([term, count]) => ({ date, term, count })));
+
+  return { top, timeline };
+}
+
 export class TenantNotFoundError extends Error {
   constructor() {
     super("Not found");
@@ -128,7 +198,7 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
 
   // Sources
-  getSources(): Promise<Source[]>;
+  getSources(clientId?: number): Promise<Source[]>;
   getSource(id: number, clientId?: number): Promise<Source | undefined>;
   createSource(source: InsertSource): Promise<Source>;
   updateSource(id: number, source: Partial<InsertSource>, clientId?: number): Promise<Source | undefined>;
@@ -139,7 +209,7 @@ export interface IStorage {
   getArticle(id: number, clientId?: number): Promise<Article | undefined>;
   getArticlesByIds(ids: number[], clientId?: number): Promise<(Article & { source: Source | null })[]>;
   createArticle(article: InsertArticle): Promise<Article>;
-  getArticleByUrl(url: string): Promise<Article | undefined>; // For deduplication
+  getArticleByUrl(url: string, clientId: number): Promise<Article | undefined>; // For tenant-scoped deduplication
   getArticleByTitle(title: string, clientId?: number | null): Promise<Article | undefined>; // For cross-channel deduplication
 
   // Keywords
@@ -277,12 +347,12 @@ export interface IStorage {
   getAuditLogs(params?: { limit?: number; offset?: number }): Promise<{ items: (AdminAuditLog & { username: string })[], total: number }>;
 
   // Soft-delete sources
-  softDeleteSource(id: number): Promise<void>;
-  restoreSource(id: number): Promise<void>;
+  softDeleteSource(id: number, clientId?: number): Promise<void>;
+  restoreSource(id: number, clientId?: number): Promise<void>;
   getActiveSources(): Promise<Source[]>;
 
   // User management extensions
-  updateUser(id: number, updates: Partial<{ role: string; clientId: number | null; disabled: boolean; password: string }>): Promise<User | undefined>;
+  updateUser(id: number, updates: Partial<{ role: string; userScope: string; clientId: number | null; disabled: boolean; password: string }>): Promise<User | undefined>;
 
   // System health (enhanced)
   getSystemHealth(): Promise<{
@@ -449,13 +519,13 @@ export interface IStorage {
   removeWorkspaceMember(workspaceId: number, userId: number): Promise<void>;
 
   // Comments / Discussions
-  getComments(targetType: string, targetId: number): Promise<Comment[]>;
+  getComments(targetType: string, targetId: number, clientId?: number): Promise<Comment[]>;
   getComment(id: number): Promise<Comment | undefined>;
   createComment(data: InsertComment): Promise<Comment>;
   deleteComment(id: number, userId?: number): Promise<void>;
 
   // Annotations
-  getAnnotations(targetType: string, targetId: number): Promise<Annotation[]>;
+  getAnnotations(targetType: string, targetId: number, clientId?: number): Promise<Annotation[]>;
   createAnnotation(data: InsertAnnotation): Promise<Annotation>;
   deleteAnnotation(id: number, userId?: number): Promise<void>;
 
@@ -496,7 +566,7 @@ export interface IStorage {
   markAlertRead(id: number, userId?: number): Promise<void>;
 
   // Change History
-  getChangeHistory(entityType: string, entityId: number): Promise<ChangeHistoryEntry[]>;
+  getChangeHistory(entityType: string, entityId: number, clientId?: number): Promise<ChangeHistoryEntry[]>;
   createChangeHistory(data: InsertChangeHistory): Promise<ChangeHistoryEntry>;
 
   // Activity Feed
@@ -671,7 +741,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Sources
-  async getSources(): Promise<Source[]> {
+  async getSources(clientId?: number): Promise<Source[]> {
+    if (clientId) {
+      return await db.select().from(sources).where(eq(sources.clientId, clientId));
+    }
     return await db.select().from(sources);
   }
 
@@ -679,6 +752,11 @@ export class DatabaseStorage implements IStorage {
     const conditions = [eq(sources.id, id)];
     if (clientId) conditions.push(eq(sources.clientId, clientId));
     const [source] = await db.select().from(sources).where(and(...conditions));
+    return source;
+  }
+
+  async getSourceByFeedToken(feedToken: string): Promise<Source | undefined> {
+    const [source] = await db.select().from(sources).where(eq(sources.feedToken, feedToken));
     return source;
   }
 
@@ -858,8 +936,10 @@ export class DatabaseStorage implements IStorage {
     return article;
   }
 
-  async getArticleByUrl(url: string): Promise<Article | undefined> {
-    const [article] = await db.select().from(articles).where(eq(articles.url, url));
+  async getArticleByUrl(url: string, clientId: number): Promise<Article | undefined> {
+    const [article] = await db.select().from(articles).where(
+      and(eq(articles.url, url), eq(articles.clientId, clientId)),
+    );
     return article;
   }
 
@@ -991,7 +1071,7 @@ export class DatabaseStorage implements IStorage {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return [];
     }
-    const sourceIdFilter = sourceIds ? sql`AND s.id = ANY(${sourceIds})` : sql``;
+    const sourceIdFilter = sourceIds ? sql`AND s.id IN (${sqlNumberList(sourceIds)})` : sql``;
     const rows = await db.execute(sql`
       SELECT 
         s.id as "sourceId",
@@ -1132,8 +1212,9 @@ export class DatabaseStorage implements IStorage {
         trendingKeywords: [],
       };
     }
-    const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
-    const sourceIdFilter = sourceIds ? sql`AND id = ANY(${sourceIds})` : sql``;
+    const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const sourceIdFilter = sourceIds ? sql`AND sources.id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const joinedSourceIdFilter = sourceIds ? sql`AND s.id IN (${sqlNumberList(sourceIds)})` : sql``;
 
     const totalArticlesRows = await db.execute(sql`SELECT COUNT(*)::int as count FROM articles WHERE 1=1 ${sourceFilter}`);
     const totalArticles = Number((totalArticlesRows.rows[0] as any)?.count || 0);
@@ -1179,7 +1260,7 @@ export class DatabaseStorage implements IStorage {
       SELECT s.name, COUNT(a.id)::int as count
       FROM sources s
       JOIN articles a ON a.source_id = s.id
-      WHERE 1=1 ${sourceIdFilter}
+      WHERE 1=1 ${joinedSourceIdFilter}
       GROUP BY s.name
       ORDER BY count DESC
       LIMIT 5
@@ -1202,7 +1283,7 @@ export class DatabaseStorage implements IStorage {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return [];
     }
-    const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const aiFilter = sql`AND (ai_analysis_status = 'success' OR ai_analysis_status IS NULL)`;
     const rows = await db.execute(sql`
       SELECT 
@@ -1248,8 +1329,8 @@ export class DatabaseStorage implements IStorage {
     }
     const start = new Date(startDate);
     const end = new Date(endDate);
-    const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
-    const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const sourceFilterA = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
 
@@ -1301,13 +1382,13 @@ export class DatabaseStorage implements IStorage {
 
   async getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
-      return { topics: [], topicTimeline: [], byCategory: [] };
+      return { topics: [], topicTimeline: [], byCategory: [], method: "title-terms" };
     }
     const start = new Date(startDate);
     const end = new Date(endDate);
-    const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
-    const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
-    const sourceFilterA2 = sourceIds ? sql`AND a2.source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const sourceFilterA = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const sourceFilterA2 = sourceIds ? sql`AND a2.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
     const clientFilterA2 = clientId ? sql`AND a2.client_id = ${clientId}` : sql``;
@@ -1339,29 +1420,29 @@ export class DatabaseStorage implements IStorage {
       ORDER BY date ASC
     `);
 
+    const termRows = await db.execute(sql`
+      SELECT title, published_at as "publishedAt"
+      FROM articles
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
+    `);
+    const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 20, 8);
+
     const categoryRows = await db.execute(sql`
       SELECT COALESCE(category, 'general') as category, COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
       GROUP BY category
       ORDER BY count DESC
     `);
 
     return {
-      topics: (topicRows.rows as any[]).map(r => ({
-        topic: String(r.topic),
-        count: Number(r.count),
-        sentiment: String(r.sentiment || "neutral"),
-      })),
-      topicTimeline: (topicTimelineRows.rows as any[]).map(r => ({
-        date: String(r.date),
-        topic: String(r.topic),
-        count: Number(r.count),
-      })),
+      topics: termStats.top.map(({ term, count }) => ({ topic: term, count })),
+      topicTimeline: termStats.timeline.map(({ date, term, count }) => ({ date, topic: term, count })),
       byCategory: (categoryRows.rows as any[]).map(r => ({
         category: String(r.category),
         count: Number(r.count),
       })),
+      method: "title-terms",
     };
   }
 
@@ -1371,9 +1452,9 @@ export class DatabaseStorage implements IStorage {
     }
     const start = new Date(startDate);
     const end = new Date(endDate);
-    const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
-    const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
-    const sourceFilterA2 = sourceIds ? sql`AND a2.source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const sourceFilterA = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const sourceFilterA2 = sourceIds ? sql`AND a2.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
     const clientFilterA2 = clientId ? sql`AND a2.client_id = ${clientId}` : sql``;
@@ -1405,17 +1486,17 @@ export class DatabaseStorage implements IStorage {
       ORDER BY date ASC
     `);
 
+    const termRows = await db.execute(sql`
+      SELECT title, published_at as "publishedAt"
+      FROM articles
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
+    `);
+    const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 25, 10);
+
     return {
-      topKeywords: (topKeywordsRows.rows as any[]).map(r => ({
-        keyword: String(r.keyword),
-        count: Number(r.count),
-        avgSentiment: Number(r.avgSentiment),
-      })),
-      keywordTimeline: (keywordTimelineRows.rows as any[]).map(r => ({
-        date: String(r.date),
-        keyword: String(r.keyword),
-        count: Number(r.count),
-      })),
+      topKeywords: termStats.top.map(({ term, count }) => ({ keyword: term, count })),
+      keywordTimeline: termStats.timeline.map(({ date, term, count }) => ({ date, keyword: term, count })),
+      method: "title-terms",
     };
   }
 
@@ -1431,8 +1512,8 @@ export class DatabaseStorage implements IStorage {
     }
     const start = new Date(startDate);
     const end = new Date(endDate);
-    const sourceFilter = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
-    const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const sourceFilterA = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
     const aiFilter = sql`AND (ai_analysis_status = 'success' OR ai_analysis_status IS NULL)`;
@@ -1519,8 +1600,8 @@ export class DatabaseStorage implements IStorage {
     const start = new Date(startDate);
     const end = new Date(endDate);
     const daysDiff = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
-    const sourceIdFilter = sourceIds ? sql`AND s.id = ANY(${sourceIds})` : sql``;
-    const sourceFilterA = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+    const sourceIdFilter = sourceIds ? sql`AND s.id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const sourceFilterA = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
     const clientFilterS = clientId ? sql`AND s.client_id = ${clientId}` : sql``;
 
@@ -1570,7 +1651,7 @@ export class DatabaseStorage implements IStorage {
     }
     const start = new Date(startDate);
     const end = new Date(endDate);
-    const sourceFilter = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilter = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
 
     const rows = await db.execute(sql`
@@ -1636,8 +1717,8 @@ export class DatabaseStorage implements IStorage {
     const dayEnd = new Date(date);
     dayEnd.setHours(23, 59, 59, 999);
     const prevDayStart = new Date(dayStart.getTime() - 24 * 60 * 60 * 1000);
-    const sourceFilter = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
-    const sourceFilterPlain = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilter = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const sourceFilterPlain = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
     const clientFilterPlain = clientId ? sql`AND client_id = ${clientId}` : sql``;
 
@@ -1719,15 +1800,15 @@ export class DatabaseStorage implements IStorage {
     }
     const start = new Date(startDate);
     const end = new Date(endDate);
-    const sourceFilter = sourceIds ? sql`AND a.source_id = ANY(${sourceIds})` : sql``;
-    const sourceFilterPlain = sourceIds ? sql`AND source_id = ANY(${sourceIds})` : sql``;
+    const sourceFilter = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const sourceFilterPlain = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
     const clientFilterPlain = clientId ? sql`AND client_id = ${clientId}` : sql``;
 
     const freqRows = await db.execute(sql`
       SELECT TO_CHAR(published_at, 'YYYY-MM-DD') as date, COUNT(*)::int as count
       FROM articles
-      WHERE keywords IS NOT NULL AND ${keyword} = ANY(keywords)
+      WHERE POSITION(${keyword.toLowerCase()} IN LOWER(CONCAT_WS(' ', title, summary, content))) > 0
         AND published_at >= ${start} AND published_at <= ${end} ${sourceFilterPlain} ${clientFilterPlain}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
@@ -1737,7 +1818,7 @@ export class DatabaseStorage implements IStorage {
       SELECT s.name as "sourceName", COUNT(*)::int as count
       FROM articles a
       JOIN sources s ON a.source_id = s.id
-      WHERE a.keywords IS NOT NULL AND ${keyword} = ANY(a.keywords)
+      WHERE POSITION(${keyword.toLowerCase()} IN LOWER(CONCAT_WS(' ', a.title, a.summary, a.content))) > 0
         AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilter} ${clientFilter}
       GROUP BY s.name
       ORDER BY count DESC
@@ -1750,7 +1831,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE keywords IS NOT NULL AND ${keyword} = ANY(keywords)
+      WHERE POSITION(${keyword.toLowerCase()} IN LOWER(CONCAT_WS(' ', title, summary, content))) > 0
         AND published_at >= ${start} AND published_at <= ${end} ${sourceFilterPlain} ${clientFilterPlain}
     `);
 
@@ -1758,7 +1839,7 @@ export class DatabaseStorage implements IStorage {
       SELECT a.title, a.url, s.name as "sourceName", a.published_at as "publishedAt", a.sentiment_label as sentiment
       FROM articles a
       JOIN sources s ON a.source_id = s.id
-      WHERE a.keywords IS NOT NULL AND ${keyword} = ANY(a.keywords)
+      WHERE POSITION(${keyword.toLowerCase()} IN LOWER(CONCAT_WS(' ', a.title, a.summary, a.content))) > 0
         AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilter} ${clientFilter}
       ORDER BY a.published_at DESC
       LIMIT 20
@@ -1904,12 +1985,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   // === SOFT-DELETE SOURCES ===
-  async softDeleteSource(id: number): Promise<void> {
-    await db.update(sources).set({ deletedAt: new Date(), active: false }).where(eq(sources.id, id));
+  async softDeleteSource(id: number, clientId?: number): Promise<void> {
+    const conditions = [eq(sources.id, id)];
+    if (clientId) conditions.push(eq(sources.clientId, clientId));
+    await db.update(sources).set({ deletedAt: new Date(), active: false }).where(and(...conditions));
   }
 
-  async restoreSource(id: number): Promise<void> {
-    await db.update(sources).set({ deletedAt: null, active: true }).where(eq(sources.id, id));
+  async restoreSource(id: number, clientId?: number): Promise<void> {
+    const conditions = [eq(sources.id, id)];
+    if (clientId) conditions.push(eq(sources.clientId, clientId));
+    await db.update(sources).set({ deletedAt: null, active: true }).where(and(...conditions));
   }
 
   async getActiveSources(): Promise<Source[]> {
@@ -1917,7 +2002,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // === USER MANAGEMENT EXTENSIONS ===
-  async updateUser(id: number, updates: Partial<{ role: string; clientId: number; disabled: boolean; password: string }>): Promise<User | undefined> {
+  async updateUser(id: number, updates: Partial<{ role: string; userScope: string; clientId: number | null; disabled: boolean; password: string }>): Promise<User | undefined> {
     const [user] = await db.update(users).set(updates).where(eq(users.id, id)).returning();
     return user;
   }
@@ -2393,12 +2478,12 @@ export class DatabaseStorage implements IStorage {
   async getActiveUserCount(clientId: number): Promise<number> {
     const [result] = await db.select({ count: sql<number>`count(*)::int` })
       .from(users)
-      .where(and(eq(users.clientId, clientId), sql`(${users.disabled} = false OR ${users.disabled} IS NULL)`));
+      .where(and(eq(users.clientId, clientId), eq(users.userScope, "tenant"), sql`(${users.disabled} = false OR ${users.disabled} IS NULL)`));
     return result?.count || 0;
   }
 
   async getUsersByClientId(clientId: number): Promise<User[]> {
-    return await db.select().from(users).where(eq(users.clientId, clientId));
+    return await db.select().from(users).where(and(eq(users.clientId, clientId), eq(users.userScope, "tenant")));
   }
 
   async getOnboardingState(clientId: number): Promise<OnboardingState | undefined> {
@@ -2868,8 +2953,10 @@ export class DatabaseStorage implements IStorage {
     await db.delete(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)));
   }
 
-  async getComments(targetType: string, targetId: number): Promise<Comment[]> {
-    return db.select().from(comments).where(and(eq(comments.targetType, targetType), eq(comments.targetId, targetId))).orderBy(asc(comments.createdAt));
+  async getComments(targetType: string, targetId: number, clientId?: number): Promise<Comment[]> {
+    const conditions = [eq(comments.targetType, targetType), eq(comments.targetId, targetId)];
+    if (clientId) conditions.push(eq(comments.clientId, clientId));
+    return db.select().from(comments).where(and(...conditions)).orderBy(asc(comments.createdAt));
   }
 
   async getComment(id: number): Promise<Comment | undefined> {
@@ -2888,8 +2975,10 @@ export class DatabaseStorage implements IStorage {
     await db.delete(comments).where(and(...conditions));
   }
 
-  async getAnnotations(targetType: string, targetId: number): Promise<Annotation[]> {
-    return db.select().from(annotations).where(and(eq(annotations.targetType, targetType), eq(annotations.targetId, targetId))).orderBy(desc(annotations.createdAt));
+  async getAnnotations(targetType: string, targetId: number, clientId?: number): Promise<Annotation[]> {
+    const conditions = [eq(annotations.targetType, targetType), eq(annotations.targetId, targetId)];
+    if (clientId) conditions.push(eq(annotations.clientId, clientId));
+    return db.select().from(annotations).where(and(...conditions)).orderBy(desc(annotations.createdAt));
   }
 
   async createAnnotation(data: InsertAnnotation): Promise<Annotation> {
@@ -3054,8 +3143,10 @@ export class DatabaseStorage implements IStorage {
     await db.update(internalAlerts).set({ read: true }).where(and(...conditions));
   }
 
-  async getChangeHistory(entityType: string, entityId: number): Promise<ChangeHistoryEntry[]> {
-    return db.select().from(changeHistory).where(and(eq(changeHistory.entityType, entityType), eq(changeHistory.entityId, entityId))).orderBy(desc(changeHistory.createdAt));
+  async getChangeHistory(entityType: string, entityId: number, clientId?: number): Promise<ChangeHistoryEntry[]> {
+    const conditions = [eq(changeHistory.entityType, entityType), eq(changeHistory.entityId, entityId)];
+    if (clientId) conditions.push(eq(changeHistory.clientId, clientId));
+    return db.select().from(changeHistory).where(and(...conditions)).orderBy(desc(changeHistory.createdAt));
   }
 
   async createChangeHistory(data: InsertChangeHistory): Promise<ChangeHistoryEntry> {

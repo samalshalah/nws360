@@ -1,8 +1,28 @@
 import RssParser from "rss-parser";
 import { storage } from "./storage";
 import { enqueueAIJob, awaitJobResult } from "./ai/ai-gateway";
-import { scrapeWebsite, fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed, fetchTelegramFeed } from "./web-scraper";
+import { fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed, fetchTelegramFeed } from "./web-scraper";
 import { enqueueJob, registerJobHandler, openaiLimiter } from "./processing-queue";
+import { getGoogleNewsEdition } from "@shared/google-news-regions";
+import type { WebsiteCollectorConfig } from "@shared/source-collector";
+import {
+  filterSourceItems,
+  normalizeSourceFilterConfig,
+  type SourceFilterConfig,
+} from "@shared/source-filter";
+import { collectWebsite, inspectArticleImage } from "./website-collector";
+
+type FeedSource = {
+  id: number;
+  name: string;
+  url: string;
+  clientId?: number | null;
+  country?: string | null;
+  category?: string | null;
+  maxArticlesPerFetch?: number | null;
+  collectorConfig?: WebsiteCollectorConfig | null;
+  filterConfig?: SourceFilterConfig | null;
+};
 
 const parser = new RssParser({
   timeout: 15000,
@@ -132,6 +152,20 @@ function extractImageFromRssItem(item: any): string | undefined {
   return undefined;
 }
 
+function extractImageTitleFromRssItem(item: any): string | undefined {
+  const candidates = [item.mediaContent, item.mediaThumbnail, item.mediaGroup, item.image, item.enclosure];
+  for (const candidate of candidates) {
+    for (const value of Array.isArray(candidate) ? candidate : [candidate]) {
+      if (!value || typeof value !== "object") continue;
+      const title = value.title || value.caption || value.description || value.$?.title || value.$?.alt;
+      if (typeof title === "string" && stripHtml(title).trim()) return stripHtml(title).trim();
+    }
+  }
+  const encoded = String(item.contentEncoded || item.content || "");
+  const match = encoded.match(/<img[^>]+(?:alt|title)=["']([^"']+)["']/i);
+  return match?.[1] ? stripHtml(match[1]).trim() : undefined;
+}
+
 function normalizeUrl(url: string): string {
   let normalized = url.trim();
   if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
@@ -186,8 +220,7 @@ async function discoverRssFeed(url: string): Promise<string | null> {
   return null;
 }
 
-async function fetchRssArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
-  const limit = source.maxArticlesPerFetch || 10;
+async function fetchRssArticles(source: FeedSource): Promise<number> {
   let feedUrl = normalizeUrl(source.url);
 
   if (!feedUrl.match(/\.(xml|rss|atom)$/i) && !feedUrl.includes("/feed") && !feedUrl.includes("/rss")) {
@@ -208,80 +241,74 @@ async function fetchRssArticles(source: { id: number; name: string; url: string;
     content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || ""),
     publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
     image: extractImageFromRssItem(item),
+    imageTitle: extractImageTitleFromRssItem(item),
   }));
   mapped.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
-  return await processItems(source, mapped.slice(0, limit));
+  return await processItems(source, mapped);
 }
 
-async function fetchWebsiteArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
+async function fetchWebsiteArticles(source: FeedSource): Promise<number> {
   const limit = source.maxArticlesPerFetch || 10;
+  const hasFilters = Boolean(source.filterConfig?.whitelist.enabled || source.filterConfig?.blacklist.enabled);
+  const candidateLimit = hasFilters ? Math.min(limit * 3, 50) : limit;
   const url = normalizeUrl(source.url);
-  console.log(`[Worker] Scraping website: ${url} for source: ${source.name}`);
+  console.log(`[Worker] Collecting website: ${url} for source: ${source.name}`);
 
-  const discovered = await discoverRssFeed(url);
-  if (discovered) {
-    console.log(`[Worker] Found RSS feed for ${source.name}: ${discovered}`);
-    const feed = await parser.parseURL(discovered);
-    const mapped = (feed.items || []).map(item => ({
-      title: stripHtml(item.title || "Untitled"),
-      url: item.link || "",
-      content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || ""),
-      publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
-      image: extractImageFromRssItem(item),
-    }));
-    mapped.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
-    return await processItems(source, mapped.slice(0, limit));
+  const result = await collectWebsite(url, source.collectorConfig, candidateLimit);
+  console.log(`[Worker] Website collector used ${result.method}${result.rendered ? " with browser rendering" : ""} for ${source.name}`);
+  for (const warning of result.warnings) console.warn(`[Worker] ${source.name}: ${warning}`);
+
+  if (result.feedUrl && result.feedUrl !== source.collectorConfig?.feedUrl) {
+    await storage.updateSource(source.id, {
+      collectorConfig: {
+        strategy: source.collectorConfig?.strategy || "auto",
+        renderJavascript: source.collectorConfig?.renderJavascript || false,
+        selectors: source.collectorConfig?.selectors,
+        feedUrl: result.feedUrl,
+      },
+    }, source.clientId || undefined);
   }
-
-  const scraped = await scrapeWebsite(url);
-  console.log(`[Worker] Scraped ${scraped.length} articles from ${source.name}`);
-  scraped.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
-  return await processItems(source, scraped.slice(0, limit));
+  return await processItems(source, result.articles);
 }
 
-async function fetchTwitterArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
-  const limit = source.maxArticlesPerFetch || 10;
+async function fetchTwitterArticles(source: FeedSource): Promise<number> {
   console.log(`[Worker] Fetching Twitter/X: ${source.url} for source: ${source.name}`);
   const tweets = await fetchTwitterFeed(source.url);
   tweets.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${tweets.length} tweets from ${source.name}`);
-  return await processItems(source, tweets.slice(0, limit));
+  return await processItems(source, tweets);
 }
 
-async function fetchYouTubeArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
-  const limit = source.maxArticlesPerFetch || 10;
+async function fetchYouTubeArticles(source: FeedSource): Promise<number> {
   console.log(`[Worker] Fetching YouTube: ${source.url} for source: ${source.name}`);
   const videos = await fetchYouTubeFeed(source.url);
   videos.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${videos.length} videos from ${source.name}`);
-  return await processItems(source, videos.slice(0, limit));
+  return await processItems(source, videos);
 }
 
-async function fetchFacebookArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
-  const limit = source.maxArticlesPerFetch || 10;
+async function fetchFacebookArticles(source: FeedSource): Promise<number> {
   console.log(`[Worker] Fetching Facebook: ${source.url} for source: ${source.name}`);
   const posts = await fetchFacebookFeed(source.url);
   posts.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${posts.length} Facebook posts from ${source.name}`);
-  return await processItems(source, posts.slice(0, limit));
+  return await processItems(source, posts);
 }
 
-async function fetchInstagramArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
-  const limit = source.maxArticlesPerFetch || 10;
+async function fetchInstagramArticles(source: FeedSource): Promise<number> {
   console.log(`[Worker] Fetching Instagram: ${source.url} for source: ${source.name}`);
   const posts = await fetchInstagramFeed(source.url);
   posts.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${posts.length} Instagram posts from ${source.name}`);
-  return await processItems(source, posts.slice(0, limit));
+  return await processItems(source, posts);
 }
 
-async function fetchTelegramArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
-  const limit = source.maxArticlesPerFetch || 10;
+async function fetchTelegramArticles(source: FeedSource): Promise<number> {
   console.log(`[Worker] Fetching Telegram: ${source.url} for source: ${source.name}`);
   const posts = await fetchTelegramFeed(source.url);
   posts.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${posts.length} Telegram posts from ${source.name}`);
-  return await processItems(source, posts.slice(0, limit));
+  return await processItems(source, posts);
 }
 
 function extractGoogleNewsSubSource(item: any): string | undefined {
@@ -425,14 +452,22 @@ function cleanGoogleNewsTitle(title: string, subSource?: string): string {
   return title;
 }
 
-async function fetchGoogleNewsArticles(source: { id: number; name: string; url: string; maxArticlesPerFetch?: number | null }): Promise<number> {
+function buildGoogleNewsSearchUrl(keyword: string, country?: string | null, recency?: "1d" | "7d"): string {
+  const edition = getGoogleNewsEdition(country);
+  const query = recency ? `${keyword} when:${recency}` : keyword;
+  return `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=${encodeURIComponent(edition.locale)}&gl=${edition.code}&ceid=${edition.code}:${edition.language}`;
+}
+
+async function fetchGoogleNewsArticles(source: FeedSource): Promise<number> {
   const limit = source.maxArticlesPerFetch || 10;
+  const hasFilters = Boolean(source.filterConfig?.whitelist.enabled || source.filterConfig?.blacklist.enabled);
+  const candidateLimit = hasFilters ? Math.min(limit * 3, 50) : limit;
   const keyword = source.url.trim();
-  const encodedKeyword = encodeURIComponent(keyword);
-  const recentUrl = `https://news.google.com/rss/search?q=${encodedKeyword}+when:1d&hl=en&gl=US&ceid=US:en`;
-  const fallbackUrl = `https://news.google.com/rss/search?q=${encodedKeyword}+when:7d&hl=en&gl=US&ceid=US:en`;
-  const defaultUrl = `https://news.google.com/rss/search?q=${encodedKeyword}&hl=en&gl=US&ceid=US:en`;
-  console.log(`[Worker] Fetching Google News for keyword "${keyword}" (recent first)`);
+  const edition = getGoogleNewsEdition(source.country);
+  const recentUrl = buildGoogleNewsSearchUrl(keyword, edition.code, "1d");
+  const fallbackUrl = buildGoogleNewsSearchUrl(keyword, edition.code, "7d");
+  const defaultUrl = buildGoogleNewsSearchUrl(keyword, edition.code);
+  console.log(`[Worker] Fetching Google News for keyword "${keyword}" in ${edition.name} (recent first)`);
 
   try {
     let feed = await parser.parseURL(recentUrl);
@@ -452,8 +487,8 @@ async function fetchGoogleNewsArticles(source: { id: number; name: string; url: 
     }));
     itemsWithDates.sort((a, b) => b._parsedDate.getTime() - a._parsedDate.getTime());
 
-    const rawItems = itemsWithDates.slice(0, limit);
-    const items: { title: string; url: string; content: string; publishedAt: Date; image?: string; subSource?: string }[] = [];
+    const rawItems = itemsWithDates.slice(0, candidateLimit);
+    const items: { title: string; url: string; content: string; publishedAt: Date; image?: string; imageTitle?: string; subSource?: string }[] = [];
     for (const item of rawItems) {
       const subSource = extractGoogleNewsSubSource(item);
       const rawTitle = stripHtml(item.title || "Untitled");
@@ -472,6 +507,7 @@ async function fetchGoogleNewsArticles(source: { id: number; name: string; url: 
         content: stripHtml(item.contentSnippet || item.content || item.summary || item.title || ""),
         publishedAt: item._parsedDate.getTime() > 0 ? item._parsedDate : new Date(),
         image,
+        imageTitle: extractImageTitleFromRssItem(item),
         subSource,
       });
     }
@@ -514,8 +550,8 @@ function detectPlatform(url: string): string | null {
 }
 
 async function processItems(
-  source: { id: number; name: string; clientId?: number | null },
-  items: { title: string; url: string; content: string; publishedAt: Date; image?: string; subSource?: string; engagementLikes?: number; engagementComments?: number; engagementShares?: number }[]
+  source: FeedSource,
+  items: { title: string; url: string; content: string; publishedAt: Date; image?: string; imageTitle?: string; subSource?: string; engagementLikes?: number; engagementComments?: number; engagementShares?: number }[]
 ): Promise<number> {
   let newArticles = 0;
 
@@ -525,11 +561,26 @@ async function processItems(
     return dateB - dateA;
   });
 
-  for (const item of items) {
+  const filteredItems = filterSourceItems(items, source.filterConfig);
+  const rejectedCount = items.length - filteredItems.length;
+  if (rejectedCount > 0) console.log(`[Worker] ${source.name}: feed filters rejected ${rejectedCount} article(s)`);
+
+  for (const item of filteredItems.slice(0, source.maxArticlesPerFetch || 10)) {
     if (!item.url) continue;
 
-    const existing = await storage.getArticleByUrl(item.url);
-    if (existing) continue;
+    const clientId = source.clientId;
+    if (!clientId) continue;
+
+    const sourceCategory = source.category && VALID_CATEGORIES.includes(source.category)
+      ? source.category
+      : "general";
+    const existing = await storage.getArticleByUrl(item.url, clientId);
+    if (existing) {
+      if (sourceCategory !== "general" && existing.category === "general") {
+        await storage.updateArticle(existing.id, { category: sourceCategory, sourceId: source.id });
+      }
+      continue;
+    }
 
     const title = item.title || "Untitled";
 
@@ -543,6 +594,9 @@ async function processItems(
           const updated = [...existingCrossPosts, { platform, url: item.url, sourceId: source.id }];
           await storage.updateArticle(titleDup.id, { crossPosts: updated });
           console.log(`[Worker] Cross-post added: "${title.substring(0, 50)}..." on ${platform}`);
+        }
+        if (sourceCategory !== "general" && titleDup.category === "general") {
+          await storage.updateArticle(titleDup.id, { category: sourceCategory, sourceId: source.id });
         }
         continue;
       }
@@ -567,13 +621,13 @@ async function processItems(
       sentimentScore: null,
       keywords: [] as string[],
       topics: [] as string[],
-      category: "general",
+      category: sourceCategory,
       imageUrl: item.image || null,
       subSource: item.subSource || null,
       engagementLikes: item.engagementLikes ?? null,
       engagementComments: item.engagementComments ?? null,
       engagementShares: item.engagementShares ?? null,
-      clientId: source.clientId ?? null,
+      clientId,
       aiAnalysisStatus: "skipped" as const,
       aiRetryCount: 0,
     };
@@ -765,19 +819,31 @@ export type SourcePreviewResult = {
   method: string;
   articles: PreviewArticle[];
   feedUrl?: string;
+  rendered?: boolean;
+  warnings?: string[];
   error?: string;
 };
 
-export async function previewSource(url: string, type: string, maxArticles: number = 10): Promise<SourcePreviewResult> {
+export async function previewSource(
+  url: string,
+  type: string,
+  maxArticles: number = 10,
+  country?: string,
+  collectorConfig?: WebsiteCollectorConfig,
+  rawFilterConfig?: SourceFilterConfig,
+): Promise<SourcePreviewResult> {
   const normalized = normalizeUrl(url);
+  const filterConfig = normalizeSourceFilterConfig(rawFilterConfig);
+  const candidateLimit = filterConfig.whitelist.enabled || filterConfig.blacklist.enabled
+    ? Math.min(maxArticles * 3, 50)
+    : maxArticles;
 
   if (type === "google_news") {
     const keyword = url.trim();
-    const encodedKeyword = encodeURIComponent(keyword);
-    const rssUrl = `https://news.google.com/rss/search?q=${encodedKeyword}&hl=en&gl=US&ceid=US:en`;
+    const rssUrl = buildGoogleNewsSearchUrl(keyword, country);
     try {
       const feed = await parser.parseURL(rssUrl);
-      const articles = feed.items.slice(0, maxArticles).map(item => {
+      const candidates = feed.items.slice(0, candidateLimit).map(item => {
         const subSource = extractGoogleNewsSubSource(item);
         const rawTitle = stripHtml(item.title || "Untitled");
         return {
@@ -786,10 +852,15 @@ export async function previewSource(url: string, type: string, maxArticles: numb
           content: stripHtml(item.contentSnippet || item.content || item.summary || item.title || "").substring(0, 300),
           publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
           image: extractImageFromRssItem(item),
+          imageTitle: extractImageTitleFromRssItem(item),
         };
       });
+      const articles = filterSourceItems(candidates, filterConfig).slice(0, maxArticles);
       if (articles.length > 0) {
         return { success: true, method: "google_news", articles };
+      }
+      if (candidates.length > 0) {
+        return { success: false, method: "google_news", articles: [], error: "No recent articles matched the feed filters" };
       }
     } catch {}
     return { success: false, method: "none", articles: [], error: "Unable to fetch Google News results for this keyword" };
@@ -803,78 +874,42 @@ export async function previewSource(url: string, type: string, maxArticles: numb
         if (discovered) feedUrl = discovered;
       }
       const feed = await parser.parseURL(feedUrl);
-      const articles = feed.items.slice(0, maxArticles).map(item => ({
+      const candidates = feed.items.slice(0, candidateLimit).map(item => ({
         title: stripHtml(item.title || "Untitled"),
         url: item.link || "",
         content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || "").substring(0, 300),
         publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
         image: extractImageFromRssItem(item),
+        imageTitle: extractImageTitleFromRssItem(item),
       }));
+      const articles = filterSourceItems(candidates, filterConfig).slice(0, maxArticles);
       if (articles.length > 0) {
         return { success: true, method: "rss", articles, feedUrl };
+      }
+      if (candidates.length > 0) {
+        return { success: false, method: "rss", articles: [], feedUrl, error: "No recent articles matched the feed filters" };
       }
     } catch {}
     return { success: false, method: "none", articles: [], error: "Unable to parse RSS feed from this URL" };
   }
 
-  // For website type: try website scraping first, then RSS discovery, then alternatives
-  // Step 1: Try direct website scraping
   try {
-    const scraped = await scrapeWebsite(normalized);
-    if (scraped.length > 0) {
-      const articles = scraped.slice(0, maxArticles).map(a => ({
-        title: a.title,
-        url: a.url,
-        content: (a.content || "").substring(0, 300),
-        publishedAt: a.publishedAt || new Date(),
-        image: a.image,
-      }));
-      return { success: true, method: "website", articles };
-    }
+    const result = await collectWebsite(normalized, collectorConfig, candidateLimit);
+    const articles = filterSourceItems(result.articles, filterConfig).slice(0, maxArticles);
+    return {
+      success: articles.length > 0,
+      method: result.method,
+      articles: articles.map((article) => ({ ...article, content: article.content.substring(0, 300) })),
+      feedUrl: result.feedUrl,
+      rendered: result.rendered,
+      warnings: result.warnings,
+      error: result.articles.length > 0 && articles.length === 0 ? "No recent articles matched the feed filters" : undefined,
+    };
   } catch (e) {
-    console.log(`[Preview] Website scraping failed for ${normalized}: ${e instanceof Error ? e.message : e}`);
+    const message = e instanceof Error ? e.message : "Website collection failed";
+    console.log(`[Preview] Website collection failed for ${normalized}: ${message}`);
+    return { success: false, method: "none", articles: [], error: message };
   }
-
-  // Step 2: Try RSS feed discovery
-  try {
-    const feedUrl = await discoverRssFeed(normalized);
-    if (feedUrl) {
-      const feed = await parser.parseURL(feedUrl);
-      const articles = feed.items.slice(0, maxArticles).map(item => ({
-        title: stripHtml(item.title || "Untitled"),
-        url: item.link || "",
-        content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || "").substring(0, 300),
-        publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
-        image: extractImageFromRssItem(item),
-      }));
-      if (articles.length > 0) {
-        return { success: true, method: "rss", articles, feedUrl };
-      }
-    }
-  } catch (e) {
-    console.log(`[Preview] RSS discovery failed for ${normalized}: ${e instanceof Error ? e.message : e}`);
-  }
-
-  // Step 3: Try Google News as fallback
-  try {
-    const domain = new URL(normalized).hostname.replace("www.", "");
-    const rssUrl = `https://news.google.com/rss/search?q=site:${domain}&hl=en&gl=US&ceid=US:en`;
-    const feed = await parser.parseURL(rssUrl);
-    const articles = feed.items.slice(0, maxArticles).map(item => ({
-      title: stripHtml(item.title || "Untitled"),
-      url: item.link || "",
-      content: stripHtml(item.contentSnippet || item.content || item.summary || "").substring(0, 300),
-      publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
-      image: extractImageFromRssItem(item),
-    }));
-    if (articles.length > 0) {
-      return { success: true, method: "google_news_fallback", articles };
-    }
-  } catch (e) {
-    console.log(`[Preview] Google News fallback failed for ${normalized}: ${e instanceof Error ? e.message : e}`);
-  }
-
-  return { success: false, method: "none", articles: [], error: "Unable to fetch articles from this source. Please check the URL and try again." };
 }
 
 export async function fetchAllFeeds(): Promise<{ sourceName: string; newArticles: number; error?: string }[]> {
@@ -962,7 +997,7 @@ export async function backfillMissingImages(): Promise<number> {
     const batch = noImageArticles.slice(0, 5);
     for (const article of batch) {
       try {
-        const image = await fetchOgImage(article.url!);
+        const image = await inspectArticleImage(article.url!).catch(() => fetchOgImage(article.url!));
         if (image && !isGenericGoogleImage(image)) {
           await storage.updateArticle(article.id, { imageUrl: image });
           totalUpdated++;

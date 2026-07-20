@@ -6,6 +6,7 @@ interface AuthContext {
     id: number;
     username: string;
     role: string;
+    userScope: string;
     userType: string | null;
     clientId: number | null;
     disabled: boolean;
@@ -47,6 +48,7 @@ interface LegacyPermissions {
 
 interface Capabilities {
   role: string;
+  userScope: string;
   userType: string | null;
   tenantId: number | null;
   tenantName: string | null;
@@ -62,7 +64,7 @@ interface Capabilities {
 export { SYSTEM_ROLES, CAPS };
 
 export function usePermissions() {
-  const { data: authContext, isLoading } = useQuery<AuthContext>({
+  const { data: authContext, isLoading: authLoading } = useQuery<AuthContext | null>({
     queryKey: ["/api/auth/me"],
     queryFn: async () => {
       const res = await fetch("/api/auth/me");
@@ -74,7 +76,7 @@ export function usePermissions() {
     staleTime: 30000,
   });
 
-  const { data: capabilities } = useQuery<Capabilities>({
+  const { data: capabilities, isLoading: capsLoading } = useQuery<Capabilities | null>({
     queryKey: ["/api/auth/capabilities"],
     queryFn: async () => {
       const res = await fetch("/api/auth/capabilities");
@@ -89,31 +91,26 @@ export function usePermissions() {
 
   const hasPermission = (code: string): boolean => {
     if (!authContext) return false;
-    if (authContext.user.role === SYSTEM_ROLES.SYSTEM_ADMIN) return true;
     return authContext.permissions.includes(code);
   };
 
   const hasAnyPermission = (...codes: string[]): boolean => {
     if (!authContext) return false;
-    if (authContext.user.role === SYSTEM_ROLES.SYSTEM_ADMIN) return true;
     return codes.some((code) => authContext.permissions.includes(code));
   };
 
   const hasAllPermissions = (...codes: string[]): boolean => {
     if (!authContext) return false;
-    if (authContext.user.role === SYSTEM_ROLES.SYSTEM_ADMIN) return true;
     return codes.every((code) => authContext.permissions.includes(code));
   };
 
   const hasCap = (cap: string): boolean => {
     if (!capabilities) return false;
-    if (capabilities.role === SYSTEM_ROLES.SYSTEM_ADMIN) return true;
     return capabilities.capabilities.includes(cap);
   };
 
   const hasAnyCap = (...caps: string[]): boolean => {
     if (!capabilities) return false;
-    if (capabilities.role === SYSTEM_ROLES.SYSTEM_ADMIN) return true;
     return caps.some((c) => capabilities.capabilities.includes(c));
   };
 
@@ -122,13 +119,17 @@ export function usePermissions() {
     return capabilities.permissions[capability];
   };
 
+  const isPlatformScope = capabilities?.userScope === "platform" || authContext?.user?.userScope === "platform";
+  const isTenantScope = capabilities?.userScope === "tenant" || authContext?.user?.userScope === "tenant";
+  const hasTenantContext = !!capabilities?.tenantId;
+
   return {
     authContext,
     capabilities,
     permissions: authContext?.permissions || [],
     organization: authContext?.organization || null,
     impersonation: authContext?.impersonation || { isImpersonating: false, activeOrganizationId: null, activeUserId: null, originalUserId: null },
-    isLoading,
+    isLoading: authLoading || (!!authContext && capsLoading),
     hasPermission,
     hasAnyPermission,
     hasAllPermissions,
@@ -139,6 +140,9 @@ export function usePermissions() {
     isClientAdmin: authContext?.user?.role === SYSTEM_ROLES.CLIENT_ADMIN,
     isClient: authContext?.user?.role === SYSTEM_ROLES.CLIENT_USER,
     isReadonly: authContext?.user?.role === SYSTEM_ROLES.READONLY_USER,
+    isPlatformScope,
+    isTenantScope,
+    hasTenantContext,
     userType: authContext?.user?.userType || null,
     tenantId: capabilities?.tenantId || authContext?.organization?.id || null,
     planTier: capabilities?.planTier || "starter",

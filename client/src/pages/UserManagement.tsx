@@ -17,7 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Shield, ShieldOff, Trash2, UserPlus, Users, Crown, Info, KeyRound, Briefcase } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { SYSTEM_ROLES, USER_TYPES } from "@shared/schema";
+import { CAPS, SYSTEM_ROLES, USER_TYPES } from "@shared/schema";
 import type { User } from "@shared/schema";
 
 const USER_TYPE_LABELS: Record<string, string> = {
@@ -63,7 +63,7 @@ function CardInfo({ description }: { description: string }) {
 export default function UserManagement() {
   const { t } = useTranslation();
   const { user: currentUser } = useAuth();
-  const { isAdmin } = usePermissions();
+  const { hasCap, isAdmin } = usePermissions();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -179,11 +179,11 @@ export default function UserManagement() {
     return parent ? parent.username : "-";
   };
 
-  const canManageUser = (u: any) => {
-    if (isAdmin) return true;
-    if (currentUser?.role === SYSTEM_ROLES.CLIENT_ADMIN && u.parentId === currentUser.id) return true;
-    return false;
-  };
+  const canInviteUsers = hasCap(CAPS.USERS_INVITE);
+  const canEditUsers = hasCap(CAPS.USERS_EDIT);
+  const canAssignRoles = hasCap(CAPS.USERS_ASSIGN_ROLES);
+  const canDisableUsers = hasCap(CAPS.USERS_DISABLE);
+  const canManageUser = (_u: any) => isAdmin || canEditUsers || canAssignRoles || canDisableUsers;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -229,17 +229,18 @@ export default function UserManagement() {
         </Card>
       )}
 
-      <Card className="border-border/50 shadow-md">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <UserPlus className="w-5 h-5" />
-            {t("userManagement.createUser")}
-            <CardInfo description="Create new team members with specific roles and access levels. The User Type determines which features they can access." />
-          </CardTitle>
-          <CardDescription>{t("userManagement.createUserSubtitle")}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleCreateUser} className="space-y-4" data-testid="form-create-user">
+      {canInviteUsers && (
+        <Card className="border-border/50 shadow-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <UserPlus className="w-5 h-5" />
+              {t("userManagement.createUser")}
+              <CardInfo description="Create new team members with specific roles and access levels. The User Type determines which features they can access." />
+            </CardTitle>
+            <CardDescription>{t("userManagement.createUserSubtitle")}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleCreateUser} className="space-y-4" data-testid="form-create-user">
             <div className="flex flex-col sm:flex-row items-end gap-3 flex-wrap">
               <div className="flex-1 min-w-[180px] space-y-1">
                 <label className="text-sm text-muted-foreground">{t("userManagement.newUsername")}</label>
@@ -318,9 +319,10 @@ export default function UserManagement() {
                 </span>
               )}
             </div>
-          </form>
-        </CardContent>
-      </Card>
+            </form>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="border-border/50 shadow-md">
         <CardContent className="pt-6">
@@ -373,7 +375,7 @@ export default function UserManagement() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            {canManage && !isCurrentUser ? (
+                            {canEditUsers && canManage && !isCurrentUser ? (
                               <Select
                                 value={u.userType || "reader"}
                                 onValueChange={(val) => updateUserTypeMutation.mutate({ id: u.id, userType: val })}
@@ -399,7 +401,7 @@ export default function UserManagement() {
                           <TableCell className="text-right rtl:text-left">
                             {isCurrentUser ? null : canManage ? (
                               <div className="flex items-center gap-2 justify-end rtl:justify-start flex-wrap">
-                                {isAdmin && (
+                                {canAssignRoles && (
                                   <Select
                                     value={u.role}
                                     onValueChange={(val) => updateRoleMutation.mutate({ id: u.id, role: val })}
@@ -425,16 +427,18 @@ export default function UserManagement() {
                                     Password
                                   </Button>
                                 )}
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={deleteUserMutation.isPending}
-                                  onClick={() => handleDelete(u.id)}
-                                  className="text-destructive"
-                                  data-testid={`button-delete-user-${u.id}`}
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
+                                {canDisableUsers && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={deleteUserMutation.isPending}
+                                    onClick={() => handleDelete(u.id)}
+                                    className="text-destructive"
+                                    data-testid={`button-delete-user-${u.id}`}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                )}
                               </div>
                             ) : null}
                           </TableCell>
@@ -475,20 +479,22 @@ export default function UserManagement() {
                         {!isCurrentUser && canManage && (
                           <div className="space-y-2">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <Select
-                                value={u.userType || "reader"}
-                                onValueChange={(val) => updateUserTypeMutation.mutate({ id: u.id, userType: val })}
-                              >
-                                <SelectTrigger className="h-8 w-32 text-xs" data-testid={`select-usertype-mobile-${u.id}`}>
-                                  <Briefcase className="w-3 h-3 mr-1" />
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {Object.entries(USER_TYPE_LABELS).map(([value, label]) => (
-                                    <SelectItem key={value} value={value}>{label}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                              {canEditUsers && (
+                                <Select
+                                  value={u.userType || "reader"}
+                                  onValueChange={(val) => updateUserTypeMutation.mutate({ id: u.id, userType: val })}
+                                >
+                                  <SelectTrigger className="h-8 w-32 text-xs" data-testid={`select-usertype-mobile-${u.id}`}>
+                                    <Briefcase className="w-3 h-3 mr-1" />
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {Object.entries(USER_TYPE_LABELS).map(([value, label]) => (
+                                      <SelectItem key={value} value={value}>{label}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
                               {isAdmin && (
                                 <Button
                                   variant="outline"
@@ -500,17 +506,19 @@ export default function UserManagement() {
                                   Password
                                 </Button>
                               )}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={deleteUserMutation.isPending}
-                                onClick={() => handleDelete(u.id)}
-                                className="text-destructive"
-                                data-testid={`button-delete-user-mobile-${u.id}`}
-                              >
-                                <Trash2 className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
-                                {t("userManagement.deleteUser")}
-                              </Button>
+                              {canDisableUsers && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={deleteUserMutation.isPending}
+                                  onClick={() => handleDelete(u.id)}
+                                  className="text-destructive"
+                                  data-testid={`button-delete-user-mobile-${u.id}`}
+                                >
+                                  <Trash2 className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
+                                  {t("userManagement.deleteUser")}
+                                </Button>
+                              )}
                             </div>
                           </div>
                         )}

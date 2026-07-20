@@ -1,7 +1,9 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, uniqueIndex, index, uuid } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { relations } from "drizzle-orm";
+import type { WebsiteCollectorConfig } from "./source-collector";
+import type { SourceFilterConfig } from "./source-filter";
 
 // === CLIENTS ===
 export const clients = pgTable("clients", {
@@ -27,6 +29,7 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   role: text("role").notNull().default("client"),
+  userScope: text("user_scope").notNull().default("tenant"),
   userType: text("user_type"),
   parentId: integer("parent_id"),
   clientId: integer("client_id").notNull(),
@@ -50,6 +53,10 @@ export const sources = pgTable("sources", {
   userId: integer("user_id"),
   clientId: integer("client_id").notNull(),
   country: text("country"),
+  category: text("category"),
+  collectorConfig: jsonb("collector_config").$type<WebsiteCollectorConfig>(),
+  filterConfig: jsonb("filter_config").$type<SourceFilterConfig>(),
+  feedToken: uuid("feed_token").defaultRandom().notNull().unique(),
   refreshPriority: text("refresh_priority").default("medium"),
   logoUrl: text("logo_url"),
   deletedAt: timestamp("deleted_at"),
@@ -77,7 +84,7 @@ export const articles = pgTable("articles", {
   content: text("content").notNull(),
   contentClean: text("content_clean"),
   summary: text("summary"),
-  url: text("url").unique(),
+  url: text("url"),
   sourceId: integer("source_id").references(() => sources.id),
   publishedAt: timestamp("published_at"),
   ingestedAt: timestamp("ingested_at").defaultNow(),
@@ -101,6 +108,7 @@ export const articles = pgTable("articles", {
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_articles_client_id").on(table.clientId),
+  uniqueIndex("articles_client_url_idx").on(table.clientId, table.url),
 ]);
 
 export const insertArticleSchema = createInsertSchema(articles).omit({ id: true, createdAt: true });

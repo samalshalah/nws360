@@ -15,6 +15,8 @@ import { useTranslation } from "react-i18next";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { usePermissions } from "@/hooks/use-permissions";
+import { CAPS } from "@shared/schema";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +27,7 @@ const PAGE_SIZE = 20;
 export default function Feed() {
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
+  const { hasCap, isAdmin } = usePermissions();
   const currentLang = i18n.language?.split("-")[0] || "en";
   const searchString = useSearch();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -297,6 +300,9 @@ export default function Feed() {
 
   const activeSourceType = filters.sourceType || "all";
   const activeSentiment = filters.sentiment || "all";
+  const canExportArticles = hasCap(CAPS.ARTICLE_EXPORT);
+  const canRunIntelligence = hasCap(CAPS.INTELLIGENCE_RUN);
+  const canDeleteArticles = isAdmin;
 
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
@@ -508,54 +514,60 @@ export default function Feed() {
               )}
             </div>
           </div>
-          <Button variant="ghost" size="icon" onClick={handleExport} data-testid="button-export">
-            <Download className="w-4 h-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => reanalyzeMutation.mutate()}
-            disabled={reanalyzeMutation.isPending}
-            data-testid="button-reanalyze"
-          >
-            <RefreshCw className={cn("w-4 h-4", reanalyzeMutation.isPending && "animate-spin")} />
-          </Button>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={deleteAllMutation.isPending || !articlesData?.total}
-                data-testid="button-delete-all"
-                title="Delete all articles"
-              >
-                <Trash2 className={cn("w-4 h-4 text-destructive", deleteAllMutation.isPending && "animate-pulse")} />
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete all articles?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will permanently delete all {articlesData?.total || 0} articles. This action cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel data-testid="button-cancel-delete-all">Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={() => deleteAllMutation.mutate()}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  data-testid="button-confirm-delete-all"
+          {canExportArticles && (
+            <Button variant="ghost" size="icon" onClick={handleExport} data-testid="button-export">
+              <Download className="w-4 h-4" />
+            </Button>
+          )}
+          {canRunIntelligence && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => reanalyzeMutation.mutate()}
+              disabled={reanalyzeMutation.isPending}
+              data-testid="button-reanalyze"
+            >
+              <RefreshCw className={cn("w-4 h-4", reanalyzeMutation.isPending && "animate-spin")} />
+            </Button>
+          )}
+          {canDeleteArticles && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  disabled={deleteAllMutation.isPending || !articlesData?.total}
+                  data-testid="button-delete-all"
+                  title="Delete all articles"
                 >
-                  {deleteAllMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : (
-                    <Trash2 className="w-4 h-4 mr-2" />
-                  )}
-                  Delete All
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+                  <Trash2 className={cn("w-4 h-4 text-destructive", deleteAllMutation.isPending && "animate-pulse")} />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete all articles?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will permanently delete all {articlesData?.total || 0} articles. This action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel data-testid="button-cancel-delete-all">Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => deleteAllMutation.mutate()}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    data-testid="button-confirm-delete-all"
+                  >
+                    {deleteAllMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <Trash2 className="w-4 h-4 mr-2" />
+                    )}
+                    Delete All
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
         </div>
       </div>
 
@@ -626,7 +638,7 @@ export default function Feed() {
                 key={article.id}
                 article={article}
                 selected={selectedArticles.has(article.id)}
-                onToggleSelect={toggleSelectArticle}
+                onToggleSelect={canDeleteArticles ? toggleSelectArticle : undefined}
                 layout={layout}
               />
             ))}
@@ -650,7 +662,7 @@ export default function Feed() {
         </>
       )}
 
-      {selectedArticles.size > 0 && (
+      {canDeleteArticles && selectedArticles.size > 0 && (
         <div
           className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 bg-card border border-border rounded-md shadow-lg"
           data-testid="bulk-actions-bar"

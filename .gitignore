@@ -1,5 +1,14 @@
 node_modules
 dist
+.run
+.tools
+.wrangler
+.wrangler-dry-run
+.env
+.env.*
+!.env.example
+audit-screenshots/
+*_patch_probe.tmp
 .DS_Store
 server/public
 vite.config.ts.*

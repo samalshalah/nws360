@@ -57,7 +57,10 @@ export function useUpdateSource() {
         body: JSON.stringify(updates),
       });
 
-      if (!res.ok) throw new Error("Failed to update source");
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ message: "Failed to update source" }));
+        throw new Error(error.message || "Failed to update source");
+      }
       return api.sources.update.responses[200].parse(await res.json());
     },
     onSuccess: () => {

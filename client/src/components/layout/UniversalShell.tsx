@@ -21,13 +21,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { buildUniversalNavTree, filterNavByCaps, type NavItem, type NavGroup } from "@/lib/nav-config";
+import { buildAdminNavTree, buildClientNavTree, filterNavByCaps, type NavItem, type NavGroup } from "@/lib/nav-config";
 import { BreakingNewsBanner } from "@/components/BreakingNewsBanner";
 import { RightPanel } from "@/components/layout/RightPanel";
 
 function TenantSwitcher() {
   const { capabilities, isAdmin } = usePermissions();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
 
   const { data: clients } = useQuery<any[]>({
     queryKey: ["/api/admin/clients"],
@@ -38,9 +39,10 @@ function TenantSwitcher() {
     mutationFn: async (tenantId: number | null) => {
       await apiRequest("POST", "/api/admin/select-tenant", { tenantId });
     },
-    onSuccess: () => {
+    onSuccess: (_data, tenantId) => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/capabilities"] });
+      setLocation(tenantId ? "/feed" : "/admin");
     },
   });
 
@@ -49,7 +51,7 @@ function TenantSwitcher() {
   return (
     <div className="px-3 py-2" data-testid="tenant-switcher">
       <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1 block px-1">
-        Tenant
+        Workspace
       </label>
       <Select
         value={capabilities?.tenantId?.toString() || "all"}
@@ -58,10 +60,10 @@ function TenantSwitcher() {
         }}
       >
         <SelectTrigger className="h-8 text-xs" data-testid="select-tenant">
-          <SelectValue placeholder="All Tenants" />
+          <SelectValue placeholder="Control Center" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all" data-testid="select-tenant-all">All Tenants</SelectItem>
+          <SelectItem value="all" data-testid="select-tenant-all">Control Center</SelectItem>
           {clients?.map((c: any) => (
             <SelectItem key={c.id} value={c.id.toString()} data-testid={`select-tenant-${c.id}`}>
               {c.name}
@@ -311,8 +313,12 @@ function UniversalSidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { logout, user } = useAuth();
   const { hasCap, capabilities, isAdmin } = usePermissions();
   const { t } = useTranslation();
+  const isPlatformContext = isAdmin && capabilities?.userScope === "platform" && !capabilities?.tenantId;
 
-  const menuStructure = useMemo(() => buildUniversalNavTree(t), [t]);
+  const menuStructure = useMemo(
+    () => (isPlatformContext ? buildAdminNavTree(t) : buildClientNavTree(t)),
+    [t, isPlatformContext],
+  );
   const filteredMenu = useMemo(
     () => filterNavByCaps(menuStructure, hasCap, isAdmin),
     [menuStructure, hasCap, capabilities, isAdmin],
@@ -398,7 +404,8 @@ export function UniversalShell({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
   const dir = document.documentElement.dir || "ltr";
   const drawerSide = dir === "rtl" ? "right" : "left";
-  const showRightPanel = location === "/dashboard" || location === "/feed" || location.startsWith("/feed?");
+  const isPlatformContext = isAdmin && capabilities?.userScope === "platform" && !capabilities?.tenantId;
+  const showRightPanel = !isPlatformContext && (location === "/dashboard" || location === "/feed" || location.startsWith("/feed?"));
 
   const bottomTabs = [
     { name: t("nav.newsFeed", "Feed"), icon: Newspaper, href: "/feed", testId: "nav-bottom-feed" },
@@ -459,7 +466,7 @@ export function UniversalShell({ children }: { children: React.ReactNode }) {
         </aside>
       )}
 
-      {capabilities && !isAdmin && (
+      {capabilities && !isPlatformContext && (
         <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border/50" style={{ height: 60, paddingBottom: "env(safe-area-inset-bottom)" }} role="navigation" aria-label="Mobile navigation">
           <div className="flex items-center justify-around h-full">
             {bottomTabs.map((tab) => {

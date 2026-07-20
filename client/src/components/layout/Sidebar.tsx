@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Newspaper, BarChart3, LogOut, ChevronDown,
   FileBarChart, TrendingUp, Search, MessageSquare, Shield,
-  FileText, Network, Plus, List, Hash, Menu, Bookmark, Users,
+  FileText, Network, List, Hash, Menu, Bookmark, Users,
   Activity, GitCompare, Zap, Tag, Brain, Eye, CreditCard,
   HelpCircle, Lightbulb, Plug, Monitor, UsersRound, ExternalLink
 } from "lucide-react";
@@ -92,7 +92,6 @@ function buildMenuStructure(t: (key: string, fallback?: string) => string): Menu
       icon: List,
       capability: "sources",
       items: [
-        { key: "addSource", label: t("nav.addSource", "Add Source"), href: "/sources/add", icon: Plus },
         { key: "manageSources", label: t("nav.manageSources", "Manage Sources"), href: "/sources/manage", icon: List },
         { key: "keywords", label: t("nav.keywords", "Keywords"), href: "/sources/keywords", icon: Hash },
       ],

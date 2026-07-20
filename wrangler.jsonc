@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "nws360-builder-app",
+  "main": "server/worker.ts",
+  "compatibility_date": "2026-07-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist/public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "vars": {
+    "AI_DRY_RUN": "1",
+    "CF_WORKER": "1",
+    "OPENAI_API_KEY": "cloudflare-preview-placeholder"
+  }
+}

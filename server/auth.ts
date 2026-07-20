@@ -2,6 +2,7 @@ import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import { Express } from "express";
 import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
 import createMemoryStore from "memorystore";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
@@ -22,7 +23,15 @@ declare module "express-session" {
 }
 
 const scryptAsync = promisify(scrypt);
+const PgSessionStore = connectPgSimple(session);
 const MemoryStore = createMemoryStore(session);
+
+export type PublicUser = Omit<User, "password">;
+
+export function toPublicUser(user: User): PublicUser {
+  const { password: _password, ...publicUser } = user;
+  return publicUser;
+}
 
 export function setupAuth(app: Express) {
   const sessionSettings: session.SessionOptions = {
@@ -30,10 +39,19 @@ export function setupAuth(app: Express) {
     resave: false,
     saveUninitialized: false,
     cookie: {},
-    store: new MemoryStore({
-      checkPeriod: 86400000,
-    }),
   };
+
+  if (process.env.CF_WORKER !== "1" && process.env.DATABASE_URL) {
+    sessionSettings.store = new PgSessionStore({
+      conString: process.env.DATABASE_URL,
+      createTableIfMissing: true,
+      tableName: "session",
+    });
+  } else if (process.env.CF_WORKER !== "1") {
+    sessionSettings.store = new MemoryStore({
+      checkPeriod: 86400000,
+    });
+  }
 
   if (app.get("env") === "production") {
     app.set("trust proxy", 1);
@@ -114,7 +132,7 @@ export function setupAuth(app: Express) {
 
       req.login(user, (err) => {
         if (err) return next(err);
-        res.status(201).json(user);
+        res.status(201).json(toPublicUser(user));
       });
     } catch (err) {
       next(err);
@@ -131,7 +149,9 @@ export function setupAuth(app: Express) {
       }
       req.login(user, (err) => {
         if (err) return next(err);
-        res.json(user);
+        req.session.selectedTenantId = undefined;
+        req.session.impersonation = undefined;
+        res.json(toPublicUser(user));
         storage.trackUsage("login", user.id).catch(() => {});
         setTimeout(() => {
           fetchAllFeeds().catch((e) =>
@@ -151,7 +171,7 @@ export function setupAuth(app: Express) {
 
   app.get("/api/user", (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    res.json(req.user);
+    res.json(toPublicUser(req.user as User));
   });
 }
 

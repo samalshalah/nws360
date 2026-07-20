@@ -1,15 +1,20 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
-import { setupAuth } from "./auth";
+import { setupAuth, toPublicUser } from "./auth";
 import { storage, assertTenant, TenantNotFoundError, safeNotFound } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { startFeedWorker, fetchAllFeeds, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler, previewSource } from "./feed-worker";
+import { startFeedWorker, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler, previewSource } from "./feed-worker";
 import { enqueueAIJob, awaitJobResult, checkClientAiBudget } from "./ai/ai-gateway";
 import { startScheduler, stopScheduler, _schedulerTickForTesting } from "./ai/ai-scheduler";
 import { db } from "./db";
 import { articles, PLAN_LIMITS, SYSTEM_ROLES, CAPS, resolveEffectiveCaps } from "@shared/schema";
-import { eq, sql } from "drizzle-orm";
+import { isGoogleNewsEditionCode } from "@shared/google-news-regions";
+import { isSourceCategoryCode } from "@shared/source-categories";
+import { normalizeWebsiteCollectorConfig, websiteCollectorConfigSchema } from "@shared/source-collector";
+import { normalizeSourceFilterConfig, sourceFilterConfigSchema } from "@shared/source-filter";
+import { discoverPublisherCategories, type DiscoveredPublisherCategory } from "./publisher-discovery";
+import { and, eq, sql } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
 import sanitizeHtml from "sanitize-html";
 import { scrypt, randomBytes, createHash } from "crypto";
@@ -20,22 +25,28 @@ import { runDataRetention, onSourceHardDeleted } from "./data-retention-worker";
 import { startLearningWorker } from "./learning-worker";
 
 const scryptAsync = promisify(scrypt);
+const SYSTEM_CLIENT_ID = 9000;
 
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 1000,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { message: "Too many requests, please try again later." },
-});
+const workerMiddleware = (_req: any, _res: any, next: any) => next();
+const apiLimiter = process.env.CF_WORKER === "1"
+  ? workerMiddleware
+  : rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max: 1000,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: { message: "Too many requests, please try again later." },
+    });
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { message: "Too many login attempts, please try again later." },
-});
+const authLimiter = process.env.CF_WORKER === "1"
+  ? workerMiddleware
+  : rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max: 20,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: { message: "Too many login attempts, please try again later." },
+    });
 
 function sanitizeInput(text: string | undefined): string {
   if (!text) return "";
@@ -53,8 +64,27 @@ function getRoleLevel(role: string): number {
   return ROLE_HIERARCHY[role] ?? 0;
 }
 
+function getUserScope(user: any): "platform" | "tenant" {
+  if (user?.userScope === "platform" || user?.user_scope === "platform") return "platform";
+  if (user?.userScope === "tenant" || user?.user_scope === "tenant") return "tenant";
+  return user?.role === SYSTEM_ROLES.SYSTEM_ADMIN && user?.clientId === SYSTEM_CLIENT_ID ? "platform" : "tenant";
+}
+
+function escapeXml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function isPlatformUser(user: any): boolean {
+  return getUserScope(user) === "platform";
+}
+
 function isSystemAdmin(user: any): boolean {
-  return user.role === SYSTEM_ROLES.SYSTEM_ADMIN;
+  return isPlatformUser(user) && user.role === SYSTEM_ROLES.SYSTEM_ADMIN;
 }
 
 function isClientAdmin(user: any): boolean {
@@ -163,8 +193,22 @@ function requireWriteAccess() {
   };
 }
 
+const PLATFORM_ADMIN_CAPS = [
+  CAPS.ADMIN_SYSTEM_DASHBOARD,
+  CAPS.ADMIN_TENANT_SWITCH,
+  CAPS.ADMIN_IMPERSONATE,
+  CAPS.ADMIN_AUDIT_LOGS,
+  CAPS.ADMIN_OPERATIONS,
+  CAPS.ADMIN_JOB_MONITOR,
+  CAPS.ADMIN_PRODUCT_ANALYTICS,
+  CAPS.INTEGRATION_MONITOR_VIEW,
+  CAPS.SOURCE_HEALTH_VIEW,
+];
+
 async function resolveUserCaps(user: any): Promise<string[]> {
-  if (isSystemAdmin(user)) return Object.values(CAPS);
+  if (isSystemAdmin(user)) {
+    return PLATFORM_ADMIN_CAPS;
+  }
   const client = user.clientId ? await storage.getClient(user.clientId) : null;
   const aiEnabled = client?.aiEnabled || false;
   const planTier = (client?.planTier as any) || "starter";
@@ -181,9 +225,22 @@ function requireCapability(...caps: string[]) {
   return async (req: any, res: any, next: any) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    if (isSystemAdmin(user)) return next();
     try {
-      const userCaps = await resolveUserCaps(user);
+      let userCaps: string[];
+      if (isSystemAdmin(user)) {
+        const ctx = resolveTenantContext(user, req);
+        userCaps = ctx.tenantId
+          ? resolveEffectiveCaps(
+              user.role,
+              user.userType || null,
+              "enterprise",
+              true,
+              user.capabilities || null,
+            )
+          : PLATFORM_ADMIN_CAPS;
+      } else {
+        userCaps = await resolveUserCaps(user);
+      }
       const hasRequired = caps.some(c => userCaps.includes(c));
       if (!hasRequired) {
         return res.status(403).json({ message: "Insufficient permissions" });
@@ -199,9 +256,9 @@ function requireAiEnabled() {
   return async (req: any, res: any, next: any) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    if (isSystemAdmin(user)) return next();
     try {
-      const client = user.clientId ? await storage.getClient(user.clientId) : null;
+      const clientId = resolveClientId(user, req);
+      const client = clientId ? await storage.getClient(clientId) : null;
       if (!client || !client.aiEnabled) {
         return res.status(400).json({ message: "AI features are not enabled for your organization" });
       }
@@ -236,17 +293,81 @@ function requireClientId(user: any, req: any, res: any): number | false {
   return cid as number;
 }
 
-async function getUserSourceIds(user: any): Promise<number[] | undefined> {
-  if (isSystemAdmin(user)) return undefined;
-  const userIds = [user.id];
-  const children = await storage.getUserChildren(user.id);
-  for (const child of children) {
-    userIds.push(child.id);
+async function getUsersForTenantScope(user: any, req: any, includeSystemAdmins = false) {
+  const clientId = resolveClientId(user, req);
+  if (clientId) {
+    const users = await storage.getUsersByClientId(clientId);
+    return includeSystemAdmins ? users : users.filter((u: any) => !isPlatformUser(u));
   }
-  const userSources = await storage.getSources();
-  return userSources
-    .filter(s => s.userId && userIds.includes(s.userId))
-    .map(s => s.id);
+  if (isSystemAdmin(user)) {
+    const users = await storage.getUsers();
+    return users.filter((u: any) => isPlatformUser(u));
+  }
+  return [];
+}
+
+async function getScopedUserOrNotFound(targetUserId: number, currentUser: any, req: any, res: any) {
+  const targetUser = await storage.getUser(targetUserId);
+  if (!targetUser) {
+    safeNotFound(res);
+    return null;
+  }
+
+  const clientId = resolveClientId(currentUser, req);
+  if (clientId && targetUser.clientId !== clientId) {
+    safeNotFound(res);
+    return null;
+  }
+  if (isSystemAdmin(currentUser) && !clientId && !isPlatformUser(targetUser)) {
+    safeNotFound(res);
+    return null;
+  }
+  if (!isSystemAdmin(currentUser) && isPlatformUser(targetUser)) {
+    safeNotFound(res);
+    return null;
+  }
+  if (!isSystemAdmin(currentUser) && (!clientId || targetUser.clientId !== clientId)) {
+    safeNotFound(res);
+    return null;
+  }
+
+  return targetUser;
+}
+
+function requireTenantContext(user: any, req: any, res: any): number | null {
+  const clientId = resolveClientId(user, req);
+  if (!clientId) {
+    res.status(400).json({ message: "Tenant context required" });
+    return null;
+  }
+  return clientId;
+}
+
+async function getWorkspaceForTenantOrNotFound(workspaceId: number | undefined, clientId: number, res: any) {
+  if (!workspaceId) return null;
+  const workspace = await storage.getWorkspace(workspaceId);
+  if (!workspace || workspace.clientId !== clientId) {
+    safeNotFound(res);
+    return undefined;
+  }
+  return workspace;
+}
+
+async function ensureUserInTenant(userId: number | undefined, clientId: number, res: any): Promise<boolean> {
+  if (!userId) return true;
+  const targetUser = await storage.getUser(userId);
+  if (!targetUser || targetUser.clientId !== clientId) {
+    safeNotFound(res);
+    return false;
+  }
+  return true;
+}
+
+async function getUserSourceIds(user: any, req?: any): Promise<number[] | undefined> {
+  const clientId = resolveClientId(user, req);
+  if (!clientId) return [];
+  const tenantSources = await storage.getSources(clientId);
+  return tenantSources.map(s => s.id);
 }
 
 export async function registerRoutes(
@@ -300,6 +421,7 @@ export async function registerRoutes(
           id: effectiveUser.id,
           username: effectiveUser.username,
           role: effectiveUser.role,
+          userScope: getUserScope(effectiveUser),
           clientId: effectiveUser.clientId,
           disabled: effectiveUser.disabled,
           createdAt: effectiveUser.createdAt,
@@ -482,7 +604,7 @@ export async function registerRoutes(
       }
     }
 
-    const effectiveCaps = resolveEffectiveCaps(
+    const effectiveCaps = sysAdmin && !ctx.tenantId ? PLATFORM_ADMIN_CAPS : resolveEffectiveCaps(
       role,
       user.userType || null,
       sysAdmin ? "enterprise" : planTier,
@@ -492,6 +614,7 @@ export async function registerRoutes(
 
     res.json({
       role,
+      userScope: getUserScope(user),
       userType: user.userType || null,
       tenantId: ctx.tenantId,
       tenantName,
@@ -525,28 +648,62 @@ export async function registerRoutes(
   app.get(api.sources.list.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    if (isSystemAdmin(user)) {
-      const allSources = await storage.getSources();
-      return res.json(allSources);
-    }
-    const children = await storage.getUserChildren(user.id);
-    const userIds = [user.id, ...children.map((c: any) => c.id)];
-    const allSources = await storage.getSources();
-    const filtered = allSources.filter((s: any) => userIds.includes(s.userId));
-    res.json(filtered);
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.json([]);
+    const sources = await storage.getSources(clientId || undefined);
+    res.json(sources);
+  });
+
+  app.get("/feeds/:token.xml", apiLimiter, async (req, res) => {
+    const token = Array.isArray(req.params.token) ? req.params.token[0] : req.params.token;
+    if (!z.string().uuid().safeParse(token).success) return res.sendStatus(404);
+    const source = await storage.getSourceByFeedToken(token);
+    if (!source || source.deletedAt) return res.sendStatus(404);
+    const { items } = await storage.getArticles({ sourceId: source.id, clientId: source.clientId, limit: 50 });
+    const baseUrl = (process.env.PUBLIC_APP_URL || "https://nws360.com").replace(/\/$/, "");
+    const entries = items.map((article) => `
+      <item>
+        <title>${escapeXml(article.title)}</title>
+        <link>${escapeXml(article.url)}</link>
+        <guid isPermaLink="true">${escapeXml(article.url)}</guid>
+        <description>${escapeXml(article.summary || article.contentClean || article.content || "")}</description>
+        <pubDate>${new Date(article.publishedAt || article.createdAt || Date.now()).toUTCString()}</pubDate>
+        ${article.imageUrl && article.imageUrl !== "none" ? `<enclosure url="${escapeXml(article.imageUrl)}" type="image/jpeg" />` : ""}
+      </item>`).join("");
+    res.set({
+      "Content-Type": "application/rss+xml; charset=utf-8",
+      "Cache-Control": "public, max-age=300, stale-while-revalidate=300",
+    });
+    res.send(`<?xml version="1.0" encoding="UTF-8"?>
+      <rss version="2.0">
+        <channel>
+          <title>${escapeXml(source.name)}</title>
+          <link>${escapeXml(source.url)}</link>
+          <description>${escapeXml(`NWS360 collected feed for ${source.name}`)}</description>
+          <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="${escapeXml(`${baseUrl}/feeds/${source.feedToken}.xml`)}" rel="self" type="application/rss+xml" />
+          ${entries}
+        </channel>
+      </rss>`);
   });
 
   const previewInputSchema = z.object({
     url: z.string().min(1, "URL is required").max(2000),
     type: z.enum(["website", "rss", "twitter", "youtube", "facebook", "instagram", "telegram", "google_news"]),
+    country: z.string().trim().length(2).optional(),
     maxArticles: z.number().int().min(1).max(50).optional().default(10),
+    collectorConfig: websiteCollectorConfigSchema.optional(),
+    filterConfig: sourceFilterConfigSchema.optional(),
+  }).superRefine((input, ctx) => {
+    if (input.type === "google_news" && (!input.country || !isGoogleNewsEditionCode(input.country))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["country"], message: "A supported Google News region is required" });
+    }
   });
 
-  app.post("/api/sources/preview", async (req, res) => {
+  app.post("/api/sources/preview", requireCapability(CAPS.SOURCES_ADD, CAPS.SOURCES_EDIT), async (req, res) => {
     try {
       if (!req.isAuthenticated()) return res.sendStatus(401);
       const input = previewInputSchema.parse(req.body);
-      const result = await previewSource(input.url, input.type, input.maxArticles);
+      const result = await previewSource(input.url, input.type, input.maxArticles, input.country, input.collectorConfig, input.filterConfig);
       res.json(result);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -557,16 +714,37 @@ export async function registerRoutes(
     }
   });
 
-  const sourceCreateInput = api.sources.create.input.omit({ clientId: true, userId: true, logoUrl: true, active: true, refreshPriority: true, country: true });
+  const sourceCreateInput = api.sources.create.input
+    .omit({ clientId: true, userId: true, logoUrl: true, active: true, refreshPriority: true, feedToken: true })
+    .extend({
+      collectorConfig: websiteCollectorConfigSchema.nullable().optional(),
+      filterConfig: sourceFilterConfigSchema.nullable().optional(),
+    })
+    .superRefine((input, ctx) => {
+      if (input.type === "google_news" && (!input.country || !isGoogleNewsEditionCode(input.country))) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["country"], message: "A supported Google News region is required" });
+      }
+      if (input.category && !isSourceCategoryCode(input.category)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["category"], message: "A supported source category is required" });
+      }
+    });
 
-  app.post(api.sources.create.path, async (req, res) => {
+  app.post(api.sources.create.path, requireCapability(CAPS.SOURCES_ADD), async (req, res) => {
     try {
       if (!req.isAuthenticated()) return res.sendStatus(401);
       const user = req.user as any;
       const input = sourceCreateInput.parse(req.body);
       const clientId = resolveClientId(user, req);
-      const logoUrl = getSourceLogoUrl(input.url, input.name);
-      const source = await storage.createSource({...input, userId: user.id, clientId: clientId || 9001, logoUrl});
+      if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+      const normalizedInput = {
+        ...input,
+        country: input.type === "google_news" ? input.country!.toUpperCase() : null,
+        category: input.category && isSourceCategoryCode(input.category) ? input.category : null,
+        collectorConfig: input.type === "website" ? normalizeWebsiteCollectorConfig(input.collectorConfig) : null,
+        filterConfig: normalizeSourceFilterConfig(input.filterConfig),
+      };
+      const logoUrl = getSourceLogoUrl(normalizedInput.url, normalizedInput.name);
+      const source = await storage.createSource({...normalizedInput, userId: user.id, clientId, logoUrl});
 
       setTimeout(async () => {
         try {
@@ -586,65 +764,95 @@ export async function registerRoutes(
     }
   });
 
-  app.patch(api.sources.update.path, async (req, res) => {
+  const sourceUpdateInput = z.object({
+    name: z.string().trim().min(1).max(200).optional(),
+    url: z.string().trim().min(1).max(2000).optional(),
+    active: z.boolean().optional(),
+    intervalMinutes: z.number().int().min(5).max(1440).optional(),
+    maxArticlesPerFetch: z.number().int().min(1).max(50).optional(),
+    retentionDays: z.number().int().min(1).max(30).optional(),
+    country: z.string().trim().length(2).nullable().optional(),
+    category: z.string().trim().nullable().optional(),
+    collectorConfig: websiteCollectorConfigSchema.nullable().optional(),
+    filterConfig: sourceFilterConfigSchema.nullable().optional(),
+  }).strict();
+
+  app.patch(api.sources.update.path, requireCapability(CAPS.SOURCES_EDIT), async (req, res) => {
     try {
       if (!req.isAuthenticated()) return res.sendStatus(401);
       const user = req.user as any;
       const id = parseInt(req.params.id);
       const clientId = resolveClientId(user, req);
-      if (!isSystemAdmin(user)) {
-        const existingSource = await storage.getSource(id, clientId || undefined);
-        if (!existingSource || existingSource.userId !== user.id) {
-          return safeNotFound(res);
-        }
+      if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+      const existingSource = await storage.getSource(id, clientId);
+      if (!existingSource) {
+        return safeNotFound(res);
       }
-      const rawBody = req.body;
-      const allowedFields = ['name', 'url', 'type', 'active', 'intervalMinutes', 'maxArticlesPerFetch', 'retentionDays', 'userId'] as const;
-      const cleanUpdates: Record<string, any> = {};
-      for (const key of allowedFields) {
-        if (key in rawBody && rawBody[key] !== undefined) {
-          cleanUpdates[key] = rawBody[key];
-        }
-      }
+      const input = sourceUpdateInput.parse(req.body);
+      const cleanUpdates: Record<string, any> = { ...input };
       if (Object.keys(cleanUpdates).length === 0) {
         return res.status(400).json({ message: "No valid fields to update" });
       }
-      if (cleanUpdates.url || cleanUpdates.name) {
-        const existing = await storage.getSource(id, clientId || undefined);
-        if (existing) {
-          cleanUpdates.logoUrl = getSourceLogoUrl(cleanUpdates.url || existing.url, cleanUpdates.name || existing.name);
-        }
+      if (cleanUpdates.category !== undefined && cleanUpdates.category !== null && !isSourceCategoryCode(cleanUpdates.category)) {
+        return res.status(400).json({ message: "A supported source category is required" });
       }
-      const source = await storage.updateSource(id, cleanUpdates, clientId || undefined);
+      if (existingSource.type === "google_news") {
+        const country = cleanUpdates.country === undefined ? existingSource.country : cleanUpdates.country;
+        if (!country || !isGoogleNewsEditionCode(country)) {
+          return res.status(400).json({ message: "A supported Google News region is required" });
+        }
+        cleanUpdates.country = country.toUpperCase();
+      } else if (cleanUpdates.country !== undefined) {
+        cleanUpdates.country = null;
+      }
+      if (cleanUpdates.collectorConfig !== undefined) {
+        cleanUpdates.collectorConfig = existingSource.type === "website"
+          ? normalizeWebsiteCollectorConfig(cleanUpdates.collectorConfig)
+          : null;
+      }
+      if (cleanUpdates.filterConfig !== undefined) {
+        cleanUpdates.filterConfig = normalizeSourceFilterConfig(cleanUpdates.filterConfig);
+      }
+      if (cleanUpdates.url || cleanUpdates.name) {
+        cleanUpdates.logoUrl = getSourceLogoUrl(cleanUpdates.url || existingSource.url, cleanUpdates.name || existingSource.name);
+      }
+      const source = await storage.updateSource(id, cleanUpdates, clientId);
       if (!source) return res.status(404).json({ message: "Source not found" });
+      if (input.category !== undefined) {
+        await db.update(articles)
+          .set({ category: input.category || "general" })
+          .where(and(eq(articles.sourceId, id), eq(articles.clientId, clientId)));
+      }
       res.json(source);
     } catch (err) {
-      res.status(400).json({ message: "Invalid Input" });
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid source settings" });
+      }
+      res.status(400).json({ message: "Invalid source settings" });
     }
   });
 
-  app.delete(api.sources.delete.path, async (req, res) => {
+  app.delete(api.sources.delete.path, requireCapability(CAPS.SOURCES_DELETE), async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    const user = req.user as any;
-    const id = parseInt(req.params.id);
-    const clientId = resolveClientId(user, req);
-    if (!isSystemAdmin(user)) {
-      const existingSource = await storage.getSource(id, clientId || undefined);
-      if (!existingSource || existingSource.userId !== user.id) {
+      const user = req.user as any;
+      const id = parseInt(req.params.id);
+      const clientId = resolveClientId(user, req);
+      if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+      const existingSource = await storage.getSource(id, clientId);
+      if (!existingSource) {
         return safeNotFound(res);
       }
-    }
-    await storage.deleteSource(id, clientId || undefined);
+    await storage.deleteSource(id, clientId);
     runAnalyticsComputation().catch(e => console.error("[Analytics] Post-source-delete recomputation error:", e));
     res.sendStatus(204);
   });
 
-  app.post("/api/sources/discover-channels", async (req, res) => {
+  app.post("/api/sources/discover-channels", requireCapability(CAPS.SOURCES_ADD), async (req, res) => {
     try {
       if (!req.isAuthenticated()) return res.sendStatus(401);
       const { url } = req.body;
       if (!url || typeof url !== "string") {
-        return res.status(400).json({ channels: {} });
+        return res.status(400).json({ channels: {}, categories: [] });
       }
 
       let targetUrl = url.trim();
@@ -654,10 +862,11 @@ export async function registerRoutes(
       try {
         new URL(targetUrl);
       } catch {
-        return res.json({ channels: {} });
+        return res.json({ channels: {}, categories: [] });
       }
 
       const channels: Record<string, { url: string; confidence: string }> = {};
+      let categories: DiscoveredPublisherCategory[] = [];
 
       try {
         const response = await fetch(targetUrl, {
@@ -672,6 +881,7 @@ export async function registerRoutes(
         const html = await response.text();
         const cheerio = await import("cheerio");
         const $ = cheerio.load(html);
+        const categoryDiscovery = discoverPublisherCategories(targetUrl, html);
 
         const socialPatterns: { type: string; patterns: RegExp[]; normalize: (url: string) => string }[] = [
           {
@@ -816,19 +1026,21 @@ export async function registerRoutes(
           } catch {}
         });
 
+        categories = await categoryDiscovery;
+
       } catch (scrapeErr) {
         console.error("[Discover] Failed to scrape website for social links:", scrapeErr);
       }
 
-      res.json({ channels });
+      res.json({ channels, categories });
     } catch (err) {
       console.error("[Discover] Channel discovery error:", err);
-      res.json({ channels: {} });
+      res.json({ channels: {}, categories: [] });
     }
   });
 
   // === WEBSITE SEARCH / DISCOVERY ===
-  app.get("/api/search-websites", async (req, res) => {
+  app.get("/api/search-websites", requireCapability(CAPS.SOURCES_ADD), async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const query = (req.query.q as string || "").trim();
     if (!query || query.length < 2) {
@@ -886,14 +1098,14 @@ export async function registerRoutes(
   });
 
   // === MANUAL FETCH ===
-  app.post("/api/sources/:id/fetch", async (req, res) => {
+  app.post("/api/sources/:id/fetch", requireCapability(CAPS.SOURCES_EDIT), async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const id = parseInt(req.params.id);
     const clientId = resolveClientId(user, req);
     const source = await storage.getSource(id, clientId || undefined);
     if (!source) return res.status(404).json({ message: "Source not found" });
-    if (!isSystemAdmin(user) && source.userId !== user.id) {
+    if (!isSystemAdmin(user) && source.clientId !== clientId) {
       return safeNotFound(res);
     }
     try {
@@ -905,11 +1117,26 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/fetch-all", async (req, res) => {
+  app.post("/api/fetch-all", requireCapability(CAPS.SOURCES_EDIT), async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    console.log("[Fetch-All] Fetch triggered by user");
+    const user = req.user as any;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    console.log(`[Fetch-All] Fetch triggered by user for tenant ${clientId}`);
     try {
-      const results = await fetchAllFeeds();
+      const tenantSources = await storage.getSources(clientId);
+      const activeSources = tenantSources.filter((source: any) => source.active);
+      const results = await Promise.all(
+        activeSources.map(async (source: any) => {
+          try {
+            const newArticles = await fetchSourceFeed(source.id);
+            return { sourceId: source.id, newArticles };
+          } catch (error) {
+            console.error(`[Fetch-All] Failed source ${source.id}:`, error);
+            return { sourceId: source.id, newArticles: 0, error: true };
+          }
+        })
+      );
       const totalNew = results.reduce((sum: number, r: any) => sum + (r.newArticles || 0), 0);
       console.log(`[Fetch-All] Complete: ${totalNew} new articles from ${results.length} sources`);
       res.json({ success: true, totalNewArticles: totalNew, message: `Fetched ${totalNew} new articles from ${results.length} sources` });
@@ -925,11 +1152,11 @@ export async function registerRoutes(
     try {
       const user = req.user as any;
       const clientId = resolveClientId(user, req);
-      const scopedSourceIds = await getUserSourceIds(user);
+      const scopedSourceIds = await getUserSourceIds(user, req);
       let filteredSourceIds = scopedSourceIds;
       const sourceNameFilter = req.query.sourceName as string;
       if (sourceNameFilter) {
-        const allSources = await storage.getSources();
+        const allSources = await storage.getSources(clientId || undefined);
         const matchingIds = allSources
           .filter(s => s.name === sourceNameFilter && (!scopedSourceIds || scopedSourceIds.includes(s.id)))
           .map(s => s.id);
@@ -1007,7 +1234,7 @@ export async function registerRoutes(
     try {
       const user = req.user as any;
       const clientId = resolveClientId(user, req);
-      const scopedSourceIds = await getUserSourceIds(user);
+      const scopedSourceIds = await getUserSourceIds(user, req);
       if (Array.isArray(scopedSourceIds) && scopedSourceIds.length === 0) {
         return res.json([]);
       }
@@ -1031,7 +1258,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const params = {
       search: req.query.search as string,
       sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
@@ -1077,11 +1304,12 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
+    if (!clientId) return res.json([]);
     const kws = await storage.getKeywords(clientId || undefined);
     res.json(kws);
   });
 
-  app.post(api.keywords.create.path, async (req, res) => {
+  app.post(api.keywords.create.path, requireCapability(CAPS.KEYWORDS_ADD), async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
@@ -1095,7 +1323,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete(api.keywords.delete.path, async (req, res) => {
+  app.delete(api.keywords.delete.path, requireCapability(CAPS.KEYWORDS_DELETE), async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
@@ -1198,7 +1426,7 @@ export async function registerRoutes(
         return res.status(403).json({ success: false, message: `AI analysis blocked: ${budgetCheck.reason}` });
       }
 
-      const scopedSourceIds = await getUserSourceIds(user);
+      const scopedSourceIds = await getUserSourceIds(user, req);
       const allArticles = await storage.getArticles({ limit: 500, sourceIds: scopedSourceIds, clientId: clientId || undefined });
       const unanalyzed = allArticles.items.filter(
         a => a.aiAnalysisStatus === "skipped" || ((!a.sentimentLabel || a.sentimentLabel === "neutral") && a.sentimentScore === 0 && (!a.keywords || a.keywords.length === 0))
@@ -1237,21 +1465,21 @@ export async function registerRoutes(
   // === ANALYTICS ===
   app.get(api.analytics.stats.path, requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const stats = await storage.getStats(scopedSourceIds);
     res.json(stats);
   });
 
   app.get(api.analytics.sentimentTrend.path, requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const trend = await storage.getSentimentTrend(scopedSourceIds);
     res.json(trend);
   });
 
   app.get("/api/analytics/content-volume", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const clientId = resolveClientId(user, req);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
@@ -1262,7 +1490,7 @@ export async function registerRoutes(
 
   app.get("/api/analytics/trending-topics", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const clientId = resolveClientId(user, req);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
@@ -1273,7 +1501,7 @@ export async function registerRoutes(
 
   app.get("/api/analytics/keyword-analysis", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const clientId = resolveClientId(user, req);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
@@ -1284,7 +1512,7 @@ export async function registerRoutes(
 
   app.get("/api/analytics/sentiment-reports", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const clientId = resolveClientId(user, req);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
@@ -1295,7 +1523,7 @@ export async function registerRoutes(
 
   app.get("/api/analytics/source-behavior", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const clientId = resolveClientId(user, req);
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
@@ -1306,7 +1534,7 @@ export async function registerRoutes(
 
   app.get("/api/analytics/narrative-comparison", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const clientId = resolveClientId(user, req);
     const topic = req.query.topic as string;
     const startDate = req.query.startDate as string;
@@ -1324,7 +1552,7 @@ export async function registerRoutes(
 
   app.get("/api/analytics/daily-brief", requireAiEnabled(), requireCapability(CAPS.INTELLIGENCE_VIEW), async (req, res) => {
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const clientId = resolveClientId(user, req);
     const dateStr = (req.query.date as string) || new Date().toISOString().split("T")[0];
     if (isNaN(Date.parse(dateStr))) return res.status(400).json({ message: "valid date required" });
@@ -1339,7 +1567,7 @@ export async function registerRoutes(
 
   app.get("/api/analytics/keyword-detail", requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const clientId = resolveClientId(user, req);
     const keyword = req.query.keyword as string;
     const startDate = req.query.startDate as string;
@@ -1381,9 +1609,13 @@ export async function registerRoutes(
 
   app.post("/api/bookmarks", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    const userId = (req.user as any).id;
+    const user = req.user as any;
+    const userId = user.id;
+    const clientId = resolveClientId(user, req);
     const { articleId } = req.body;
     if (!articleId) return res.status(400).json({ message: "articleId required" });
+    const article = await storage.getArticle(Number(articleId), clientId || undefined);
+    if (!article) return safeNotFound(res);
     const bookmark = await storage.addBookmark(userId, articleId);
     res.status(201).json(bookmark);
   });
@@ -1402,9 +1634,10 @@ export async function registerRoutes(
     const user = req.user as any;
     if (!isSystemAdmin(user)) return res.status(403).json({ message: "Admin access required" });
     const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids array required" });
-    const deleted = await storage.deleteArticles(ids, clientId || undefined);
+    const deleted = await storage.deleteArticles(ids, clientId);
     if (deleted > 0) {
       runAnalyticsComputation().catch(e => console.error("[Analytics] Post-article-delete recomputation error:", e));
     }
@@ -1416,7 +1649,8 @@ export async function registerRoutes(
     const user = req.user as any;
     if (!isSystemAdmin(user)) return res.status(403).json({ message: "Admin access required" });
     const clientId = resolveClientId(user, req);
-    const deleted = await storage.deleteAllArticles(clientId || undefined);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+    const deleted = await storage.deleteAllArticles(clientId);
     if (deleted > 0) {
       runAnalyticsComputation().catch(e => console.error("[Analytics] Post-delete-all recomputation error:", e));
     }
@@ -1428,9 +1662,10 @@ export async function registerRoutes(
     const user = req.user as any;
     if (!isSystemAdmin(user)) return res.status(403).json({ message: "Admin access required" });
     const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
     const { ids, category } = req.body;
     if (!Array.isArray(ids) || ids.length === 0 || !category) return res.status(400).json({ message: "ids and category required" });
-    const updated = await storage.updateArticlesCategory(ids, category, clientId || undefined);
+    const updated = await storage.updateArticlesCategory(ids, category, clientId);
     res.json({ updated });
   });
 
@@ -1438,17 +1673,13 @@ export async function registerRoutes(
   app.get("/api/users", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    let allUsers;
-    if (isSystemAdmin(user)) {
-      allUsers = await storage.getUsers();
-    } else {
-      allUsers = await storage.getUsers(user.id);
-    }
-    const safeUsers = allUsers.map((u: any) => ({ id: u.id, username: u.username, role: u.role, userType: u.userType || null, parentId: u.parentId, clientId: u.clientId, disabled: u.disabled || false, createdAt: u.createdAt }));
+    if (!resolveClientId(user, req)) return res.json([]);
+    const allUsers = await getUsersForTenantScope(user, req);
+    const safeUsers = allUsers.map(toPublicUser);
     res.json(safeUsers);
   });
 
-  app.post("/api/users", requireCapability(CAPS.USERS_MANAGE), async (req, res) => {
+  app.post("/api/users", requireCapability(CAPS.USERS_INVITE), async (req, res) => {
     const currentUser = req.user as any;
     const { username, password, role, clientId: bodyClientId, userType: bodyUserType } = req.body;
     if (!username || !password) return res.status(400).json({ message: "Username and password required" });
@@ -1473,8 +1704,9 @@ export async function registerRoutes(
     const existingUser = await storage.getUserByUsername(username);
     if (existingUser) return res.status(400).json({ message: "Username already exists" });
 
-    let assignedRole = "client";
-    if (isSystemAdmin(currentUser) && role && [SYSTEM_ROLES.SYSTEM_ADMIN, SYSTEM_ROLES.CLIENT_ADMIN, SYSTEM_ROLES.CLIENT_USER, SYSTEM_ROLES.READONLY_USER].includes(role)) {
+    let assignedRole = SYSTEM_ROLES.CLIENT_USER;
+    const tenantRoles = [SYSTEM_ROLES.CLIENT_ADMIN, SYSTEM_ROLES.CLIENT_USER, SYSTEM_ROLES.READONLY_USER];
+    if (isSystemAdmin(currentUser) && role && tenantRoles.includes(role)) {
       assignedRole = role;
     }
 
@@ -1489,45 +1721,45 @@ export async function registerRoutes(
       username,
       password: hashedPassword,
       role: assignedRole,
+      userScope: "tenant",
       parentId: currentUser.id,
       clientId: resolvedClientId,
       userType: resolvedUserType,
     });
 
-    res.status(201).json({ id: newUser.id, username: newUser.username, role: newUser.role, userType: newUser.userType, parentId: newUser.parentId, clientId: newUser.clientId, createdAt: newUser.createdAt });
+    res.status(201).json(toPublicUser(newUser));
   });
 
-  app.patch("/api/users/:id/role", requireCapability(CAPS.USERS_MANAGE), async (req, res) => {
+  app.patch("/api/users/:id/role", requireCapability(CAPS.USERS_ASSIGN_ROLES), async (req, res) => {
     const currentUser = req.user as any;
     const id = parseInt(req.params.id);
     if (id === currentUser.id) return res.status(400).json({ message: "Cannot change your own role" });
 
-    if (!isSystemAdmin(currentUser)) {
-      const targetUser = await storage.getUser(id);
-      if (!targetUser || targetUser.parentId !== currentUser.id) {
-        return safeNotFound(res);
-      }
-    }
+    const targetUser = await getScopedUserOrNotFound(id, currentUser, req, res);
+    if (!targetUser) return;
 
     const { role } = req.body;
     const validRoles = Object.values(SYSTEM_ROLES);
     if (!role || !validRoles.includes(role)) return res.status(400).json({ message: "Invalid role" });
+    const selectedClientId = resolveClientId(currentUser, req);
+    if (selectedClientId && role === SYSTEM_ROLES.SYSTEM_ADMIN) {
+      return res.status(400).json({ message: "Tenant staff cannot use platform admin role" });
+    }
+    if (!isSystemAdmin(currentUser) && role === SYSTEM_ROLES.SYSTEM_ADMIN) {
+      return res.status(403).json({ message: "Cannot assign platform admin role" });
+    }
     const updated = await storage.updateUserRole(id, role);
     if (!updated) return res.status(404).json({ message: "User not found" });
-    res.json({ id: updated.id, username: updated.username, role: updated.role, userType: updated.userType, parentId: updated.parentId, clientId: updated.clientId, createdAt: updated.createdAt });
+    res.json(toPublicUser(updated));
   });
 
-  app.patch("/api/users/:id/user-type", requireCapability(CAPS.USERS_MANAGE), async (req, res) => {
+  app.patch("/api/users/:id/user-type", requireCapability(CAPS.USERS_EDIT), async (req, res) => {
     const currentUser = req.user as any;
     const id = parseInt(req.params.id);
     if (id === currentUser.id) return res.status(400).json({ message: "Cannot change your own user type" });
 
-    if (!isSystemAdmin(currentUser)) {
-      const targetUser = await storage.getUser(id);
-      if (!targetUser || targetUser.parentId !== currentUser.id) {
-        return safeNotFound(res);
-      }
-    }
+    const targetUser = await getScopedUserOrNotFound(id, currentUser, req, res);
+    if (!targetUser) return;
 
     const { userType } = req.body;
     const validUserTypes = ["reader", "analyst", "editor", "monitor", "executive", "integrations_manager"];
@@ -1535,7 +1767,7 @@ export async function registerRoutes(
 
     const updated = await storage.updateUserType(id, userType);
     if (!updated) return res.status(404).json({ message: "User not found" });
-    res.json({ id: updated.id, username: updated.username, role: updated.role, userType: updated.userType, parentId: updated.parentId, clientId: updated.clientId, createdAt: updated.createdAt });
+    res.json(toPublicUser(updated));
   });
 
   app.patch("/api/users/:id/password", async (req, res) => {
@@ -1548,8 +1780,8 @@ export async function registerRoutes(
     if (id === currentUser.id) return res.status(400).json({ message: "Use your account settings to change your own password" });
     const { password } = req.body;
     if (!password || password.length < 4) return res.status(400).json({ message: "Password must be at least 4 characters" });
-    const targetUser = await storage.getUser(id);
-    if (!targetUser) return safeNotFound(res);
+    const targetUser = await getScopedUserOrNotFound(id, currentUser, req, res);
+    if (!targetUser) return;
     const salt = randomBytes(16).toString("hex");
     const buf = (await scryptAsync(password, salt, 64)) as Buffer;
     const hashedPassword = `${salt}:${buf.toString("hex")}`;
@@ -1557,17 +1789,13 @@ export async function registerRoutes(
     res.json({ message: "Password updated successfully" });
   });
 
-  app.delete("/api/users/:id", requireCapability(CAPS.USERS_MANAGE), async (req, res) => {
+  app.delete("/api/users/:id", requireCapability(CAPS.USERS_DISABLE), async (req, res) => {
     const currentUser = req.user as any;
     const id = parseInt(req.params.id);
     if (id === currentUser.id) return res.status(400).json({ message: "Cannot delete yourself" });
 
-    if (!isSystemAdmin(currentUser)) {
-      const targetUser = await storage.getUser(id);
-      if (!targetUser || targetUser.parentId !== currentUser.id) {
-        return safeNotFound(res);
-      }
-    }
+    const targetUser = await getScopedUserOrNotFound(id, currentUser, req, res);
+    if (!targetUser) return;
 
     await storage.deleteUser(id);
     res.sendStatus(204);
@@ -1576,7 +1804,7 @@ export async function registerRoutes(
   // === SOURCE HEALTH ===
   app.get("/api/source-health", requireCapability(CAPS.SOURCE_HEALTH_VIEW), async (req, res) => {
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const health = await storage.getSourceHealth(scopedSourceIds);
     res.json(health);
   });
@@ -1585,7 +1813,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const sourceId = parseInt(req.params.sourceId);
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     if (scopedSourceIds && !scopedSourceIds.includes(sourceId)) {
       return safeNotFound(res);
     }
@@ -1597,7 +1825,7 @@ export async function registerRoutes(
   app.get("/api/ingestion-logs", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const params = {
       from: req.query.from as string,
       to: req.query.to as string,
@@ -1616,7 +1844,7 @@ export async function registerRoutes(
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const sentimentData = await storage.getSentimentReports(startDate, endDate, scopedSourceIds, clientId || undefined);
     const csvHeader = "Source,Positive,Negative,Neutral,Total\n";
     const csvRows = sentimentData.bySource.map(s => {
@@ -1638,20 +1866,22 @@ export async function registerRoutes(
 
   app.get("/api/admin/sources", async (req, res) => {
     if (!requireAdmin(req, res)) return;
-    const allSources = await storage.getSources();
+    const user = req.user as any;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const allSources = await storage.getSources(clientId || undefined);
     res.json(allSources);
   });
 
   app.get("/api/sources/article-counts", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user) || [];
+    const scopedSourceIds = await getUserSourceIds(user, req) || [];
     try {
       let counts;
       if (scopedSourceIds.length > 0) {
-        counts = await db.execute(sql`SELECT source_id, COUNT(*)::int as count FROM articles WHERE source_id IS NOT NULL AND source_id = ANY(${scopedSourceIds}) GROUP BY source_id`);
-      } else if (isSystemAdmin(user)) {
-        counts = await db.execute(sql`SELECT source_id, COUNT(*)::int as count FROM articles WHERE source_id IS NOT NULL GROUP BY source_id`);
+        const sourceIdList = sql.join(scopedSourceIds.map(id => sql`${id}`), sql`, `);
+        counts = await db.execute(sql`SELECT source_id, COUNT(*)::int as count FROM articles WHERE source_id IS NOT NULL AND source_id IN (${sourceIdList}) GROUP BY source_id`);
       } else {
         return res.json({});
       }
@@ -1672,8 +1902,9 @@ export async function registerRoutes(
       const { name, url, type, active, intervalMinutes, maxArticlesPerFetch, retentionDays, country, refreshPriority } = req.body;
       if (!name || !url || !type) return res.status(400).json({ message: "name, url, and type are required" });
       const adminClientId = req.body.clientId || resolveClientId(user, req);
+      if (!adminClientId) return res.status(400).json({ message: "Tenant context required" });
       const logoUrl = getSourceLogoUrl(url, name);
-      const source = await storage.createSource({ name: sanitizeInput(name), url, type, active: active !== false, intervalMinutes: intervalMinutes || 15, maxArticlesPerFetch: maxArticlesPerFetch || 10, retentionDays: retentionDays || 30, country: country || null, refreshPriority: refreshPriority || "medium", userId: user.id, clientId: adminClientId || undefined, logoUrl });
+      const source = await storage.createSource({ name: sanitizeInput(name), url, type, active: active !== false, intervalMinutes: intervalMinutes || 15, maxArticlesPerFetch: maxArticlesPerFetch || 10, retentionDays: retentionDays || 30, country: country || null, refreshPriority: refreshPriority || "medium", userId: user.id, clientId: adminClientId, logoUrl });
       await storage.createAuditLog({ userId: user.id, action: "create", entity: "source", entityId: source.id, details: `Created source: ${source.name}` });
       setTimeout(async () => { try { await fetchSourceFeed(source.id); } catch {} }, 1000);
       res.status(201).json(source);
@@ -1687,13 +1918,15 @@ export async function registerRoutes(
     const user = req.user as any;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid source ID" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
     const allowedFields = ['name', 'url', 'type', 'active', 'intervalMinutes', 'maxArticlesPerFetch', 'retentionDays', 'country', 'refreshPriority'] as const;
     const cleanUpdates: Record<string, any> = {};
     for (const key of allowedFields) {
       if (key in req.body && req.body[key] !== undefined) cleanUpdates[key] = req.body[key];
     }
     if (Object.keys(cleanUpdates).length === 0) return res.status(400).json({ message: "No valid fields to update" });
-    const source = await storage.updateSource(id, cleanUpdates);
+    const source = await storage.updateSource(id, cleanUpdates, clientId);
     if (!source) return res.status(404).json({ message: "Source not found" });
     await storage.createAuditLog({ userId: user.id, action: "update", entity: "source", entityId: id, details: `Updated source: ${JSON.stringify(cleanUpdates)}` });
     res.json(source);
@@ -1704,7 +1937,9 @@ export async function registerRoutes(
     const user = req.user as any;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid source ID" });
-    await storage.softDeleteSource(id);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    await storage.softDeleteSource(id, clientId);
     await storage.createAuditLog({ userId: user.id, action: "soft_delete", entity: "source", entityId: id, details: `Soft-deleted source #${id}` });
     res.sendStatus(204);
   });
@@ -1714,7 +1949,9 @@ export async function registerRoutes(
     const user = req.user as any;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid source ID" });
-    await storage.restoreSource(id);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    await storage.restoreSource(id, clientId);
     await storage.createAuditLog({ userId: user.id, action: "restore", entity: "source", entityId: id, details: `Restored source #${id}` });
     res.json({ success: true });
   });
@@ -1835,8 +2072,9 @@ export async function registerRoutes(
   // === ADMIN: USERS MANAGEMENT ===
   app.get("/api/admin/users", async (req, res) => {
     if (!requireAdmin(req, res)) return;
-    const allUsers = await storage.getUsers();
-    const safeUsers = allUsers.map((u: any) => ({ id: u.id, username: u.username, role: u.role, parentId: u.parentId, clientId: u.clientId, disabled: u.disabled, createdAt: u.createdAt }));
+    const adminUser = req.user as any;
+    const allUsers = await getUsersForTenantScope(adminUser, req, true);
+    const safeUsers = allUsers.map(toPublicUser);
     res.json(safeUsers);
   });
 
@@ -1845,7 +2083,18 @@ export async function registerRoutes(
     const adminUser = req.user as any;
     const { username, password, role, clientId } = req.body;
     if (!username || !password) return res.status(400).json({ message: "Username and password required" });
-    const resolvedClientId = clientId || null;
+    const selectedClientId = resolveClientId(adminUser, req);
+    if (!selectedClientId && clientId) {
+      return res.status(400).json({ message: "Select a tenant before creating tenant staff. Platform mode can only create admin staff." });
+    }
+    const requestedClientId = clientId !== undefined && clientId !== null ? Number(clientId) : null;
+    if (requestedClientId !== null && Number.isNaN(requestedClientId)) {
+      return res.status(400).json({ message: "Invalid client ID" });
+    }
+    const resolvedClientId = requestedClientId || selectedClientId || SYSTEM_CLIENT_ID;
+    if (selectedClientId && resolvedClientId !== selectedClientId) {
+      return res.status(403).json({ message: "Cannot create user outside selected tenant" });
+    }
     if (resolvedClientId) {
       const sub = await storage.getSubscription(resolvedClientId);
       if (sub) {
@@ -1855,15 +2104,30 @@ export async function registerRoutes(
         }
       }
     }
-    if (!["admin", "client", "viewer"].includes(role || "client")) return res.status(400).json({ message: "Invalid role" });
+    const validRoles = Object.values(SYSTEM_ROLES);
+    const resolvedRole = selectedClientId ? (role || SYSTEM_ROLES.CLIENT_USER) : SYSTEM_ROLES.SYSTEM_ADMIN;
+    if (!validRoles.includes(resolvedRole)) return res.status(400).json({ message: "Invalid role" });
+    if (!selectedClientId && resolvedRole !== SYSTEM_ROLES.SYSTEM_ADMIN) {
+      return res.status(400).json({ message: "Platform user must be an admin" });
+    }
+    if (selectedClientId && resolvedRole === SYSTEM_ROLES.SYSTEM_ADMIN) {
+      return res.status(400).json({ message: "Tenant staff cannot use platform admin role" });
+    }
     const existingUser = await storage.getUserByUsername(username);
     if (existingUser) return res.status(400).json({ message: "Username already exists" });
     const salt = randomBytes(16).toString("hex");
     const buf = (await scryptAsync(password, salt, 64)) as Buffer;
     const hashedPassword = `${salt}:${buf.toString("hex")}`;
-    const newUser = await storage.createUser({ username: sanitizeInput(username), password: hashedPassword, role: role || "client", parentId: adminUser.id, clientId: clientId || null });
+    const newUser = await storage.createUser({
+      username: sanitizeInput(username),
+      password: hashedPassword,
+      role: resolvedRole,
+      userScope: selectedClientId ? "tenant" : "platform",
+      parentId: adminUser.id,
+      clientId: resolvedClientId,
+    });
     await storage.createAuditLog({ userId: adminUser.id, action: "create", entity: "user", entityId: newUser.id, details: `Created user: ${newUser.username} (${newUser.role})` });
-    res.status(201).json({ id: newUser.id, username: newUser.username, role: newUser.role, parentId: newUser.parentId, clientId: newUser.clientId, disabled: newUser.disabled, createdAt: newUser.createdAt });
+    res.status(201).json(toPublicUser(newUser));
   });
 
   app.put("/api/admin/users/:id", async (req, res) => {
@@ -1872,9 +2136,21 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid user ID" });
     if (id === adminUser.id) return res.status(400).json({ message: "Cannot modify your own account via admin" });
+    const targetUser = await getScopedUserOrNotFound(id, adminUser, req, res);
+    if (!targetUser) return;
     const allowedFields: Record<string, any> = {};
     if (req.body.role && ["admin", "client", "viewer"].includes(req.body.role)) allowedFields.role = req.body.role;
-    if (req.body.clientId !== undefined) allowedFields.clientId = req.body.clientId;
+    const selectedClientId = resolveClientId(adminUser, req);
+    if (req.body.clientId !== undefined) {
+      const requestedClientId = req.body.clientId !== null ? Number(req.body.clientId) : null;
+      if (requestedClientId !== null && Number.isNaN(requestedClientId)) {
+        return res.status(400).json({ message: "Invalid client ID" });
+      }
+      if (selectedClientId && requestedClientId !== selectedClientId) {
+        return res.status(403).json({ message: "Cannot move user outside selected tenant" });
+      }
+      allowedFields.clientId = requestedClientId;
+    }
     if (typeof req.body.disabled === "boolean") allowedFields.disabled = req.body.disabled;
     if (req.body.password && typeof req.body.password === "string" && req.body.password.length >= 4) {
       const salt = randomBytes(16).toString("hex");
@@ -1885,7 +2161,7 @@ export async function registerRoutes(
     const updated = await storage.updateUser(id, allowedFields);
     if (!updated) return res.status(404).json({ message: "User not found" });
     await storage.createAuditLog({ userId: adminUser.id, action: "update", entity: "user", entityId: id, details: `Updated user #${id}: ${Object.keys(allowedFields).join(", ")}` });
-    res.json({ id: updated.id, username: updated.username, role: updated.role, parentId: updated.parentId, clientId: updated.clientId, disabled: updated.disabled, createdAt: updated.createdAt });
+    res.json(toPublicUser(updated));
   });
 
   app.delete("/api/admin/users/:id", async (req, res) => {
@@ -1894,6 +2170,8 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid user ID" });
     if (id === adminUser.id) return res.status(400).json({ message: "Cannot delete yourself" });
+    const targetUser = await getScopedUserOrNotFound(id, adminUser, req, res);
+    if (!targetUser) return;
     await storage.deleteUser(id);
     await storage.createAuditLog({ userId: adminUser.id, action: "delete", entity: "user", entityId: id, details: `Deleted user #${id}` });
     res.sendStatus(204);
@@ -3002,9 +3280,12 @@ export async function registerRoutes(
 
   // === SEED & START WORKERS ===
   await seed();
-  // registerArticleAnalysisHandler(); // AI disabled
-  startFeedWorker();
-  // await startScheduler(); // AI disabled
+  const isCloudflareWorker = process.env.CF_WORKER === "1";
+  if (!isCloudflareWorker) {
+    // registerArticleAnalysisHandler(); // AI disabled
+    startFeedWorker();
+    // await startScheduler(); // AI disabled
+  }
   registerJobHandler("COMPUTE_ANALYTICS", async () => {
     await runAnalyticsComputation();
     return { completed: true };
@@ -3022,13 +3303,15 @@ export async function registerRoutes(
   //   return { completed: true };
   // });
 
-  startQueueProcessor();
-  startPeriodicJobs();
-  // startLearningWorker(); // AI disabled
+  if (!isCloudflareWorker) {
+    startQueueProcessor();
+    startPeriodicJobs();
+    // startLearningWorker(); // AI disabled
 
-  setTimeout(() => {
-    runAnalyticsComputation().catch(e => console.error("[Analytics] Initial computation error:", e));
-  }, 30000);
+    setTimeout(() => {
+      runAnalyticsComputation().catch(e => console.error("[Analytics] Initial computation error:", e));
+    }, 30000);
+  }
 
   app.get("/api/stories", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
@@ -3204,11 +3487,7 @@ export async function registerRoutes(
     const limits = sub ? PLAN_LIMITS[sub.plan as keyof typeof PLAN_LIMITS] : PLAN_LIMITS.basic;
     const activeUsers = await storage.getActiveUserCount(clientId);
     const clientKws = await storage.getClientKeywords(clientId);
-    const allSources = await storage.getSources();
-    const clientUsers = await storage.getUsersByClientId(clientId);
-    const clientUserIds = new Set(clientUsers.map((u: any) => u.id));
-    clientUserIds.add(clientId);
-    const userSources = allSources.filter((s: any) => clientUserIds.has(s.userId));
+    const userSources = await storage.getSources(clientId);
     res.json({
       plan: sub?.plan || "basic",
       status: sub?.status || "trial",
@@ -3363,7 +3642,7 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
-    const scopedSourceIds = await getUserSourceIds(user);
+    const scopedSourceIds = await getUserSourceIds(user, req);
     const articles = await storage.getArticles({ limit: 5, sourceIds: scopedSourceIds, clientId: clientId || undefined });
     const events = await storage.getDetectedEvents({ limit: 5, clientId: clientId || undefined });
     const briefs = await storage.getDailyBriefs(1, clientId || undefined);
@@ -3995,6 +4274,7 @@ export async function registerRoutes(
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
+    if (!clientId) return res.json([]);
     const ws = await storage.getWorkspaces(clientId || undefined);
     res.json(ws);
   });
@@ -4002,13 +4282,14 @@ export async function registerRoutes(
   app.post("/api/collaboration/workspaces", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
     const schema = z.object({ name: z.string().min(1).max(200), description: z.string().optional() });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
     const ws = await storage.createWorkspace({ ...parsed.data, clientId, createdBy: user.id });
     await storage.addWorkspaceMember({ workspaceId: ws.id, userId: user.id, role: "owner" });
-    await storage.createActivityEvent({ workspaceId: ws.id, actorId: user.id, verb: "created_workspace", targetType: "workspace", targetId: ws.id });
+    await storage.createActivityEvent({ workspaceId: ws.id, actorId: user.id, verb: "created_workspace", targetType: "workspace", targetId: ws.id, clientId });
     res.status(201).json(ws);
   });
 
@@ -4038,7 +4319,11 @@ export async function registerRoutes(
     const ws = await storage.getWorkspace(parseInt(req.params.id));
     if (!ws) return res.status(404).json({ message: "Not found" });
     try { assertTenant(ws.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
-    const member = await storage.addWorkspaceMember({ workspaceId: parseInt(req.params.id), userId: req.body.userId, role: req.body.role || "member" });
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+    const targetUserId = Number(req.body.userId);
+    if (!targetUserId || Number.isNaN(targetUserId)) return res.status(400).json({ message: "Valid userId required" });
+    if (!(await ensureUserInTenant(targetUserId, clientId, res))) return;
+    const member = await storage.addWorkspaceMember({ workspaceId: parseInt(req.params.id), userId: targetUserId, role: req.body.role || "member" });
     res.status(201).json(member);
   });
 
@@ -4054,6 +4339,7 @@ export async function registerRoutes(
   });
 
   async function verifyTargetOwnership(targetType: string, targetId: number, clientId: number): Promise<boolean> {
+    if (!Number.isInteger(targetId) || targetId <= 0) return false;
     switch (targetType) {
       case "article": {
         const article = await storage.getArticle(targetId, clientId);
@@ -4075,8 +4361,12 @@ export async function registerRoutes(
         const ws = await storage.getWorkspace(targetId);
         return !!ws && ws.clientId === clientId;
       }
+      case "task": {
+        const task = await storage.getTask(targetId);
+        return !!task && task.clientId === clientId;
+      }
       default:
-        return true;
+        return false;
     }
   }
 
@@ -4084,30 +4374,34 @@ export async function registerRoutes(
   app.get("/api/collaboration/comments/:targetType/:targetId", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
     const targetType = req.params.targetType;
     const targetId = parseInt(req.params.targetId);
-    if (clientId) {
-      const hasAccess = await verifyTargetOwnership(targetType, targetId, clientId);
-      if (!hasAccess) return res.status(404).json({ message: "Not found" });
-    }
-    const cmts = await storage.getComments(targetType, targetId);
+    const hasAccess = await verifyTargetOwnership(targetType, targetId, clientId);
+    if (!hasAccess) return res.status(404).json({ message: "Not found" });
+    const cmts = await storage.getComments(targetType, targetId, clientId || undefined);
     res.json(cmts);
   });
 
   app.post("/api/collaboration/comments", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
     const schema = z.object({ targetType: z.string().min(1), targetId: z.number().int(), message: z.string().min(1), parentId: z.number().int().optional(), workspaceId: z.number().int().optional() });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
-    if (clientId) {
+    {
       const hasAccess = await verifyTargetOwnership(parsed.data.targetType, parsed.data.targetId, clientId);
       if (!hasAccess) return res.status(404).json({ message: "Not found" });
+      if (parsed.data.workspaceId) {
+        const workspace = await getWorkspaceForTenantOrNotFound(parsed.data.workspaceId, clientId, res);
+        if (workspace === undefined) return;
+      }
     }
-    const cmt = await storage.createComment({ ...parsed.data, userId: user.id });
-    await storage.createActivityEvent({ workspaceId: parsed.data.workspaceId, actorId: user.id, verb: "commented", targetType: parsed.data.targetType, targetId: parsed.data.targetId });
+    const cmt = await storage.createComment({ ...parsed.data, userId: user.id, clientId });
+    await storage.createActivityEvent({ workspaceId: parsed.data.workspaceId, actorId: user.id, verb: "commented", targetType: parsed.data.targetType, targetId: parsed.data.targetId, clientId });
     res.status(201).json(cmt);
   });
 
@@ -4122,30 +4416,34 @@ export async function registerRoutes(
   app.get("/api/collaboration/annotations/:targetType/:targetId", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
     const targetType = req.params.targetType;
     const targetId = parseInt(req.params.targetId);
-    if (clientId) {
-      const hasAccess = await verifyTargetOwnership(targetType, targetId, clientId);
-      if (!hasAccess) return res.status(404).json({ message: "Not found" });
-    }
-    const notes = await storage.getAnnotations(targetType, targetId);
+    const hasAccess = await verifyTargetOwnership(targetType, targetId, clientId);
+    if (!hasAccess) return res.status(404).json({ message: "Not found" });
+    const notes = await storage.getAnnotations(targetType, targetId, clientId || undefined);
     res.json(notes);
   });
 
   app.post("/api/collaboration/annotations", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
     const schema = z.object({ targetType: z.string().min(1), targetId: z.number().int(), noteType: z.enum(["observation", "warning", "hypothesis", "conclusion"]), content: z.string().min(1), workspaceId: z.number().int().optional() });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
-    if (clientId) {
+    {
       const hasAccess = await verifyTargetOwnership(parsed.data.targetType, parsed.data.targetId, clientId);
       if (!hasAccess) return res.status(404).json({ message: "Not found" });
+      if (parsed.data.workspaceId) {
+        const workspace = await getWorkspaceForTenantOrNotFound(parsed.data.workspaceId, clientId, res);
+        if (workspace === undefined) return;
+      }
     }
-    const note = await storage.createAnnotation({ ...parsed.data, userId: user.id });
-    await storage.createActivityEvent({ workspaceId: parsed.data.workspaceId, actorId: user.id, verb: "annotated", targetType: parsed.data.targetType, targetId: parsed.data.targetId, metadata: { noteType: parsed.data.noteType } });
+    const note = await storage.createAnnotation({ ...parsed.data, userId: user.id, clientId });
+    await storage.createActivityEvent({ workspaceId: parsed.data.workspaceId, actorId: user.id, verb: "annotated", targetType: parsed.data.targetType, targetId: parsed.data.targetId, metadata: { noteType: parsed.data.noteType }, clientId });
     res.status(201).json(note);
   });
 
@@ -4161,7 +4459,12 @@ export async function registerRoutes(
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
+    if (!clientId) return res.json([]);
     const wId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
+    if (clientId && wId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(wId, clientId, res);
+      if (workspace === undefined) return;
+    }
     const reports = await storage.getSharedReports({ clientId: clientId || undefined, workspaceId: wId });
     res.json(reports);
   });
@@ -4169,11 +4472,16 @@ export async function registerRoutes(
   app.post("/api/collaboration/reports", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    if (req.body.workspaceId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(Number(req.body.workspaceId), clientId, res);
+      if (workspace === undefined) return;
+    }
     const crypto = await import("crypto");
     const shareToken = crypto.randomBytes(24).toString("hex");
     const report = await storage.createSharedReport({ ...req.body, createdBy: user.id, clientId, shareToken });
-    await storage.createActivityEvent({ workspaceId: req.body.workspaceId, actorId: user.id, verb: "created_report", targetType: "report", targetId: report.id });
+    await storage.createActivityEvent({ workspaceId: req.body.workspaceId, actorId: user.id, verb: "created_report", targetType: "report", targetId: report.id, clientId });
     res.status(201).json(report);
   });
 
@@ -4183,7 +4491,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const report = await storage.updateSharedReport(parseInt(req.params.id), req.body, clientId || undefined);
     if (!report) return res.status(404).json({ message: "Not found" });
-    await storage.createChangeHistory({ userId: user.id, entityType: "report", entityId: report.id, changeType: "updated", details: req.body });
+    await storage.createChangeHistory({ userId: user.id, entityType: "report", entityId: report.id, changeType: "updated", details: req.body, clientId: report.clientId });
     res.json(report);
   });
 
@@ -4237,7 +4545,12 @@ export async function registerRoutes(
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
+    if (!clientId) return res.json([]);
     const wId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
+    if (clientId && wId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(wId, clientId, res);
+      if (workspace === undefined) return;
+    }
     const tags = await storage.getCustomTags({ clientId: clientId || undefined, workspaceId: wId });
     res.json(tags);
   });
@@ -4245,7 +4558,12 @@ export async function registerRoutes(
   app.post("/api/collaboration/tags", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    if (req.body.workspaceId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(Number(req.body.workspaceId), clientId, res);
+      if (workspace === undefined) return;
+    }
     const tag = await storage.createCustomTag({ ...req.body, clientId, createdBy: user.id });
     res.status(201).json(tag);
   });
@@ -4261,6 +4579,10 @@ export async function registerRoutes(
   app.get("/api/collaboration/tag-assignments/:targetType/:targetId", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const hasAccess = await verifyTargetOwnership(req.params.targetType, parseInt(req.params.targetId), clientId);
+    if (!hasAccess) return res.status(404).json({ message: "Not found" });
     const assignments = await storage.getTagAssignments(req.params.targetType, parseInt(req.params.targetId));
     res.json(assignments);
   });
@@ -4268,7 +4590,16 @@ export async function registerRoutes(
   app.post("/api/collaboration/tag-assignments", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const assignment = await storage.createTagAssignment({ ...req.body, createdBy: user.id });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const schema = z.object({ tagId: z.number().int(), targetType: z.string().min(1), targetId: z.number().int() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const tags = await storage.getCustomTags({ clientId });
+    if (!tags.some((tag: any) => tag.id === parsed.data.tagId)) return res.status(404).json({ message: "Not found" });
+    const hasAccess = await verifyTargetOwnership(parsed.data.targetType, parsed.data.targetId, clientId);
+    if (!hasAccess) return res.status(404).json({ message: "Not found" });
+    const assignment = await storage.createTagAssignment({ ...parsed.data, createdBy: user.id });
     res.status(201).json(assignment);
   });
 
@@ -4284,9 +4615,15 @@ export async function registerRoutes(
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
+    if (!clientId) return res.json([]);
     const wsId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
     const assignedTo = req.query.assignedTo ? parseInt(req.query.assignedTo as string) : undefined;
     const status = req.query.status as string | undefined;
+    if (clientId && wsId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(wsId, clientId, res);
+      if (workspace === undefined) return;
+    }
+    if (clientId && assignedTo && !(await ensureUserInTenant(assignedTo, clientId, res))) return;
     const taskList = await storage.getTasks({ workspaceId: wsId, assignedTo, status }, clientId || undefined);
     res.json(taskList);
   });
@@ -4299,6 +4636,11 @@ export async function registerRoutes(
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
     if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+    if (parsed.data.workspaceId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(parsed.data.workspaceId, clientId, res);
+      if (workspace === undefined) return;
+    }
+    if (!(await ensureUserInTenant(parsed.data.assignedTo, clientId, res))) return;
     const task = await storage.createTask({ ...parsed.data, createdBy: user.id, clientId });
     await storage.createActivityEvent({ workspaceId: parsed.data.workspaceId, actorId: user.id, verb: "created_task", targetType: "task", targetId: task.id, clientId });
     res.status(201).json(task);
@@ -4311,6 +4653,12 @@ export async function registerRoutes(
     const existingTask = await storage.getTask(parseInt(req.params.id));
     if (!existingTask) return res.status(404).json({ message: "Not found" });
     try { assertTenant(existingTask.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
+    const taskClientId = clientId || existingTask.clientId;
+    if (req.body.workspaceId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(Number(req.body.workspaceId), taskClientId, res);
+      if (workspace === undefined) return;
+    }
+    if (!(await ensureUserInTenant(req.body.assignedTo, taskClientId, res))) return;
     const task = await storage.updateTask(parseInt(req.params.id), req.body);
     if (!task) return res.status(404).json({ message: "Not found" });
     if (req.body.status === "resolved") {
@@ -4341,7 +4689,9 @@ export async function registerRoutes(
   app.post("/api/collaboration/watchlists", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const item = await storage.createWatchlist({ ...req.body, userId: user.id });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const item = await storage.createWatchlist({ ...req.body, userId: user.id, clientId });
     res.status(201).json(item);
   });
 
@@ -4363,8 +4713,21 @@ export async function registerRoutes(
   app.post("/api/collaboration/alerts", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const alert = await storage.createInternalAlert({ ...req.body, senderId: user.id });
-    await storage.createActivityEvent({ workspaceId: req.body.workspaceId, actorId: user.id, verb: "sent_alert", targetType: "alert", targetId: alert.id });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const receiverId = Number(req.body.receiverId);
+    if (!receiverId || Number.isNaN(receiverId)) return res.status(400).json({ message: "Valid receiverId required" });
+    if (!(await ensureUserInTenant(receiverId, clientId, res))) return;
+    if (req.body.workspaceId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(Number(req.body.workspaceId), clientId, res);
+      if (workspace === undefined) return;
+    }
+    if (req.body.targetType && req.body.targetId) {
+      const hasAccess = await verifyTargetOwnership(String(req.body.targetType), Number(req.body.targetId), clientId);
+      if (!hasAccess) return res.status(404).json({ message: "Not found" });
+    }
+    const alert = await storage.createInternalAlert({ ...req.body, senderId: user.id, receiverId, clientId });
+    await storage.createActivityEvent({ workspaceId: req.body.workspaceId, actorId: user.id, verb: "sent_alert", targetType: "alert", targetId: alert.id, clientId });
     res.status(201).json(alert);
   });
 
@@ -4379,7 +4742,11 @@ export async function registerRoutes(
   app.get("/api/collaboration/history/:entityType/:entityId", async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const history = await storage.getChangeHistory(req.params.entityType, parseInt(req.params.entityId));
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const hasAccess = await verifyTargetOwnership(req.params.entityType, parseInt(req.params.entityId), clientId);
+    if (!hasAccess) return res.status(404).json({ message: "Not found" });
+    const history = await storage.getChangeHistory(req.params.entityType, parseInt(req.params.entityId), clientId || undefined);
     res.json(history);
   });
 
@@ -4388,8 +4755,13 @@ export async function registerRoutes(
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = resolveClientId(user, req);
+    if (!clientId) return res.json([]);
     const wsId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+    if (clientId && wsId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(wsId, clientId, res);
+      if (workspace === undefined) return;
+    }
     const events = await storage.getActivityFeed({ workspaceId: wsId, limit }, clientId || undefined);
     res.json(events);
   });
@@ -4402,8 +4774,10 @@ export async function registerRoutes(
     let members: any[] = [];
     if (clientId) {
       members = await storage.getUsersByClientId(clientId);
-    } else {
+    } else if (isSystemAdmin(user)) {
       members = await storage.getUsers();
+    } else {
+      return res.status(403).json({ message: "No organization assigned" });
     }
     res.json(members.map(m => ({ id: m.id, username: m.username, role: m.role })));
   });
@@ -4431,15 +4805,24 @@ function renderWidgetContent(widgetType: string, data: any): string {
 }
 
 async function seed() {
+  if (process.env.SEED_DEMO_DATA !== "1") {
+    return;
+  }
   const existingSources = await storage.getSources();
   if (existingSources.length === 0) {
     console.log("Seeding sources...");
+    const [seedClient] = await storage.getClients();
+    if (!seedClient) {
+      console.log("Skipping source seed: no client exists.");
+      return;
+    }
     await storage.createSource({
       name: "TechCrunch",
       url: "https://techcrunch.com/feed/",
       type: "rss",
       active: true,
       intervalMinutes: 15,
+      clientId: seedClient.id,
     });
     await storage.createSource({
       name: "The Verge",
@@ -4447,6 +4830,7 @@ async function seed() {
       type: "rss",
       active: true,
       intervalMinutes: 15,
+      clientId: seedClient.id,
     });
     await storage.createSource({
       name: "BBC News",
@@ -4454,6 +4838,7 @@ async function seed() {
       type: "rss",
       active: true,
       intervalMinutes: 10,
+      clientId: seedClient.id,
     });
     await storage.createSource({
       name: "Reuters",
@@ -4461,6 +4846,7 @@ async function seed() {
       type: "rss",
       active: true,
       intervalMinutes: 10,
+      clientId: seedClient.id,
     });
     await storage.createSource({
       name: "Al Jazeera",
@@ -4468,6 +4854,7 @@ async function seed() {
       type: "rss",
       active: true,
       intervalMinutes: 15,
+      clientId: seedClient.id,
     });
     console.log("Sources seeded.");
   }

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useTranslation } from "react-i18next";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -807,6 +808,7 @@ function AiAssistantTab() {
 export default function IntelligencePage() {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const { isAdmin } = usePermissions();
   const [mode, setMode] = useViewMode();
 
   const refreshIntelligence = useMutation({
@@ -855,25 +857,29 @@ export default function IntelligencePage() {
           <p className="text-muted-foreground text-sm">AI-powered news intelligence and analysis</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => refreshAnalytics.mutate()}
-            disabled={refreshAnalytics.isPending}
-            data-testid="button-refresh-analytics"
-          >
-            <RefreshCw className={`w-4 h-4 mr-1 ${refreshAnalytics.isPending ? "animate-spin" : ""}`} />
-            {refreshAnalytics.isPending ? "Refreshing..." : "Refresh Analytics"}
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => refreshIntelligence.mutate()}
-            disabled={refreshIntelligence.isPending}
-            data-testid="button-build-intelligence"
-          >
-            <Brain className={`w-4 h-4 mr-1 ${refreshIntelligence.isPending ? "animate-spin" : ""}`} />
-            {refreshIntelligence.isPending ? "Building..." : "Build Intelligence"}
-          </Button>
+          {isAdmin && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refreshAnalytics.mutate()}
+                disabled={refreshAnalytics.isPending}
+                data-testid="button-refresh-analytics"
+              >
+                <RefreshCw className={`w-4 h-4 mr-1 ${refreshAnalytics.isPending ? "animate-spin" : ""}`} />
+                {refreshAnalytics.isPending ? "Refreshing..." : "Refresh Analytics"}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => refreshIntelligence.mutate()}
+                disabled={refreshIntelligence.isPending}
+                data-testid="button-build-intelligence"
+              >
+                <Brain className={`w-4 h-4 mr-1 ${refreshIntelligence.isPending ? "animate-spin" : ""}`} />
+                {refreshIntelligence.isPending ? "Building..." : "Build Intelligence"}
+              </Button>
+            </>
+          )}
           <div className="flex items-center gap-2" data-testid="toggle-view-mode">
             <Eye className="w-4 h-4 text-muted-foreground" />
             <span className="text-xs font-medium text-muted-foreground">Executive</span>

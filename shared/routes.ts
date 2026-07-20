@@ -3,6 +3,12 @@ import { insertUserSchema, insertSourceSchema, insertKeywordSchema, users, sourc
 
 export type LoginRequest = { username: string; password: string };
 export type RegisterRequest = z.infer<typeof insertUserSchema>;
+export type CreateSourceRequest = Omit<
+  z.infer<typeof insertSourceSchema>,
+  "clientId" | "userId" | "logoUrl" | "active" | "refreshPriority" | "feedToken"
+>;
+export type UpdateSourceRequest = Partial<CreateSourceRequest> & { active?: boolean };
+export type CreateKeywordRequest = Omit<z.infer<typeof insertKeywordSchema>, "clientId">;
 
 // Shared Error Schemas
 export const errorSchemas = {

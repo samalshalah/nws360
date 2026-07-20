@@ -34,6 +34,8 @@ export function useAuth() {
     },
     onSuccess: (data) => {
       queryClient.setQueryData([api.auth.me.path], data);
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/capabilities"] });
       toast({ title: "Welcome back!", description: `Logged in as ${data.username}` });
     },
     onError: (error) => {
@@ -81,6 +83,8 @@ export function useAuth() {
     },
     onSuccess: () => {
       queryClient.setQueryData([api.auth.me.path], null);
+      queryClient.removeQueries({ queryKey: ["/api/auth/me"] });
+      queryClient.removeQueries({ queryKey: ["/api/auth/capabilities"] });
       toast({ title: "Logged out", description: "See you next time!" });
     },
   });

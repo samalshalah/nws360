@@ -2,10 +2,11 @@ import React, { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources, useUpdateSource } from "@/hooks/use-sources";
 import { useKeywords, useCreateKeyword, useDeleteKeyword } from "@/hooks/use-keywords";
+import { usePermissions } from "@/hooks/use-permissions";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 
@@ -15,10 +16,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ChevronDown, ChevronRight, ArrowRight, ThumbsUp, MessageCircle, Share2, Info, CheckCircle2, AlertTriangle, ExternalLink } from "lucide-react";
+import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ChevronDown, ChevronRight, ArrowRight, ThumbsUp, MessageCircle, Share2, Info, CheckCircle2, AlertTriangle, ExternalLink, Pencil } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
+import { CAPS, type Source } from "@shared/schema";
+import { getSourceCategoryLabel } from "@shared/source-categories";
+import { GlobalAddSourceDialog } from "@/components/sources/GlobalAddSourceDialog";
+import { EditSourceDialog } from "@/components/sources/EditSourceDialog";
 
 function CardInfo({ description }: { description: string }) {
   return (
@@ -85,7 +90,13 @@ const TOPIC_CATEGORIES = [
   },
 ];
 
-export default function Admin({ tab = "add" }: { tab?: "add" | "manage" | "keywords" }) {
+export default function Admin({
+  tab = "manage",
+  initialAddOpen = false,
+}: {
+  tab?: "add" | "manage" | "keywords";
+  initialAddOpen?: boolean;
+}) {
   const { t } = useTranslation();
 
   const titles: Record<string, { title: string; subtitle: string }> = {
@@ -104,7 +115,7 @@ export default function Admin({ tab = "add" }: { tab?: "add" | "manage" | "keywo
       </div>
 
       {tab === "add" && <AddSourceView />}
-      {tab === "manage" && <SourcesManager />}
+      {tab === "manage" && <SourcesManager initialAddOpen={initialAddOpen} />}
       {tab === "keywords" && <KeywordsManager />}
     </div>
   );
@@ -152,7 +163,7 @@ type ChannelState = {
   discovered?: boolean;
 };
 
-function AddSourceView() {
+function AddSourceView({ onImported }: { onImported?: () => void }) {
   const { t } = useTranslation();
   const { mutate: createSource, isPending: isCreating } = useCreateSource();
   const [searchQuery, setSearchQuery] = useState("");
@@ -386,6 +397,7 @@ function AddSourceView() {
     setSearchQuery("");
     setSearchResults([]);
     setShowResults(false);
+    onImported?.();
   };
 
   const resetDialog = () => {
@@ -399,7 +411,7 @@ function AddSourceView() {
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
       <div className="max-w-2xl mx-auto">
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
@@ -420,6 +432,7 @@ function AddSourceView() {
             />
           </div>
           <Button
+            className="w-full sm:w-auto"
             onClick={() => {
               if (searchQuery.trim()) {
                 searchWebsites(searchQuery);
@@ -813,8 +826,19 @@ function AddSourceView() {
   );
 }
 
-function SourcesManager() {
+function AddSourceDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return <GlobalAddSourceDialog open={open} onOpenChange={onOpenChange} />;
+}
+
+function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }) {
   const { t } = useTranslation();
+  const { hasCap } = usePermissions();
   const { data: sources, isLoading } = useSources();
   const { mutate: deleteSource, isPending: isDeleting } = useDeleteSource();
   const { mutate: fetchSource, isPending: isFetchingOne, variables: fetchingSourceId } = useFetchSource();
@@ -830,6 +854,8 @@ function SourcesManager() {
   });
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [viewingSource, setViewingSource] = useState<{ id: number; name: string } | null>(null);
+  const [editingSource, setEditingSource] = useState<Source | null>(null);
+  const [isAddSourceOpen, setIsAddSourceOpen] = useState(initialAddOpen);
   const { data: sourceArticles, isLoading: isLoadingArticles } = useQuery<any[]>({
     queryKey: ["/api/articles", { sourceId: viewingSource?.id }],
     queryFn: async () => {
@@ -863,18 +889,30 @@ function SourcesManager() {
     return config?.color || "";
   };
 
-  const channelSuffixes = ["-RSS", "-FB", "-X", "-YT", "-IG", "-TG", "-News"];
-  const getGroupName = (name: string): string => {
-    for (const suffix of channelSuffixes) {
-      if (name.endsWith(suffix)) {
-        return name.slice(0, -suffix.length);
-      }
+  const socialSuffixes: Record<string, string[]> = {
+    facebook: ["Facebook", "FB"],
+    twitter: ["X", "Twitter"],
+    youtube: ["YouTube", "YT"],
+    instagram: ["Instagram", "IG"],
+    telegram: ["Telegram", "TG"],
+    rss: ["RSS", "News"],
+  };
+  const sourceVariantLabel = (source: any): string => {
+    if (source.category) return getSourceCategoryLabel(source.category);
+    const suffixes = socialSuffixes[source.type] || [];
+    const suffix = suffixes.find((item) => source.name.endsWith(` - ${item}`) || source.name.endsWith(`-${item}`));
+    return suffix || sourceTypeLabels[source.type] || source.type;
+  };
+  const getGroupName = (source: any): string => {
+    const variant = sourceVariantLabel(source);
+    for (const suffix of [` - ${variant}`, `-${variant}`]) {
+      if (source.name.endsWith(suffix)) return source.name.slice(0, -suffix.length);
     }
-    return name;
+    return source.name;
   };
 
   const sourceGroups = (sources || []).reduce((acc, source) => {
-    const key = getGroupName(source.name);
+    const key = getGroupName(source);
     if (!acc[key]) acc[key] = [];
     acc[key].push(source);
     return acc;
@@ -907,16 +945,28 @@ function SourcesManager() {
           <CardTitle className="flex items-center gap-2">{t("admin.newsSources")}<CardInfo description="Add and manage RSS feeds, websites, and social media accounts to monitor. Configure fetch frequency and auto-discovery for each source." /></CardTitle>
           <CardDescription>{t("admin.sourcesDescription")}</CardDescription>
         </div>
-        <Button
-          variant="outline"
-          className="gap-2"
-          onClick={() => fetchAll()}
-          disabled={isFetchingAll}
-          data-testid="button-fetch-all"
-        >
-          <RefreshCw className={`w-4 h-4 ${isFetchingAll ? "animate-spin" : ""}`} />
-          {isFetchingAll ? t("admin.fetching") : t("admin.fetchAll")}
-        </Button>
+        <div className="flex items-center gap-2">
+          {hasCap(CAPS.SOURCES_ADD) && (
+            <Button
+              className="gap-2"
+              onClick={() => setIsAddSourceOpen(true)}
+              data-testid="button-add-source"
+            >
+              <Plus className="w-4 h-4" />
+              {t("admin.addSource")}
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => fetchAll()}
+            disabled={isFetchingAll}
+            data-testid="button-fetch-all"
+          >
+            <RefreshCw className={`w-4 h-4 ${isFetchingAll ? "animate-spin" : ""}`} />
+            {isFetchingAll ? t("admin.fetching") : t("admin.fetchAll")}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -1021,6 +1071,18 @@ function SourcesManager() {
                         </TableCell>
                         <TableCell className="text-right rtl:text-left">
                           <div className="flex items-center justify-end rtl:justify-start gap-1">
+                            {isSingle && hasCap(CAPS.SOURCES_EDIT) && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setEditingSource(groupSources[0])}
+                                aria-label={`Edit ${groupName}`}
+                                title="Edit source"
+                                data-testid={`button-edit-source-${groupSources[0].id}`}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="icon"
@@ -1054,7 +1116,7 @@ function SourcesManager() {
                             <TableCell>
                               <div className="flex items-center gap-2 text-sm pl-2">
                                 <Icon className={`w-3.5 h-3.5 ${getSourceColor(source.type)}`} />
-                                <span className="text-muted-foreground">{sourceTypeLabels[source.type] || source.type}</span>
+                                <span className="text-muted-foreground">{sourceVariantLabel(source)}</span>
                               </div>
                             </TableCell>
                             <TableCell>
@@ -1103,7 +1165,7 @@ function SourcesManager() {
                             <TableCell>
                               <button
                                 className="tabular-nums text-sm text-primary underline-offset-4 hover:underline cursor-pointer"
-                                onClick={() => setViewingSource({ id: source.id, name: `${groupName} (${sourceTypeLabels[source.type] || source.type})` })}
+                                onClick={() => setViewingSource({ id: source.id, name: `${groupName} (${sourceVariantLabel(source)})` })}
                                 data-testid={`button-article-count-${source.id}`}
                               >
                                 {(articleCounts?.[source.id] ?? 0).toLocaleString()}
@@ -1111,7 +1173,7 @@ function SourcesManager() {
                             </TableCell>
                             <TableCell>
                               <Switch
-                                checked={source.active}
+                                checked={source.active !== false}
                                 onCheckedChange={(checked) => updateSource({ id: source.id, active: checked })}
                                 data-testid={`switch-source-active-${source.id}`}
                               />
@@ -1123,6 +1185,18 @@ function SourcesManager() {
                             </TableCell>
                             <TableCell className="text-right rtl:text-left">
                               <div className="flex items-center justify-end rtl:justify-start gap-1">
+                                {hasCap(CAPS.SOURCES_EDIT) && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setEditingSource(source)}
+                                    aria-label={`Edit ${source.name}`}
+                                    title="Edit source"
+                                    data-testid={`button-edit-source-${source.id}`}
+                                  >
+                                    <Pencil className="w-4 h-4" />
+                                  </Button>
+                                )}
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -1217,14 +1291,29 @@ function SourcesManager() {
                               <div className="flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-2">
                                   <Icon className={`w-3.5 h-3.5 ${getSourceColor(source.type)}`} />
-                                  <span className="text-sm">{sourceTypeLabels[source.type] || source.type}</span>
+                                  <span className="text-sm">{sourceVariantLabel(source)}</span>
                                   <span className="text-xs text-muted-foreground">({(articleCounts?.[source.id] ?? 0)} articles)</span>
                                 </div>
-                                <Switch
-                                  checked={source.active}
-                                  onCheckedChange={(checked) => updateSource({ id: source.id, active: checked })}
-                                  data-testid={`switch-source-active-mobile-${source.id}`}
-                                />
+                                <div className="flex items-center gap-1">
+                                  {hasCap(CAPS.SOURCES_EDIT) && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8"
+                                      onClick={() => setEditingSource(source)}
+                                      aria-label={`Edit ${source.name}`}
+                                      title="Edit source"
+                                      data-testid={`button-edit-source-mobile-${source.id}`}
+                                    >
+                                      <Pencil className="w-4 h-4" />
+                                    </Button>
+                                  )}
+                                  <Switch
+                                    checked={source.active !== false}
+                                    onCheckedChange={(checked) => updateSource({ id: source.id, active: checked })}
+                                    data-testid={`switch-source-active-mobile-${source.id}`}
+                                  />
+                                </div>
                               </div>
                               <div className="flex items-center gap-4 flex-wrap">
                                 <div className="flex items-center gap-1">
@@ -1265,6 +1354,18 @@ function SourcesManager() {
                       </div>
                     )}
                     <div className="flex items-center justify-end gap-1 pt-1 border-t border-border/50">
+                      {isSingle && hasCap(CAPS.SOURCES_EDIT) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setEditingSource(groupSources[0])}
+                          aria-label={`Edit ${groupName}`}
+                          title="Edit source"
+                          data-testid={`button-edit-source-mobile-${groupSources[0].id}`}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"
@@ -1292,6 +1393,12 @@ function SourcesManager() {
           </>
         )}
       </CardContent>
+
+      <EditSourceDialog
+        source={editingSource}
+        open={!!editingSource}
+        onOpenChange={(open) => !open && setEditingSource(null)}
+      />
 
       <Dialog open={!!viewingSource} onOpenChange={(open) => !open && setViewingSource(null)}>
         <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
@@ -1376,6 +1483,7 @@ function SourcesManager() {
           </div>
         </DialogContent>
       </Dialog>
+      <AddSourceDialog open={isAddSourceOpen} onOpenChange={setIsAddSourceOpen} />
     </Card>
   );
 }
