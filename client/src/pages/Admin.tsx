@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ChevronDown, ChevronRight, ArrowRight, ThumbsUp, MessageCircle, Share2, Info, CheckCircle2, AlertTriangle, ExternalLink, Pencil } from "lucide-react";
+import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ChevronDown, ChevronRight, ArrowRight, ThumbsUp, MessageCircle, Share2, Info, CheckCircle2, AlertTriangle, ExternalLink, Pencil, Upload } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
@@ -24,6 +24,7 @@ import { CAPS, type Source } from "@shared/schema";
 import { getSourceCategoryLabel } from "@shared/source-categories";
 import { GlobalAddSourceDialog } from "@/components/sources/GlobalAddSourceDialog";
 import { EditSourceDialog } from "@/components/sources/EditSourceDialog";
+import { FeedImportDialog } from "@/components/sources/FeedImportDialog";
 
 function CardInfo({ description }: { description: string }) {
   return (
@@ -856,6 +857,7 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
   const [viewingSource, setViewingSource] = useState<{ id: number; name: string } | null>(null);
   const [editingSource, setEditingSource] = useState<Source | null>(null);
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(initialAddOpen);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const { data: sourceArticles, isLoading: isLoadingArticles } = useQuery<any[]>({
     queryKey: ["/api/articles", { sourceId: viewingSource?.id }],
     queryFn: async () => {
@@ -947,14 +949,25 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
         </div>
         <div className="flex items-center gap-2">
           {hasCap(CAPS.SOURCES_ADD) && (
-            <Button
-              className="gap-2"
-              onClick={() => setIsAddSourceOpen(true)}
-              data-testid="button-add-source"
-            >
-              <Plus className="w-4 h-4" />
-              {t("admin.addSource")}
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => setIsImportOpen(true)}
+                data-testid="button-import-feeds"
+              >
+                <Upload className="w-4 h-4" />
+                Import Feeds
+              </Button>
+              <Button
+                className="gap-2"
+                onClick={() => setIsAddSourceOpen(true)}
+                data-testid="button-add-source"
+              >
+                <Plus className="w-4 h-4" />
+                {t("admin.addSource")}
+              </Button>
+            </>
           )}
           <Button
             variant="outline"
@@ -1399,6 +1412,8 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
         open={!!editingSource}
         onOpenChange={(open) => !open && setEditingSource(null)}
       />
+
+      <FeedImportDialog open={isImportOpen} onOpenChange={setIsImportOpen} />
 
       <Dialog open={!!viewingSource} onOpenChange={(open) => !open && setViewingSource(null)}>
         <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">

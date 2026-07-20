@@ -13,6 +13,7 @@ import { isGoogleNewsEditionCode } from "@shared/google-news-regions";
 import { isSourceCategoryCode } from "@shared/source-categories";
 import { normalizeWebsiteCollectorConfig, websiteCollectorConfigSchema } from "@shared/source-collector";
 import { normalizeSourceFilterConfig, sourceFilterConfigSchema } from "@shared/source-filter";
+import { classifyFeedImportRow, normalizeSourceImportKey, type FeedImportInputRow } from "@shared/source-import";
 import { discoverPublisherCategories, type DiscoveredPublisherCategory } from "./publisher-discovery";
 import { and, eq, sql } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
@@ -882,6 +883,133 @@ export async function registerRoutes(
         return res.status(400).json({ message: err.errors[0]?.message || "Invalid source settings" });
       }
       res.status(400).json({ message: "Invalid source rebuild request" });
+    }
+  });
+
+  const sourceImportInput = z.object({
+    rows: z.array(z.object({
+      xmlUrl: z.string().nullable().optional(),
+      title: z.string().nullable().optional(),
+      description: z.string().nullable().optional(),
+      sourceUrl: z.string().nullable().optional(),
+    })).min(1).max(300),
+    active: z.boolean().optional().default(false),
+    fetchAfterImport: z.boolean().optional().default(false),
+    intervalMinutes: z.number().int().min(5).max(1440).optional().default(30),
+    maxArticlesPerFetch: z.number().int().min(1).max(50).optional().default(10),
+    retentionDays: z.number().int().min(1).max(30).optional().default(30),
+    category: z.string().trim().nullable().optional(),
+  }).strict();
+
+  app.post("/api/sources/import", requireCapability(CAPS.SOURCES_ADD), async (req, res) => {
+    try {
+      if (!req.isAuthenticated()) return res.sendStatus(401);
+      const user = req.user as any;
+      const clientId = resolveClientId(user, req);
+      if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+
+      const input = sourceImportInput.parse(req.body);
+      if (input.category && !isSourceCategoryCode(input.category)) {
+        return res.status(400).json({ message: "A supported source category is required" });
+      }
+
+      const existingSources = await storage.getSources(clientId);
+      const seen = new Set(existingSources.map(source => normalizeSourceImportKey(source.type, source.url, source.country)));
+      const results: Array<{
+        rowIndex: number;
+        name: string;
+        type: string;
+        url: string;
+        status: "created" | "skipped" | "failed";
+        sourceId?: number;
+        reason?: string;
+      }> = [];
+      let created = 0;
+      let skipped = 0;
+      let failed = 0;
+
+      for (let index = 0; index < input.rows.length; index++) {
+        const classified = classifyFeedImportRow(input.rows[index] as FeedImportInputRow, index);
+        if (!classified.enabled || !classified.url) {
+          skipped += 1;
+          results.push({
+            rowIndex: index,
+            name: classified.name,
+            type: classified.type,
+            url: classified.url,
+            status: "skipped",
+            reason: classified.warnings[0] || "No importable URL found",
+          });
+          continue;
+        }
+
+        const country = classified.type === "google_news"
+          ? (isGoogleNewsEditionCode(classified.country) ? classified.country!.toUpperCase() : "US")
+          : null;
+        const key = normalizeSourceImportKey(classified.type, classified.url, country);
+        if (seen.has(key)) {
+          skipped += 1;
+          results.push({
+            rowIndex: index,
+            name: classified.name,
+            type: classified.type,
+            url: classified.url,
+            status: "skipped",
+            reason: "Duplicate source",
+          });
+          continue;
+        }
+
+        try {
+          const source = await storage.createSource({
+            name: sanitizeInput(classified.name).slice(0, 200) || "Imported source",
+            url: classified.url,
+            type: classified.type,
+            active: input.active,
+            intervalMinutes: input.intervalMinutes,
+            maxArticlesPerFetch: input.maxArticlesPerFetch,
+            retentionDays: input.retentionDays,
+            country,
+            category: input.category && isSourceCategoryCode(input.category) ? input.category : null,
+            collectorConfig: null,
+            filterConfig: normalizeSourceFilterConfig(null),
+            refreshPriority: "medium",
+            userId: user.id,
+            clientId,
+            logoUrl: getSourceLogoUrl(classified.originalUrl || classified.url, classified.name),
+          });
+          seen.add(key);
+          created += 1;
+          results.push({ rowIndex: index, name: source.name, type: source.type, url: source.url, status: "created", sourceId: source.id });
+
+          if (input.active && input.fetchAfterImport) {
+            setTimeout(async () => {
+              try {
+                await fetchSourceFeed(source.id);
+              } catch (e) {
+                console.error(`[Worker] Failed import fetch for ${source.name}:`, e);
+              }
+            }, 1000 + created * 250);
+          }
+        } catch (e) {
+          failed += 1;
+          results.push({
+            rowIndex: index,
+            name: classified.name,
+            type: classified.type,
+            url: classified.url,
+            status: "failed",
+            reason: e instanceof Error ? e.message : "Create failed",
+          });
+        }
+      }
+
+      res.status(201).json({ created, skipped, failed, results });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid source import" });
+      }
+      res.status(400).json({ message: "Invalid source import" });
     }
   });
 
