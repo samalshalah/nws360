@@ -41,6 +41,8 @@ const NOISE_WORDS = new Set([
   "images",
   "investigate",
   "investigates",
+  "iraq",
+  "iraqi",
   "journalist",
   "journalists",
   "latest",
@@ -92,12 +94,181 @@ const NOISE_WORDS = new Set([
   "video",
   "videos",
   "watch",
+  "website",
   "wire",
   "wires",
   "writer",
   "writers",
   "wsj",
   "yahoo",
+]);
+
+const URL_NOISE_WORDS = new Set([
+  "amp",
+  "ar",
+  "aspx",
+  "com",
+  "details",
+  "feed",
+  "feeds",
+  "html",
+  "http",
+  "https",
+  "iq",
+  "key",
+  "net",
+  "org",
+  "rss",
+  "url",
+  "www",
+]);
+
+const SOURCE_NOISE_WORDS = new Set([
+  "alhurra",
+  "alforatnews",
+  "alhadath",
+  "aljazeera",
+  "alarabiya",
+  "alsharqiya",
+  "alsumaria",
+  "kurdistan24",
+  "nina",
+  "ninanews",
+  "rudaw",
+  "shafaq",
+  "utv",
+  "الاخبار",
+  "الاعلام",
+  "الاتجاه",
+  "الجزيره",
+  "الحدث",
+  "الحرة",
+  "الحره",
+  "السومريه",
+  "الشرقيه",
+  "الفرات",
+  "العربيه",
+  "المدى",
+  "المدي",
+  "نينا",
+  "نيوز",
+  "وكاله",
+]);
+
+const ARABIC_STOP_WORDS = new Set([
+  "اثر",
+  "اذا",
+  "اذ",
+  "الا",
+  "التي",
+  "الذي",
+  "الذين",
+  "اللا",
+  "اللتان",
+  "اللذان",
+  "اللذين",
+  "الى",
+  "اما",
+  "امام",
+  "ان",
+  "انه",
+  "او",
+  "اول",
+  "اي",
+  "ايضا",
+  "اين",
+  "بعد",
+  "بعض",
+  "بين",
+  "تلك",
+  "تم",
+  "ثم",
+  "حتى",
+  "حول",
+  "حيث",
+  "حين",
+  "خلال",
+  "دون",
+  "ذلك",
+  "هذه",
+  "هذا",
+  "لكن",
+  "لدى",
+  "لم",
+  "لن",
+  "له",
+  "لها",
+  "ما",
+  "مع",
+  "من",
+  "منذ",
+  "نحو",
+  "هل",
+  "هو",
+  "هي",
+  "وفي",
+  "ولا",
+  "وقد",
+  "وهو",
+  "وهي",
+  "يكون",
+]);
+
+const ARABIC_NEWS_NOISE_WORDS = new Set([
+  "ابرز",
+  "اخر",
+  "اكثر",
+  "اعلان",
+  "الان",
+  "العاجله",
+  "العراق",
+  "العراقي",
+  "العراقيه",
+  "الخبر",
+  "الخبرتابعونا",
+  "العمل",
+  "الاولي",
+  "الثانيه",
+  "الحكومه",
+  "الخاصه",
+  "اليوم",
+  "الرسميه",
+  "امس",
+  "تحديث",
+  "تفاصيل",
+  "جديد",
+  "جديدة",
+  "جديده",
+  "خبر",
+  "اخبار",
+  "اشترك",
+  "بالتعاون",
+  "رئيس",
+  "رييس",
+  "سياسه",
+  "عاجل",
+  "عام",
+  "عربي",
+  "عربيه",
+  "عالمي",
+  "عبر",
+  "عراق",
+  "بغداد",
+  "دايره",
+  "تطلق",
+  "فيديو",
+  "قبل",
+  "كامل",
+  "مصدر",
+  "مصادر",
+  "نشرة",
+  "نشره",
+  "مجلس",
+  "منصه",
+  "قناتنا",
+  "وزاره",
+  "وزارة",
+  "هييه",
 ]);
 
 const DATE_WORDS = new Set([
@@ -135,6 +306,24 @@ const DATE_WORDS = new Set([
   "months",
   "year",
   "years",
+  "الاحد",
+  "الاثنين",
+  "الثلاثاء",
+  "الاربعاء",
+  "الخميس",
+  "الجمعة",
+  "الجمعه",
+  "السبت",
+  "دقيقه",
+  "دقائق",
+  "ساعه",
+  "ساعات",
+  "شهر",
+  "عام",
+  "اليوم",
+  "غدا",
+  "غداً",
+  "امس",
 ]);
 
 const NOISE_PHRASES = new Set([
@@ -156,6 +345,11 @@ function normalizeAnalyticsValue(value: string): string {
   return value
     .normalize("NFKC")
     .toLowerCase()
+    .replace(/[إأآٱ]/g, "ا")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
     .replace(/[\u064B-\u065F\u0670]/g, "")
     .replace(/\u0640/g, "")
     .replace(/[^a-z0-9\u0600-\u06FF]+/g, " ")
@@ -171,7 +365,14 @@ function isNoiseToken(token: string): boolean {
   if (!ALLOWED_SHORT_TERMS.has(token) && token.length < 3) return true;
   if (/^\d+$/.test(token)) return true;
   if (/^\d+(?:st|nd|rd|th)$/.test(token)) return true;
-  return NOISE_WORDS.has(token) || DATE_WORDS.has(token);
+  return (
+    NOISE_WORDS.has(token) ||
+    URL_NOISE_WORDS.has(token) ||
+    SOURCE_NOISE_WORDS.has(token) ||
+    ARABIC_STOP_WORDS.has(token) ||
+    ARABIC_NEWS_NOISE_WORDS.has(token) ||
+    DATE_WORDS.has(token)
+  );
 }
 
 export function isGenericAnalyticsTerm(value: string | null | undefined): boolean {
