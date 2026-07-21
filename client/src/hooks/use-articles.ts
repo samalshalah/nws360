@@ -30,6 +30,7 @@ export function useArticles(params?: ArticleQueryParams) {
       if (!res.ok) throw new Error("Failed to fetch articles");
       return res.json();
     },
+    staleTime: 0,
   });
 }
 

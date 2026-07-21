@@ -892,7 +892,15 @@ export class DatabaseStorage implements IStorage {
     const limit = params?.limit || 20;
     const offset = ((params?.page || 1) - 1) * limit;
     const sort = params?.sort || "newest";
-    const publishedSort = sql`COALESCE(${articles.publishedAt}, ${articles.ingestedAt}, ${articles.createdAt})`;
+    const publishedSort = sql`
+      CASE
+        WHEN ${articles.publishedAt} IS NOT NULL
+          AND ${articles.ingestedAt} IS NOT NULL
+          AND ${articles.publishedAt} > ${articles.ingestedAt} + INTERVAL '10 minutes'
+          THEN ${articles.ingestedAt}
+        ELSE COALESCE(${articles.publishedAt}, ${articles.ingestedAt}, ${articles.createdAt})
+      END
+    `;
     const sourceNameSort = sql`LOWER(COALESCE(NULLIF(${articles.subSource}, ''), ${sources.name}, 'Unknown'))`;
     const engagementSort = sql`COALESCE(${articles.engagementLikes}, 0) + COALESCE(${articles.engagementComments}, 0) + COALESCE(${articles.engagementShares}, 0)`;
     const orderBy =
