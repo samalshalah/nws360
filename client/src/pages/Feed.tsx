@@ -399,7 +399,7 @@ export default function Feed() {
         value={filters.sort}
         onValueChange={(val) => updateFilter("sort", parseFeedSort(val))}
       >
-        <SelectTrigger className="w-full sm:w-[190px] bg-background" data-testid="select-sort-articles">
+        <SelectTrigger className="w-full shrink-0 bg-background sm:w-[190px]" data-testid="select-sort-articles">
           <ArrowDownUp className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
           <SelectValue placeholder="Sort" />
         </SelectTrigger>
@@ -414,7 +414,7 @@ export default function Feed() {
         value={filters.sourceName || "all"}
         onValueChange={(val) => updateFilter("sourceName", val === "all" ? undefined : val)}
       >
-        <SelectTrigger className="w-full sm:w-[180px] bg-background" data-testid="select-filter-source">
+        <SelectTrigger className="w-full shrink-0 bg-background sm:w-[180px]" data-testid="select-filter-source">
           <SelectValue placeholder={t("feed.allSources")} />
         </SelectTrigger>
         <SelectContent>
@@ -431,7 +431,7 @@ export default function Feed() {
         value={filters.sourceType || "all"}
         onValueChange={(val) => updateFilter("sourceType", val === "all" ? undefined : val)}
       >
-        <SelectTrigger className="w-full sm:w-[170px] bg-background" data-testid="select-filter-channel-type">
+        <SelectTrigger className="w-full shrink-0 bg-background sm:w-[170px]" data-testid="select-filter-channel-type">
           <SelectValue placeholder={t("feed.allChannels")} />
         </SelectTrigger>
         <SelectContent>
@@ -453,7 +453,7 @@ export default function Feed() {
         value={filters.dateRange}
         onValueChange={(val) => updateFilter("dateRange", val)}
       >
-        <SelectTrigger className="w-full sm:w-[150px] bg-background" data-testid="select-filter-date-range">
+        <SelectTrigger className="w-full shrink-0 bg-background sm:w-[150px]" data-testid="select-filter-date-range">
           <SelectValue placeholder={t("feed.allDates")} />
         </SelectTrigger>
         <SelectContent>
@@ -467,7 +467,7 @@ export default function Feed() {
         value={filters.sentiment || "all"}
         onValueChange={(val) => updateFilter("sentiment", val === "all" ? undefined : val)}
       >
-        <SelectTrigger className="w-full sm:w-[150px] bg-background" data-testid="select-filter-sentiment">
+        <SelectTrigger className="w-full shrink-0 bg-background sm:w-[150px]" data-testid="select-filter-sentiment">
           <SelectValue placeholder={t("feed.allSentiment")} />
         </SelectTrigger>
         <SelectContent>
@@ -486,7 +486,7 @@ export default function Feed() {
         value={filters.category || "all"}
         onValueChange={(val) => updateFilter("category", val === "all" ? undefined : val)}
       >
-        <SelectTrigger className="w-full sm:w-[170px] bg-background" data-testid="select-filter-category">
+        <SelectTrigger className="w-full shrink-0 bg-background sm:w-[170px]" data-testid="select-filter-category">
           <SelectValue placeholder={t("feed.allCategories")} />
         </SelectTrigger>
         <SelectContent>
@@ -500,7 +500,7 @@ export default function Feed() {
       </Select>
 
       {hasActiveFilters && (
-        <Button variant="ghost" size="sm" onClick={clearFilters} data-testid="button-clear-filters">
+        <Button variant="ghost" size="sm" className="shrink-0" onClick={clearFilters} data-testid="button-clear-filters">
           <X className="w-3.5 h-3.5 mr-1" />
           {t("feed.clearFilters")}
         </Button>
@@ -510,19 +510,24 @@ export default function Feed() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="text-xl font-bold text-foreground" data-testid="text-feed-title">{t("feed.title")}</h1>
-          {articlesData && (
-            <span className="text-xs text-muted-foreground tabular-nums" data-testid="badge-total-articles">
-              {articlesData.total} {t("feed.articles")}
-            </span>
-          )}
-          {isFetching && (
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
-          )}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="hidden w-[280px] shrink-0 md:block">
+            {searchBar}
+          </div>
+          <div className="flex min-w-0 items-center gap-3">
+            <h1 className="shrink-0 text-xl font-bold text-foreground" data-testid="text-feed-title">{t("feed.title")}</h1>
+            {articlesData && (
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums" data-testid="badge-total-articles">
+                {articlesData.total} {t("feed.articles")}
+              </span>
+            )}
+            {isFetching && (
+              <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-muted-foreground" />
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex shrink-0 items-center gap-1.5">
           <div className="md:hidden flex items-center gap-1">
             <Button
               variant={mobileSearchOpen ? "default" : "ghost"}
@@ -620,14 +625,10 @@ export default function Feed() {
       )}
 
       <div className="hidden md:block">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-[180px]">
-            {searchBar}
-          </div>
-
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
           {filterDropdowns}
 
-          <div className="flex items-center gap-0.5 ml-auto border border-border rounded-md p-0.5">
+          <div className="ml-auto flex shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5">
             <Button
               size="icon"
               variant={layout === "grid" ? "default" : "ghost"}
