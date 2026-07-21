@@ -1917,7 +1917,7 @@ export class DatabaseStorage implements IStorage {
         .where(
           and(
             eq(articles.sourceId, source.id),
-            lte(articles.createdAt, cutoffDate)
+            sql`COALESCE(${articles.publishedAt}, ${articles.ingestedAt}, ${articles.createdAt}) <= ${cutoffDate}`
           )
         );
       const expiredIds = expiredArticles.map(a => a.id);
