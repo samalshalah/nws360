@@ -399,7 +399,7 @@ export default function Feed() {
         value={filters.sort}
         onValueChange={(val) => updateFilter("sort", parseFeedSort(val))}
       >
-        <SelectTrigger className="w-full shrink-0 bg-background sm:w-[190px]" data-testid="select-sort-articles">
+        <SelectTrigger className="h-9 w-full min-w-0 flex-1 basis-0 bg-background" data-testid="select-sort-articles">
           <ArrowDownUp className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
           <SelectValue placeholder="Sort" />
         </SelectTrigger>
@@ -414,7 +414,7 @@ export default function Feed() {
         value={filters.sourceName || "all"}
         onValueChange={(val) => updateFilter("sourceName", val === "all" ? undefined : val)}
       >
-        <SelectTrigger className="w-full shrink-0 bg-background sm:w-[180px]" data-testid="select-filter-source">
+        <SelectTrigger className="h-9 w-full min-w-0 flex-1 basis-0 bg-background" data-testid="select-filter-source">
           <SelectValue placeholder={t("feed.allSources")} />
         </SelectTrigger>
         <SelectContent>
@@ -431,7 +431,7 @@ export default function Feed() {
         value={filters.sourceType || "all"}
         onValueChange={(val) => updateFilter("sourceType", val === "all" ? undefined : val)}
       >
-        <SelectTrigger className="w-full shrink-0 bg-background sm:w-[170px]" data-testid="select-filter-channel-type">
+        <SelectTrigger className="h-9 w-full min-w-0 flex-1 basis-0 bg-background" data-testid="select-filter-channel-type">
           <SelectValue placeholder={t("feed.allChannels")} />
         </SelectTrigger>
         <SelectContent>
@@ -453,7 +453,7 @@ export default function Feed() {
         value={filters.dateRange}
         onValueChange={(val) => updateFilter("dateRange", val)}
       >
-        <SelectTrigger className="w-full shrink-0 bg-background sm:w-[150px]" data-testid="select-filter-date-range">
+        <SelectTrigger className="h-9 w-full min-w-0 flex-1 basis-0 bg-background" data-testid="select-filter-date-range">
           <SelectValue placeholder={t("feed.allDates")} />
         </SelectTrigger>
         <SelectContent>
@@ -467,7 +467,7 @@ export default function Feed() {
         value={filters.sentiment || "all"}
         onValueChange={(val) => updateFilter("sentiment", val === "all" ? undefined : val)}
       >
-        <SelectTrigger className="w-full shrink-0 bg-background sm:w-[150px]" data-testid="select-filter-sentiment">
+        <SelectTrigger className="h-9 w-full min-w-0 flex-1 basis-0 bg-background" data-testid="select-filter-sentiment">
           <SelectValue placeholder={t("feed.allSentiment")} />
         </SelectTrigger>
         <SelectContent>
@@ -486,7 +486,7 @@ export default function Feed() {
         value={filters.category || "all"}
         onValueChange={(val) => updateFilter("category", val === "all" ? undefined : val)}
       >
-        <SelectTrigger className="w-full shrink-0 bg-background sm:w-[170px]" data-testid="select-filter-category">
+        <SelectTrigger className="h-9 w-full min-w-0 flex-1 basis-0 bg-background" data-testid="select-filter-category">
           <SelectValue placeholder={t("feed.allCategories")} />
         </SelectTrigger>
         <SelectContent>
@@ -500,7 +500,7 @@ export default function Feed() {
       </Select>
 
       {hasActiveFilters && (
-        <Button variant="ghost" size="sm" className="shrink-0" onClick={clearFilters} data-testid="button-clear-filters">
+        <Button variant="ghost" size="sm" className="h-9 shrink-0 px-2" onClick={clearFilters} data-testid="button-clear-filters">
           <X className="w-3.5 h-3.5 mr-1" />
           {t("feed.clearFilters")}
         </Button>
@@ -511,102 +511,120 @@ export default function Feed() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <div className="hidden w-[280px] shrink-0 md:block">
+        <div className="flex min-w-0 shrink-0 items-center gap-3">
+          <h1 className="shrink-0 text-xl font-bold text-foreground" data-testid="text-feed-title">{t("feed.title")}</h1>
+          {articlesData && (
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums" data-testid="badge-total-articles">
+              {articlesData.total} {t("feed.articles")}
+            </span>
+          )}
+          {isFetching && (
+            <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-muted-foreground" />
+          )}
+        </div>
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+          <div className="hidden w-[300px] max-w-[34vw] shrink md:block">
             {searchBar}
           </div>
-          <div className="flex min-w-0 items-center gap-3">
-            <h1 className="shrink-0 text-xl font-bold text-foreground" data-testid="text-feed-title">{t("feed.title")}</h1>
-            {articlesData && (
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums" data-testid="badge-total-articles">
-                {articlesData.total} {t("feed.articles")}
-              </span>
-            )}
-            {isFetching && (
-              <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-muted-foreground" />
-            )}
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <div className="md:hidden flex items-center gap-1">
+          <div className="hidden shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5 md:flex">
             <Button
-              variant={mobileSearchOpen ? "default" : "ghost"}
               size="icon"
-              onClick={() => { setMobileSearchOpen(!mobileSearchOpen); if (!mobileSearchOpen) setMobileFiltersOpen(false); }}
-              data-testid="button-mobile-search-toggle"
+              variant={layout === "grid" ? "default" : "ghost"}
+              onClick={() => { setLayout("grid"); localStorage.setItem("feed-layout", "grid"); }}
+              data-testid="button-layout-grid"
             >
-              <Search className="w-4 h-4" />
+              <LayoutGrid className="w-4 h-4" />
             </Button>
-            <div className="relative">
+            <Button
+              size="icon"
+              variant={layout === "list" ? "default" : "ghost"}
+              onClick={() => { setLayout("list"); localStorage.setItem("feed-layout", "list"); }}
+              data-testid="button-layout-list"
+            >
+              <List className="w-4 h-4" />
+            </Button>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <div className="md:hidden flex items-center gap-1">
               <Button
-                variant={mobileFiltersOpen ? "default" : "ghost"}
+                variant={mobileSearchOpen ? "default" : "ghost"}
                 size="icon"
-                onClick={() => { setMobileFiltersOpen(!mobileFiltersOpen); if (!mobileFiltersOpen) setMobileSearchOpen(false); }}
-                data-testid="button-mobile-filters-toggle"
+                onClick={() => { setMobileSearchOpen(!mobileSearchOpen); if (!mobileSearchOpen) setMobileFiltersOpen(false); }}
+                data-testid="button-mobile-search-toggle"
               >
-                <SlidersHorizontal className="w-4 h-4" />
+                <Search className="w-4 h-4" />
               </Button>
-              {activeFilterCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center rounded-full" data-testid="badge-active-filter-count">
-                  {activeFilterCount}
-                </span>
-              )}
-            </div>
-          </div>
-          {canExportArticles && (
-            <Button variant="ghost" size="icon" onClick={handleExport} data-testid="button-export">
-              <Download className="w-4 h-4" />
-            </Button>
-          )}
-          {canRunIntelligence && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => reanalyzeMutation.mutate()}
-              disabled={reanalyzeMutation.isPending}
-              data-testid="button-reanalyze"
-            >
-              <RefreshCw className={cn("w-4 h-4", reanalyzeMutation.isPending && "animate-spin")} />
-            </Button>
-          )}
-          {canDeleteArticles && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
+              <div className="relative">
                 <Button
-                  variant="ghost"
+                  variant={mobileFiltersOpen ? "default" : "ghost"}
                   size="icon"
-                  disabled={deleteAllMutation.isPending || !articlesData?.total}
-                  data-testid="button-delete-all"
-                  title="Delete all articles"
+                  onClick={() => { setMobileFiltersOpen(!mobileFiltersOpen); if (!mobileFiltersOpen) setMobileSearchOpen(false); }}
+                  data-testid="button-mobile-filters-toggle"
                 >
-                  <Trash2 className={cn("w-4 h-4 text-destructive", deleteAllMutation.isPending && "animate-pulse")} />
+                  <SlidersHorizontal className="w-4 h-4" />
                 </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete all articles?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will permanently delete all {articlesData?.total || 0} articles. This action cannot be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel data-testid="button-cancel-delete-all">Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => deleteAllMutation.mutate()}
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    data-testid="button-confirm-delete-all"
+                {activeFilterCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center rounded-full" data-testid="badge-active-filter-count">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </div>
+            </div>
+            {canExportArticles && (
+              <Button variant="ghost" size="icon" onClick={handleExport} data-testid="button-export">
+                <Download className="w-4 h-4" />
+              </Button>
+            )}
+            {canRunIntelligence && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => reanalyzeMutation.mutate()}
+                disabled={reanalyzeMutation.isPending}
+                data-testid="button-reanalyze"
+              >
+                <RefreshCw className={cn("w-4 h-4", reanalyzeMutation.isPending && "animate-spin")} />
+              </Button>
+            )}
+            {canDeleteArticles && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    disabled={deleteAllMutation.isPending || !articlesData?.total}
+                    data-testid="button-delete-all"
+                    title="Delete all articles"
                   >
-                    {deleteAllMutation.isPending ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <Trash2 className="w-4 h-4 mr-2" />
-                    )}
-                    Delete All
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
+                    <Trash2 className={cn("w-4 h-4 text-destructive", deleteAllMutation.isPending && "animate-pulse")} />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete all articles?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete all {articlesData?.total || 0} articles. This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel data-testid="button-cancel-delete-all">Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => deleteAllMutation.mutate()}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      data-testid="button-confirm-delete-all"
+                    >
+                      {deleteAllMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      ) : (
+                        <Trash2 className="w-4 h-4 mr-2" />
+                      )}
+                      Delete All
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+          </div>
         </div>
       </div>
 
@@ -625,27 +643,8 @@ export default function Feed() {
       )}
 
       <div className="hidden md:block">
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <div className="flex w-full items-center gap-2">
           {filterDropdowns}
-
-          <div className="ml-auto flex shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5">
-            <Button
-              size="icon"
-              variant={layout === "grid" ? "default" : "ghost"}
-              onClick={() => { setLayout("grid"); localStorage.setItem("feed-layout", "grid"); }}
-              data-testid="button-layout-grid"
-            >
-              <LayoutGrid className="w-4 h-4" />
-            </Button>
-            <Button
-              size="icon"
-              variant={layout === "list" ? "default" : "ghost"}
-              onClick={() => { setLayout("list"); localStorage.setItem("feed-layout", "list"); }}
-              data-testid="button-layout-list"
-            >
-              <List className="w-4 h-4" />
-            </Button>
-          </div>
         </div>
       </div>
 
