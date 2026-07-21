@@ -21,7 +21,7 @@ export async function runDataRetention() {
     const allSources = await db.select().from(sources);
 
     for (const source of allSources) {
-      const retentionDays = source.retentionDays ?? 30;
+      const retentionDays = source.retentionDays ?? 7;
       const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
 
       const expiredArticles = await db
@@ -43,7 +43,7 @@ export async function runDataRetention() {
       totalCleaned += expiredIds.length;
     }
 
-    const defaultCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const defaultCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const orphanArticles = await db
       .select({ id: articles.id })
       .from(articles)

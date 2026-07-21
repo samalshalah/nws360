@@ -122,7 +122,7 @@ const METHOD_OPTIONS: Array<{
 const initialSettings = {
   intervalMinutes: 15,
   maxArticlesPerFetch: 10,
-  retentionDays: 30,
+  retentionDays: 7,
 };
 
 function normalizeWebsiteUrl(value: string): string {

@@ -81,7 +81,7 @@ function sourceToForm(source: Source): SourceForm {
     active: source.active !== false,
     intervalMinutes: source.intervalMinutes || 15,
     maxArticlesPerFetch: source.maxArticlesPerFetch || 10,
-    retentionDays: source.retentionDays || 30,
+    retentionDays: source.retentionDays || 7,
     collectorConfig: supportsConfiguredFeed(source.type)
       ? { ...DEFAULT_WEBSITE_COLLECTOR_CONFIG, ...(source.collectorConfig || {}) }
       : DEFAULT_WEBSITE_COLLECTOR_CONFIG,
@@ -192,7 +192,7 @@ export function EditSourceDialog({
     active: form.active,
     intervalMinutes: clamp(form.intervalMinutes, 5, 1440, 15),
     maxArticlesPerFetch: clamp(form.maxArticlesPerFetch, 1, 50, 10),
-    retentionDays: clamp(form.retentionDays, 1, 30, 30),
+    retentionDays: clamp(form.retentionDays, 1, 30, 7),
     collectorConfig: canConfigureFeed ? form.collectorConfig : null,
     filterConfig: form.filterConfig,
   });

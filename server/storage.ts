@@ -1907,7 +1907,7 @@ export class DatabaseStorage implements IStorage {
     let totalDeleted = 0;
 
     for (const source of allSources) {
-      const retentionDays = source.retentionDays ?? 30;
+      const retentionDays = source.retentionDays ?? 7;
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
 

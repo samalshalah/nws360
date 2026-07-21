@@ -157,7 +157,7 @@ export function FeedImportDialog({
   const [category, setCategory] = useState("general");
   const [intervalMinutes, setIntervalMinutes] = useState(30);
   const [maxArticlesPerFetch, setMaxArticlesPerFetch] = useState(10);
-  const [retentionDays, setRetentionDays] = useState(30);
+  const [retentionDays, setRetentionDays] = useState(7);
   const [isImporting, setIsImporting] = useState(false);
 
   const selectedRows = rows.filter(row => row.selected);
@@ -177,7 +177,7 @@ export function FeedImportDialog({
     setCategory("general");
     setIntervalMinutes(30);
     setMaxArticlesPerFetch(10);
-    setRetentionDays(30);
+    setRetentionDays(7);
   };
 
   const handleFile = async (file?: File | null) => {

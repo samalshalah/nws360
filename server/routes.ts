@@ -8,14 +8,14 @@ import { startFeedWorker, fetchSourceFeed, analyzeWithAI, registerArticleAnalysi
 import { enqueueAIJob, awaitJobResult, checkClientAiBudget } from "./ai/ai-gateway";
 import { startScheduler, stopScheduler, _schedulerTickForTesting } from "./ai/ai-scheduler";
 import { db } from "./db";
-import { articles, PLAN_LIMITS, SYSTEM_ROLES, CAPS, resolveEffectiveCaps } from "@shared/schema";
+import { analyticsCache, articles, PLAN_LIMITS, SYSTEM_ROLES, CAPS, resolveEffectiveCaps } from "@shared/schema";
 import { isGoogleNewsEditionCode } from "@shared/google-news-regions";
 import { isSourceCategoryCode } from "@shared/source-categories";
 import { normalizeWebsiteCollectorConfig, websiteCollectorConfigSchema } from "@shared/source-collector";
 import { normalizeSourceFilterConfig, sourceFilterConfigSchema } from "@shared/source-filter";
 import { classifyFeedImportRow, normalizeSourceImportKey, type FeedImportInputRow } from "@shared/source-import";
 import { discoverPublisherCategories, type DiscoveredPublisherCategory } from "./publisher-discovery";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
 import sanitizeHtml from "sanitize-html";
 import { scrypt, randomBytes, createHash } from "crypto";
@@ -28,6 +28,8 @@ import { startLearningWorker } from "./learning-worker";
 const scryptAsync = promisify(scrypt);
 const SYSTEM_CLIENT_ID = 9000;
 const CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram"]);
+const DEFAULT_SOURCE_RETENTION_DAYS = 7;
+const BULK_SOURCE_FETCH_CONCURRENCY = 3;
 
 function sourceTypeSupportsCollectorConfig(type: string): boolean {
   return type === "website" || CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES.has(type);
@@ -748,6 +750,7 @@ export async function registerRoutes(
         category: input.category && isSourceCategoryCode(input.category) ? input.category : null,
         collectorConfig: sourceTypeSupportsCollectorConfig(input.type) ? normalizeWebsiteCollectorConfig(input.collectorConfig) : null,
         filterConfig: normalizeSourceFilterConfig(input.filterConfig),
+        retentionDays: input.retentionDays ?? DEFAULT_SOURCE_RETENTION_DAYS,
       };
       const logoUrl = getSourceLogoUrl(normalizedInput.url, normalizedInput.name);
       const source = await storage.createSource({...normalizedInput, userId: user.id, clientId, logoUrl});
@@ -902,7 +905,7 @@ export async function registerRoutes(
     fetchAfterImport: z.boolean().optional().default(false),
     intervalMinutes: z.number().int().min(5).max(1440).optional().default(30),
     maxArticlesPerFetch: z.number().int().min(1).max(50).optional().default(10),
-    retentionDays: z.number().int().min(1).max(30).optional().default(30),
+    retentionDays: z.number().int().min(1).max(30).optional().default(DEFAULT_SOURCE_RETENTION_DAYS),
     category: z.string().trim().nullable().optional(),
   }).strict();
 
@@ -1329,6 +1332,100 @@ export async function registerRoutes(
     } catch (err) {
       console.error("[Fetch-All] Fetch failed:", err);
       res.status(500).json({ success: false, message: "Feed fetch failed" });
+    }
+  });
+
+  const bulkSourceMaintenanceInput = z.object({
+    retentionDays: z.number().int().min(1).max(30).optional().default(DEFAULT_SOURCE_RETENTION_DAYS),
+    activeOnly: z.boolean().optional().default(false),
+    updateSourceRetention: z.boolean().optional().default(true),
+    deleteOldArticles: z.boolean().optional().default(true),
+    fetchAfterCleanup: z.boolean().optional().default(false),
+  }).strict();
+
+  app.post("/api/sources/bulk-maintenance", requireCapability(CAPS.SOURCES_EDIT), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+
+    try {
+      const input = bulkSourceMaintenanceInput.parse(req.body || {});
+      const tenantSources = await storage.getSources(clientId);
+      const scopedSources = tenantSources.filter((source: any) => !input.activeOnly || source.active !== false);
+      const sourceIds = scopedSources.map((source: any) => Number(source.id)).filter(Number.isFinite);
+      const cutoff = new Date(Date.now() - input.retentionDays * 24 * 60 * 60 * 1000);
+
+      let sourcesUpdated = 0;
+      if (input.updateSourceRetention) {
+        for (const sourceId of sourceIds) {
+          const updated = await storage.updateSource(sourceId, { retentionDays: input.retentionDays }, clientId);
+          if (updated) sourcesUpdated++;
+        }
+      }
+
+      let deletedArticles = 0;
+      if (input.deleteOldArticles && sourceIds.length > 0) {
+        const oldArticleRows = await db
+          .select({ id: articles.id })
+          .from(articles)
+          .where(and(
+            eq(articles.clientId, clientId),
+            inArray(articles.sourceId, sourceIds),
+            sql`COALESCE(${articles.publishedAt}, ${articles.ingestedAt}) < ${cutoff}`,
+          ));
+        const articleIds = oldArticleRows.map((row) => row.id);
+        for (let i = 0; i < articleIds.length; i += 500) {
+          deletedArticles += await storage.deleteArticles(articleIds.slice(i, i + 500), clientId);
+        }
+      }
+
+      const fetchResults: { sourceId: number; newArticles: number; error?: string }[] = [];
+      if (input.fetchAfterCleanup) {
+        const sourcesToFetch = scopedSources.filter((source: any) => source.active !== false);
+        let nextIndex = 0;
+        const workerCount = Math.min(BULK_SOURCE_FETCH_CONCURRENCY, sourcesToFetch.length);
+        await Promise.all(Array.from({ length: workerCount }, async () => {
+          while (nextIndex < sourcesToFetch.length) {
+            const source = sourcesToFetch[nextIndex++];
+            try {
+              const newArticles = await fetchSourceFeed(source.id);
+              fetchResults.push({ sourceId: source.id, newArticles });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Fetch failed";
+              console.error(`[Bulk Maintenance] Failed source ${source.id}:`, error);
+              fetchResults.push({ sourceId: source.id, newArticles: 0, error: message });
+            }
+          }
+        }));
+      }
+
+      if (deletedArticles > 0 || fetchResults.length > 0) {
+        await db.delete(analyticsCache).where(eq(analyticsCache.clientId, clientId));
+        runAnalyticsComputation().catch(e => console.error("[Analytics] Post-bulk-maintenance recomputation error:", e));
+      }
+
+      const totalNewArticles = fetchResults.reduce((sum, result) => sum + result.newArticles, 0);
+      const fetchErrors = fetchResults.filter((result) => result.error);
+      res.json({
+        success: true,
+        retentionDays: input.retentionDays,
+        sourceScope: input.activeOnly ? "active" : "all",
+        cutoff: cutoff.toISOString(),
+        sourcesMatched: sourceIds.length,
+        sourcesUpdated,
+        deletedArticles,
+        fetchedSources: fetchResults.length,
+        totalNewArticles,
+        fetchErrors: fetchErrors.length,
+        results: fetchResults,
+      });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ success: false, message: err.errors[0]?.message || "Invalid bulk maintenance request" });
+      }
+      console.error("[Bulk Maintenance] Failed:", err);
+      res.status(500).json({ success: false, message: "Bulk source maintenance failed" });
     }
   });
 
@@ -2101,7 +2198,7 @@ export async function registerRoutes(
       const adminClientId = req.body.clientId || resolveClientId(user, req);
       if (!adminClientId) return res.status(400).json({ message: "Tenant context required" });
       const logoUrl = getSourceLogoUrl(url, name);
-      const source = await storage.createSource({ name: sanitizeInput(name), url, type, active: active !== false, intervalMinutes: intervalMinutes || 15, maxArticlesPerFetch: maxArticlesPerFetch || 10, retentionDays: retentionDays || 30, country: country || null, refreshPriority: refreshPriority || "medium", userId: user.id, clientId: adminClientId, logoUrl });
+      const source = await storage.createSource({ name: sanitizeInput(name), url, type, active: active !== false, intervalMinutes: intervalMinutes || 15, maxArticlesPerFetch: maxArticlesPerFetch || 10, retentionDays: retentionDays || DEFAULT_SOURCE_RETENTION_DAYS, country: country || null, refreshPriority: refreshPriority || "medium", userId: user.id, clientId: adminClientId, logoUrl });
       await storage.createAuditLog({ userId: user.id, action: "create", entity: "source", entityId: source.id, details: `Created source: ${source.name}` });
       setTimeout(async () => { try { await fetchSourceFeed(source.id); } catch {} }, 1000);
       res.status(201).json(source);

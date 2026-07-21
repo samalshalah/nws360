@@ -152,6 +152,60 @@ export function useFetchAllSources() {
   });
 }
 
+export type BulkSourceMaintenanceRequest = {
+  retentionDays: number;
+  activeOnly?: boolean;
+  updateSourceRetention?: boolean;
+  deleteOldArticles?: boolean;
+  fetchAfterCleanup?: boolean;
+};
+
+export type BulkSourceMaintenanceResponse = {
+  success: boolean;
+  retentionDays: number;
+  sourceScope: "active" | "all";
+  cutoff: string;
+  sourcesMatched: number;
+  sourcesUpdated: number;
+  deletedArticles: number;
+  fetchedSources: number;
+  totalNewArticles: number;
+  fetchErrors: number;
+};
+
+export function useBulkSourceMaintenance() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (data: BulkSourceMaintenanceRequest) => {
+      const res = await fetch("/api/sources/bulk-maintenance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(result.message || "Bulk source maintenance failed");
+      }
+      return result as BulkSourceMaintenanceResponse;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: [api.sources.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sources/article-counts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
+      queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] || "").startsWith("/api/analytics") });
+      toast({
+        title: "Source maintenance complete",
+        description: `${data.sourcesUpdated} source(s) updated. ${data.deletedArticles} old article(s) deleted. ${data.totalNewArticles} new article(s) fetched.`,
+      });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Maintenance failed", description: error.message });
+    },
+  });
+}
+
 export function usePreviewSource() {
   return useMutation({
     mutationFn: async (data: { url: string; type: string; maxArticles?: number }) => {

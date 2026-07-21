@@ -49,7 +49,7 @@ export const sources = pgTable("sources", {
   active: boolean("active").default(true),
   intervalMinutes: integer("interval_minutes").default(15),
   maxArticlesPerFetch: integer("max_articles_per_fetch").default(10),
-  retentionDays: integer("retention_days").default(30),
+  retentionDays: integer("retention_days").default(7),
   userId: integer("user_id"),
   clientId: integer("client_id").notNull(),
   country: text("country"),
