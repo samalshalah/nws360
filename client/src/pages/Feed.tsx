@@ -24,10 +24,10 @@ const CATEGORIES = ["political", "health", "tech", "sports", "business", "entert
 const SOURCE_TYPES = ["rss", "website", "google_news", "twitter", "youtube", "facebook", "instagram", "telegram"] as const;
 const PAGE_SIZE = 20;
 type FeedSort = "newest" | "oldest" | "recently_added" | "source_az" | "title_az" | "engagement";
-const DEFAULT_SORT: FeedSort = "recently_added";
+const DEFAULT_SORT: FeedSort = "newest";
 const SORT_OPTIONS: { value: FeedSort; label: string }[] = [
-  { value: "recently_added", label: "Recently added" },
   { value: "newest", label: "Newest published" },
+  { value: "recently_added", label: "Recently added" },
   { value: "oldest", label: "Oldest published" },
   { value: "source_az", label: "Source A-Z" },
   { value: "title_az", label: "Title A-Z" },

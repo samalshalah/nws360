@@ -1448,7 +1448,7 @@ export async function registerRoutes(
       const sortParam = req.query.sort as string | undefined;
       const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
         ? sortParam as any
-        : "recently_added";
+        : "newest";
       const params = {
         search: req.query.search as string,
         sourceId: req.query.sourceId && !isNaN(parseInt(req.query.sourceId as string)) ? parseInt(req.query.sourceId as string) : undefined,
@@ -1550,7 +1550,7 @@ export async function registerRoutes(
     const sortParam = req.query.sort as string | undefined;
     const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
       ? sortParam as any
-      : "recently_added";
+      : "newest";
     const params = {
       search: req.query.search as string,
       sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
