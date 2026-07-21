@@ -12,7 +12,7 @@ import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } fro
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useTranslation } from "react-i18next";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -24,6 +24,16 @@ const CATEGORIES = ["political", "health", "tech", "sports", "business", "entert
 const SOURCE_TYPES = ["rss", "website", "google_news", "twitter", "youtube", "facebook", "instagram", "telegram"] as const;
 const PAGE_SIZE = 20;
 type FeedSort = "newest" | "oldest" | "recently_added" | "source_az" | "title_az" | "engagement";
+type FeedLiveUpdateMode = "notify" | "auto_load";
+type PublicSystemSettings = {
+  feedLiveUpdateEnabled: boolean;
+  feedLiveUpdateIntervalSeconds: number;
+  feedLiveUpdateMode: FeedLiveUpdateMode;
+};
+type ArticleLiveStatus = {
+  total: number;
+  items: { id: number; publishedAt: string | null; ingestedAt: string | null; createdAt: string | null }[];
+};
 const DEFAULT_SORT: FeedSort = "newest";
 const SORT_OPTIONS: { value: FeedSort; label: string }[] = [
   { value: "newest", label: "Newest published" },
@@ -53,7 +63,11 @@ export default function Feed() {
   const [selectedArticles, setSelectedArticles] = useState<Set<number>>(new Set());
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchInput, setSearchInput] = useState("");
+  const [pendingNewCount, setPendingNewCount] = useState(0);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const baselineArticleIdsRef = useRef<Set<number>>(new Set());
+  const baselineTotalRef = useRef(0);
+  const baselineReadyRef = useRef(false);
   const [layout, setLayout] = useState<"grid" | "list">(() => {
     return (localStorage.getItem("feed-layout") as "grid" | "list") || "grid";
   });
@@ -102,6 +116,10 @@ export default function Feed() {
 
   const resetScroll = useCallback(() => {
     isResettingRef.current = true;
+    baselineReadyRef.current = false;
+    baselineArticleIdsRef.current = new Set();
+    baselineTotalRef.current = 0;
+    setPendingNewCount(0);
     setPage(1);
     setAllArticles([]);
     setHasMore(true);
@@ -143,6 +161,48 @@ export default function Feed() {
     limit: PAGE_SIZE,
   });
 
+  const { data: publicSettings } = useQuery<PublicSystemSettings>({
+    queryKey: ["/api/settings/public"],
+    queryFn: async () => {
+      const res = await fetch("/api/settings/public", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch public settings");
+      return res.json();
+    },
+  });
+
+  const liveUpdateEnabled = publicSettings?.feedLiveUpdateEnabled ?? true;
+  const liveUpdateMode: FeedLiveUpdateMode = publicSettings?.feedLiveUpdateMode === "auto_load" ? "auto_load" : "notify";
+  const liveUpdateIntervalMs = Math.min(
+    300,
+    Math.max(15, publicSettings?.feedLiveUpdateIntervalSeconds ?? 60)
+  ) * 1000;
+  const liveStatusQueryString = useMemo(() => {
+    const searchParams = new URLSearchParams();
+    if (filters.search) searchParams.set("search", filters.search);
+    if (filters.sourceId) searchParams.set("sourceId", filters.sourceId);
+    if (filters.sourceName) searchParams.set("sourceName", filters.sourceName);
+    if (filters.sort) searchParams.set("sort", filters.sort);
+    if (filters.sentiment) searchParams.set("sentiment", filters.sentiment);
+    if (filters.category) searchParams.set("category", filters.category);
+    if (filters.sourceType) searchParams.set("sourceType", filters.sourceType);
+    if (dateRange.startDate) searchParams.set("startDate", dateRange.startDate);
+    if (dateRange.endDate) searchParams.set("endDate", dateRange.endDate);
+    return searchParams.toString();
+  }, [filters.search, filters.sourceId, filters.sourceName, filters.sort, filters.sentiment, filters.category, filters.sourceType, dateRange.startDate, dateRange.endDate]);
+
+  const { data: liveStatus, dataUpdatedAt: liveStatusUpdatedAt } = useQuery<ArticleLiveStatus>({
+    queryKey: ["/api/articles/live-status", liveStatusQueryString],
+    queryFn: async () => {
+      const url = liveStatusQueryString ? `/api/articles/live-status?${liveStatusQueryString}` : "/api/articles/live-status";
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to check feed updates");
+      return res.json();
+    },
+    enabled: liveUpdateEnabled,
+    refetchInterval: liveUpdateEnabled ? liveUpdateIntervalMs : false,
+    staleTime: 0,
+  });
+
   const { data: sources } = useSources();
   const { data: analytics } = useAnalytics();
 
@@ -170,15 +230,45 @@ export default function Feed() {
     const newItems = articlesData.items || [];
     if (page === 1) {
       setAllArticles(newItems);
+      baselineArticleIdsRef.current = new Set(newItems.map((article: any) => article.id));
+      baselineTotalRef.current = articlesData.total || 0;
+      baselineReadyRef.current = true;
+      setPendingNewCount(0);
     } else {
       setAllArticles(prev => {
         const existingIds = new Set(prev.map((a: any) => a.id));
         const uniqueNew = newItems.filter((a: any) => !existingIds.has(a.id));
+        for (const article of uniqueNew) {
+          baselineArticleIdsRef.current.add(article.id);
+        }
         return [...prev, ...uniqueNew];
       });
     }
     setHasMore(newItems.length >= PAGE_SIZE);
   }, [articlesData, page]);
+
+  const loadNewestArticles = useCallback(() => {
+    setPendingNewCount(0);
+    queryClient.invalidateQueries({
+      predicate: (query) => String(query.queryKey[0] || "").startsWith("/api/articles"),
+    });
+    resetScroll();
+  }, [resetScroll]);
+
+  useEffect(() => {
+    if (!liveStatus || !baselineReadyRef.current) return;
+    const unseenItems = (liveStatus.items || []).filter(item => !baselineArticleIdsRef.current.has(item.id));
+    const totalIncrease = Math.max(0, (liveStatus.total || 0) - baselineTotalRef.current);
+    const nextNewCount = Math.max(unseenItems.length, totalIncrease);
+    if (nextNewCount <= 0) return;
+
+    if (liveUpdateMode === "auto_load") {
+      loadNewestArticles();
+      return;
+    }
+
+    setPendingNewCount(nextNewCount);
+  }, [liveStatus, liveStatusUpdatedAt, liveUpdateMode, loadNewestArticles]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -627,6 +717,20 @@ export default function Feed() {
           </div>
         </div>
       </div>
+
+      {pendingNewCount > 0 && liveUpdateMode === "notify" && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm" data-testid="banner-new-articles">
+          <div className="flex min-w-0 items-center gap-2 text-primary">
+            <RefreshCw className="h-4 w-4 shrink-0" />
+            <span className="truncate font-medium">
+              {pendingNewCount === 1 ? "1 new article available" : `${pendingNewCount} new articles available`}
+            </span>
+          </div>
+          <Button size="sm" onClick={loadNewestArticles} data-testid="button-load-new-articles">
+            Load newest
+          </Button>
+        </div>
+      )}
 
       {mobileSearchOpen && (
         <div className="md:hidden" data-testid="mobile-search-panel">

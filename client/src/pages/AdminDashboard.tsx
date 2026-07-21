@@ -952,8 +952,24 @@ function SettingsTab() {
   const [form, setForm] = useState<Record<string, any>>({});
   const [dirty, setDirty] = useState(false);
 
-  const settingsFields = [
+  const settingsFields: {
+    key: string;
+    label: string;
+    type: "number" | "boolean" | "select";
+    options?: { value: string; label: string }[];
+  }[] = [
     { key: "feedRefreshMinutes", label: t("Feed Refresh Interval (minutes)"), type: "number" },
+    { key: "feedLiveUpdateEnabled", label: t("Enable Live Feed Updates"), type: "boolean" },
+    { key: "feedLiveUpdateIntervalSeconds", label: t("Live Feed Check Interval (seconds)"), type: "number" },
+    {
+      key: "feedLiveUpdateMode",
+      label: t("Live Feed Update Behavior"),
+      type: "select",
+      options: [
+        { value: "notify", label: t("Show new articles button") },
+        { value: "auto_load", label: t("Auto-load newest articles") },
+      ],
+    },
     { key: "rawArticleRetentionDays", label: t("Raw Article Retention (days)"), type: "number" },
     { key: "maxArticlesPerSource", label: t("Max Articles Per Source"), type: "number" },
     { key: "enableAutoFetch", label: t("Enable Auto Fetch"), type: "boolean" },
@@ -964,6 +980,11 @@ function SettingsTab() {
   ];
 
   const currentValues = { ...settings, ...form };
+  const asBoolean = (value: unknown) => value === true || String(value).toLowerCase() === "true";
+  const asNumber = (value: unknown) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
 
   const handleChange = (key: string, value: any) => {
     setForm(f => ({ ...f, [key]: value }));
@@ -1005,14 +1026,28 @@ function SettingsTab() {
             <Label className="flex-1 min-w-[200px]">{field.label}</Label>
             {field.type === "boolean" ? (
               <Switch
-                checked={!!currentValues[field.key]}
+                checked={asBoolean(currentValues[field.key])}
                 onCheckedChange={v => handleChange(field.key, v)}
                 data-testid={`switch-setting-${field.key}`}
               />
+            ) : field.type === "select" ? (
+              <Select
+                value={String(currentValues[field.key] ?? field.options?.[0]?.value ?? "")}
+                onValueChange={value => handleChange(field.key, value)}
+              >
+                <SelectTrigger className="w-64" data-testid={`select-setting-${field.key}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {field.options?.map(option => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             ) : (
               <Input
                 type="number"
-                value={currentValues[field.key] ?? ""}
+                value={asNumber(currentValues[field.key])}
                 onChange={e => handleChange(field.key, parseInt(e.target.value) || 0)}
                 className="w-32"
                 data-testid={`input-setting-${field.key}`}

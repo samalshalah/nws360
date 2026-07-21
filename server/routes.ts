@@ -30,6 +30,25 @@ const SYSTEM_CLIENT_ID = 9000;
 const CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram"]);
 const DEFAULT_SOURCE_RETENTION_DAYS = 7;
 const BULK_SOURCE_FETCH_CONCURRENCY = 3;
+const SYSTEM_SETTING_DEFAULTS: Record<string, string> = {
+  feedRefreshMinutes: "5",
+  rawArticleRetentionDays: "30",
+  analyticsRetentionMonths: "12",
+  defaultTargetLanguages: "en,ar",
+  autoTranslationEnabled: "true",
+  keywordSpikeThreshold: "150",
+  sentimentShiftSensitivity: "30",
+  maxArticlesPerSource: "1000",
+  enableAutoFetch: "true",
+  enableSentimentAnalysis: "true",
+  enableBreakingNews: "true",
+  maxConcurrentFetches: "3",
+  workerIntervalSeconds: "300",
+  feedLiveUpdateEnabled: "true",
+  feedLiveUpdateIntervalSeconds: "60",
+  feedLiveUpdateMode: "notify",
+};
+const ALLOWED_SYSTEM_SETTING_KEYS = new Set(Object.keys(SYSTEM_SETTING_DEFAULTS));
 
 function sourceTypeSupportsCollectorConfig(type: string): boolean {
   return type === "website" || CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES.has(type);
@@ -59,6 +78,31 @@ const authLimiter = process.env.CF_WORKER === "1"
 function sanitizeInput(text: string | undefined): string {
   if (!text) return "";
   return sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} }).trim();
+}
+
+function systemSettingsWithDefaults(settings: Record<string, string>): Record<string, string> {
+  return { ...SYSTEM_SETTING_DEFAULTS, ...settings };
+}
+
+function booleanSetting(settings: Record<string, string>, key: string): boolean {
+  return String(settings[key] ?? SYSTEM_SETTING_DEFAULTS[key] ?? "false").toLowerCase() === "true";
+}
+
+function numberSetting(settings: Record<string, string>, key: string, min: number, max: number): number {
+  const fallback = Number(SYSTEM_SETTING_DEFAULTS[key] ?? min);
+  const parsed = Number(settings[key] ?? fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
+function publicSystemSettings(settings: Record<string, string>) {
+  const withDefaults = systemSettingsWithDefaults(settings);
+  const mode = withDefaults.feedLiveUpdateMode === "auto_load" ? "auto_load" : "notify";
+  return {
+    feedLiveUpdateEnabled: booleanSetting(withDefaults, "feedLiveUpdateEnabled"),
+    feedLiveUpdateIntervalSeconds: numberSetting(withDefaults, "feedLiveUpdateIntervalSeconds", 15, 300),
+    feedLiveUpdateMode: mode,
+  };
 }
 
 const ROLE_HIERARCHY: Record<string, number> = {
@@ -388,6 +432,12 @@ export async function registerRoutes(
     app.use("/replit_integrations", (_req, res) => res.sendStatus(404));
     app.use("/api/replit_integrations", (_req, res) => res.sendStatus(404));
   }
+
+  app.get("/api/settings/public", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const settings = await storage.getSystemSettings();
+    res.json(publicSystemSettings(settings));
+  });
 
   if (process.env.NODE_ENV !== "production") {
     app.get("/dev/ai-bypass-test", (_req, res) => {
@@ -1542,6 +1592,56 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/articles/live-status", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    try {
+      const user = req.user as any;
+      const clientId = resolveClientId(user, req);
+      const scopedSourceIds = await getUserSourceIds(user, req);
+      let filteredSourceIds = scopedSourceIds;
+      const sourceNameFilter = req.query.sourceName as string;
+      if (sourceNameFilter) {
+        const allSources = await storage.getSources(clientId || undefined);
+        const matchingIds = allSources
+          .filter(s => s.name === sourceNameFilter && (!scopedSourceIds || scopedSourceIds.includes(s.id)))
+          .map(s => s.id);
+        filteredSourceIds = matchingIds.length > 0 ? matchingIds : [-1];
+      }
+      const sortParam = req.query.sort as string | undefined;
+      const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
+        ? sortParam as any
+        : "newest";
+      const result = await storage.getArticles({
+        search: req.query.search as string,
+        sourceId: req.query.sourceId && !isNaN(parseInt(req.query.sourceId as string)) ? parseInt(req.query.sourceId as string) : undefined,
+        sourceIds: filteredSourceIds,
+        clientId: clientId || undefined,
+        sort,
+        sentiment: req.query.sentiment as string,
+        category: req.query.category as string,
+        sourceType: req.query.sourceType as string,
+        country: req.query.country as string,
+        topic: req.query.topic as string,
+        startDate: req.query.startDate as string,
+        endDate: req.query.endDate as string,
+        page: 1,
+        limit: 20,
+      });
+      res.json({
+        total: result.total,
+        items: result.items.map(article => ({
+          id: article.id,
+          publishedAt: article.publishedAt,
+          ingestedAt: article.ingestedAt,
+          createdAt: article.createdAt,
+        })),
+      });
+    } catch (err) {
+      console.error("Error checking live article status:", err);
+      res.status(500).json({ message: "Error checking live article status" });
+    }
+  });
+
   app.get("/api/articles/export", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
@@ -2475,16 +2575,7 @@ export async function registerRoutes(
   app.get("/api/admin/settings", async (req, res) => {
     if (!requireAdmin(req, res)) return;
     const settings = await storage.getSystemSettings();
-    const defaults: Record<string, string> = {
-      feedRefreshMinutes: "5",
-      rawArticleRetentionDays: "30",
-      analyticsRetentionMonths: "12",
-      defaultTargetLanguages: "en,ar",
-      autoTranslationEnabled: "true",
-      keywordSpikeThreshold: "150",
-      sentimentShiftSensitivity: "30",
-    };
-    res.json({ ...defaults, ...settings });
+    res.json(systemSettingsWithDefaults(settings));
   });
 
   app.put("/api/admin/settings", async (req, res) => {
@@ -2492,15 +2583,14 @@ export async function registerRoutes(
     const user = req.user as any;
     const updates = req.body;
     if (!updates || typeof updates !== "object") return res.status(400).json({ message: "Settings object required" });
-    const allowedKeys = ["feedRefreshMinutes", "rawArticleRetentionDays", "analyticsRetentionMonths", "defaultTargetLanguages", "autoTranslationEnabled", "keywordSpikeThreshold", "sentimentShiftSensitivity"];
     for (const [key, value] of Object.entries(updates)) {
-      if (allowedKeys.includes(key) && typeof value === "string") {
-        await storage.updateSystemSetting(key, value);
+      if (ALLOWED_SYSTEM_SETTING_KEYS.has(key) && ["string", "number", "boolean"].includes(typeof value)) {
+        await storage.updateSystemSetting(key, String(value));
       }
     }
     await storage.createAuditLog({ userId: user.id, action: "update", entity: "system_settings", details: `Updated settings: ${Object.keys(updates).join(", ")}` });
     const settings = await storage.getSystemSettings();
-    res.json(settings);
+    res.json(systemSettingsWithDefaults(settings));
   });
 
   // === ADMIN: LOGS & HEALTH ===
