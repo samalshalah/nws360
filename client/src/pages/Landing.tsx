@@ -93,7 +93,7 @@ function DashboardMock() {
           <Globe className="w-3 h-3 text-muted-foreground" />
         </div>
         <div className="space-y-1.5">
-          {["RSS Feeds", "Social Media", "TV / Broadcast"].map((src, i) => (
+          {["RSS Feeds", "Social Media", "YouTube Channels"].map((src, i) => (
             <div key={src} className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: `hsl(var(--chart-${i + 1}))` }} />
               <span className="text-[10px] text-muted-foreground flex-1">{src}</span>
@@ -158,7 +158,7 @@ export default function Landing() {
               <span className="text-primary">Before It Happens</span>
             </h1>
             <p className="text-base md:text-lg text-muted-foreground leading-relaxed max-w-lg">
-              AI-powered monitoring across news, TV, and social media — organized into signals, narratives, and forecasts.
+              AI-powered monitoring across news websites, RSS feeds, YouTube, and social media - organized into signals, narratives, and forecasts.
             </p>
             <div className="flex items-center gap-3 flex-wrap">
               <Link href="/demo">
@@ -187,7 +187,7 @@ export default function Landing() {
               {
                 icon: Radar,
                 title: "Monitor",
-                desc: "Track hundreds of media sources in real time — RSS, social channels, TV transcripts, government feeds.",
+                desc: "Track hundreds of media sources in real time - RSS, news websites, YouTube channels, social feeds, and government sources.",
                 stats: "74 active sources",
               },
               {

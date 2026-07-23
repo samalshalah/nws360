@@ -33,7 +33,7 @@ const SOURCES = [
 ];
 
 const KEYWORD_SUGGESTIONS: Record<string, string[]> = {
-  Media: ["breaking news", "press conference", "editorial", "broadcast"],
+  Media: ["breaking news", "press conference", "editorial", "YouTube channel"],
   Government: ["policy", "legislation", "election", "regulation"],
   Finance: ["market", "stocks", "investment", "economy"],
   Technology: ["AI", "startup", "cybersecurity", "innovation"],

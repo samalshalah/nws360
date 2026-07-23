@@ -93,7 +93,7 @@ const TOPIC_CATEGORIES = [
   },
   {
     category: "entertainment",
-    topics: ["Movies", "Music", "TV Shows", "Celebrities", "Streaming", "Pop Culture"],
+    topics: ["Movies", "Music", "Streaming Shows", "Celebrities", "Streaming", "Pop Culture"],
   },
   {
     category: "lifestyle",
