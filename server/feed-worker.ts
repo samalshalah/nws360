@@ -1,7 +1,7 @@
 import RssParser from "rss-parser";
 import { storage } from "./storage";
 import { enqueueAIJob, awaitJobResult } from "./ai/ai-gateway";
-import { fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed, fetchTelegramFeed } from "./web-scraper";
+import { fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed, fetchTelegramFeed, fetchSocialRssFeed } from "./web-scraper";
 import { enqueueJob, registerJobHandler, openaiLimiter } from "./processing-queue";
 import { getGoogleNewsEdition } from "@shared/google-news-regions";
 import type { WebsiteCollectorConfig } from "@shared/source-collector";
@@ -280,20 +280,54 @@ async function fetchWebsiteArticles(source: FeedSource): Promise<number> {
   return await processItems(source, result.articles);
 }
 
+function getConfiguredSocialFeedUrl(source: FeedSource): string | null {
+  const feedUrl = source.collectorConfig?.feedUrl?.trim();
+  return feedUrl || null;
+}
+
+async function fetchConfiguredSocialFeed(source: FeedSource, label: string): Promise<FeedItem[] | null> {
+  const feedUrl = getConfiguredSocialFeedUrl(source);
+  if (!feedUrl) return null;
+
+  console.log(`[Worker] Fetching configured ${label} RSS feed: ${feedUrl} for source: ${source.name}`);
+  const items = await fetchSocialRssFeed(feedUrl, source.url);
+  items.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+  console.log(`[Worker] Got ${items.length} ${label} posts from configured RSS feed for ${source.name}`);
+  return items;
+}
+
+function hasItemsWithinSourceRetention(source: FeedSource, items: FeedItem[]): boolean {
+  const retentionDays = normalizeRetentionDays(source.retentionDays);
+  return items.some(item => isWithinRetentionWindow(item.publishedAt, retentionDays));
+}
+
+async function processConfiguredSocialFeedOrFallback(
+  source: FeedSource,
+  label: string,
+  fallback: () => Promise<FeedItem[]>,
+): Promise<number> {
+  const configuredItems = await fetchConfiguredSocialFeed(source, label);
+  if (configuredItems !== null) {
+    if (hasItemsWithinSourceRetention(source, configuredItems)) {
+      return await processItems(source, configuredItems);
+    }
+    console.log(`[Worker] Configured ${label} RSS feed has no items inside retention window for ${source.name}; trying platform fallback`);
+  }
+
+  const fallbackItems = await fallback();
+  fallbackItems.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+  console.log(`[Worker] Got ${fallbackItems.length} ${label} posts from platform fallback for ${source.name}`);
+  return await processItems(source, fallbackItems);
+}
+
 async function fetchTwitterArticles(source: FeedSource): Promise<number> {
   console.log(`[Worker] Fetching Twitter/X: ${source.url} for source: ${source.name}`);
-  const tweets = await fetchTwitterFeed(source.url);
-  tweets.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
-  console.log(`[Worker] Got ${tweets.length} tweets from ${source.name}`);
-  return await processItems(source, tweets);
+  return await processConfiguredSocialFeedOrFallback(source, "Twitter/X", () => fetchTwitterFeed(source.url));
 }
 
 async function fetchYouTubeArticles(source: FeedSource): Promise<number> {
   console.log(`[Worker] Fetching YouTube: ${source.url} for source: ${source.name}`);
-  const videos = await fetchYouTubeFeed(source.url);
-  videos.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
-  console.log(`[Worker] Got ${videos.length} videos from ${source.name}`);
-  return await processItems(source, videos);
+  return await processConfiguredSocialFeedOrFallback(source, "YouTube", () => fetchYouTubeFeed(source.url));
 }
 
 async function fetchFacebookArticles(source: FeedSource): Promise<number> {
@@ -307,18 +341,12 @@ async function fetchFacebookArticles(source: FeedSource): Promise<number> {
 
 async function fetchInstagramArticles(source: FeedSource): Promise<number> {
   console.log(`[Worker] Fetching Instagram: ${source.url} for source: ${source.name}`);
-  const posts = await fetchInstagramFeed(source.url);
-  posts.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
-  console.log(`[Worker] Got ${posts.length} Instagram posts from ${source.name}`);
-  return await processItems(source, posts);
+  return await processConfiguredSocialFeedOrFallback(source, "Instagram", () => fetchInstagramFeed(source.url));
 }
 
 async function fetchTelegramArticles(source: FeedSource): Promise<number> {
   console.log(`[Worker] Fetching Telegram: ${source.url} for source: ${source.name}`);
-  const posts = await fetchTelegramFeed(source.url);
-  posts.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
-  console.log(`[Worker] Got ${posts.length} Telegram posts from ${source.name}`);
-  return await processItems(source, posts);
+  return await processConfiguredSocialFeedOrFallback(source, "Telegram", () => fetchTelegramFeed(source.url));
 }
 
 function extractGoogleNewsSubSource(item: any): string | undefined {

@@ -139,7 +139,7 @@ function isLikelyFeedUrl(input: string): boolean {
   }
 }
 
-async function fetchSocialRssFeed(feedUrl: string, fallbackUrl: string): Promise<ScrapedArticle[]> {
+export async function fetchSocialRssFeed(feedUrl: string, fallbackUrl: string): Promise<ScrapedArticle[]> {
   console.log(`[Social RSS] Fetching feed: ${feedUrl}`);
   const response = await fetch(feedUrl, {
     headers: { "User-Agent": "NWS360/1.0 (RSS Reader)", "Accept": "application/rss+xml, application/xml, text/xml, */*" },

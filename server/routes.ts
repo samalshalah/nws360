@@ -13,7 +13,7 @@ import { isGoogleNewsEditionCode } from "@shared/google-news-regions";
 import { isSourceCategoryCode } from "@shared/source-categories";
 import { normalizeWebsiteCollectorConfig, websiteCollectorConfigSchema } from "@shared/source-collector";
 import { normalizeSourceFilterConfig, sourceFilterConfigSchema } from "@shared/source-filter";
-import { classifyFeedImportRow, normalizeSourceImportKey, type FeedImportInputRow } from "@shared/source-import";
+import { classifyFeedImportRow, normalizeSourceImportKey, type ClassifiedFeedImportRow, type FeedImportInputRow } from "@shared/source-import";
 import { discoverPublisherCategories, type DiscoveredPublisherCategory } from "./publisher-discovery";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
@@ -27,7 +27,7 @@ import { startLearningWorker } from "./learning-worker";
 
 const scryptAsync = promisify(scrypt);
 const SYSTEM_CLIENT_ID = 9000;
-const CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram"]);
+const CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram", "youtube"]);
 const DEFAULT_SOURCE_RETENTION_DAYS = 7;
 const BULK_SOURCE_FETCH_CONCURRENCY = 3;
 const SYSTEM_SETTING_DEFAULTS: Record<string, string> = {
@@ -52,6 +52,17 @@ const ALLOWED_SYSTEM_SETTING_KEYS = new Set(Object.keys(SYSTEM_SETTING_DEFAULTS)
 
 function sourceTypeSupportsCollectorConfig(type: string): boolean {
   return type === "website" || CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES.has(type);
+}
+
+function buildImportedFeedCollectorConfig(classified: ClassifiedFeedImportRow) {
+  const xmlUrl = classified.xmlUrl?.trim();
+  if (!xmlUrl || !/^https?:\/\/rss\.app\/feeds\//i.test(xmlUrl)) return null;
+  if (!sourceTypeSupportsCollectorConfig(classified.type)) return null;
+  return normalizeWebsiteCollectorConfig({
+    strategy: "rss",
+    feedUrl: xmlUrl,
+    renderJavascript: false,
+  });
 }
 
 const workerMiddleware = (_req: any, _res: any, next: any) => next();
@@ -972,7 +983,11 @@ export async function registerRoutes(
       }
 
       const existingSources = await storage.getSources(clientId);
-      const seen = new Set(existingSources.map(source => normalizeSourceImportKey(source.type, source.url, source.country)));
+      const existingSourcesByKey = new Map(existingSources.map(source => [
+        normalizeSourceImportKey(source.type, source.url, source.country),
+        source,
+      ]));
+      const seen = new Set(existingSourcesByKey.keys());
       const results: Array<{
         rowIndex: number;
         name: string;
@@ -1006,6 +1021,28 @@ export async function registerRoutes(
           : null;
         const key = normalizeSourceImportKey(classified.type, classified.url, country);
         if (seen.has(key)) {
+          const existingSource = existingSourcesByKey.get(key);
+          const collectorConfig = buildImportedFeedCollectorConfig(classified);
+          const currentFeedUrl = existingSource?.collectorConfig?.feedUrl?.trim();
+          if (existingSource && collectorConfig && currentFeedUrl !== collectorConfig.feedUrl) {
+            await storage.updateSource(existingSource.id, {
+              collectorConfig: {
+                ...normalizeWebsiteCollectorConfig(existingSource.collectorConfig),
+                ...collectorConfig,
+              },
+            }, clientId);
+            skipped += 1;
+            results.push({
+              rowIndex: index,
+              name: existingSource.name,
+              type: existingSource.type,
+              url: existingSource.url,
+              status: "skipped",
+              sourceId: existingSource.id,
+              reason: "Duplicate source updated with RSS.app feed URL",
+            });
+            continue;
+          }
           skipped += 1;
           results.push({
             rowIndex: index,
@@ -1029,7 +1066,7 @@ export async function registerRoutes(
             retentionDays: input.retentionDays,
             country,
             category: input.category && isSourceCategoryCode(input.category) ? input.category : null,
-            collectorConfig: null,
+            collectorConfig: buildImportedFeedCollectorConfig(classified),
             filterConfig: normalizeSourceFilterConfig(null),
             refreshPriority: "medium",
             userId: user.id,
