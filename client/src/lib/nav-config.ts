@@ -4,7 +4,7 @@ import {
   FileText, Network, List, Hash, Bookmark, Users,
   Activity, GitCompare, Zap, Tag, Brain, Eye, CreditCard,
   HelpCircle, Lightbulb, Plug, Monitor, UsersRound, ExternalLink,
-  Home, Bell, Settings, Rss, ClipboardList, Lock, Building2
+  Home, Bell, Settings, ClipboardList, Lock, Building2
 } from "lucide-react";
 import { CAPS } from "@shared/schema";
 
@@ -41,10 +41,20 @@ export function buildTenantNavTree(t: any): NavGroup[] {
       icon: Home,
       items: [
         { key: "dashboard", label: t("nav.dashboard", "Home"), href: "/dashboard", icon: Home, caps: [CAPS.FEED_VIEW] },
-        { key: "feed", label: t("nav.newsFeed", "Feed"), href: "/feed", icon: Newspaper, caps: [CAPS.FEED_VIEW] },
         { key: "saved", label: t("nav.saved", "Saved"), href: "/saved", icon: Bookmark, caps: [CAPS.ARTICLE_SAVE] },
       ],
       collapsible: false,
+    },
+    {
+      key: "newsFeeds",
+      label: t("nav.newsFeeds", "News Feeds"),
+      icon: Newspaper,
+      items: [
+        { key: "feed", label: t("nav.latestNews", "Latest News"), href: "/feed", icon: Newspaper, caps: [CAPS.FEED_VIEW] },
+        { key: "manageSources", label: t("nav.manageSources", "Manage Sources"), href: "/sources/manage", icon: List, caps: [CAPS.SOURCES_VIEW] },
+        { key: "keywords", label: t("nav.keywords", "Keywords"), href: "/sources/keywords", icon: Hash, caps: [CAPS.KEYWORDS_VIEW] },
+      ],
+      collapsible: true,
     },
     {
       key: "analytics",
@@ -75,17 +85,6 @@ export function buildTenantNavTree(t: any): NavGroup[] {
         { key: "intelligence", label: t("nav.intelligence", "Intelligence Hub"), href: "/intelligence", icon: Brain, caps: [CAPS.INTELLIGENCE_VIEW] },
         { key: "forecasting", label: t("nav.forecasting", "Predictions"), href: "/forecasting", icon: TrendingUp, caps: [CAPS.INTELLIGENCE_PREDICTIONS] },
         { key: "executiveHome", label: t("nav.executiveHome", "Executive View"), href: "/executive", icon: Eye, caps: [CAPS.EXECUTIVE_HOME] },
-      ],
-      collapsible: true,
-    },
-    {
-      key: "sources",
-      label: t("nav.sources", "Sources"),
-      icon: Rss,
-      caps: [CAPS.SOURCES_VIEW],
-      items: [
-        { key: "manageSources", label: t("nav.manageSources", "My Sources"), href: "/sources/manage", icon: List, caps: [CAPS.SOURCES_VIEW] },
-        { key: "keywords", label: t("nav.keywords", "Keywords"), href: "/sources/keywords", icon: Hash, caps: [CAPS.KEYWORDS_VIEW] },
       ],
       collapsible: true,
     },

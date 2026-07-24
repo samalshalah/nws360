@@ -50,10 +50,20 @@ function buildMenuStructure(t: (key: string, fallback?: string) => string): Menu
       icon: LayoutDashboard,
       items: [
         { key: "dashboard", label: t("nav.dashboard", "Dashboard"), href: "/dashboard", icon: LayoutDashboard },
-        { key: "feed", label: t("nav.newsFeed", "News Feed"), href: "/feed", icon: Newspaper },
         { key: "saved", label: t("nav.saved", "Saved"), href: "/saved", icon: Bookmark },
       ],
       collapsible: false,
+    },
+    {
+      key: "newsFeeds",
+      label: t("nav.newsFeeds", "News Feeds"),
+      icon: Newspaper,
+      items: [
+        { key: "feed", label: t("nav.latestNews", "Latest News"), href: "/feed", icon: Newspaper },
+        { key: "manageSources", label: t("nav.manageSources", "Manage Sources"), href: "/sources/manage", icon: List, capability: "sources" },
+        { key: "keywords", label: t("nav.keywords", "Keywords"), href: "/sources/keywords", icon: Hash, capability: "sources" },
+      ],
+      collapsible: true,
     },
     {
       key: "analytics",
@@ -85,17 +95,6 @@ function buildMenuStructure(t: (key: string, fallback?: string) => string): Menu
         { key: "forecasting", label: t("nav.forecasting", "Predictive Intelligence"), href: "/forecasting", icon: TrendingUp, capability: "predictiveIntelligence" },
       ],
       collapsible: false,
-    },
-    {
-      key: "sources",
-      label: t("nav.sources", "Sources"),
-      icon: List,
-      capability: "sources",
-      items: [
-        { key: "manageSources", label: t("nav.manageSources", "Manage Sources"), href: "/sources/manage", icon: List },
-        { key: "keywords", label: t("nav.keywords", "Keywords"), href: "/sources/keywords", icon: Hash },
-      ],
-      collapsible: true,
     },
     {
       key: "collaboration",
@@ -522,7 +521,6 @@ export function MobileBottomNav() {
     { name: t("nav.dashboard", "Dashboard"), icon: LayoutDashboard, href: "/dashboard", testId: "nav-bottom-dashboard" },
     { name: t("nav.saved", "Saved"), icon: Bookmark, href: "/saved", testId: "nav-bottom-saved" },
     { name: t("nav.analytics", "Analytics"), icon: BarChart3, href: "/analytics", testId: "nav-bottom-analytics", capability: "analytics" },
-    { name: t("nav.sources", "Sources"), icon: List, href: "/sources/manage", testId: "nav-bottom-sources", capability: "sources" },
   ];
 
   const tabs = allTabs.filter((tab) => {
