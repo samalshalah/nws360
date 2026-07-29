@@ -179,6 +179,30 @@ const taskUpdateInputSchema = taskInputSchema.extend({
   status: z.enum(TASK_STATUSES).optional(),
 }).partial();
 
+const REPORT_STATUSES = ["draft", "review", "published", "archived"] as const;
+const BRIEFING_ITEM_TYPES = ["article", "note", "heading", "link"] as const;
+
+const sharedReportInputSchema = z.object({
+  title: z.string().trim().min(2).max(160),
+  summary: optionalTrimmedText(2000),
+  status: z.enum(REPORT_STATUSES).default("draft"),
+  workspaceId: optionalPositiveInt,
+}).strict();
+
+const sharedReportUpdateInputSchema = z.object({
+  title: z.string().trim().min(2).max(160).optional(),
+  summary: optionalTrimmedText(2000),
+  status: z.enum(REPORT_STATUSES).optional(),
+  workspaceId: optionalPositiveInt,
+}).strict();
+
+const briefingItemInputSchema = z.object({
+  itemType: z.enum(BRIEFING_ITEM_TYPES),
+  itemRefId: optionalPositiveInt,
+  content: optionalTrimmedText(5000),
+  position: z.coerce.number().int().min(0).max(10000).default(0),
+}).strict();
+
 function parseTaskDueDate(value: string | null | undefined): Date | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -5766,58 +5790,72 @@ export async function registerRoutes(
   });
 
   // === SHARED REPORTS / BRIEFINGS ===
-  app.get("/api/collaboration/reports", async (req, res) => {
-    const user = req.user as any;
-    if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
-    if (!clientId) return res.json([]);
-    const wId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
-    if (clientId && wId) {
-      const workspace = await getWorkspaceForTenantOrNotFound(wId, clientId, res);
-      if (workspace === undefined) return;
-    }
-    const reports = await storage.getSharedReports({ clientId: clientId || undefined, workspaceId: wId });
-    res.json(reports);
-  });
-
-  app.post("/api/collaboration/reports", async (req, res) => {
+  app.get("/api/collaboration/reports", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
     const clientId = requireTenantContext(user, req, res);
     if (!clientId) return;
-    if (req.body.workspaceId) {
-      const workspace = await getWorkspaceForTenantOrNotFound(Number(req.body.workspaceId), clientId, res);
+    const wId = req.query.workspaceId ? Number(req.query.workspaceId) : undefined;
+    if (wId !== undefined && (!Number.isInteger(wId) || wId <= 0)) {
+      return res.status(400).json({ message: "Valid workspaceId required" });
+    }
+    if (wId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(wId, clientId, res);
+      if (workspace === undefined) return;
+    }
+    const reports = await storage.getSharedReports({ clientId, workspaceId: wId });
+    res.json(reports);
+  });
+
+  app.post("/api/collaboration/reports", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const parsed = sharedReportInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    if (parsed.data.workspaceId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(parsed.data.workspaceId, clientId, res);
       if (workspace === undefined) return;
     }
     const crypto = await import("crypto");
     const shareToken = crypto.randomBytes(24).toString("hex");
-    const report = await storage.createSharedReport({ ...req.body, createdBy: user.id, clientId, shareToken });
-    await storage.createActivityEvent({ workspaceId: req.body.workspaceId, actorId: user.id, verb: "created_report", targetType: "report", targetId: report.id, clientId });
+    const report = await storage.createSharedReport({ ...parsed.data, createdBy: user.id, clientId, shareToken });
+    await storage.createActivityEvent({ workspaceId: parsed.data.workspaceId || undefined, actorId: user.id, verb: "created_report", targetType: "report", targetId: report.id, clientId });
     res.status(201).json(report);
   });
 
-  app.patch("/api/collaboration/reports/:id", async (req, res) => {
+  app.patch("/api/collaboration/reports/:id", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
-    const report = await storage.updateSharedReport(parseInt(req.params.id), req.body, clientId || undefined);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const parsed = sharedReportUpdateInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    if (parsed.data.workspaceId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(parsed.data.workspaceId, clientId, res);
+      if (workspace === undefined) return;
+    }
+    const report = await storage.updateSharedReport(parseInt(req.params.id), parsed.data, clientId);
     if (!report) return res.status(404).json({ message: "Not found" });
-    await storage.createChangeHistory({ userId: user.id, entityType: "report", entityId: report.id, changeType: "updated", details: req.body, clientId: report.clientId });
+    await storage.createChangeHistory({ userId: user.id, entityType: "report", entityId: report.id, changeType: "updated", details: parsed.data, clientId: report.clientId });
     res.json(report);
   });
 
-  app.delete("/api/collaboration/reports/:id", async (req, res) => {
+  app.delete("/api/collaboration/reports/:id", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
-    await storage.deleteSharedReport(parseInt(req.params.id), clientId || undefined);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    await storage.deleteSharedReport(parseInt(req.params.id), clientId);
     res.json({ success: true });
   });
 
-  app.get("/api/collaboration/reports/:id/items", async (req, res) => {
+  app.get("/api/collaboration/reports/:id/items", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
     const report = await storage.getSharedReport(parseInt(req.params.id));
     if (!report) return res.status(404).json({ message: "Not found" });
     try { assertTenant(report.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
@@ -5825,22 +5863,39 @@ export async function registerRoutes(
     res.json(items);
   });
 
-  app.post("/api/collaboration/reports/:id/items", async (req, res) => {
+  app.post("/api/collaboration/reports/:id/items", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
-    const report = await storage.getSharedReport(parseInt(req.params.id));
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const reportId = parseInt(req.params.id);
+    const report = await storage.getSharedReport(reportId);
     if (!report) return res.status(404).json({ message: "Not found" });
     try { assertTenant(report.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
-    const item = await storage.createBriefingItem({ ...req.body, reportId: parseInt(req.params.id) });
+    const parsed = briefingItemInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    if (parsed.data.itemType === "article") {
+      if (!parsed.data.itemRefId) return res.status(400).json({ message: "Article item requires itemRefId" });
+      const article = await storage.getArticle(parsed.data.itemRefId, clientId);
+      if (!article) return res.status(404).json({ message: "Not found" });
+    } else if (!parsed.data.content) {
+      return res.status(400).json({ message: "Content is required for non-article briefing items" });
+    }
+    const item = await storage.createBriefingItem({ ...parsed.data, reportId });
     res.status(201).json(item);
   });
 
-  app.delete("/api/collaboration/reports/items/:id", async (req, res) => {
+  app.delete("/api/collaboration/reports/items/:id", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
-    await storage.deleteBriefingItem(parseInt(req.params.id), clientId || undefined);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const item = await storage.getBriefingItem(parseInt(req.params.id));
+    if (!item) return res.status(404).json({ message: "Not found" });
+    const report = await storage.getSharedReport(item.reportId);
+    if (!report || report.clientId !== clientId) return res.status(404).json({ message: "Not found" });
+    await storage.deleteBriefingItem(parseInt(req.params.id), clientId);
+    await storage.updateSharedReport(report.id, {}, clientId);
     res.json({ success: true });
   });
 

@@ -4,7 +4,7 @@ import {
   FileText, Network, List, Hash, Bookmark, Users,
   Activity, GitCompare, Zap, Tag, Brain, Eye, CreditCard,
   HelpCircle, Lightbulb, Plug, Monitor, UsersRound, ExternalLink,
-  Home, Bell, Settings, ClipboardList, CheckSquare, Lock, Building2
+  Home, Bell, Settings, ClipboardList, CheckSquare, Lock, Building2, BookOpen
 } from "lucide-react";
 import { CAPS } from "@shared/schema";
 
@@ -52,6 +52,7 @@ export function buildTenantNavTree(t: any): NavGroup[] {
       items: [
         { key: "feed", label: t("nav.latestNews", "Latest News"), href: "/feed", icon: Newspaper, caps: [CAPS.FEED_VIEW] },
         { key: "reportBasket", label: t("nav.reportBasket", "Report Basket"), href: "/reports/basket", icon: ClipboardList, caps: [CAPS.ARTICLE_VIEW] },
+        { key: "briefings", label: t("nav.briefings", "Briefings"), href: "/briefings", icon: BookOpen, caps: [CAPS.COLLAB_VIEW] },
         { key: "alerts", label: t("nav.alerts", "Alerts"), href: "/alerts", icon: Bell, caps: [CAPS.ALERTS_VIEW] },
         { key: "manageSources", label: t("nav.manageSources", "Manage Sources"), href: "/sources/manage", icon: List, caps: [CAPS.SOURCES_VIEW] },
         { key: "keywords", label: t("nav.keywords", "Keywords"), href: "/sources/keywords", icon: Hash, caps: [CAPS.KEYWORDS_VIEW] },
@@ -158,6 +159,7 @@ export const ROUTE_CAPS: RouteCapConfig[] = [
   { path: "/dashboard", caps: [CAPS.FEED_VIEW] },
   { path: "/feed", caps: [CAPS.FEED_VIEW] },
   { path: "/reports/basket", caps: [CAPS.ARTICLE_VIEW] },
+  { path: "/briefings", caps: [CAPS.COLLAB_VIEW] },
   { path: "/alerts", caps: [CAPS.ALERTS_VIEW] },
   { path: "/saved", caps: [CAPS.ARTICLE_SAVE] },
   { path: "/analytics", caps: [CAPS.ANALYTICS_VIEW] },

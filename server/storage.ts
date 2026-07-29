@@ -579,6 +579,7 @@ export interface IStorage {
   updateSharedReport(id: number, data: Partial<InsertSharedReport>, clientId?: number): Promise<SharedReport | undefined>;
   deleteSharedReport(id: number, clientId?: number): Promise<void>;
   getBriefingItems(reportId: number): Promise<BriefingItem[]>;
+  getBriefingItem(id: number): Promise<BriefingItem | undefined>;
   createBriefingItem(data: InsertBriefingItem): Promise<BriefingItem>;
   deleteBriefingItem(id: number, clientId?: number): Promise<void>;
 
@@ -3222,13 +3223,19 @@ export class DatabaseStorage implements IStorage {
   async updateSharedReport(id: number, data: Partial<InsertSharedReport>, clientId?: number): Promise<SharedReport | undefined> {
     const conditions = [eq(sharedReports.id, id)];
     if (clientId) conditions.push(eq(sharedReports.clientId, clientId));
-    const [row] = await db.update(sharedReports).set(data).where(and(...conditions)).returning();
+    const [row] = await db.update(sharedReports).set({
+      ...data,
+      lastUpdated: new Date(),
+    } as any).where(and(...conditions)).returning();
     return row;
   }
 
   async deleteSharedReport(id: number, clientId?: number): Promise<void> {
     const conditions = [eq(sharedReports.id, id)];
     if (clientId) conditions.push(eq(sharedReports.clientId, clientId));
+    const [report] = await db.select().from(sharedReports).where(and(...conditions));
+    if (!report) return;
+    await db.delete(briefingItems).where(eq(briefingItems.reportId, id));
     await db.delete(sharedReports).where(and(...conditions));
   }
 
@@ -3236,8 +3243,16 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(briefingItems).where(eq(briefingItems.reportId, reportId)).orderBy(asc(briefingItems.position));
   }
 
+  async getBriefingItem(id: number): Promise<BriefingItem | undefined> {
+    const [row] = await db.select().from(briefingItems).where(eq(briefingItems.id, id));
+    return row;
+  }
+
   async createBriefingItem(data: InsertBriefingItem): Promise<BriefingItem> {
     const [row] = await db.insert(briefingItems).values(data).returning();
+    await db.update(sharedReports)
+      .set({ lastUpdated: new Date() } as any)
+      .where(eq(sharedReports.id, row.reportId));
     return row;
   }
 

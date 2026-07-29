@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Download, FileText, Loader2, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import { BookOpen, Download, FileText, Loader2, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ArticleCard } from "@/components/articles/ArticleCard";
 import { Badge } from "@/components/ui/badge";
@@ -153,6 +153,12 @@ export default function ReportBasket() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Link href="/briefings">
+            <Button variant="outline" size="sm" data-testid="button-open-briefings-from-basket">
+              <BookOpen className="h-4 w-4" />
+              <span className="ml-2">{t("nav.briefings", "Briefings")}</span>
+            </Button>
+          </Link>
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching} data-testid="button-refresh-report-basket">
             {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             <span className="ml-2">{t("common.refresh", "Refresh")}</span>

@@ -49,6 +49,7 @@ import Landing from "@/pages/Landing";
 import NotFound from "@/pages/not-found";
 import NotAuthorized from "@/pages/NotAuthorized";
 import ReportBasket from "@/pages/ReportBasket";
+import Briefings from "@/pages/Briefings";
 import ClientSettings from "@/pages/ClientSettings";
 import ClientAlerts from "@/pages/ClientAlerts";
 import WorkQueue from "@/pages/WorkQueue";
@@ -135,6 +136,9 @@ function Router() {
       </Route>
       <Route path="/reports/basket">
         <ProtectedPage component={ReportBasket} />
+      </Route>
+      <Route path="/briefings">
+        <ProtectedPage component={Briefings} />
       </Route>
       <Route path="/alerts">
         <ProtectedPage component={ClientAlerts} />
