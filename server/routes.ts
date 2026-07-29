@@ -35,6 +35,7 @@ import { startQueueProcessor, startPeriodicJobs, getQueueStats, logSystemError, 
 import { runAnalyticsComputation } from "./analytics-worker";
 import { runDataRetention, onSourceHardDeleted } from "./data-retention-worker";
 import { startLearningWorker } from "./learning-worker";
+import { buildBriefingDeliveryPreview, deliverDueBriefings, getEmailProviderStatus } from "./briefing-delivery";
 
 const scryptAsync = promisify(scrypt);
 const SYSTEM_CLIENT_ID = 9000;
@@ -4555,6 +4556,9 @@ export async function registerRoutes(
     await runDataRetention();
     return { completed: true };
   });
+  registerJobHandler("DELIVER_BRIEFINGS", async () => {
+    return deliverDueBriefings();
+  });
 
   // === AI INTELLIGENCE ROUTES ===
   const { answerIntelligenceQuery, runIntelligencePipeline, analyzeNarratives } = await import("./ai-intelligence");
@@ -5916,6 +5920,17 @@ export async function registerRoutes(
     res.json(subscriptions.filter(subscription => subscription.sendBriefing !== false));
   });
 
+  app.get("/api/collaboration/briefing-delivery-status", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    res.json({
+      provider: getEmailProviderStatus(),
+      automaticDeliveryEnabled: getEmailProviderStatus().configured,
+    });
+  });
+
   app.post("/api/collaboration/briefing-schedules", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
@@ -5962,6 +5977,47 @@ export async function registerRoutes(
     await storage.deleteEmailSubscription(id, { clientId });
     await storage.createActivityEvent({ actorId: user.id, verb: "deleted_briefing_schedule", targetType: "email_subscription", targetId: id, clientId });
     res.json({ success: true });
+  });
+
+  app.post("/api/collaboration/briefing-schedules/:id/preview-delivery", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const id = parseInt(req.params.id);
+    const schedules = await storage.getEmailSubscriptions({ clientId });
+    const schedule = schedules.find(subscription => subscription.id === id && subscription.sendBriefing !== false);
+    if (!schedule) return res.status(404).json({ message: "Not found" });
+    const preview = await buildBriefingDeliveryPreview(schedule);
+    res.json({
+      ...preview,
+      provider: getEmailProviderStatus(),
+    });
+  });
+
+  app.post("/api/collaboration/briefing-schedules/run-due", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const parsed = z.object({
+      dryRun: z.boolean().default(true),
+      force: z.boolean().default(false),
+      scheduleId: z.coerce.number().int().positive().optional(),
+    }).strict().safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    if (parsed.data.scheduleId) {
+      const schedules = await storage.getEmailSubscriptions({ clientId });
+      const schedule = schedules.find(subscription => subscription.id === parsed.data.scheduleId && subscription.sendBriefing !== false);
+      if (!schedule) return res.status(404).json({ message: "Not found" });
+    }
+    const result = await deliverDueBriefings({
+      clientId,
+      scheduleId: parsed.data.scheduleId,
+      dryRun: parsed.data.dryRun,
+      force: parsed.data.force,
+    });
+    res.json(result);
   });
 
   app.get("/api/collaboration/reports", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {

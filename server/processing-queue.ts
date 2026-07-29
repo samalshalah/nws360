@@ -11,6 +11,7 @@ export type JobType =
   | "EXTRACT_ARTICLE_CONTENT"
   | "ANALYZE_ARTICLE"
   | "TRANSLATE_ARTICLE"
+  | "DELIVER_BRIEFINGS"
   | "INTELLIGENCE_PIPELINE";
 
 export const JOB_PRIORITIES: Record<string, number> = {
@@ -18,6 +19,7 @@ export const JOB_PRIORITIES: Record<string, number> = {
   COMPUTE_ANALYTICS: 2,
   INTELLIGENCE_PIPELINE: 3,
   TRANSLATE_ARTICLE: 4,
+  DELIVER_BRIEFINGS: 4,
   FETCH_SOURCE: 5,
   FETCH_ALL_PRIORITY: 5,
   BACKFILL_IMAGES: 5,
@@ -387,6 +389,7 @@ interface PeriodicJobConfig {
 
 const PERIODIC_JOBS: PeriodicJobConfig[] = [
   { type: "COMPUTE_ANALYTICS", intervalMs: 15 * 60 * 1000, priority: JOB_PRIORITIES.COMPUTE_ANALYTICS, maxAttempts: 1 },
+  { type: "DELIVER_BRIEFINGS", intervalMs: 15 * 60 * 1000, priority: JOB_PRIORITIES.DELIVER_BRIEFINGS, maxAttempts: 1 },
   { type: "DATA_RETENTION", intervalMs: 24 * 60 * 60 * 1000, priority: JOB_PRIORITIES.DATA_RETENTION, maxAttempts: 1 },
   { type: "INTELLIGENCE_PIPELINE", intervalMs: 30 * 60 * 1000, priority: JOB_PRIORITIES.INTELLIGENCE_PIPELINE, maxAttempts: 1 },
 ];
