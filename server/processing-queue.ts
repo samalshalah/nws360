@@ -93,6 +93,23 @@ export async function enqueueJob(
   return job.id;
 }
 
+export async function recordCompletedJob(type: JobType, payload: any, result: any): Promise<number> {
+  const now = new Date();
+  const [job] = await db.insert(processingJobs).values({
+    type,
+    status: "completed",
+    priority: JOB_PRIORITIES[type] ?? 5,
+    payload,
+    result,
+    runAt: now,
+    startedAt: now,
+    completedAt: now,
+    attempts: 1,
+    maxAttempts: 1,
+  }).returning();
+  return job.id;
+}
+
 async function claimJob(): Promise<typeof processingJobs.$inferSelect | null> {
   const now = new Date();
   const [job] = await db

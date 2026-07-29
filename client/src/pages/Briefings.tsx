@@ -9,6 +9,7 @@ import {
   Copy,
   Download,
   FileText,
+  History,
   Loader2,
   Mail,
   Plus,
@@ -126,6 +127,44 @@ type BriefingDeliveryPreview = {
   provider: BriefingDeliveryStatus["provider"];
 };
 
+type BriefingDeliverySummary = {
+  checked: number;
+  sent: number;
+  dryRun: number;
+  skipped: number;
+  providerMissing: number;
+  failed: number;
+  results: Array<{
+    scheduleId: number;
+    clientId: number;
+    email: string;
+    status: "sent" | "dry_run" | "provider_not_configured" | "failed" | "not_due";
+    itemCount?: number;
+    articleCount?: number;
+    error?: string;
+  }>;
+};
+
+type BriefingDeliveryHistoryItem = {
+  id: number;
+  status: string;
+  dryRun: boolean;
+  force: boolean;
+  manual: boolean;
+  scheduleId: number | null;
+  createdAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  runAt: string | null;
+  error: string | null;
+  summary: BriefingDeliverySummary;
+};
+
+type BriefingDeliveryHistoryResponse = {
+  items: BriefingDeliveryHistoryItem[];
+  total: number;
+};
+
 type ReportBasketResponse = {
   items: any[];
   total: number;
@@ -138,6 +177,7 @@ const BASKET_QUERY_KEY = ["/api/reports/basket", "sort=newest&limit=100"];
 const TEMPLATES_QUERY_KEY = ["/api/collaboration/report-templates"];
 const SCHEDULES_QUERY_KEY = ["/api/collaboration/briefing-schedules"];
 const DELIVERY_STATUS_QUERY_KEY = ["/api/collaboration/briefing-delivery-status"];
+const DELIVERY_HISTORY_QUERY_KEY = ["/api/collaboration/briefing-delivery-history"];
 
 const DEFAULT_TEMPLATE_SECTIONS: BriefingTemplateSection[] = [
   { itemType: "heading", content: "Executive summary", position: 0 },
@@ -226,6 +266,17 @@ function formatScheduleCadence(schedule: BriefingSchedule) {
   return `${time} ${timezone}`;
 }
 
+function formatDeliverySummary(summary: BriefingDeliverySummary) {
+  const parts = [
+    summary.sent > 0 ? `${summary.sent} sent` : "",
+    summary.dryRun > 0 ? `${summary.dryRun} test` : "",
+    summary.providerMissing > 0 ? `${summary.providerMissing} provider missing` : "",
+    summary.failed > 0 ? `${summary.failed} failed` : "",
+    summary.skipped > 0 ? `${summary.skipped} skipped` : "",
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(", ") : `${summary.checked} checked`;
+}
+
 export default function Briefings() {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -254,6 +305,8 @@ export default function Briefings() {
   const [scheduleDayOfMonth, setScheduleDayOfMonth] = useState("1");
   const [deliveryPreview, setDeliveryPreview] = useState<BriefingDeliveryPreview | null>(null);
   const [previewScheduleId, setPreviewScheduleId] = useState<number | null>(null);
+  const [runScheduleId, setRunScheduleId] = useState<number | null>(null);
+  const [deliveryRunResult, setDeliveryRunResult] = useState<BriefingDeliverySummary | null>(null);
 
   const {
     data: reports = [],
@@ -283,6 +336,10 @@ export default function Briefings() {
 
   const { data: deliveryStatus, refetch: refetchDeliveryStatus } = useQuery<BriefingDeliveryStatus>({
     queryKey: DELIVERY_STATUS_QUERY_KEY,
+  });
+
+  const { data: deliveryHistory, isLoading: deliveryHistoryLoading, refetch: refetchDeliveryHistory } = useQuery<BriefingDeliveryHistoryResponse>({
+    queryKey: DELIVERY_HISTORY_QUERY_KEY,
   });
 
   const selectedReport = useMemo(
@@ -386,6 +443,7 @@ export default function Briefings() {
 
   const invalidateSchedules = () => {
     queryClient.invalidateQueries({ queryKey: SCHEDULES_QUERY_KEY });
+    queryClient.invalidateQueries({ queryKey: DELIVERY_HISTORY_QUERY_KEY });
     queryClient.invalidateQueries({ queryKey: ["/api/collaboration/activity-feed"] });
   };
 
@@ -681,6 +739,40 @@ export default function Briefings() {
     },
   });
 
+  const runDeliveryMutation = useMutation({
+    mutationFn: async ({ id, dryRun }: { id: number; dryRun: boolean }) => {
+      const res = await apiRequest("POST", `/api/collaboration/briefing-schedules/${id}/run-delivery`, {
+        dryRun,
+        force: true,
+      });
+      return res.json() as Promise<BriefingDeliverySummary & { jobId: number }>;
+    },
+    onMutate: ({ id }) => {
+      setRunScheduleId(id);
+    },
+    onSuccess: (result, variables) => {
+      setDeliveryRunResult(result);
+      queryClient.invalidateQueries({ queryKey: DELIVERY_HISTORY_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: SCHEDULES_QUERY_KEY });
+      toast({
+        title: variables.dryRun
+          ? t("briefings.deliveryTestRecorded", "Delivery test recorded")
+          : t("briefings.deliveryRunRecorded", "Delivery run recorded"),
+        description: formatDeliverySummary(result),
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: t("briefings.deliveryRunFailed", "Delivery run failed"),
+        description: error instanceof Error ? error.message : t("common.tryAgain", "Please try again."),
+      });
+    },
+    onSettled: () => {
+      setRunScheduleId(null);
+    },
+  });
+
   const saveSelectedReport = () => {
     if (!selectedReport) return;
     updateReportMutation.mutate({
@@ -773,7 +865,7 @@ export default function Briefings() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => { refetchReports(); refetchItems(); refetchBasket(); refetchTemplates(); refetchSchedules(); refetchDeliveryStatus(); }} disabled={reportsFetching} data-testid="button-refresh-briefings">
+          <Button variant="outline" size="sm" onClick={() => { refetchReports(); refetchItems(); refetchBasket(); refetchTemplates(); refetchSchedules(); refetchDeliveryStatus(); refetchDeliveryHistory(); }} disabled={reportsFetching} data-testid="button-refresh-briefings">
             {reportsFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             <span className="ml-2">{t("common.refresh", "Refresh")}</span>
           </Button>
@@ -1154,6 +1246,30 @@ export default function Briefings() {
                                 {previewDeliveryMutation.isPending && previewScheduleId === schedule.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
                                 <span className="ml-2">{t("common.preview", "Preview")}</span>
                               </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => runDeliveryMutation.mutate({ id: schedule.id, dryRun: true })}
+                                disabled={runDeliveryMutation.isPending && runScheduleId === schedule.id}
+                                data-testid={`button-test-briefing-delivery-${schedule.id}`}
+                              >
+                                {runDeliveryMutation.isPending && runScheduleId === schedule.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                                <span className="ml-2">{t("common.test", "Test")}</span>
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                title={deliveryStatus?.provider.configured ? t("briefings.sendNow", "Send now") : t("briefings.deliveryProviderMissing", "Automatic delivery needs RESEND_API_KEY and EMAIL_FROM in Railway.")}
+                                onClick={() => {
+                                  if (window.confirm(t("briefings.sendNowConfirm", "Send this briefing now?"))) {
+                                    runDeliveryMutation.mutate({ id: schedule.id, dryRun: false });
+                                  }
+                                }}
+                                disabled={!deliveryStatus?.provider.configured || (runDeliveryMutation.isPending && runScheduleId === schedule.id)}
+                                data-testid={`button-send-briefing-delivery-${schedule.id}`}
+                              >
+                                <Send className="h-4 w-4" />
+                              </Button>
                               <Switch
                                 checked={schedule.active !== false}
                                 onCheckedChange={(active) => updateScheduleMutation.mutate({ id: schedule.id, updates: { active } })}
@@ -1199,6 +1315,63 @@ export default function Briefings() {
                     </pre>
                   </div>
                 )}
+
+                {deliveryRunResult && (
+                  <div className="mt-3 rounded-md border border-border/60 bg-muted/20 p-3" data-testid="panel-briefing-delivery-run-result">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">{t("briefings.lastRunResult", "Last run result")}</p>
+                        <p className="text-xs text-muted-foreground">{formatDeliverySummary(deliveryRunResult)}</p>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={() => setDeliveryRunResult(null)} data-testid="button-close-briefing-delivery-run-result">
+                        {t("common.close", "Close")}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-3 border-t border-border/60 pt-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <History className="h-4 w-4 text-primary" />
+                      <p className="text-xs font-medium uppercase text-muted-foreground">{t("briefings.deliveryHistory", "Delivery history")}</p>
+                    </div>
+                    <Badge variant="secondary">{deliveryHistory?.total || 0}</Badge>
+                  </div>
+                  {deliveryHistoryLoading ? (
+                    <div className="space-y-2">
+                      {Array.from({ length: 2 }).map((_, index) => <Skeleton key={index} className="h-14 rounded-md" />)}
+                    </div>
+                  ) : deliveryHistory?.items?.length ? (
+                    <div className="space-y-2" data-testid="list-briefing-delivery-history">
+                      {deliveryHistory.items.slice(0, 5).map(item => (
+                        <div key={item.id} className="rounded-md border border-border/60 px-3 py-2">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge variant={item.summary.failed > 0 ? "destructive" : item.summary.sent > 0 ? "default" : "secondary"}>
+                                  {item.status}
+                                </Badge>
+                                {item.manual && <Badge variant="outline">{t("briefings.manualRun", "Manual")}</Badge>}
+                                {item.dryRun && <Badge variant="outline">{t("briefings.testRun", "Test")}</Badge>}
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">{formatDeliverySummary(item.summary)}</p>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {item.completedAt || item.createdAt
+                                ? formatDistanceToNow(new Date(item.completedAt || item.createdAt || Date.now()), { addSuffix: true })
+                                : t("common.notAvailable", "Not available")}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-dashed border-border/70 bg-muted/20 px-4 py-5 text-center text-sm text-muted-foreground" data-testid="empty-briefing-delivery-history">
+                      {t("briefings.noDeliveryHistory", "No delivery runs recorded yet.")}
+                    </div>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>

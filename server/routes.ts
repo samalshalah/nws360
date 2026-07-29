@@ -8,7 +8,7 @@ import { startFeedWorker, fetchSourceFeed, analyzeWithAI, registerArticleAnalysi
 import { enqueueAIJob, awaitJobResult, checkClientAiBudget } from "./ai/ai-gateway";
 import { startScheduler, stopScheduler, _schedulerTickForTesting } from "./ai/ai-scheduler";
 import { db } from "./db";
-import { analyticsCache, articles, PLAN_LIMITS, SYSTEM_ROLES, CAPS, resolveEffectiveCaps, type AlertRule } from "@shared/schema";
+import { analyticsCache, articles, processingJobs, PLAN_LIMITS, SYSTEM_ROLES, CAPS, resolveEffectiveCaps, type AlertRule } from "@shared/schema";
 import { isGoogleNewsEditionCode } from "@shared/google-news-regions";
 import { isSourceCategoryCode } from "@shared/source-categories";
 import {
@@ -26,12 +26,12 @@ import { normalizeWebsiteCollectorConfig, websiteCollectorConfigSchema } from "@
 import { normalizeSourceFilterConfig, sourceFilterConfigSchema } from "@shared/source-filter";
 import { classifyFeedImportRow, normalizeSourceImportKey, type ClassifiedFeedImportRow, type FeedImportInputRow } from "@shared/source-import";
 import { discoverPublisherCategories, type DiscoveredPublisherCategory } from "./publisher-discovery";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
 import sanitizeHtml from "sanitize-html";
 import { scrypt, randomBytes, createHash } from "crypto";
 import { promisify } from "util";
-import { startQueueProcessor, startPeriodicJobs, getQueueStats, logSystemError, enqueueJob, openaiLimiter, registerJobHandler } from "./processing-queue";
+import { startQueueProcessor, startPeriodicJobs, getQueueStats, logSystemError, enqueueJob, openaiLimiter, registerJobHandler, recordCompletedJob } from "./processing-queue";
 import { runAnalyticsComputation } from "./analytics-worker";
 import { runDataRetention, onSourceHardDeleted } from "./data-retention-worker";
 import { startLearningWorker } from "./learning-worker";
@@ -301,6 +301,44 @@ async function validateBriefingScheduleTarget(config: BriefingScheduleConfig | n
     }
   }
   return true;
+}
+
+function filterDeliveryResultsForClient(result: any, clientId: number) {
+  const results = Array.isArray(result?.results)
+    ? result.results.filter((item: any) => Number(item?.clientId) === clientId)
+    : [];
+  return {
+    checked: results.length,
+    sent: results.filter((item: any) => item.status === "sent").length,
+    dryRun: results.filter((item: any) => item.status === "dry_run").length,
+    skipped: results.filter((item: any) => item.status === "not_due").length,
+    providerMissing: results.filter((item: any) => item.status === "provider_not_configured").length,
+    failed: results.filter((item: any) => item.status === "failed").length,
+    results,
+  };
+}
+
+function formatDeliveryHistoryJob(job: typeof processingJobs.$inferSelect, clientId: number) {
+  const payload = (job.payload || {}) as any;
+  const rawResult = (job.result || {}) as any;
+  const result = filterDeliveryResultsForClient(rawResult, clientId);
+  const ownsPayload = Number(payload.clientId) === clientId;
+  if (!ownsPayload && result.results.length === 0) return null;
+
+  return {
+    id: job.id,
+    status: job.status,
+    dryRun: Boolean(payload.dryRun),
+    force: Boolean(payload.force),
+    manual: Boolean(payload.manual),
+    scheduleId: payload.scheduleId || null,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    runAt: job.runAt,
+    error: job.lastError,
+    summary: result,
+  };
 }
 
 function parseTaskDueDate(value: string | null | undefined): Date | null | undefined {
@@ -5931,6 +5969,24 @@ export async function registerRoutes(
     });
   });
 
+  app.get("/api/collaboration/briefing-delivery-history", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+    const rows = await db.select()
+      .from(processingJobs)
+      .where(eq(processingJobs.type, "DELIVER_BRIEFINGS"))
+      .orderBy(desc(processingJobs.createdAt))
+      .limit(150);
+    const items = rows
+      .map(row => formatDeliveryHistoryJob(row, clientId))
+      .filter(Boolean)
+      .slice(0, limit);
+    res.json({ items, total: items.length });
+  });
+
   app.post("/api/collaboration/briefing-schedules", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
@@ -5993,6 +6049,38 @@ export async function registerRoutes(
       ...preview,
       provider: getEmailProviderStatus(),
     });
+  });
+
+  app.post("/api/collaboration/briefing-schedules/:id/run-delivery", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const id = parseInt(req.params.id);
+    const parsed = z.object({
+      dryRun: z.boolean().default(true),
+      force: z.boolean().default(true),
+    }).strict().safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const schedules = await storage.getEmailSubscriptions({ clientId });
+    const schedule = schedules.find(subscription => subscription.id === id && subscription.sendBriefing !== false);
+    if (!schedule) return res.status(404).json({ message: "Not found" });
+    const result = await deliverDueBriefings({
+      clientId,
+      scheduleId: id,
+      dryRun: parsed.data.dryRun,
+      force: parsed.data.force,
+    });
+    const jobId = await recordCompletedJob("DELIVER_BRIEFINGS", {
+      actorId: user.id,
+      clientId,
+      scheduleId: id,
+      dryRun: parsed.data.dryRun,
+      force: parsed.data.force,
+      manual: true,
+    }, result);
+    await storage.createActivityEvent({ actorId: user.id, verb: parsed.data.dryRun ? "tested_briefing_delivery" : "ran_briefing_delivery", targetType: "email_subscription", targetId: id, clientId });
+    res.json({ ...result, jobId });
   });
 
   app.post("/api/collaboration/briefing-schedules/run-due", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
