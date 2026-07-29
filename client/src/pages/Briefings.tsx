@@ -3,11 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import {
   BookOpen,
+  CalendarClock,
   Check,
+  Clock,
   Copy,
   Download,
   FileText,
   Loader2,
+  Mail,
   Plus,
   RefreshCw,
   Save,
@@ -22,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -69,6 +73,34 @@ type BriefingTemplate = {
   lastUpdated: string | null;
 };
 
+type BriefingFrequency = "realtime" | "daily" | "weekly" | "monthly";
+
+type BriefingScheduleConfig = {
+  label?: string | null;
+  deliveryTime?: string;
+  timezone?: string;
+  dayOfWeek?: number | null;
+  dayOfMonth?: number | null;
+  reportId?: number | null;
+  templateId?: number | null;
+  notes?: string | null;
+};
+
+type BriefingSchedule = {
+  id: number;
+  userId: number;
+  clientId: number;
+  email: string;
+  topics: string[] | null;
+  frequency: BriefingFrequency;
+  sendAlerts: boolean | null;
+  sendBriefing: boolean | null;
+  sendWeeklySummary: boolean | null;
+  customSchedule: BriefingScheduleConfig | null;
+  active: boolean | null;
+  createdAt: string | null;
+};
+
 type ReportBasketResponse = {
   items: any[];
   total: number;
@@ -79,6 +111,7 @@ type ReportBasketResponse = {
 const REPORTS_QUERY_KEY = ["/api/collaboration/reports"];
 const BASKET_QUERY_KEY = ["/api/reports/basket", "sort=newest&limit=100"];
 const TEMPLATES_QUERY_KEY = ["/api/collaboration/report-templates"];
+const SCHEDULES_QUERY_KEY = ["/api/collaboration/briefing-schedules"];
 
 const DEFAULT_TEMPLATE_SECTIONS: BriefingTemplateSection[] = [
   { itemType: "heading", content: "Executive summary", position: 0 },
@@ -93,6 +126,15 @@ const STATUS_LABELS: Record<ReportStatus, string> = {
   published: "Published",
   archived: "Archived",
 };
+
+const FREQUENCY_LABELS: Record<BriefingFrequency, string> = {
+  realtime: "Real-time",
+  daily: "Daily",
+  weekly: "Weekly",
+  monthly: "Monthly",
+};
+
+const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function reportStatusVariant(status: ReportStatus): "default" | "secondary" | "outline" {
   if (status === "published") return "default";
@@ -128,6 +170,36 @@ function articleSnapshot(article: any) {
     .slice(0, 900);
 }
 
+function splitTopicInput(value: string) {
+  return Array.from(new Set(
+    value
+      .split(",")
+      .map(topic => topic.trim().replace(/\s+/g, " "))
+      .filter(Boolean)
+      .map(topic => topic.slice(0, 80)),
+  )).slice(0, 30);
+}
+
+function getScheduleConfig(schedule: BriefingSchedule): BriefingScheduleConfig {
+  return schedule.customSchedule && typeof schedule.customSchedule === "object"
+    ? schedule.customSchedule
+    : {};
+}
+
+function formatScheduleCadence(schedule: BriefingSchedule) {
+  const config = getScheduleConfig(schedule);
+  const time = config.deliveryTime || "08:00";
+  const timezone = config.timezone || "Asia/Baghdad";
+  if (schedule.frequency === "realtime") return "As matching news arrives";
+  if (schedule.frequency === "weekly") {
+    return `${WEEKDAY_LABELS[config.dayOfWeek ?? 0]} at ${time} ${timezone}`;
+  }
+  if (schedule.frequency === "monthly") {
+    return `Day ${config.dayOfMonth ?? 1} at ${time} ${timezone}`;
+  }
+  return `${time} ${timezone}`;
+}
+
 export default function Briefings() {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -145,6 +217,15 @@ export default function Briefings() {
   const [exporting, setExporting] = useState(false);
   const [templateName, setTemplateName] = useState("Daily news brief");
   const [selectedTemplateId, setSelectedTemplateId] = useState("none");
+  const [scheduleLabel, setScheduleLabel] = useState("Daily briefing");
+  const [scheduleEmail, setScheduleEmail] = useState("");
+  const [scheduleFrequency, setScheduleFrequency] = useState<BriefingFrequency>("daily");
+  const [scheduleTime, setScheduleTime] = useState("08:00");
+  const [scheduleTimezone, setScheduleTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Baghdad");
+  const [scheduleTopics, setScheduleTopics] = useState("");
+  const [scheduleSource, setScheduleSource] = useState<"current-report" | "selected-template" | "manual">("current-report");
+  const [scheduleDayOfWeek, setScheduleDayOfWeek] = useState("1");
+  const [scheduleDayOfMonth, setScheduleDayOfMonth] = useState("1");
 
   const {
     data: reports = [],
@@ -166,6 +247,10 @@ export default function Briefings() {
 
   const { data: templates = [], isLoading: templatesLoading, refetch: refetchTemplates } = useQuery<BriefingTemplate[]>({
     queryKey: TEMPLATES_QUERY_KEY,
+  });
+
+  const { data: schedules = [], isLoading: schedulesLoading, refetch: refetchSchedules } = useQuery<BriefingSchedule[]>({
+    queryKey: SCHEDULES_QUERY_KEY,
   });
 
   const selectedReport = useMemo(
@@ -214,6 +299,22 @@ export default function Briefings() {
     return { draft, review, published };
   }, [reports]);
 
+  const activeScheduleCount = useMemo(
+    () => schedules.filter(schedule => schedule.active !== false).length,
+    [schedules],
+  );
+
+  const scheduleTargetLabel = (schedule: BriefingSchedule) => {
+    const config = getScheduleConfig(schedule);
+    if (config.reportId) {
+      return reports.find(report => report.id === config.reportId)?.title || `Briefing #${config.reportId}`;
+    }
+    if (config.templateId) {
+      return templates.find(template => template.id === config.templateId)?.name || `Template #${config.templateId}`;
+    }
+    return t("briefings.manualScheduleTarget", "Manual briefing selection");
+  };
+
   useEffect(() => {
     if (reports.length === 0) {
       setSelectedReportId(null);
@@ -232,6 +333,15 @@ export default function Briefings() {
     setCopied(false);
   }, [selectedReport]);
 
+  useEffect(() => {
+    if (scheduleSource === "current-report" && !selectedReport) {
+      setScheduleSource("manual");
+    }
+    if (scheduleSource === "selected-template" && !selectedTemplate) {
+      setScheduleSource("manual");
+    }
+  }, [scheduleSource, selectedReport, selectedTemplate]);
+
   const invalidateReports = () => {
     queryClient.invalidateQueries({ queryKey: REPORTS_QUERY_KEY });
     queryClient.invalidateQueries({ queryKey: ["/api/collaboration/activity-feed"] });
@@ -239,6 +349,11 @@ export default function Briefings() {
 
   const invalidateTemplates = () => {
     queryClient.invalidateQueries({ queryKey: TEMPLATES_QUERY_KEY });
+    queryClient.invalidateQueries({ queryKey: ["/api/collaboration/activity-feed"] });
+  };
+
+  const invalidateSchedules = () => {
+    queryClient.invalidateQueries({ queryKey: SCHEDULES_QUERY_KEY });
     queryClient.invalidateQueries({ queryKey: ["/api/collaboration/activity-feed"] });
   };
 
@@ -442,6 +557,77 @@ export default function Briefings() {
     },
   });
 
+  const createScheduleMutation = useMutation({
+    mutationFn: async () => {
+      const customSchedule: BriefingScheduleConfig = {
+        label: scheduleLabel.trim(),
+        deliveryTime: scheduleTime,
+        timezone: scheduleTimezone.trim() || "Asia/Baghdad",
+      };
+      if (scheduleFrequency === "weekly") {
+        customSchedule.dayOfWeek = Number(scheduleDayOfWeek);
+      }
+      if (scheduleFrequency === "monthly") {
+        customSchedule.dayOfMonth = Number(scheduleDayOfMonth);
+      }
+      if (scheduleSource === "current-report" && selectedReport) {
+        customSchedule.reportId = selectedReport.id;
+      }
+      if (scheduleSource === "selected-template" && selectedTemplate) {
+        customSchedule.templateId = selectedTemplate.id;
+      }
+      const res = await apiRequest("POST", "/api/collaboration/briefing-schedules", {
+        email: scheduleEmail.trim(),
+        topics: splitTopicInput(scheduleTopics),
+        frequency: scheduleFrequency,
+        sendAlerts: false,
+        sendBriefing: true,
+        sendWeeklySummary: scheduleFrequency === "weekly",
+        customSchedule,
+        active: true,
+      });
+      return res.json() as Promise<BriefingSchedule>;
+    },
+    onSuccess: () => {
+      invalidateSchedules();
+      setScheduleEmail("");
+      setScheduleTopics("");
+      toast({ title: t("briefings.scheduleCreated", "Schedule created") });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: t("briefings.scheduleFailed", "Schedule failed"),
+        description: error instanceof Error ? error.message : t("common.tryAgain", "Please try again."),
+      });
+    },
+  });
+
+  const updateScheduleMutation = useMutation({
+    mutationFn: async ({ id, updates }: { id: number; updates: Partial<BriefingSchedule> }) => {
+      const res = await apiRequest("PATCH", `/api/collaboration/briefing-schedules/${id}`, updates);
+      return res.json() as Promise<BriefingSchedule>;
+    },
+    onSuccess: invalidateSchedules,
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: t("briefings.scheduleFailed", "Schedule failed"),
+        description: error instanceof Error ? error.message : t("common.tryAgain", "Please try again."),
+      });
+    },
+  });
+
+  const deleteScheduleMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/collaboration/briefing-schedules/${id}`);
+    },
+    onSuccess: () => {
+      invalidateSchedules();
+      toast({ title: t("briefings.scheduleDeleted", "Schedule deleted") });
+    },
+  });
+
   const saveSelectedReport = () => {
     if (!selectedReport) return;
     updateReportMutation.mutate({
@@ -534,7 +720,7 @@ export default function Briefings() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => { refetchReports(); refetchItems(); refetchBasket(); refetchTemplates(); }} disabled={reportsFetching} data-testid="button-refresh-briefings">
+          <Button variant="outline" size="sm" onClick={() => { refetchReports(); refetchItems(); refetchBasket(); refetchTemplates(); refetchSchedules(); }} disabled={reportsFetching} data-testid="button-refresh-briefings">
             {reportsFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             <span className="ml-2">{t("common.refresh", "Refresh")}</span>
           </Button>
@@ -711,6 +897,206 @@ export default function Briefings() {
                   ))}
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-md">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <CalendarClock className="h-4 w-4 text-primary" />
+                {t("briefings.distributionSchedules", "Distribution Schedules")}
+              </CardTitle>
+              <CardDescription>{t("briefings.distributionDescription", "Set the recipient, cadence, and briefing package for delivery.")}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="briefing-schedule-label">{t("briefings.scheduleLabel", "Schedule name")}</Label>
+                    <Input
+                      id="briefing-schedule-label"
+                      value={scheduleLabel}
+                      onChange={(event) => setScheduleLabel(event.target.value)}
+                      data-testid="input-briefing-schedule-label"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="briefing-schedule-email">{t("briefings.recipientEmail", "Recipient email")}</Label>
+                    <Input
+                      id="briefing-schedule-email"
+                      type="email"
+                      value={scheduleEmail}
+                      onChange={(event) => setScheduleEmail(event.target.value)}
+                      placeholder="analyst@example.org"
+                      data-testid="input-briefing-schedule-email"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>{t("briefings.frequency", "Frequency")}</Label>
+                    <Select value={scheduleFrequency} onValueChange={(value) => setScheduleFrequency(value as BriefingFrequency)}>
+                      <SelectTrigger data-testid="select-briefing-schedule-frequency"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="realtime">Real-time</SelectItem>
+                        <SelectItem value="daily">Daily</SelectItem>
+                        <SelectItem value="weekly">Weekly</SelectItem>
+                        <SelectItem value="monthly">Monthly</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="briefing-schedule-time">{t("briefings.deliveryTime", "Delivery time")}</Label>
+                    <Input
+                      id="briefing-schedule-time"
+                      type="time"
+                      value={scheduleTime}
+                      onChange={(event) => setScheduleTime(event.target.value)}
+                      disabled={scheduleFrequency === "realtime"}
+                      data-testid="input-briefing-schedule-time"
+                    />
+                  </div>
+                </div>
+
+                {scheduleFrequency === "weekly" && (
+                  <div className="space-y-2">
+                    <Label>{t("briefings.weekday", "Weekday")}</Label>
+                    <Select value={scheduleDayOfWeek} onValueChange={setScheduleDayOfWeek}>
+                      <SelectTrigger data-testid="select-briefing-schedule-weekday"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {WEEKDAY_LABELS.map((label, index) => (
+                          <SelectItem key={label} value={String(index)}>{label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {scheduleFrequency === "monthly" && (
+                  <div className="space-y-2">
+                    <Label>{t("briefings.monthDay", "Day of month")}</Label>
+                    <Select value={scheduleDayOfMonth} onValueChange={setScheduleDayOfMonth}>
+                      <SelectTrigger data-testid="select-briefing-schedule-month-day"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: 31 }).map((_, index) => (
+                          <SelectItem key={index + 1} value={String(index + 1)}>Day {index + 1}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="briefing-schedule-timezone">{t("briefings.timezone", "Timezone")}</Label>
+                    <Input
+                      id="briefing-schedule-timezone"
+                      value={scheduleTimezone}
+                      onChange={(event) => setScheduleTimezone(event.target.value)}
+                      disabled={scheduleFrequency === "realtime"}
+                      data-testid="input-briefing-schedule-timezone"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("briefings.scheduleSource", "Package")}</Label>
+                    <Select value={scheduleSource} onValueChange={(value) => setScheduleSource(value as typeof scheduleSource)}>
+                      <SelectTrigger data-testid="select-briefing-schedule-source"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="manual">Manual selection</SelectItem>
+                        <SelectItem value="current-report" disabled={!selectedReport}>Selected briefing</SelectItem>
+                        <SelectItem value="selected-template" disabled={!selectedTemplate}>Selected template</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="briefing-schedule-topics">{t("briefings.topicFilters", "Topic filters")}</Label>
+                  <Input
+                    id="briefing-schedule-topics"
+                    value={scheduleTopics}
+                    onChange={(event) => setScheduleTopics(event.target.value)}
+                    placeholder="oil, security, Baghdad"
+                    data-testid="input-briefing-schedule-topics"
+                  />
+                </div>
+
+                <Button
+                  onClick={() => createScheduleMutation.mutate()}
+                  disabled={createScheduleMutation.isPending || scheduleLabel.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(scheduleEmail.trim())}
+                  data-testid="button-create-briefing-schedule"
+                >
+                  {createScheduleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />}
+                  <span className="ml-2">{t("briefings.createSchedule", "Create schedule")}</span>
+                </Button>
+              </div>
+
+              <div className="border-t border-border/60 pt-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium uppercase text-muted-foreground">{t("briefings.activeSchedules", "Active schedules")}</p>
+                  <Badge variant="secondary">{activeScheduleCount}/{schedules.length}</Badge>
+                </div>
+                {schedulesLoading ? (
+                  <div className="space-y-2">
+                    {Array.from({ length: 2 }).map((_, index) => <Skeleton key={index} className="h-16 rounded-md" />)}
+                  </div>
+                ) : schedules.length > 0 ? (
+                  <div className="space-y-2" data-testid="list-briefing-schedules">
+                    {schedules.slice(0, 5).map(schedule => {
+                      const config = getScheduleConfig(schedule);
+                      return (
+                        <div key={schedule.id} className="rounded-md border border-border/60 px-3 py-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="truncate text-sm font-medium text-foreground">{config.label || schedule.email}</span>
+                                <Badge variant={schedule.active === false ? "secondary" : "default"}>{schedule.active === false ? "Paused" : "Active"}</Badge>
+                                <Badge variant="outline">{FREQUENCY_LABELS[schedule.frequency] || schedule.frequency}</Badge>
+                              </div>
+                              <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <Mail className="h-3 w-3" />
+                                <span className="truncate">{schedule.email}</span>
+                              </p>
+                              <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <Clock className="h-3 w-3" />
+                                <span className="truncate">{formatScheduleCadence(schedule)}</span>
+                              </p>
+                              <p className="truncate text-xs text-muted-foreground">{scheduleTargetLabel(schedule)}</p>
+                              {schedule.topics && schedule.topics.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {schedule.topics.slice(0, 4).map(topic => <Badge key={topic} variant="secondary" className="text-[11px]">{topic}</Badge>)}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <Switch
+                                checked={schedule.active !== false}
+                                onCheckedChange={(active) => updateScheduleMutation.mutate({ id: schedule.id, updates: { active } })}
+                                disabled={updateScheduleMutation.isPending}
+                                data-testid={`switch-briefing-schedule-${schedule.id}`}
+                              />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => deleteScheduleMutation.mutate(schedule.id)}
+                                disabled={deleteScheduleMutation.isPending}
+                                data-testid={`button-delete-briefing-schedule-${schedule.id}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-dashed border-border/70 bg-muted/20 px-4 py-6 text-center text-sm text-muted-foreground" data-testid="empty-briefing-schedules">
+                    {t("briefings.noSchedules", "No schedules yet. Create one for the first recipient.")}
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
 

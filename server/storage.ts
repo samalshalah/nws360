@@ -192,6 +192,11 @@ function buildAnalyticsTermSnapshot(rows: AnalyticsTextRow[], topLimit = 25, tim
   return { top, timeline };
 }
 
+type EmailSubscriptionScope = {
+  userId?: number;
+  clientId?: number;
+};
+
 export class TenantNotFoundError extends Error {
   constructor() {
     super("Not found");
@@ -517,10 +522,10 @@ export interface IStorage {
   createWebhookDelivery(data: InsertWebhookDelivery): Promise<WebhookDelivery>;
   updateWebhookDelivery(id: number, data: Partial<InsertWebhookDelivery>): Promise<void>;
 
-  getEmailSubscriptions(userId?: number): Promise<EmailSubscription[]>;
+  getEmailSubscriptions(scope?: EmailSubscriptionScope): Promise<EmailSubscription[]>;
   createEmailSubscription(data: InsertEmailSubscription): Promise<EmailSubscription>;
-  updateEmailSubscription(id: number, data: Partial<InsertEmailSubscription>, userId?: number): Promise<EmailSubscription | undefined>;
-  deleteEmailSubscription(id: number, userId?: number): Promise<void>;
+  updateEmailSubscription(id: number, data: Partial<InsertEmailSubscription>, scope?: EmailSubscriptionScope): Promise<EmailSubscription | undefined>;
+  deleteEmailSubscription(id: number, scope?: EmailSubscriptionScope): Promise<void>;
 
   getIntegrationConfigs(clientId?: number): Promise<IntegrationConfig[]>;
   createIntegrationConfig(data: InsertIntegrationConfig): Promise<IntegrationConfig>;
@@ -2971,8 +2976,13 @@ export class DatabaseStorage implements IStorage {
     await db.update(webhookDeliveries).set(data).where(eq(webhookDeliveries.id, id));
   }
 
-  async getEmailSubscriptions(userId?: number): Promise<EmailSubscription[]> {
-    if (userId) return db.select().from(emailSubscriptions).where(eq(emailSubscriptions.userId, userId)).orderBy(desc(emailSubscriptions.createdAt));
+  async getEmailSubscriptions(scope?: EmailSubscriptionScope): Promise<EmailSubscription[]> {
+    const conditions = [];
+    if (scope?.userId != null) conditions.push(eq(emailSubscriptions.userId, scope.userId));
+    if (scope?.clientId != null) conditions.push(eq(emailSubscriptions.clientId, scope.clientId));
+    if (conditions.length > 0) {
+      return db.select().from(emailSubscriptions).where(and(...conditions)).orderBy(desc(emailSubscriptions.createdAt));
+    }
     return db.select().from(emailSubscriptions).orderBy(desc(emailSubscriptions.createdAt));
   }
 
@@ -2981,16 +2991,18 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async updateEmailSubscription(id: number, data: Partial<InsertEmailSubscription>, userId?: number): Promise<EmailSubscription | undefined> {
+  async updateEmailSubscription(id: number, data: Partial<InsertEmailSubscription>, scope?: EmailSubscriptionScope): Promise<EmailSubscription | undefined> {
     const conditions = [eq(emailSubscriptions.id, id)];
-    if (userId) conditions.push(eq(emailSubscriptions.userId, userId));
+    if (scope?.userId != null) conditions.push(eq(emailSubscriptions.userId, scope.userId));
+    if (scope?.clientId != null) conditions.push(eq(emailSubscriptions.clientId, scope.clientId));
     const [row] = await db.update(emailSubscriptions).set(data).where(and(...conditions)).returning();
     return row;
   }
 
-  async deleteEmailSubscription(id: number, userId?: number): Promise<void> {
+  async deleteEmailSubscription(id: number, scope?: EmailSubscriptionScope): Promise<void> {
     const conditions = [eq(emailSubscriptions.id, id)];
-    if (userId) conditions.push(eq(emailSubscriptions.userId, userId));
+    if (scope?.userId != null) conditions.push(eq(emailSubscriptions.userId, scope.userId));
+    if (scope?.clientId != null) conditions.push(eq(emailSubscriptions.clientId, scope.clientId));
     await db.delete(emailSubscriptions).where(and(...conditions));
   }
 

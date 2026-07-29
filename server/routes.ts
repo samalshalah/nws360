@@ -228,6 +228,80 @@ const templateFromReportInputSchema = z.object({
   description: optionalTrimmedText(1000),
 }).strict();
 
+const BRIEFING_DELIVERY_FREQUENCIES = ["realtime", "daily", "weekly", "monthly"] as const;
+
+const normalizedTopicListSchema = z.preprocess((value) => {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  const seen = new Set<string>();
+  const topics: string[] = [];
+  for (const raw of rawValues) {
+    const topic = String(raw || "").trim().replace(/\s+/g, " ");
+    const key = topic.toLowerCase();
+    if (!topic || seen.has(key)) continue;
+    seen.add(key);
+    topics.push(topic);
+  }
+  return topics;
+}, z.array(z.string().min(1).max(80)).max(30).default([]));
+
+const briefingScheduleConfigSchema = z.object({
+  label: optionalTrimmedText(120),
+  deliveryTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default("08:00"),
+  timezone: z.string().trim().min(2).max(80).default("Asia/Baghdad"),
+  dayOfWeek: z.coerce.number().int().min(0).max(6).nullable().optional(),
+  dayOfMonth: z.coerce.number().int().min(1).max(31).nullable().optional(),
+  reportId: optionalPositiveInt,
+  templateId: optionalPositiveInt,
+  notes: optionalTrimmedText(1000),
+}).strict();
+
+const emailSubscriptionInputSchema = z.object({
+  email: z.string().trim().email().max(254),
+  topics: normalizedTopicListSchema,
+  frequency: z.enum(BRIEFING_DELIVERY_FREQUENCIES).default("daily"),
+  sendAlerts: z.boolean().default(true),
+  sendBriefing: z.boolean().default(true),
+  sendWeeklySummary: z.boolean().default(false),
+  customSchedule: briefingScheduleConfigSchema.nullable().optional(),
+  active: z.boolean().default(true),
+}).strict();
+
+const emailSubscriptionUpdateSchema = emailSubscriptionInputSchema.partial();
+const briefingScheduleInputSchema = emailSubscriptionInputSchema.extend({
+  sendAlerts: z.boolean().default(false),
+  sendBriefing: z.boolean().default(true),
+});
+const briefingScheduleUpdateSchema = briefingScheduleInputSchema.partial();
+
+type BriefingScheduleConfig = z.infer<typeof briefingScheduleConfigSchema>;
+
+async function validateBriefingScheduleTarget(config: BriefingScheduleConfig | null | undefined, clientId: number, res: Response): Promise<boolean> {
+  if (!config) return true;
+  if (config.reportId && config.templateId) {
+    res.status(400).json({ message: "Choose either a briefing or a template, not both" });
+    return false;
+  }
+  if (config.reportId) {
+    const report = await storage.getSharedReport(config.reportId);
+    if (!report || report.clientId !== clientId || report.status === "template") {
+      safeNotFound(res);
+      return false;
+    }
+  }
+  if (config.templateId) {
+    const template = await storage.getSharedReport(config.templateId);
+    if (!template || template.clientId !== clientId || template.status !== "template") {
+      safeNotFound(res);
+      return false;
+    }
+  }
+  return true;
+}
+
 function parseTaskDueDate(value: string | null | undefined): Date | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -5291,25 +5365,43 @@ export async function registerRoutes(
   // === INTEGRATION: EMAIL SUBSCRIPTIONS ===
   app.get("/api/integrations/email-subscriptions", requireCapability(CAPS.INTEGRATIONS_VIEW), async (req, res) => {
     const user = (req as any).user;
-    const subs = await storage.getEmailSubscriptions(user.id);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const subs = await storage.getEmailSubscriptions({ userId: user.id, clientId });
     res.json(subs);
   });
 
   app.post("/api/integrations/email-subscriptions", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    const sub = await storage.createEmailSubscription({ ...req.body, userId: user.id });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const parsed = emailSubscriptionInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    if (!(await validateBriefingScheduleTarget(parsed.data.customSchedule, clientId, res))) return;
+    const sub = await storage.createEmailSubscription({ ...parsed.data, userId: user.id, clientId });
     res.status(201).json(sub);
   });
 
   app.patch("/api/integrations/email-subscriptions/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    const sub = await storage.updateEmailSubscription(parseInt(req.params.id), req.body, user.id);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const parsed = emailSubscriptionUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    if ("customSchedule" in parsed.data && !(await validateBriefingScheduleTarget(parsed.data.customSchedule, clientId, res))) return;
+    const sub = await storage.updateEmailSubscription(parseInt(req.params.id), parsed.data, { userId: user.id, clientId });
+    if (!sub) return res.status(404).json({ message: "Not found" });
     res.json(sub);
   });
 
   app.delete("/api/integrations/email-subscriptions/:id", requireCapability(CAPS.INTEGRATIONS_MANAGE), async (req, res) => {
     const user = (req as any).user;
-    await storage.deleteEmailSubscription(parseInt(req.params.id), user.id);
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const id = parseInt(req.params.id);
+    const existing = await storage.getEmailSubscriptions({ userId: user.id, clientId });
+    if (!existing.some(subscription => subscription.id === id)) return res.status(404).json({ message: "Not found" });
+    await storage.deleteEmailSubscription(id, { userId: user.id, clientId });
     res.json({ success: true });
   });
 
@@ -5815,6 +5907,63 @@ export async function registerRoutes(
   });
 
   // === SHARED REPORTS / BRIEFINGS ===
+  app.get("/api/collaboration/briefing-schedules", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const subscriptions = await storage.getEmailSubscriptions({ clientId });
+    res.json(subscriptions.filter(subscription => subscription.sendBriefing !== false));
+  });
+
+  app.post("/api/collaboration/briefing-schedules", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const parsed = briefingScheduleInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    if (!(await validateBriefingScheduleTarget(parsed.data.customSchedule, clientId, res))) return;
+    const schedule = await storage.createEmailSubscription({
+      ...parsed.data,
+      sendBriefing: true,
+      userId: user.id,
+      clientId,
+    });
+    await storage.createActivityEvent({ actorId: user.id, verb: "created_briefing_schedule", targetType: "email_subscription", targetId: schedule.id, clientId });
+    res.status(201).json(schedule);
+  });
+
+  app.patch("/api/collaboration/briefing-schedules/:id", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const parsed = briefingScheduleUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    if ("customSchedule" in parsed.data && !(await validateBriefingScheduleTarget(parsed.data.customSchedule, clientId, res))) return;
+    const schedule = await storage.updateEmailSubscription(parseInt(req.params.id), {
+      ...parsed.data,
+      sendBriefing: true,
+    }, { clientId });
+    if (!schedule) return res.status(404).json({ message: "Not found" });
+    await storage.createActivityEvent({ actorId: user.id, verb: "updated_briefing_schedule", targetType: "email_subscription", targetId: schedule.id, clientId });
+    res.json(schedule);
+  });
+
+  app.delete("/api/collaboration/briefing-schedules/:id", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const id = parseInt(req.params.id);
+    const existing = await storage.getEmailSubscriptions({ clientId });
+    if (!existing.some(subscription => subscription.id === id && subscription.sendBriefing !== false)) return res.status(404).json({ message: "Not found" });
+    await storage.deleteEmailSubscription(id, { clientId });
+    await storage.createActivityEvent({ actorId: user.id, verb: "deleted_briefing_schedule", targetType: "email_subscription", targetId: id, clientId });
+    res.json({ success: true });
+  });
+
   app.get("/api/collaboration/reports", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
