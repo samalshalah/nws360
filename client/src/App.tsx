@@ -51,6 +51,7 @@ import NotAuthorized from "@/pages/NotAuthorized";
 import ReportBasket from "@/pages/ReportBasket";
 import ClientSettings from "@/pages/ClientSettings";
 import ClientAlerts from "@/pages/ClientAlerts";
+import WorkQueue from "@/pages/WorkQueue";
 import { AIStagePage } from "@/components/analytics/AIStagePage";
 
 const sentimentPage = () => (
@@ -228,6 +229,9 @@ function Router() {
       </Route>
       <Route path="/collaboration">
         <ProtectedPage component={Collaboration} />
+      </Route>
+      <Route path="/work-queue">
+        <ProtectedPage component={WorkQueue} />
       </Route>
       <Route path="/knowledge">
         <ProtectedPage component={Knowledge} />

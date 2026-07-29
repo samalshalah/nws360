@@ -592,10 +592,10 @@ export interface IStorage {
 
   // Tasks
   getTasks(params?: { workspaceId?: number; assignedTo?: number; createdBy?: number; status?: string }, clientId?: number): Promise<Task[]>;
-  getTask(id: number): Promise<Task | undefined>;
+  getTask(id: number, clientId?: number): Promise<Task | undefined>;
   createTask(data: InsertTask): Promise<Task>;
-  updateTask(id: number, data: Partial<InsertTask>): Promise<Task | undefined>;
-  deleteTask(id: number): Promise<void>;
+  updateTask(id: number, data: Partial<InsertTask>, clientId?: number): Promise<Task | undefined>;
+  deleteTask(id: number, clientId?: number): Promise<void>;
 
   // Watchlists
   getWatchlists(userId: number): Promise<Watchlist[]>;
@@ -3297,8 +3297,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(tasks).orderBy(desc(tasks.createdAt));
   }
 
-  async getTask(id: number): Promise<Task | undefined> {
-    const [row] = await db.select().from(tasks).where(eq(tasks.id, id));
+  async getTask(id: number, clientId?: number): Promise<Task | undefined> {
+    const conditions = [eq(tasks.id, id)];
+    if (clientId) conditions.push(eq(tasks.clientId, clientId));
+    const [row] = await db.select().from(tasks).where(and(...conditions));
     return row;
   }
 
@@ -3307,13 +3309,17 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async updateTask(id: number, data: Partial<InsertTask>): Promise<Task | undefined> {
-    const [row] = await db.update(tasks).set(data).where(eq(tasks.id, id)).returning();
+  async updateTask(id: number, data: Partial<InsertTask>, clientId?: number): Promise<Task | undefined> {
+    const conditions = [eq(tasks.id, id)];
+    if (clientId) conditions.push(eq(tasks.clientId, clientId));
+    const [row] = await db.update(tasks).set(data).where(and(...conditions)).returning();
     return row;
   }
 
-  async deleteTask(id: number): Promise<void> {
-    await db.delete(tasks).where(eq(tasks.id, id));
+  async deleteTask(id: number, clientId?: number): Promise<void> {
+    const conditions = [eq(tasks.id, id)];
+    if (clientId) conditions.push(eq(tasks.clientId, clientId));
+    await db.delete(tasks).where(and(...conditions));
   }
 
   async getWatchlists(userId: number): Promise<Watchlist[]> {

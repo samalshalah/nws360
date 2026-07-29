@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
-import { Bookmark, Calendar, ExternalLink, Loader2, Save, Share2 } from "lucide-react";
+import { Bookmark, Calendar, CheckSquare, ExternalLink, Loader2, Save, Share2 } from "lucide-react";
 import { CAPS, type Article, type Source } from "@shared/schema";
 import { ARTICLE_CATEGORIES, ARTICLE_WORKFLOW_STATUSES, IRAQ_PROVINCES, getArticleCategoryLabel, getArticleWorkflowStatusLabel, getIraqProvinceLabel } from "@shared/article-taxonomy";
 import { Badge } from "@/components/ui/badge";
@@ -41,8 +41,9 @@ export function ArticleDetailDialog({
 }: ArticleDetailDialogProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const { hasCap } = usePermissions();
+  const { hasCap, authContext } = usePermissions();
   const canEditArticle = hasCap(CAPS.ARTICLE_EDIT);
+  const canCreateTask = hasCap(CAPS.COLLAB_TASKS);
   const publishedAt = article.publishedAt ? new Date(article.publishedAt) : null;
   const sourceName = article.subSource || article.source?.name || "Unknown source";
   const collectedVia = article.subSource ? article.source?.name : null;
@@ -88,6 +89,31 @@ export function ArticleDetailDialog({
     onError: (error) => {
       toast({
         title: "Article update failed",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const createArticleTask = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/collaboration/tasks", {
+        title: `Review: ${article.title}`.slice(0, 160),
+        description: summary || content.slice(0, 500) || null,
+        priority: "medium",
+        assignedTo: authContext?.user?.id || null,
+        relatedTargetType: "article",
+        relatedTargetId: article.id,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Task created" });
+      queryClient.invalidateQueries({ queryKey: ["/api/collaboration/tasks"] });
+    },
+    onError: (error) => {
+      toast({
+        title: "Task creation failed",
         description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
@@ -259,6 +285,22 @@ export function ArticleDetailDialog({
             <Button type="button" size="icon" variant="ghost" onClick={onShare} aria-label="Share article">
               <Share2 className="h-4 w-4" />
             </Button>
+            {canCreateTask && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => createArticleTask.mutate()}
+                disabled={createArticleTask.isPending}
+                data-testid={`button-create-task-from-article-${article.id}`}
+              >
+                {createArticleTask.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckSquare className="mr-2 h-4 w-4" />
+                )}
+                Create task
+              </Button>
+            )}
           </div>
           {article.url ? (
             <Button asChild>

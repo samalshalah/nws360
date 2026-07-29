@@ -403,6 +403,7 @@ function TasksTab() {
                     <SelectItem value="low">Low</SelectItem>
                     <SelectItem value="medium">Medium</SelectItem>
                     <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="critical">Critical</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -425,7 +426,10 @@ function TasksTab() {
                     <SelectContent>
                       <SelectItem value="article">Article</SelectItem>
                       <SelectItem value="story">Story</SelectItem>
-                      <SelectItem value="entity">Entity</SelectItem>
+                      <SelectItem value="report">Report</SelectItem>
+                      <SelectItem value="timeline">Timeline</SelectItem>
+                      <SelectItem value="workspace">Workspace</SelectItem>
+                      <SelectItem value="task">Task</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

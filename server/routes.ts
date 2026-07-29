@@ -155,6 +155,48 @@ const alertRuleUpdateInputSchema = alertRuleBaseInputSchema.partial();
 
 type AlertRuleInput = z.infer<typeof alertRuleBaseInputSchema>;
 type AlertRuleUpdateInput = z.infer<typeof alertRuleUpdateInputSchema>;
+const TASK_STATUSES = ["open", "in_progress", "resolved"] as const;
+const TASK_PRIORITIES = ["low", "medium", "high", "critical"] as const;
+const TASK_TARGET_TYPES = ["article", "story", "report", "timeline", "workspace", "task"] as const;
+
+const optionalTaskTargetType = z.preprocess((value) => {
+  if (value === undefined || value === null || value === "") return null;
+  return String(value).trim();
+}, z.enum(TASK_TARGET_TYPES).nullable().optional());
+
+const taskInputSchema = z.object({
+  title: z.string().trim().min(1).max(160),
+  description: optionalTrimmedText(1000),
+  assignedTo: optionalPositiveInt,
+  priority: z.enum(TASK_PRIORITIES).default("medium"),
+  dueDate: optionalTrimmedText(40),
+  workspaceId: optionalPositiveInt,
+  relatedTargetType: optionalTaskTargetType,
+  relatedTargetId: optionalPositiveInt,
+}).strict();
+
+const taskUpdateInputSchema = taskInputSchema.extend({
+  status: z.enum(TASK_STATUSES).optional(),
+}).partial();
+
+function parseTaskDueDate(value: string | null | undefined): Date | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00`) : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Invalid due date");
+  }
+  return date;
+}
+
+function normalizeTaskPayload(input: z.infer<typeof taskInputSchema> | z.infer<typeof taskUpdateInputSchema>) {
+  const dueDate = parseTaskDueDate(input.dueDate);
+  const output: Record<string, unknown> = { ...input };
+  if (dueDate !== undefined) output.dueDate = dueDate;
+  if (output.relatedTargetType === null) output.relatedTargetType = null;
+  if (output.relatedTargetId === null) output.relatedTargetId = null;
+  return output;
+}
 
 function validateAlertRuleInput(input: Partial<AlertRuleInput>): string | null {
   if (input.category && !isArticleCategoryCode(input.category)) {
@@ -5611,12 +5653,32 @@ export async function registerRoutes(
         return !!ws && ws.clientId === clientId;
       }
       case "task": {
-        const task = await storage.getTask(targetId);
+        const task = await storage.getTask(targetId, clientId);
         return !!task && task.clientId === clientId;
       }
       default:
         return false;
     }
+  }
+
+  async function validateTaskRelations(input: { assignedTo?: number | null; workspaceId?: number | null; relatedTargetType?: string | null; relatedTargetId?: number | null }, clientId: number, res: any): Promise<boolean> {
+    if (input.assignedTo && !(await ensureUserInTenant(input.assignedTo, clientId, res))) return false;
+    if (input.workspaceId) {
+      const workspace = await getWorkspaceForTenantOrNotFound(input.workspaceId, clientId, res);
+      if (workspace === undefined) return false;
+    }
+    if (input.relatedTargetType || input.relatedTargetId) {
+      if (!input.relatedTargetType || !input.relatedTargetId) {
+        res.status(400).json({ message: "Related target type and id must be provided together" });
+        return false;
+      }
+      const hasAccess = await verifyTargetOwnership(input.relatedTargetType, input.relatedTargetId, clientId);
+      if (!hasAccess) {
+        safeNotFound(res);
+        return false;
+      }
+    }
+    return true;
   }
 
   // === DISCUSSION COMMENTS ===
@@ -5860,70 +5922,90 @@ export async function registerRoutes(
   });
 
   // === TASKS & FOLLOW-UP TRACKING (tenant-scoped) ===
-  app.get("/api/collaboration/tasks", async (req, res) => {
+  app.get("/api/collaboration/tasks", requireCapability(CAPS.COLLAB_TASKS), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
-    if (!clientId) return res.json([]);
-    const wsId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
-    const assignedTo = req.query.assignedTo ? parseInt(req.query.assignedTo as string) : undefined;
-    const status = req.query.status as string | undefined;
-    if (clientId && wsId) {
-      const workspace = await getWorkspaceForTenantOrNotFound(wsId, clientId, res);
-      if (workspace === undefined) return;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    try {
+      const wsId = req.query.workspaceId ? parseInt(req.query.workspaceId as string) : undefined;
+      const assignedTo = req.query.assignedTo ? parseInt(req.query.assignedTo as string) : undefined;
+      const status = req.query.status as string | undefined;
+      if (status && !TASK_STATUSES.includes(status as any)) return res.status(400).json({ message: "Invalid task status" });
+      if (wsId) {
+        const workspace = await getWorkspaceForTenantOrNotFound(wsId, clientId, res);
+        if (workspace === undefined) return;
+      }
+      if (assignedTo && !(await ensureUserInTenant(assignedTo, clientId, res))) return;
+      const taskList = await storage.getTasks({ workspaceId: wsId, assignedTo, status }, clientId);
+      res.json(taskList);
+    } catch (err) {
+      console.error("Task fetch failed:", err);
+      res.status(500).json({ message: "Error fetching tasks" });
     }
-    if (clientId && assignedTo && !(await ensureUserInTenant(assignedTo, clientId, res))) return;
-    const taskList = await storage.getTasks({ workspaceId: wsId, assignedTo, status }, clientId || undefined);
-    res.json(taskList);
   });
 
-  app.post("/api/collaboration/tasks", async (req, res) => {
+  app.post("/api/collaboration/tasks", requireCapability(CAPS.COLLAB_TASKS), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
-    const schema = z.object({ title: z.string().min(1), description: z.string().optional(), assignedTo: z.number().int().optional(), priority: z.enum(["low", "medium", "high", "critical"]).optional(), dueDate: z.string().optional(), workspaceId: z.number().int().optional() });
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
-    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
-    if (parsed.data.workspaceId) {
-      const workspace = await getWorkspaceForTenantOrNotFound(parsed.data.workspaceId, clientId, res);
-      if (workspace === undefined) return;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    try {
+      const input = taskInputSchema.parse(req.body || {});
+      if (!(await validateTaskRelations(input, clientId, res))) return;
+      const task = await storage.createTask({ ...normalizeTaskPayload(input), createdBy: user.id, clientId } as any);
+      await storage.createActivityEvent({ workspaceId: input.workspaceId || undefined, actorId: user.id, verb: "created_task", targetType: "task", targetId: task.id, clientId });
+      res.status(201).json(task);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid task input" });
+      }
+      res.status(400).json({ message: err instanceof Error ? err.message : "Task create failed" });
     }
-    if (!(await ensureUserInTenant(parsed.data.assignedTo, clientId, res))) return;
-    const task = await storage.createTask({ ...parsed.data, createdBy: user.id, clientId });
-    await storage.createActivityEvent({ workspaceId: parsed.data.workspaceId, actorId: user.id, verb: "created_task", targetType: "task", targetId: task.id, clientId });
-    res.status(201).json(task);
   });
 
-  app.patch("/api/collaboration/tasks/:id", async (req, res) => {
+  app.patch("/api/collaboration/tasks/:id", requireCapability(CAPS.COLLAB_TASKS), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
-    const existingTask = await storage.getTask(parseInt(req.params.id));
-    if (!existingTask) return res.status(404).json({ message: "Not found" });
-    try { assertTenant(existingTask.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
-    const taskClientId = clientId || existingTask.clientId;
-    if (req.body.workspaceId) {
-      const workspace = await getWorkspaceForTenantOrNotFound(Number(req.body.workspaceId), taskClientId, res);
-      if (workspace === undefined) return;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid task id" });
+    try {
+      const existingTask = await storage.getTask(id, clientId);
+      if (!existingTask) return safeNotFound(res);
+      const input = taskUpdateInputSchema.parse(req.body || {});
+      const relationInput = {
+        assignedTo: input.assignedTo !== undefined ? input.assignedTo : existingTask.assignedTo,
+        workspaceId: input.workspaceId !== undefined ? input.workspaceId : existingTask.workspaceId,
+        relatedTargetType: input.relatedTargetType !== undefined ? input.relatedTargetType : existingTask.relatedTargetType,
+        relatedTargetId: input.relatedTargetId !== undefined ? input.relatedTargetId : existingTask.relatedTargetId,
+      };
+      if (!(await validateTaskRelations(relationInput, clientId, res))) return;
+      const task = await storage.updateTask(id, normalizeTaskPayload(input) as any, clientId);
+      if (!task) return safeNotFound(res);
+      if (input.status === "resolved" && existingTask.status !== "resolved") {
+        await storage.createActivityEvent({ workspaceId: task.workspaceId || undefined, actorId: user.id, verb: "resolved_task", targetType: "task", targetId: task.id, clientId });
+      }
+      res.json(task);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid task update" });
+      }
+      res.status(400).json({ message: err instanceof Error ? err.message : "Task update failed" });
     }
-    if (!(await ensureUserInTenant(req.body.assignedTo, taskClientId, res))) return;
-    const task = await storage.updateTask(parseInt(req.params.id), req.body);
-    if (!task) return res.status(404).json({ message: "Not found" });
-    if (req.body.status === "resolved") {
-      await storage.createActivityEvent({ workspaceId: task.workspaceId || undefined, actorId: user.id, verb: "resolved_task", targetType: "task", targetId: task.id, clientId: clientId || existingTask.clientId });
-    }
-    res.json(task);
   });
 
-  app.delete("/api/collaboration/tasks/:id", async (req, res) => {
+  app.delete("/api/collaboration/tasks/:id", requireCapability(CAPS.COLLAB_TASKS), async (req, res) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ message: "Not authenticated" });
-    const clientId = resolveClientId(user, req);
-    const existingTask = await storage.getTask(parseInt(req.params.id));
-    if (!existingTask) return res.status(404).json({ message: "Not found" });
-    try { assertTenant(existingTask.clientId, clientId); } catch { return res.status(404).json({ message: "Not found" }); }
-    await storage.deleteTask(parseInt(req.params.id));
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid task id" });
+    const existingTask = await storage.getTask(id, clientId);
+    if (!existingTask) return safeNotFound(res);
+    await storage.deleteTask(id, clientId);
     res.json({ success: true });
   });
 

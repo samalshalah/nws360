@@ -4,7 +4,7 @@ import {
   FileText, Network, List, Hash, Bookmark, Users,
   Activity, GitCompare, Zap, Tag, Brain, Eye, CreditCard,
   HelpCircle, Lightbulb, Plug, Monitor, UsersRound, ExternalLink,
-  Home, Bell, Settings, ClipboardList, Lock, Building2
+  Home, Bell, Settings, ClipboardList, CheckSquare, Lock, Building2
 } from "lucide-react";
 import { CAPS } from "@shared/schema";
 
@@ -95,6 +95,7 @@ export function buildTenantNavTree(t: any): NavGroup[] {
       label: t("nav.more", "More"),
       icon: Settings,
       items: [
+        { key: "workQueue", label: t("nav.workQueue", "Work Queue"), href: "/work-queue", icon: CheckSquare, caps: [CAPS.COLLAB_TASKS] },
         { key: "collaboration", label: t("nav.collaboration", "Collaboration"), href: "/collaboration", icon: UsersRound, caps: [CAPS.COLLAB_VIEW] },
         { key: "knowledge", label: t("nav.knowledge", "Knowledge"), href: "/knowledge", icon: Brain, caps: [CAPS.KNOWLEDGE_VIEW] },
         { key: "integrations", label: t("nav.integrations", "Integrations"), href: "/integrations", icon: Plug, caps: [CAPS.INTEGRATIONS_VIEW] },
@@ -181,6 +182,7 @@ export const ROUTE_CAPS: RouteCapConfig[] = [
   { path: "/usage-billing", caps: [CAPS.BILLING_VIEW] },
   { path: "/integrations", caps: [CAPS.INTEGRATIONS_VIEW] },
   { path: "/collaboration", caps: [CAPS.COLLAB_VIEW] },
+  { path: "/work-queue", caps: [CAPS.COLLAB_TASKS] },
   { path: "/knowledge", caps: [CAPS.KNOWLEDGE_VIEW] },
   { path: "/settings", caps: [CAPS.SETTINGS_VIEW] },
   { path: "/admin", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
