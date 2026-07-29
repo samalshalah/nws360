@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { isGenericAnalyticsTerm } from "./analytics-noise";
 import {
-  users, sources, articles, keywords, bookmarks, sourceFetchLogs,
+  users, sources, articles, savedFeedViews, keywords, bookmarks, sourceFetchLogs,
   clients, clientKeywords, systemSettings, adminAuditLogs,
   processingJobs, systemErrors, apiKeys, featureFlags, usageMetrics,
   storyClusters, articleAiAnalysis, dailyBriefs, detectedEvents, entityMentions, trendPredictions,
@@ -13,6 +13,7 @@ import {
   type User, type InsertUser,
   type Source, type InsertSource,
   type Article, type InsertArticle,
+  type SavedFeedView, type InsertSavedFeedView,
   type Keyword, type InsertKeyword,
   type Bookmark, type InsertBookmark,
   type SourceFetchLog, type InsertSourceFetchLog,
@@ -227,6 +228,13 @@ export interface IStorage {
   createArticle(article: InsertArticle): Promise<Article>;
   getArticleByUrl(url: string, clientId: number): Promise<Article | undefined>; // For tenant-scoped deduplication
   getArticleByTitle(title: string, clientId?: number | null): Promise<Article | undefined>; // For cross-channel deduplication
+
+  // Saved feed views
+  getSavedFeedViews(clientId: number): Promise<SavedFeedView[]>;
+  getSavedFeedView(id: number, clientId: number): Promise<SavedFeedView | undefined>;
+  createSavedFeedView(view: InsertSavedFeedView): Promise<SavedFeedView>;
+  updateSavedFeedView(id: number, data: Partial<InsertSavedFeedView>, clientId: number): Promise<SavedFeedView | undefined>;
+  deleteSavedFeedView(id: number, clientId: number): Promise<void>;
 
   // Keywords
   getKeywords(clientId?: number): Promise<Keyword[]>;
@@ -1047,6 +1055,38 @@ export class DatabaseStorage implements IStorage {
     }
     const [article] = await db.select().from(articles).where(and(...conditions)).limit(1);
     return article;
+  }
+
+  async getSavedFeedViews(clientId: number): Promise<SavedFeedView[]> {
+    return db.select()
+      .from(savedFeedViews)
+      .where(eq(savedFeedViews.clientId, clientId))
+      .orderBy(desc(savedFeedViews.updatedAt), asc(savedFeedViews.name));
+  }
+
+  async getSavedFeedView(id: number, clientId: number): Promise<SavedFeedView | undefined> {
+    const [view] = await db.select()
+      .from(savedFeedViews)
+      .where(and(eq(savedFeedViews.id, id), eq(savedFeedViews.clientId, clientId)));
+    return view;
+  }
+
+  async createSavedFeedView(view: InsertSavedFeedView): Promise<SavedFeedView> {
+    const [created] = await db.insert(savedFeedViews).values(view).returning();
+    return created;
+  }
+
+  async updateSavedFeedView(id: number, data: Partial<InsertSavedFeedView>, clientId: number): Promise<SavedFeedView | undefined> {
+    const [updated] = await db.update(savedFeedViews)
+      .set({ ...data, updatedAt: new Date() } as any)
+      .where(and(eq(savedFeedViews.id, id), eq(savedFeedViews.clientId, clientId)))
+      .returning();
+    return updated;
+  }
+
+  async deleteSavedFeedView(id: number, clientId: number): Promise<void> {
+    await db.delete(savedFeedViews)
+      .where(and(eq(savedFeedViews.id, id), eq(savedFeedViews.clientId, clientId)));
   }
 
   // Keywords

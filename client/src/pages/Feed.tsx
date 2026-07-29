@@ -7,10 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe, LayoutGrid, List, ArrowDownUp } from "lucide-react";
+import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe, LayoutGrid, List, ArrowDownUp, BookmarkPlus } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -32,6 +34,13 @@ type PublicSystemSettings = {
 type ArticleLiveStatus = {
   total: number;
   items: { id: number; publishedAt: string | null; ingestedAt: string | null; createdAt: string | null }[];
+};
+type SavedFeedView = {
+  id: number;
+  name: string;
+  filters: Record<string, string>;
+  isShared: boolean;
+  updatedAt?: string | null;
 };
 const DEFAULT_SORT: FeedSort = "newest";
 const SORT_OPTIONS: { value: FeedSort; label: string }[] = [
@@ -87,6 +96,9 @@ export default function Feed() {
       sort: parseFeedSort(params.get("sort")),
     };
   });
+  const [saveViewOpen, setSaveViewOpen] = useState(false);
+  const [viewName, setViewName] = useState("");
+  const [activeSavedViewId, setActiveSavedViewId] = useState<string | undefined>();
 
   useEffect(() => {
     const params = new URLSearchParams(searchString);
@@ -177,6 +189,15 @@ export default function Feed() {
     queryFn: async () => {
       const res = await fetch("/api/settings/public", { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch public settings");
+      return res.json();
+    },
+  });
+
+  const { data: savedViews = [] } = useQuery<SavedFeedView[]>({
+    queryKey: ["/api/feed/views"],
+    queryFn: async () => {
+      const res = await fetch("/api/feed/views", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch saved views");
       return res.json();
     },
   });
@@ -338,6 +359,81 @@ export default function Feed() {
     },
   });
 
+  const buildCurrentSavedViewFilters = useCallback(() => {
+    const viewFilters: Record<string, string> = {
+      sort: filters.sort,
+      dateRange: filters.dateRange,
+    };
+    if (filters.search) viewFilters.search = filters.search;
+    if (filters.sourceId) viewFilters.sourceId = filters.sourceId;
+    if (filters.sourceName) viewFilters.sourceName = filters.sourceName;
+    if (filters.sentiment) viewFilters.sentiment = filters.sentiment;
+    if (filters.category) viewFilters.category = filters.category;
+    if (filters.province) viewFilters.province = filters.province;
+    if (filters.workflowStatus) viewFilters.workflowStatus = filters.workflowStatus;
+    if (filters.manualTag) viewFilters.manualTag = filters.manualTag;
+    if (filters.sourceType) viewFilters.sourceType = filters.sourceType;
+    return viewFilters;
+  }, [filters]);
+
+  const applySavedView = useCallback((view: SavedFeedView) => {
+    const saved = view.filters || {};
+    const nextFilters = {
+      search: typeof saved.search === "string" ? saved.search : "",
+      sourceId: typeof saved.sourceId === "string" ? saved.sourceId : undefined,
+      sourceName: typeof saved.sourceName === "string" ? saved.sourceName : undefined,
+      sentiment: typeof saved.sentiment === "string" ? saved.sentiment : undefined,
+      category: typeof saved.category === "string" ? saved.category : undefined,
+      province: typeof saved.province === "string" ? saved.province : undefined,
+      workflowStatus: typeof saved.workflowStatus === "string" ? saved.workflowStatus : undefined,
+      manualTag: typeof saved.manualTag === "string" ? saved.manualTag : undefined,
+      sourceType: typeof saved.sourceType === "string" ? saved.sourceType : undefined,
+      dateRange: typeof saved.dateRange === "string" ? saved.dateRange : "all",
+      sort: parseFeedSort(saved.sort),
+    };
+    setFilters(nextFilters);
+    setSearchInput(nextFilters.search);
+    setActiveSavedViewId(String(view.id));
+    resetScroll();
+  }, [resetScroll]);
+
+  const saveViewMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await apiRequest("POST", "/api/feed/views", {
+        name,
+        filters: buildCurrentSavedViewFilters(),
+        isShared: true,
+      });
+      return res.json() as Promise<SavedFeedView>;
+    },
+    onSuccess: (view) => {
+      toast({ title: "Saved view updated" });
+      setActiveSavedViewId(String(view.id));
+      setSaveViewOpen(false);
+      setViewName("");
+      queryClient.invalidateQueries({ queryKey: ["/api/feed/views"] });
+    },
+    onError: (error) => {
+      toast({
+        title: "Saved view failed",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteViewMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/feed/views/${id}`),
+    onSuccess: () => {
+      toast({ title: "Saved view deleted" });
+      setActiveSavedViewId(undefined);
+      queryClient.invalidateQueries({ queryKey: ["/api/feed/views"] });
+    },
+    onError: () => {
+      toast({ title: "Saved view delete failed", variant: "destructive" });
+    },
+  });
+
   const toggleSelectArticle = (id: number) => {
     setSelectedArticles(prev => {
       const next = new Set(prev);
@@ -373,6 +469,7 @@ export default function Feed() {
   };
 
   const updateFilter = (key: string, value: string | undefined) => {
+    setActiveSavedViewId(undefined);
     setFilters(prev => ({ ...prev, [key]: value }));
     resetScroll();
   };
@@ -382,6 +479,7 @@ export default function Feed() {
   const clearFilters = () => {
     setFilters({ search: "", sourceId: undefined, sourceName: undefined, sentiment: undefined, category: undefined, province: undefined, workflowStatus: undefined, manualTag: undefined, sourceType: undefined, dateRange: "all", sort: DEFAULT_SORT });
     setSearchInput("");
+    setActiveSavedViewId(undefined);
     resetScroll();
   };
 
@@ -428,6 +526,8 @@ export default function Feed() {
 
   const activeSourceType = filters.sourceType || "all";
   const activeSentiment = filters.sentiment || "all";
+  const activeSavedView = savedViews.find((view) => String(view.id) === activeSavedViewId);
+  const canManageSavedViews = hasCap(CAPS.FEED_FILTER);
   const canExportArticles = hasCap(CAPS.ARTICLE_EXPORT);
   const canRunIntelligence = hasCap(CAPS.INTELLIGENCE_RUN);
   const canDeleteArticles = isAdmin;
@@ -504,6 +604,94 @@ export default function Feed() {
       )}
     </div>
   );
+
+  const savedViewsControl = canManageSavedViews ? (
+    <div className="flex w-full min-w-0 items-center gap-1 md:w-[260px]" data-testid="saved-feed-views-control">
+      <Select
+        value={activeSavedViewId || "none"}
+        onValueChange={(val) => {
+          if (val === "none") {
+            setActiveSavedViewId(undefined);
+            return;
+          }
+          const view = savedViews.find((item) => String(item.id) === val);
+          if (view) applySavedView(view);
+        }}
+      >
+        <SelectTrigger className="h-9 min-w-0 flex-1 bg-background" data-testid="select-saved-feed-view">
+          <SelectValue placeholder="Saved views" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">Saved views</SelectItem>
+          {savedViews.map((view) => (
+            <SelectItem key={view.id} value={String(view.id)}>
+              {view.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <Dialog
+        open={saveViewOpen}
+        onOpenChange={(open) => {
+          setSaveViewOpen(open);
+          if (open) setViewName(activeSavedView?.name || "");
+        }}
+      >
+        <DialogTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" title="Save view" data-testid="button-open-save-feed-view">
+            <BookmarkPlus className="h-4 w-4" />
+          </Button>
+        </DialogTrigger>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save feed view</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="saved-feed-view-name">Name</Label>
+            <Input
+              id="saved-feed-view-name"
+              value={viewName}
+              onChange={(event) => setViewName(event.target.value)}
+              placeholder="Baghdad security"
+              data-testid="input-saved-feed-view-name"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSaveViewOpen(false)} data-testid="button-cancel-save-feed-view">
+              Cancel
+            </Button>
+            <Button
+              onClick={() => saveViewMutation.mutate(viewName.trim())}
+              disabled={saveViewMutation.isPending || viewName.trim().length < 2}
+              data-testid="button-save-feed-view"
+            >
+              {saveViewMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {activeSavedView ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9 shrink-0"
+          title="Delete saved view"
+          onClick={() => {
+            if (window.confirm(`Delete saved view "${activeSavedView.name}"?`)) {
+              deleteViewMutation.mutate(activeSavedView.id);
+            }
+          }}
+          disabled={deleteViewMutation.isPending}
+          data-testid="button-delete-saved-feed-view"
+        >
+          <Trash2 className="h-4 w-4 text-destructive" />
+        </Button>
+      ) : null}
+    </div>
+  ) : null;
 
   const filterDropdowns = (
     <>
@@ -796,6 +984,7 @@ export default function Feed() {
 
       {mobileFiltersOpen && (
         <div className="md:hidden space-y-2" data-testid="mobile-filters-panel">
+          {savedViewsControl}
           <div className="grid grid-cols-2 gap-2">
             {filterDropdowns}
           </div>
@@ -804,6 +993,7 @@ export default function Feed() {
 
       <div className="hidden md:block">
         <div className="flex w-full flex-wrap items-center gap-2">
+          {savedViewsControl}
           {filterDropdowns}
         </div>
       </div>

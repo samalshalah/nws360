@@ -116,6 +116,25 @@ export const articles = pgTable("articles", {
 
 export const insertArticleSchema = createInsertSchema(articles).omit({ id: true, createdAt: true });
 
+// === SAVED FEED VIEWS ===
+export const savedFeedViews = pgTable("saved_feed_views", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  filters: jsonb("filters").$type<Record<string, unknown>>().notNull(),
+  isShared: boolean("is_shared").notNull().default(true),
+  userId: integer("user_id").notNull().references(() => users.id),
+  clientId: integer("client_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_saved_feed_views_client").on(table.clientId),
+  index("idx_saved_feed_views_user").on(table.userId),
+]);
+
+export const insertSavedFeedViewSchema = createInsertSchema(savedFeedViews).omit({ id: true, createdAt: true, updatedAt: true });
+export type SavedFeedView = typeof savedFeedViews.$inferSelect;
+export type InsertSavedFeedView = z.infer<typeof insertSavedFeedViewSchema>;
+
 // === KEYWORDS (Client tracking) ===
 export const keywords = pgTable("keywords", {
   id: serial("id").primaryKey(),

@@ -65,6 +65,26 @@ const articleWorkflowUpdateSchema = z.object({
   manualTags: z.array(z.string()).max(MAX_ARTICLE_MANUAL_TAGS).optional(),
 }).strict();
 
+const savedFeedViewFiltersSchema = z.object({
+  search: z.string().max(200).optional(),
+  sourceId: z.string().regex(/^\d+$/).optional(),
+  sourceName: z.string().max(200).optional(),
+  sentiment: z.enum(["positive", "negative", "neutral"]).optional(),
+  category: z.string().max(80).optional(),
+  province: z.string().max(80).optional(),
+  workflowStatus: z.string().max(80).optional(),
+  manualTag: z.string().max(80).optional(),
+  sourceType: z.string().max(60).optional(),
+  dateRange: z.enum(["all", "today", "week", "month"]).optional(),
+  sort: z.enum(["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"]).optional(),
+}).strict();
+
+const savedFeedViewInputSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  filters: savedFeedViewFiltersSchema,
+  isShared: z.boolean().optional(),
+}).strict();
+
 function normalizeManualTags(tags: string[] | undefined): string[] | undefined {
   if (!tags) return undefined;
   const seen = new Set<string>();
@@ -118,6 +138,28 @@ function buildArticleWorkflowUpdates(input: z.infer<typeof articleWorkflowUpdate
   }
 
   return updates;
+}
+
+function normalizeSavedFeedViewFilters(input: z.infer<typeof savedFeedViewFiltersSchema>): Record<string, string> {
+  const filters: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    filters[key] = trimmed;
+  }
+
+  if (filters.category && !isArticleCategoryCode(filters.category)) {
+    throw new Error(`Invalid category. Use one of: ${ARTICLE_CATEGORIES.map(item => item.code).join(", ")}`);
+  }
+  if (filters.province && !isIraqProvinceCode(filters.province)) {
+    throw new Error(`Invalid province. Use one of: ${IRAQ_PROVINCES.map(item => item.code).join(", ")}`);
+  }
+  if (filters.workflowStatus && !isArticleWorkflowStatusCode(filters.workflowStatus)) {
+    throw new Error(`Invalid workflow status. Use one of: ${ARTICLE_WORKFLOW_STATUSES.map(item => item.code).join(", ")}`);
+  }
+
+  return filters;
 }
 const ALLOWED_SYSTEM_SETTING_KEYS = new Set(Object.keys(SYSTEM_SETTING_DEFAULTS));
 
@@ -1855,6 +1897,94 @@ export async function registerRoutes(
       console.error("Article workflow update failed:", err);
       res.status(500).json({ message: "Article update failed" });
     }
+  });
+
+  app.get("/api/feed/views", requireCapability(CAPS.FEED_VIEW), async (req, res) => {
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+
+    const views = await storage.getSavedFeedViews(clientId);
+    res.json(views);
+  });
+
+  app.post("/api/feed/views", requireCapability(CAPS.FEED_FILTER), async (req, res) => {
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+
+    try {
+      const input = savedFeedViewInputSchema.parse(req.body);
+      const filters = normalizeSavedFeedViewFilters(input.filters);
+      const existing = (await storage.getSavedFeedViews(clientId))
+        .find((view) => view.name.trim().toLowerCase() === input.name.toLowerCase());
+
+      const payload = {
+        name: input.name,
+        filters,
+        isShared: input.isShared ?? true,
+        userId: user.id,
+        clientId,
+      };
+
+      const view = existing
+        ? await storage.updateSavedFeedView(existing.id, payload, clientId)
+        : await storage.createSavedFeedView(payload);
+
+      res.status(existing ? 200 : 201).json(view);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid saved view" });
+      }
+      if (err instanceof Error && err.message.startsWith("Invalid ")) {
+        return res.status(400).json({ message: err.message });
+      }
+      console.error("Saved feed view create failed:", err);
+      res.status(500).json({ message: "Saved view failed" });
+    }
+  });
+
+  app.patch("/api/feed/views/:id", requireCapability(CAPS.FEED_FILTER), async (req, res) => {
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid saved view ID" });
+
+    try {
+      const input = savedFeedViewInputSchema.partial().parse(req.body);
+      const updates: Record<string, any> = {};
+      if (input.name) updates.name = input.name;
+      if (input.filters) updates.filters = normalizeSavedFeedViewFilters(input.filters);
+      if (typeof input.isShared === "boolean") updates.isShared = input.isShared;
+      if (Object.keys(updates).length === 0) return res.status(400).json({ message: "No saved view fields provided" });
+
+      const updated = await storage.updateSavedFeedView(id, updates, clientId);
+      if (!updated) return safeNotFound(res);
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid saved view" });
+      }
+      if (err instanceof Error && err.message.startsWith("Invalid ")) {
+        return res.status(400).json({ message: err.message });
+      }
+      console.error("Saved feed view update failed:", err);
+      res.status(500).json({ message: "Saved view update failed" });
+    }
+  });
+
+  app.delete("/api/feed/views/:id", requireCapability(CAPS.FEED_FILTER), async (req, res) => {
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid saved view ID" });
+
+    await storage.deleteSavedFeedView(id, clientId);
+    res.sendStatus(204);
   });
 
   // === KEYWORDS (tenant-scoped) ===

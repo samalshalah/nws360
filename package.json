@@ -13,6 +13,7 @@
     "db:migrate:collector": "node scripts/migrate-website-collector.cjs",
     "db:migrate:filters": "node scripts/migrate-source-filters.cjs",
     "db:migrate:article-workflow": "node scripts/migrate-article-workflow.cjs",
+    "db:migrate:saved-feed-views": "node scripts/migrate-saved-feed-views.cjs",
     "test:filters": "tsx scripts/test-source-filters.ts",
     "db:push": "drizzle-kit push"
   },
