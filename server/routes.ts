@@ -8,7 +8,7 @@ import { startFeedWorker, fetchSourceFeed, analyzeWithAI, registerArticleAnalysi
 import { enqueueAIJob, awaitJobResult, checkClientAiBudget } from "./ai/ai-gateway";
 import { startScheduler, stopScheduler, _schedulerTickForTesting } from "./ai/ai-scheduler";
 import { db } from "./db";
-import { analyticsCache, articles, PLAN_LIMITS, SYSTEM_ROLES, CAPS, resolveEffectiveCaps } from "@shared/schema";
+import { analyticsCache, articles, PLAN_LIMITS, SYSTEM_ROLES, CAPS, resolveEffectiveCaps, type AlertRule } from "@shared/schema";
 import { isGoogleNewsEditionCode } from "@shared/google-news-regions";
 import { isSourceCategoryCode } from "@shared/source-categories";
 import {
@@ -120,6 +120,82 @@ const savedFeedViewInputSchema = z.object({
   filters: savedFeedViewFiltersSchema,
   isShared: z.boolean().optional(),
 }).strict();
+
+const ALERT_RULE_TYPES = ["keyword", "source", "category", "province", "combined"] as const;
+const ALERT_SEVERITIES = ["low", "medium", "high", "critical"] as const;
+
+const optionalTrimmedText = (max: number) =>
+  z.preprocess((value) => {
+    if (value === undefined || value === null) return value;
+    const text = String(value).trim().replace(/\s+/g, " ");
+    return text ? text : null;
+  }, z.string().max(max).nullable().optional());
+
+const optionalPositiveInt = z.preprocess((value) => {
+  if (value === undefined || value === null || value === "") return null;
+  return value;
+}, z.coerce.number().int().positive().nullable().optional());
+
+const alertRuleBaseInputSchema = z.object({
+  name: z.string().trim().min(2).max(100),
+  description: optionalTrimmedText(500),
+  ruleType: z.enum(ALERT_RULE_TYPES).default("keyword"),
+  searchTerm: optionalTrimmedText(160),
+  sourceId: optionalPositiveInt,
+  sourceType: optionalTrimmedText(60),
+  category: optionalTrimmedText(80),
+  province: optionalTrimmedText(80),
+  severity: z.enum(ALERT_SEVERITIES).default("medium"),
+  active: z.boolean().default(true),
+  notifyInApp: z.boolean().default(true),
+  matchWindowHours: z.coerce.number().int().min(1).max(720).default(24),
+}).strict();
+
+const alertRuleUpdateInputSchema = alertRuleBaseInputSchema.partial();
+
+type AlertRuleInput = z.infer<typeof alertRuleBaseInputSchema>;
+type AlertRuleUpdateInput = z.infer<typeof alertRuleUpdateInputSchema>;
+
+function validateAlertRuleInput(input: Partial<AlertRuleInput>): string | null {
+  if (input.category && !isArticleCategoryCode(input.category)) {
+    return `Invalid category. Use one of: ${ARTICLE_CATEGORIES.map(item => item.code).join(", ")}`;
+  }
+  if (input.province && !isIraqProvinceCode(input.province)) {
+    return `Invalid province. Use one of: ${IRAQ_PROVINCES.map(item => item.code).join(", ")}`;
+  }
+  if (!input.searchTerm && !input.sourceId && !input.sourceType && !input.category && !input.province) {
+    return "At least one alert condition is required";
+  }
+  return null;
+}
+
+function buildAlertFeedUrl(rule: Pick<AlertRule, "searchTerm" | "sourceId" | "sourceType" | "category" | "province" | "matchWindowHours">): string {
+  const params = new URLSearchParams();
+  params.set("sort", "newest");
+  params.set("startDate", new Date(Date.now() - rule.matchWindowHours * 60 * 60 * 1000).toISOString());
+  if (rule.searchTerm) params.set("search", rule.searchTerm);
+  if (rule.sourceId) params.set("sourceId", String(rule.sourceId));
+  if (rule.sourceType) params.set("sourceType", rule.sourceType);
+  if (rule.category) params.set("category", rule.category);
+  if (rule.province) params.set("province", rule.province);
+  return `/feed?${params.toString()}`;
+}
+
+function buildAlertArticleParams(rule: AlertRule, clientId: number, scopedSourceIds: number[] | undefined, limit: number) {
+  return {
+    search: rule.searchTerm || undefined,
+    sourceId: rule.sourceId || undefined,
+    sourceIds: scopedSourceIds,
+    clientId,
+    sort: "newest" as const,
+    sourceType: rule.sourceType || undefined,
+    category: rule.category || undefined,
+    province: rule.province || undefined,
+    startDate: new Date(Date.now() - rule.matchWindowHours * 60 * 60 * 1000).toISOString(),
+    page: 1,
+    limit,
+  };
+}
 
 function normalizeManualTags(tags: string[] | undefined): string[] | undefined {
   if (!tags) return undefined;
@@ -1783,6 +1859,7 @@ export async function registerRoutes(
         sort,
         sentiment: req.query.sentiment as string,
         category: req.query.category as string,
+        province: req.query.province as string,
         sourceType: req.query.sourceType as string,
         country: req.query.country as string,
         topic: req.query.topic as string,
@@ -4756,7 +4833,7 @@ export async function registerRoutes(
   });
 
   // === PRODUCT INTELLIGENCE: ALERT PREFERENCES ===
-  app.get("/api/alert-preferences", async (req, res) => {
+  app.get("/api/alert-preferences", requireCapability(CAPS.ALERTS_VIEW), async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
@@ -4764,15 +4841,165 @@ export async function registerRoutes(
     res.json(await storage.getAlertPreferences(clientId));
   });
 
-  app.post("/api/alert-preferences", async (req, res) => {
+  app.post("/api/alert-preferences", requireCapability(CAPS.ALERTS_MANAGE), async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     if (!clientId) return res.status(400).json({ message: "Client context required" });
-    const { alertType, sensitivityScore, autoTuned } = req.body;
-    if (!alertType) return res.status(400).json({ message: "Alert type required" });
-    const pref = await storage.upsertAlertPreference({ clientId, alertType, sensitivityScore: sensitivityScore ?? 50, autoTuned });
-    res.json(pref);
+    try {
+      const payload = Array.isArray(req.body) ? req.body : [req.body];
+      if (payload.length === 0) return res.status(400).json({ message: "Alert preference required" });
+      const prefs = await Promise.all(payload.map((item: any) => {
+        if (!item?.alertType) throw new Error("Alert type required");
+        const sensitivityScore = Number.isFinite(Number(item.sensitivityScore))
+          ? Math.min(100, Math.max(0, Math.round(Number(item.sensitivityScore))))
+          : 50;
+        return storage.upsertAlertPreference({
+          clientId,
+          alertType: String(item.alertType),
+          sensitivityScore,
+          autoTuned: Boolean(item.autoTuned),
+        });
+      }));
+      res.json(Array.isArray(req.body) ? prefs : prefs[0]);
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : "Invalid alert preference" });
+    }
+  });
+
+  // === CLIENT ALERT RULES (tenant-scoped, non-AI) ===
+  app.get("/api/alerts/rules", requireCapability(CAPS.ALERTS_VIEW), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+
+    try {
+      res.json(await storage.getAlertRules(clientId));
+    } catch (err) {
+      console.error("Alert rules fetch failed:", err);
+      res.status(500).json({ message: "Error fetching alert rules" });
+    }
+  });
+
+  app.get("/api/alerts/overview", requireCapability(CAPS.ALERTS_VIEW), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+
+    try {
+      const scopedSourceIds = await getUserSourceIds(user, req);
+      const rules = await storage.getAlertRules(clientId);
+      const activeRules = rules.filter(rule => rule.active !== false);
+      const summaries = await Promise.all(activeRules.slice(0, 25).map(async (rule) => {
+        const result = await storage.getArticles(buildAlertArticleParams(rule, clientId, scopedSourceIds, 5));
+        return {
+          ruleId: rule.id,
+          count: result.total,
+          feedUrl: buildAlertFeedUrl(rule),
+          articles: result.items,
+        };
+      }));
+      const matchedArticles = summaries.reduce((sum, item) => sum + item.count, 0);
+      res.json({
+        rules,
+        summaries,
+        totals: {
+          rules: rules.length,
+          activeRules: activeRules.length,
+          matchedRules: summaries.filter(item => item.count > 0).length,
+          matchedArticles,
+          evaluatedRules: summaries.length,
+        },
+      });
+    } catch (err) {
+      console.error("Alert overview failed:", err);
+      res.status(500).json({ message: "Error fetching alert overview" });
+    }
+  });
+
+  app.post("/api/alerts/rules", requireCapability(CAPS.ALERTS_MANAGE), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+
+    try {
+      const input = alertRuleBaseInputSchema.parse(req.body || {});
+      const validationError = validateAlertRuleInput(input);
+      if (validationError) return res.status(400).json({ message: validationError });
+      if (input.sourceId) {
+        const source = await storage.getSource(input.sourceId, clientId);
+        if (!source) return safeNotFound(res);
+      }
+      const rule = await storage.createAlertRule({ ...input, clientId, createdBy: user.id });
+      await storage.createAuditLog({
+        userId: user.id,
+        clientId,
+        action: "create",
+        entity: "alert_rule",
+        entityId: rule.id,
+        details: `Created alert rule ${rule.name}`,
+      });
+      res.status(201).json(rule);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid alert rule" });
+      }
+      console.error("Alert rule create failed:", err);
+      res.status(500).json({ message: "Alert rule create failed" });
+    }
+  });
+
+  app.patch("/api/alerts/rules/:id", requireCapability(CAPS.ALERTS_MANAGE), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid alert rule id" });
+
+    try {
+      const existing = await storage.getAlertRule(id, clientId);
+      if (!existing) return safeNotFound(res);
+      const input = alertRuleUpdateInputSchema.parse(req.body || {});
+      const merged = { ...existing, ...input };
+      const validationError = validateAlertRuleInput(merged);
+      if (validationError) return res.status(400).json({ message: validationError });
+      if (input.sourceId) {
+        const source = await storage.getSource(input.sourceId, clientId);
+        if (!source) return safeNotFound(res);
+      }
+      const updated = await storage.updateAlertRule(id, input, clientId);
+      if (!updated) return safeNotFound(res);
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid alert rule update" });
+      }
+      console.error("Alert rule update failed:", err);
+      res.status(500).json({ message: "Alert rule update failed" });
+    }
+  });
+
+  app.delete("/api/alerts/rules/:id", requireCapability(CAPS.ALERTS_MANAGE), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid alert rule id" });
+
+    try {
+      const existing = await storage.getAlertRule(id, clientId);
+      if (!existing) return safeNotFound(res);
+      await storage.deleteAlertRule(id, clientId);
+      res.sendStatus(204);
+    } catch (err) {
+      console.error("Alert rule delete failed:", err);
+      res.status(500).json({ message: "Alert rule delete failed" });
+    }
   });
 
   // === PRODUCT INTELLIGENCE: DASHBOARD PREFERENCES ===

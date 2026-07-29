@@ -98,6 +98,8 @@ export default function Feed() {
       workflowStatus: undefined as string | undefined,
       manualTag: undefined as string | undefined,
       sourceType: undefined as string | undefined,
+      startDate: params.get("startDate") || undefined as string | undefined,
+      endDate: params.get("endDate") || undefined as string | undefined,
       dateRange: "all" as string,
       sort: parseFeedSort(params.get("sort")),
     };
@@ -116,6 +118,9 @@ export default function Feed() {
     const provinceParam = params.get("province");
     const workflowStatusParam = params.get("workflowStatus");
     const manualTagParam = params.get("manualTag");
+    const startDateParam = params.get("startDate");
+    const endDateParam = params.get("endDate");
+    const dateRangeParam = params.get("dateRange");
     const sortParam = params.get("sort");
     const focusParam = params.get("focus");
     const updates: Partial<typeof filters> = {};
@@ -127,6 +132,9 @@ export default function Feed() {
     if (provinceParam) updates.province = provinceParam;
     if (workflowStatusParam) updates.workflowStatus = workflowStatusParam;
     if (manualTagParam) updates.manualTag = manualTagParam;
+    if (startDateParam) updates.startDate = startDateParam;
+    if (endDateParam) updates.endDate = endDateParam;
+    if (dateRangeParam) updates.dateRange = dateRangeParam;
     if (sortParam) updates.sort = parseFeedSort(sortParam);
     if (Object.keys(updates).length > 0) {
       setFilters(prev => ({ ...prev, ...updates }));
@@ -154,6 +162,9 @@ export default function Feed() {
   }, []);
 
   const dateRange = useMemo(() => {
+    if (filters.startDate || filters.endDate) {
+      return { startDate: filters.startDate, endDate: filters.endDate };
+    }
     const now = new Date();
     if (filters.dateRange === "today") {
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -170,7 +181,7 @@ export default function Feed() {
       return { startDate: start.toISOString(), endDate: now.toISOString() };
     }
     return {} as { startDate?: string; endDate?: string };
-  }, [filters.dateRange]);
+  }, [filters.dateRange, filters.endDate, filters.startDate]);
 
   const { data: articlesData, isLoading: isLoadingArticles, isFetching } = useArticles({
     search: filters.search,
@@ -535,14 +546,21 @@ export default function Feed() {
 
   const updateFilter = (key: string, value: string | undefined) => {
     setActiveSavedViewId(undefined);
-    setFilters(prev => ({ ...prev, [key]: value }));
+    setFilters(prev => {
+      const next = { ...prev, [key]: value };
+      if (key === "dateRange") {
+        next.startDate = undefined;
+        next.endDate = undefined;
+      }
+      return next;
+    });
     resetScroll();
   };
 
-  const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sentiment || filters.category || filters.province || filters.workflowStatus || filters.manualTag || filters.sourceType || filters.dateRange !== "all";
+  const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sentiment || filters.category || filters.province || filters.workflowStatus || filters.manualTag || filters.sourceType || filters.startDate || filters.endDate || filters.dateRange !== "all";
 
   const clearFilters = () => {
-    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sentiment: undefined, category: undefined, province: undefined, workflowStatus: undefined, manualTag: undefined, sourceType: undefined, dateRange: "all", sort: DEFAULT_SORT });
+    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sentiment: undefined, category: undefined, province: undefined, workflowStatus: undefined, manualTag: undefined, sourceType: undefined, startDate: undefined, endDate: undefined, dateRange: "all", sort: DEFAULT_SORT });
     setSearchInput("");
     setActiveSavedViewId(undefined);
     resetScroll();
@@ -611,6 +629,7 @@ export default function Feed() {
     filters.province,
     filters.workflowStatus,
     filters.manualTag,
+    filters.startDate || filters.endDate,
     filters.dateRange !== "all" ? filters.dateRange : undefined,
   ].filter(Boolean).length;
 

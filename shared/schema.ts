@@ -625,6 +625,32 @@ export const alertPreferences = pgTable("alert_preferences", {
 
 export const insertAlertPreferenceSchema = createInsertSchema(alertPreferences).omit({ id: true, createdAt: true, lastUpdated: true });
 
+// === CLIENT ALERT RULES ===
+export const alertRules = pgTable("alert_rules", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  ruleType: text("rule_type").notNull().default("keyword"),
+  searchTerm: text("search_term"),
+  sourceId: integer("source_id").references(() => sources.id, { onDelete: "set null" }),
+  sourceType: text("source_type"),
+  category: text("category"),
+  province: text("province"),
+  severity: text("severity").notNull().default("medium"),
+  active: boolean("active").default(true),
+  notifyInApp: boolean("notify_in_app").default(true),
+  matchWindowHours: integer("match_window_hours").notNull().default(24),
+  createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_alert_rules_client").on(table.clientId),
+  index("idx_alert_rules_client_active").on(table.clientId, table.active),
+]);
+
+export const insertAlertRuleSchema = createInsertSchema(alertRules).omit({ id: true, createdAt: true, updatedAt: true });
+
 // === PRODUCT INTELLIGENCE: DASHBOARD PREFERENCES ===
 export const dashboardPreferences = pgTable("dashboard_preferences", {
   id: serial("id").primaryKey(),
@@ -988,6 +1014,9 @@ export type InsertAiCorrection = z.infer<typeof insertAiCorrectionSchema>;
 
 export type AlertPreference = typeof alertPreferences.$inferSelect;
 export type InsertAlertPreference = z.infer<typeof insertAlertPreferenceSchema>;
+
+export type AlertRule = typeof alertRules.$inferSelect;
+export type InsertAlertRule = z.infer<typeof insertAlertRuleSchema>;
 
 export type DashboardPreference = typeof dashboardPreferences.$inferSelect;
 export type InsertDashboardPreference = z.infer<typeof insertDashboardPreferenceSchema>;
@@ -1751,6 +1780,9 @@ export const CAPS = {
   ARTICLE_EXPORT: "article_export",
   ARTICLE_EDIT: "article_edit",
 
+  ALERTS_VIEW: "alerts_view",
+  ALERTS_MANAGE: "alerts_manage",
+
   SOURCES_VIEW: "sources_view",
   SOURCES_ADD: "sources_add",
   SOURCES_EDIT: "sources_edit",
@@ -1827,6 +1859,7 @@ export type Cap = (typeof CAPS)[keyof typeof CAPS];
 const READER_CAPS: Cap[] = [
   CAPS.FEED_VIEW, CAPS.FEED_SEARCH, CAPS.FEED_FILTER,
   CAPS.ARTICLE_VIEW, CAPS.ARTICLE_SAVE,
+  CAPS.ALERTS_VIEW,
 ];
 
 const ANALYST_CAPS: Cap[] = [
@@ -1838,6 +1871,7 @@ const ANALYST_CAPS: Cap[] = [
   CAPS.ANALYTICS_NETWORK_MAPPING, CAPS.ANALYTICS_NARRATIVE_COMPARISON,
   CAPS.ANALYTICS_CUSTOM_REPORTS, CAPS.ANALYTICS_EXPORT,
   CAPS.KEYWORDS_VIEW,
+  CAPS.ALERTS_MANAGE,
   CAPS.AI_USAGE_VIEW,
   CAPS.INTELLIGENCE_RUN,
   CAPS.KNOWLEDGE_VIEW,
@@ -1848,6 +1882,7 @@ const EDITOR_CAPS: Cap[] = [
   ...READER_CAPS,
   CAPS.ARTICLE_EDIT, CAPS.ARTICLE_EXPORT,
   CAPS.KEYWORDS_VIEW, CAPS.KEYWORDS_ADD, CAPS.KEYWORDS_EDIT,
+  CAPS.ALERTS_MANAGE,
   CAPS.COLLAB_VIEW, CAPS.COLLAB_COMMENTS, CAPS.COLLAB_ANNOTATIONS,
   CAPS.ANALYTICS_CUSTOM_REPORTS,
 ];
@@ -1877,6 +1912,7 @@ const CLIENT_ADMIN_CAPS: Cap[] = [
   CAPS.SOURCES_VIEW, CAPS.SOURCES_ADD, CAPS.SOURCES_EDIT, CAPS.SOURCES_DELETE,
   CAPS.SOURCE_HEALTH_VIEW,
   CAPS.KEYWORDS_VIEW, CAPS.KEYWORDS_ADD, CAPS.KEYWORDS_EDIT, CAPS.KEYWORDS_DELETE,
+  CAPS.ALERTS_MANAGE,
   CAPS.ANALYTICS_VIEW, CAPS.ANALYTICS_OVERVIEW, CAPS.ANALYTICS_CONTENT_VOLUME,
   CAPS.ANALYTICS_TRENDING_TOPICS, CAPS.ANALYTICS_KEYWORD_ANALYSIS,
   CAPS.ANALYTICS_TONE_REPORTS, CAPS.ANALYTICS_SOURCE_BEHAVIOR,
@@ -1925,6 +1961,7 @@ export const PLAN_FEATURES: Record<string, Cap[]> = {
   [PLAN_TIERS.STARTER]: [
     CAPS.FEED_VIEW, CAPS.FEED_SEARCH, CAPS.FEED_FILTER,
     CAPS.ARTICLE_VIEW, CAPS.ARTICLE_SAVE, CAPS.ARTICLE_EDIT,
+    CAPS.ALERTS_VIEW, CAPS.ALERTS_MANAGE,
     CAPS.SOURCES_VIEW, CAPS.SOURCES_ADD, CAPS.SOURCES_EDIT, CAPS.SOURCES_DELETE,
     CAPS.KEYWORDS_VIEW, CAPS.KEYWORDS_ADD, CAPS.KEYWORDS_EDIT, CAPS.KEYWORDS_DELETE,
     CAPS.ANALYTICS_VIEW, CAPS.ANALYTICS_OVERVIEW, CAPS.ANALYTICS_CONTENT_VOLUME,
@@ -1937,6 +1974,7 @@ export const PLAN_FEATURES: Record<string, Cap[]> = {
   [PLAN_TIERS.PRO]: [
     CAPS.FEED_VIEW, CAPS.FEED_SEARCH, CAPS.FEED_FILTER,
     CAPS.ARTICLE_VIEW, CAPS.ARTICLE_SAVE, CAPS.ARTICLE_EDIT, CAPS.ARTICLE_EXPORT,
+    CAPS.ALERTS_VIEW, CAPS.ALERTS_MANAGE,
     CAPS.SOURCES_VIEW, CAPS.SOURCES_ADD, CAPS.SOURCES_EDIT, CAPS.SOURCES_DELETE,
     CAPS.SOURCE_HEALTH_VIEW,
     CAPS.KEYWORDS_VIEW, CAPS.KEYWORDS_ADD, CAPS.KEYWORDS_EDIT, CAPS.KEYWORDS_DELETE,

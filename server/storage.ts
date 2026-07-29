@@ -35,12 +35,13 @@ import {
   type NotificationSetting, type InsertNotificationSetting,
   type WhiteLabelSetting, type InsertWhiteLabelSetting,
   type SupportTicket, type InsertSupportTicket,
-  userFeedback, insightEngagement, aiCorrections, alertPreferences, dashboardPreferences,
+  userFeedback, insightEngagement, aiCorrections, alertPreferences, alertRules, dashboardPreferences,
   experiments, experimentAssignments, knowledgeEntries, valueReports,
   type UserFeedback, type InsertUserFeedback,
   type InsightEngagement, type InsertInsightEngagement,
   type AiCorrection, type InsertAiCorrection,
   type AlertPreference, type InsertAlertPreference,
+  type AlertRule, type InsertAlertRule,
   type DashboardPreference, type InsertDashboardPreference,
   type Experiment, type InsertExperiment,
   type ExperimentAssignment, type InsertExperimentAssignment,
@@ -483,6 +484,11 @@ export interface IStorage {
 
   getAlertPreferences(clientId: number): Promise<AlertPreference[]>;
   upsertAlertPreference(data: InsertAlertPreference): Promise<AlertPreference>;
+  getAlertRules(clientId: number): Promise<AlertRule[]>;
+  getAlertRule(id: number, clientId: number): Promise<AlertRule | undefined>;
+  createAlertRule(data: InsertAlertRule): Promise<AlertRule>;
+  updateAlertRule(id: number, data: Partial<InsertAlertRule>, clientId: number): Promise<AlertRule | undefined>;
+  deleteAlertRule(id: number, clientId: number): Promise<void>;
 
   getDashboardPreferences(userId: number): Promise<DashboardPreference | undefined>;
   upsertDashboardPreferences(data: InsertDashboardPreference): Promise<DashboardPreference>;
@@ -2792,6 +2798,37 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return row;
+  }
+
+  async getAlertRules(clientId: number): Promise<AlertRule[]> {
+    return await db.select()
+      .from(alertRules)
+      .where(eq(alertRules.clientId, clientId))
+      .orderBy(desc(alertRules.active), desc(alertRules.createdAt));
+  }
+
+  async getAlertRule(id: number, clientId: number): Promise<AlertRule | undefined> {
+    const [row] = await db.select()
+      .from(alertRules)
+      .where(and(eq(alertRules.id, id), eq(alertRules.clientId, clientId)));
+    return row;
+  }
+
+  async createAlertRule(data: InsertAlertRule): Promise<AlertRule> {
+    const [row] = await db.insert(alertRules).values(data).returning();
+    return row;
+  }
+
+  async updateAlertRule(id: number, data: Partial<InsertAlertRule>, clientId: number): Promise<AlertRule | undefined> {
+    const [row] = await db.update(alertRules)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(alertRules.id, id), eq(alertRules.clientId, clientId)))
+      .returning();
+    return row;
+  }
+
+  async deleteAlertRule(id: number, clientId: number): Promise<void> {
+    await db.delete(alertRules).where(and(eq(alertRules.id, id), eq(alertRules.clientId, clientId)));
   }
 
   async getDashboardPreferences(userId: number): Promise<DashboardPreference | undefined> {
