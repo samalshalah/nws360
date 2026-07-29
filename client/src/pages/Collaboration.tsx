@@ -527,7 +527,7 @@ function BriefingsTab() {
   });
 
   const copyShareLink = (report: any) => {
-    const link = window.location.origin + "/api/shared-report/" + report.shareToken;
+    const link = window.location.origin + "/shared-report/" + report.shareToken;
     navigator.clipboard.writeText(link);
     setCopiedId(report.id);
     setTimeout(() => setCopiedId(null), 2000);

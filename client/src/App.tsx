@@ -50,6 +50,7 @@ import NotFound from "@/pages/not-found";
 import NotAuthorized from "@/pages/NotAuthorized";
 import ReportBasket from "@/pages/ReportBasket";
 import Briefings from "@/pages/Briefings";
+import SharedReport from "@/pages/SharedReport";
 import ClientSettings from "@/pages/ClientSettings";
 import ClientAlerts from "@/pages/ClientAlerts";
 import WorkQueue from "@/pages/WorkQueue";
@@ -121,6 +122,9 @@ function Router() {
 
       <Route path="/" component={Landing} />
       <Route path="/demo" component={DemoPage} />
+      <Route path="/shared-report/:token">
+        {(params) => <SharedReport params={params} />}
+      </Route>
 
       <Route path="/not-authorized">
         <ShellGate>

@@ -341,7 +341,7 @@ export default function Briefings() {
 
   const copyShareLink = async () => {
     if (!selectedReport?.shareToken) return;
-    await navigator.clipboard.writeText(`${window.location.origin}/api/shared-report/${selectedReport.shareToken}`);
+    await navigator.clipboard.writeText(`${window.location.origin}/shared-report/${selectedReport.shareToken}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     toast({ title: t("briefings.shareCopied", "Share link copied") });

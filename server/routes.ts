@@ -5902,8 +5902,51 @@ export async function registerRoutes(
   app.get("/api/shared-report/:token", async (req, res) => {
     const report = await storage.getSharedReportByToken(req.params.token);
     if (!report) return res.status(404).json({ message: "Not found" });
+    if (report.status === "archived") return res.status(404).json({ message: "Not found" });
     const items = await storage.getBriefingItems(report.id);
-    res.json({ report, items });
+    const articleIds = Array.from(new Set(items
+      .filter(item => item.itemType === "article" && item.itemRefId)
+      .map(item => item.itemRefId as number)));
+    const articleRows = articleIds.length > 0
+      ? await storage.getArticlesByIds(articleIds, report.clientId)
+      : [];
+    const articleMap = new Map(articleRows.map(article => [article.id, {
+      id: article.id,
+      title: article.title,
+      url: article.url,
+      publishedAt: article.publishedAt,
+      imageUrl: article.imageUrl,
+      summary: String(article.summary || article.contentClean || article.content || "").replace(/\s+/g, " ").trim().slice(0, 1200),
+      category: article.category,
+      province: article.province,
+      sourceName: article.subSource || article.source?.name || "Unknown source",
+      collectedVia: article.subSource ? article.source?.name || null : null,
+      sourceType: article.source?.type || null,
+    }]));
+    const client = await storage.getClient(report.clientId);
+    res.json({
+      organization: {
+        name: client?.name || "NWS360",
+      },
+      report: {
+        id: report.id,
+        title: report.title,
+        summary: report.summary,
+        status: report.status,
+        shareToken: report.shareToken,
+        createdAt: report.createdAt,
+        lastUpdated: report.lastUpdated,
+      },
+      items: items.map(item => ({
+        id: item.id,
+        itemType: item.itemType,
+        itemRefId: item.itemRefId,
+        content: item.content,
+        position: item.position,
+        createdAt: item.createdAt,
+        article: item.itemRefId ? articleMap.get(item.itemRefId) || null : null,
+      })),
+    });
   });
 
   // === CUSTOM TAGS ===
