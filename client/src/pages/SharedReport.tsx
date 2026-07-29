@@ -54,42 +54,6 @@ function formatDate(value: string | null | undefined) {
   return format(date, "MMM d, yyyy h:mm a");
 }
 
-function itemText(item: PublicBriefingItem) {
-  if (item.itemType === "article") {
-    return [
-      item.article?.title,
-      item.article?.sourceName,
-      item.article?.publishedAt ? formatDate(item.article.publishedAt) : undefined,
-      item.content || item.article?.summary,
-      item.article?.url,
-    ].filter(Boolean).join("\n");
-  }
-  return item.content || "";
-}
-
-function buildTextExport(data: PublicSharedReport) {
-  const header = [
-    data.report.title,
-    data.organization.name,
-    `Updated: ${formatDate(data.report.lastUpdated || data.report.createdAt)}`,
-    data.report.summary || "",
-  ].filter(Boolean).join("\n");
-  const body = data.items
-    .map((item, index) => `${index + 1}. ${itemText(item)}`)
-    .join("\n\n");
-  return `${header}\n\n${body}\n`;
-}
-
-function downloadText(data: PublicSharedReport) {
-  const blob = new Blob([buildTextExport(data)], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${data.report.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "briefing"}.txt`;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
 function contentLabel(type: PublicBriefingItem["itemType"]) {
   if (type === "article") return "Article";
   if (type === "heading") return "Section";
@@ -157,9 +121,11 @@ export default function SharedReport({ params }: { params?: { token?: string } }
             <span className="text-sm font-semibold">NWS360 Briefing</span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => downloadText(data)} data-testid="button-download-shared-report">
-              <Download className="h-4 w-4" />
-              <span className="ml-2">Download text</span>
+            <Button variant="outline" size="sm" asChild data-testid="button-download-shared-report">
+              <a href={`/api/shared-report/${token}/export?format=txt`}>
+                <Download className="h-4 w-4" />
+                <span className="ml-2">Download text</span>
+              </a>
             </Button>
             <Button variant="outline" size="sm" onClick={() => window.print()} data-testid="button-print-shared-report">
               <Printer className="h-4 w-4" />

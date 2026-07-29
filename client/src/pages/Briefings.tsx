@@ -5,6 +5,7 @@ import {
   BookOpen,
   Check,
   Copy,
+  Download,
   FileText,
   Loader2,
   Plus,
@@ -116,6 +117,8 @@ export default function Briefings() {
   const [itemType, setItemType] = useState<Exclude<BriefingItemType, "article">>("note");
   const [itemContent, setItemContent] = useState("");
   const [copied, setCopied] = useState(false);
+  const [exportFormat, setExportFormat] = useState<"txt" | "html" | "csv" | "json">("txt");
+  const [exporting, setExporting] = useState(false);
 
   const {
     data: reports = [],
@@ -347,6 +350,32 @@ export default function Briefings() {
     toast({ title: t("briefings.shareCopied", "Share link copied") });
   };
 
+  const exportBriefing = async () => {
+    if (!selectedReport) return;
+    try {
+      setExporting(true);
+      const res = await fetch(`/api/collaboration/reports/${selectedReport.id}/export?format=${exportFormat}`, { credentials: "include" });
+      if (!res.ok) throw new Error(await res.text() || "Export failed");
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition");
+      const filename = disposition?.match(/filename="?([^"]+)"?/i)?.[1] || `nws360-briefing.${exportFormat}`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: t("briefings.exportFailed", "Export failed"),
+        description: error instanceof Error ? error.message : t("common.tryAgain", "Please try again."),
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (reportsLoading) {
     return (
       <div className="space-y-5">
@@ -380,10 +409,27 @@ export default function Briefings() {
             <span className="ml-2">{t("common.refresh", "Refresh")}</span>
           </Button>
           {selectedReport && (
-            <Button variant="outline" size="sm" onClick={copyShareLink} disabled={!selectedReport.shareToken} data-testid="button-copy-briefing-share">
-              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              <span className="ml-2">{t("briefings.copyShare", "Copy share link")}</span>
-            </Button>
+            <>
+              <Select value={exportFormat} onValueChange={(value) => setExportFormat(value as typeof exportFormat)}>
+                <SelectTrigger className="h-9 w-[95px]" data-testid="select-briefing-export-format">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="txt">Text</SelectItem>
+                  <SelectItem value="html">HTML</SelectItem>
+                  <SelectItem value="csv">CSV</SelectItem>
+                  <SelectItem value="json">JSON</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="outline" size="sm" onClick={exportBriefing} disabled={exporting} data-testid="button-export-briefing">
+                {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                <span className="ml-2">{t("common.export", "Export")}</span>
+              </Button>
+              <Button variant="outline" size="sm" onClick={copyShareLink} disabled={!selectedReport.shareToken} data-testid="button-copy-briefing-share">
+                {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                <span className="ml-2">{t("briefings.copyShare", "Copy share link")}</span>
+              </Button>
+            </>
           )}
         </div>
       </div>

@@ -5899,10 +5899,32 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
-  app.get("/api/shared-report/:token", async (req, res) => {
-    const report = await storage.getSharedReportByToken(req.params.token);
-    if (!report) return res.status(404).json({ message: "Not found" });
-    if (report.status === "archived") return res.status(404).json({ message: "Not found" });
+  function sharedReportFilename(title: string, ext: string): string {
+    const slug = String(title || "briefing")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "")
+      .slice(0, 80) || "briefing";
+    const dateLabel = new Date().toISOString().slice(0, 10);
+    return `nws360-${slug}-${dateLabel}.${ext}`;
+  }
+
+  function escapeHtml(value: unknown): string {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function formatExportDate(value: unknown): string {
+    if (!value) return "";
+    const date = new Date(value as any);
+    return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+  }
+
+  async function buildSharedReportPayload(report: any) {
     const items = await storage.getBriefingItems(report.id);
     const articleIds = Array.from(new Set(items
       .filter(item => item.itemType === "article" && item.itemRefId)
@@ -5924,7 +5946,7 @@ export async function registerRoutes(
       sourceType: article.source?.type || null,
     }]));
     const client = await storage.getClient(report.clientId);
-    res.json({
+    return {
       organization: {
         name: client?.name || "NWS360",
       },
@@ -5946,7 +5968,191 @@ export async function registerRoutes(
         createdAt: item.createdAt,
         article: item.itemRefId ? articleMap.get(item.itemRefId) || null : null,
       })),
+    };
+  }
+
+  function sharedReportText(payload: any): string {
+    const lines: string[] = [
+      "NWS360 Briefing",
+      `Organization: ${payload.organization.name}`,
+      `Title: ${payload.report.title}`,
+      `Status: ${payload.report.status}`,
+      `Updated: ${formatExportDate(payload.report.lastUpdated || payload.report.createdAt) || "Unknown"}`,
+      "",
+    ];
+
+    if (payload.report.summary) {
+      lines.push("Summary:", payload.report.summary, "");
+    }
+
+    const items = [...payload.items].sort((a: any, b: any) => (a.position || 0) - (b.position || 0) || a.id - b.id);
+    items.forEach((item: any, index: number) => {
+      const article = item.article;
+      if (item.itemType === "heading") {
+        lines.push(`${index + 1}. ${item.content || "Section"}`, "");
+        return;
+      }
+      if (item.itemType === "article") {
+        lines.push(`${index + 1}. ${article?.title || `Article #${item.itemRefId}`}`);
+        if (article?.sourceName) lines.push(`Source: ${article.sourceName}`);
+        if (article?.collectedVia) lines.push(`Collected via: ${article.collectedVia}`);
+        if (article?.publishedAt) lines.push(`Published: ${formatExportDate(article.publishedAt)}`);
+        if (article?.url) lines.push(`URL: ${article.url}`);
+        const summary = item.content || article?.summary;
+        if (summary) lines.push(`Summary: ${summary}`);
+        lines.push("");
+        return;
+      }
+      lines.push(`${index + 1}. ${item.itemType}`);
+      if (item.content) lines.push(item.content);
+      lines.push("");
     });
+
+    return lines.join("\n");
+  }
+
+  function sharedReportCsv(payload: any): string {
+    const header = ["Report Title", "Organization", "Position", "Type", "Title", "Source", "Collected Via", "Published", "URL", "Content"].join(",");
+    const rows = [...payload.items]
+      .sort((a: any, b: any) => (a.position || 0) - (b.position || 0) || a.id - b.id)
+      .map((item: any, index: number) => {
+        const article = item.article;
+        return [
+          csvCell(payload.report.title),
+          csvCell(payload.organization.name),
+          index + 1,
+          csvCell(item.itemType),
+          csvCell(item.itemType === "article" ? article?.title || `Article #${item.itemRefId}` : item.itemType === "heading" ? item.content : ""),
+          csvCell(article?.sourceName || ""),
+          csvCell(article?.collectedVia || ""),
+          csvCell(formatExportDate(article?.publishedAt)),
+          csvCell(article?.url || (item.itemType === "link" ? item.content : "")),
+          csvCell(item.content || article?.summary || ""),
+        ].join(",");
+      });
+    return [header, ...rows].join("\n");
+  }
+
+  function sharedReportHtml(payload: any): string {
+    const items = [...payload.items].sort((a: any, b: any) => (a.position || 0) - (b.position || 0) || a.id - b.id);
+    const itemHtml = items.map((item: any, index: number) => {
+      const article = item.article;
+      if (item.itemType === "heading") {
+        return `<h2>${escapeHtml(item.content || "Section")}</h2>`;
+      }
+      if (item.itemType === "article") {
+        const image = article?.imageUrl
+          ? `<img src="${escapeHtml(article.imageUrl)}" alt="" />`
+          : "";
+        const meta = [
+          article?.sourceName,
+          article?.collectedVia ? `via ${article.collectedVia}` : "",
+          formatExportDate(article?.publishedAt),
+        ].filter(Boolean).map(escapeHtml).join(" / ");
+        const sourceLink = article?.url
+          ? `<a href="${escapeHtml(article.url)}">Open source</a>`
+          : "";
+        return `<article class="item article">
+          ${image}
+          <div>
+            <p class="kicker">${index + 1}. Article${meta ? ` / ${meta}` : ""}</p>
+            <h2>${escapeHtml(article?.title || `Article #${item.itemRefId}`)}</h2>
+            ${item.content || article?.summary ? `<p>${escapeHtml(item.content || article?.summary)}</p>` : ""}
+            ${sourceLink}
+          </div>
+        </article>`;
+      }
+      const link = item.itemType === "link" && String(item.content || "").startsWith("http")
+        ? `<a href="${escapeHtml(item.content)}">${escapeHtml(item.content)}</a>`
+        : "";
+      return `<article class="item">
+        <p class="kicker">${index + 1}. ${escapeHtml(item.itemType)}</p>
+        ${link || `<p>${escapeHtml(item.content || "")}</p>`}
+      </article>`;
+    }).join("\n");
+
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(payload.report.title)}</title>
+  <style>
+    body { font-family: Arial, sans-serif; color: #111827; margin: 0; background: #f8fafc; }
+    main { max-width: 920px; margin: 0 auto; padding: 40px 24px; background: white; min-height: 100vh; }
+    header { border-bottom: 1px solid #e5e7eb; padding-bottom: 24px; margin-bottom: 24px; }
+    .meta, .kicker { color: #6b7280; font-size: 13px; }
+    h1 { font-size: 36px; line-height: 1.15; margin: 12px 0; }
+    h2 { font-size: 20px; line-height: 1.3; margin: 0 0 10px; }
+    p { line-height: 1.65; }
+    .item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin: 14px 0; }
+    .article { display: grid; grid-template-columns: 160px 1fr; gap: 16px; }
+    img { width: 160px; height: 110px; object-fit: cover; border-radius: 6px; background: #e5e7eb; }
+    a { color: #2563eb; text-decoration: none; font-weight: 600; }
+    @media (max-width: 700px) { .article { grid-template-columns: 1fr; } img { width: 100%; height: auto; max-height: 220px; } }
+    @media print { body { background: white; } main { padding: 0; } .item { break-inside: avoid; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="meta">${escapeHtml(payload.organization.name)} / ${escapeHtml(formatExportDate(payload.report.lastUpdated || payload.report.createdAt) || "Unknown")} / ${escapeHtml(payload.report.status)}</div>
+      <h1>${escapeHtml(payload.report.title)}</h1>
+      ${payload.report.summary ? `<p>${escapeHtml(payload.report.summary)}</p>` : ""}
+    </header>
+    ${itemHtml || "<p>No briefing items.</p>"}
+  </main>
+</body>
+</html>`;
+  }
+
+  function sendSharedReportExport(res: Response, payload: any, format: string) {
+    const normalized = ["txt", "html", "csv", "json"].includes(format) ? format : "txt";
+    const filename = sharedReportFilename(payload.report.title, normalized);
+    if (normalized === "json") {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
+      return res.send(JSON.stringify(payload, null, 2));
+    }
+    if (normalized === "csv") {
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
+      return res.send(sharedReportCsv(payload));
+    }
+    if (normalized === "html") {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
+      return res.send(sharedReportHtml(payload));
+    }
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
+    return res.send(sharedReportText(payload));
+  }
+
+  app.get("/api/collaboration/reports/:id/export", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const report = await storage.getSharedReport(parseInt(req.params.id));
+    if (!report || report.clientId !== clientId) return res.status(404).json({ message: "Not found" });
+    const payload = await buildSharedReportPayload(report);
+    return sendSharedReportExport(res, payload, String(req.query.format || "txt").toLowerCase());
+  });
+
+  app.get("/api/shared-report/:token/export", async (req, res) => {
+    const report = await storage.getSharedReportByToken(req.params.token);
+    if (!report) return res.status(404).json({ message: "Not found" });
+    if (report.status === "archived") return res.status(404).json({ message: "Not found" });
+    const payload = await buildSharedReportPayload(report);
+    return sendSharedReportExport(res, payload, String(req.query.format || "txt").toLowerCase());
+  });
+
+  app.get("/api/shared-report/:token", async (req, res) => {
+    const report = await storage.getSharedReportByToken(req.params.token);
+    if (!report) return res.status(404).json({ message: "Not found" });
+    if (report.status === "archived") return res.status(404).json({ message: "Not found" });
+    res.json(await buildSharedReportPayload(report));
   });
 
   // === CUSTOM TAGS ===
