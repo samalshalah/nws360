@@ -61,6 +61,35 @@ const SYSTEM_SETTING_DEFAULTS: Record<string, string> = {
   feedLiveUpdateMode: "notify",
 };
 
+const CLIENT_SETTING_DEFAULTS = {
+  feedLiveUpdateEnabled: true,
+  feedLiveUpdateIntervalSeconds: 60,
+  feedLiveUpdateMode: "notify",
+  defaultFeedDateRange: "all",
+  defaultArticleRetentionDays: 7,
+  defaultSourceIntervalMinutes: 15,
+  defaultMaxArticlesPerFetch: 10,
+  autoTranslationEnabled: false,
+  defaultTargetLanguage: "en",
+  reportExportFormat: "txt",
+  reportIncludeSummaries: true,
+} as const;
+
+const clientSettingsInputSchema = z.object({
+  defaultLanguage: z.string().trim().min(2).max(12).optional(),
+  feedLiveUpdateEnabled: z.boolean().optional(),
+  feedLiveUpdateIntervalSeconds: z.coerce.number().int().min(15).max(300).optional(),
+  feedLiveUpdateMode: z.enum(["notify", "auto_load"]).optional(),
+  defaultFeedDateRange: z.enum(["all", "today", "week", "month"]).optional(),
+  defaultArticleRetentionDays: z.coerce.number().int().min(1).max(30).optional(),
+  defaultSourceIntervalMinutes: z.coerce.number().int().min(5).max(1440).optional(),
+  defaultMaxArticlesPerFetch: z.coerce.number().int().min(1).max(100).optional(),
+  autoTranslationEnabled: z.boolean().optional(),
+  defaultTargetLanguage: z.string().trim().min(2).max(12).optional(),
+  reportExportFormat: z.enum(["txt", "csv"]).optional(),
+  reportIncludeSummaries: z.boolean().optional(),
+}).strict();
+
 const articleWorkflowUpdateSchema = z.object({
   category: z.string().nullable().optional(),
   province: z.string().nullable().optional(),
@@ -226,13 +255,40 @@ function numberSetting(settings: Record<string, string>, key: string, min: numbe
   return Math.min(max, Math.max(min, Math.round(parsed)));
 }
 
-function publicSystemSettings(settings: Record<string, string>) {
-  const withDefaults = systemSettingsWithDefaults(settings);
-  const mode = withDefaults.feedLiveUpdateMode === "auto_load" ? "auto_load" : "notify";
+function buildClientSettingsPayload(client: any, settings: any) {
   return {
-    feedLiveUpdateEnabled: booleanSetting(withDefaults, "feedLiveUpdateEnabled"),
-    feedLiveUpdateIntervalSeconds: numberSetting(withDefaults, "feedLiveUpdateIntervalSeconds", 15, 300),
+    clientId: client.id,
+    clientName: client.name,
+    defaultLanguage: client.defaultLanguage || "en",
+    feedLiveUpdateEnabled: settings?.feedLiveUpdateEnabled ?? CLIENT_SETTING_DEFAULTS.feedLiveUpdateEnabled,
+    feedLiveUpdateIntervalSeconds: settings?.feedLiveUpdateIntervalSeconds ?? CLIENT_SETTING_DEFAULTS.feedLiveUpdateIntervalSeconds,
+    feedLiveUpdateMode: settings?.feedLiveUpdateMode || CLIENT_SETTING_DEFAULTS.feedLiveUpdateMode,
+    defaultFeedDateRange: settings?.defaultFeedDateRange || CLIENT_SETTING_DEFAULTS.defaultFeedDateRange,
+    defaultArticleRetentionDays: settings?.defaultArticleRetentionDays ?? CLIENT_SETTING_DEFAULTS.defaultArticleRetentionDays,
+    defaultSourceIntervalMinutes: settings?.defaultSourceIntervalMinutes ?? CLIENT_SETTING_DEFAULTS.defaultSourceIntervalMinutes,
+    defaultMaxArticlesPerFetch: settings?.defaultMaxArticlesPerFetch ?? CLIENT_SETTING_DEFAULTS.defaultMaxArticlesPerFetch,
+    autoTranslationEnabled: settings?.autoTranslationEnabled ?? CLIENT_SETTING_DEFAULTS.autoTranslationEnabled,
+    defaultTargetLanguage: settings?.defaultTargetLanguage || client.defaultLanguage || CLIENT_SETTING_DEFAULTS.defaultTargetLanguage,
+    reportExportFormat: settings?.reportExportFormat || CLIENT_SETTING_DEFAULTS.reportExportFormat,
+    reportIncludeSummaries: settings?.reportIncludeSummaries ?? CLIENT_SETTING_DEFAULTS.reportIncludeSummaries,
+    updatedAt: settings?.updatedAt || null,
+  };
+}
+
+function publicSystemSettings(settings: Record<string, string>, clientSettings?: any) {
+  const withDefaults = systemSettingsWithDefaults(settings);
+  const rawMode = clientSettings?.feedLiveUpdateMode || withDefaults.feedLiveUpdateMode;
+  const mode = rawMode === "auto_load" ? "auto_load" : "notify";
+  const rawDateRange = clientSettings?.defaultFeedDateRange || CLIENT_SETTING_DEFAULTS.defaultFeedDateRange;
+  const defaultFeedDateRange = ["all", "today", "week", "month"].includes(rawDateRange) ? rawDateRange : "all";
+  return {
+    feedLiveUpdateEnabled: clientSettings?.feedLiveUpdateEnabled ?? booleanSetting(withDefaults, "feedLiveUpdateEnabled"),
+    feedLiveUpdateIntervalSeconds: clientSettings?.feedLiveUpdateIntervalSeconds ?? numberSetting(withDefaults, "feedLiveUpdateIntervalSeconds", 15, 300),
     feedLiveUpdateMode: mode,
+    defaultFeedDateRange,
+    defaultSourceIntervalMinutes: clientSettings?.defaultSourceIntervalMinutes ?? CLIENT_SETTING_DEFAULTS.defaultSourceIntervalMinutes,
+    defaultMaxArticlesPerFetch: clientSettings?.defaultMaxArticlesPerFetch ?? CLIENT_SETTING_DEFAULTS.defaultMaxArticlesPerFetch,
+    defaultArticleRetentionDays: clientSettings?.defaultArticleRetentionDays ?? CLIENT_SETTING_DEFAULTS.defaultArticleRetentionDays,
   };
 }
 
@@ -566,8 +622,68 @@ export async function registerRoutes(
 
   app.get("/api/settings/public", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    const settings = await storage.getSystemSettings();
-    res.json(publicSystemSettings(settings));
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    const [settings, tenantSettings] = await Promise.all([
+      storage.getSystemSettings(),
+      clientId ? storage.getClientSettings(clientId) : Promise.resolve(undefined),
+    ]);
+    res.json(publicSystemSettings(settings, tenantSettings));
+  });
+
+  app.get("/api/client/settings", requireCapability(CAPS.SETTINGS_VIEW), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+
+    try {
+      const [client, settings] = await Promise.all([
+        storage.getClient(clientId),
+        storage.getClientSettings(clientId),
+      ]);
+      if (!client) return safeNotFound(res);
+      res.json(buildClientSettingsPayload(client, settings));
+    } catch (err) {
+      console.error("Client settings fetch failed:", err);
+      res.status(500).json({ message: "Error fetching client settings" });
+    }
+  });
+
+  app.put("/api/client/settings", requireCapability(CAPS.SETTINGS_MANAGE), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+
+    try {
+      const input = clientSettingsInputSchema.parse(req.body || {});
+      const { defaultLanguage, ...settingsInput } = input;
+
+      if (defaultLanguage) {
+        await storage.updateClient(clientId, { defaultLanguage });
+      }
+      const settings = await storage.upsertClientSettings(clientId, settingsInput);
+      const client = await storage.getClient(clientId);
+      if (!client) return safeNotFound(res);
+
+      await storage.createAuditLog({
+        userId: user.id,
+        clientId,
+        action: "update",
+        entity: "client_settings",
+        entityId: clientId,
+        details: `Updated client settings: ${Object.keys(input).join(", ")}`,
+      });
+
+      res.json(buildClientSettingsPayload(client, settings));
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid client settings" });
+      }
+      console.error("Client settings update failed:", err);
+      res.status(500).json({ message: "Client settings update failed" });
+    }
   });
 
   if (process.env.NODE_ENV !== "production") {
@@ -823,7 +939,7 @@ export async function registerRoutes(
         systemAdmin: sysAdmin,
         collaboration: effectiveCaps.includes(CAPS.COLLAB_VIEW),
         integrations: effectiveCaps.includes(CAPS.INTEGRATIONS_VIEW),
-        settings: sysAdmin || effectiveCaps.includes(CAPS.PERMISSIONS_MANAGE),
+        settings: sysAdmin || effectiveCaps.includes(CAPS.SETTINGS_VIEW) || effectiveCaps.includes(CAPS.PERMISSIONS_MANAGE),
         exports: effectiveCaps.includes(CAPS.ARTICLE_EXPORT) || effectiveCaps.includes(CAPS.ANALYTICS_EXPORT),
         readOnly: role === SYSTEM_ROLES.READONLY_USER,
         executive: effectiveCaps.includes(CAPS.EXECUTIVE_HOME),
@@ -925,13 +1041,16 @@ export async function registerRoutes(
       const input = sourceCreateInput.parse(req.body);
       const clientId = resolveClientId(user, req);
       if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+      const tenantSettings = await storage.getClientSettings(clientId);
       const normalizedInput = {
         ...input,
         country: input.type === "google_news" ? input.country!.toUpperCase() : null,
         category: input.category && isSourceCategoryCode(input.category) ? input.category : null,
         collectorConfig: sourceTypeSupportsCollectorConfig(input.type) ? normalizeWebsiteCollectorConfig(input.collectorConfig) : null,
         filterConfig: normalizeSourceFilterConfig(input.filterConfig),
-        retentionDays: input.retentionDays ?? DEFAULT_SOURCE_RETENTION_DAYS,
+        intervalMinutes: input.intervalMinutes ?? tenantSettings?.defaultSourceIntervalMinutes ?? 15,
+        maxArticlesPerFetch: input.maxArticlesPerFetch ?? tenantSettings?.defaultMaxArticlesPerFetch ?? 10,
+        retentionDays: input.retentionDays ?? tenantSettings?.defaultArticleRetentionDays ?? DEFAULT_SOURCE_RETENTION_DAYS,
       };
       const logoUrl = getSourceLogoUrl(normalizedInput.url, normalizedInput.name);
       const source = await storage.createSource({...normalizedInput, userId: user.id, clientId, logoUrl});
@@ -1941,9 +2060,14 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     try {
+      const clientId = resolveClientId(user, req);
+      const tenantSettings = clientId ? await storage.getClientSettings(clientId) : undefined;
       const params = await buildReportBasketParams(req, user, 1000);
       const result = await storage.getArticles({ ...params, page: 1, limit: 1000 });
-      const format = String(req.query.format || "txt").toLowerCase();
+      const format = String(req.query.format || tenantSettings?.reportExportFormat || "txt").toLowerCase();
+      const includeSummaries = req.query.includeSummaries === undefined
+        ? tenantSettings?.reportIncludeSummaries !== false
+        : String(req.query.includeSummaries).toLowerCase() !== "false";
       const dateLabel = new Date().toISOString().slice(0, 10);
 
       if (format === "csv") {
@@ -1974,7 +2098,7 @@ export async function registerRoutes(
             csvCell(Array.isArray(article.manualTags) ? article.manualTags.join("; ") : ""),
             csvCell(article.publishedAt ? new Date(article.publishedAt).toISOString() : ""),
             csvCell(article.url || ""),
-            csvCell(reportArticleSummary(article)),
+            csvCell(includeSummaries ? reportArticleSummary(article) : ""),
           ].join(",");
         });
         res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -2003,7 +2127,7 @@ export async function registerRoutes(
         if (article.province) lines.push(`Province: ${getIraqProvinceLabel(article.province)}`);
         if (tags) lines.push(`Tags: ${tags}`);
         if (article.url) lines.push(`URL: ${article.url}`);
-        const summary = reportArticleSummary(article);
+        const summary = includeSummaries ? reportArticleSummary(article) : "";
         if (summary) lines.push(`Summary: ${summary}`);
         lines.push("");
       });

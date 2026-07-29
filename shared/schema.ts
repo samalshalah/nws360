@@ -23,6 +23,29 @@ export const clients = pgTable("clients", {
 
 export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true });
 
+// === CLIENT SETTINGS ===
+export const clientSettings = pgTable("client_settings", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  feedLiveUpdateEnabled: boolean("feed_live_update_enabled").default(true),
+  feedLiveUpdateIntervalSeconds: integer("feed_live_update_interval_seconds").default(60),
+  feedLiveUpdateMode: text("feed_live_update_mode").notNull().default("notify"),
+  defaultFeedDateRange: text("default_feed_date_range").notNull().default("all"),
+  defaultArticleRetentionDays: integer("default_article_retention_days").default(7),
+  defaultSourceIntervalMinutes: integer("default_source_interval_minutes").default(15),
+  defaultMaxArticlesPerFetch: integer("default_max_articles_per_fetch").default(10),
+  autoTranslationEnabled: boolean("auto_translation_enabled").default(false),
+  defaultTargetLanguage: text("default_target_language").default("en"),
+  reportExportFormat: text("report_export_format").notNull().default("txt"),
+  reportIncludeSummaries: boolean("report_include_summaries").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_client_settings_client").on(table.clientId),
+]);
+
+export const insertClientSettingsSchema = createInsertSchema(clientSettings).omit({ id: true, createdAt: true, updatedAt: true });
+
 // === USERS ===
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -882,6 +905,9 @@ export type InsertSourceFetchLog = z.infer<typeof insertSourceFetchLogSchema>;
 
 export type Client = typeof clients.$inferSelect;
 export type InsertClient = z.infer<typeof insertClientSchema>;
+
+export type ClientSettings = typeof clientSettings.$inferSelect;
+export type InsertClientSettings = z.infer<typeof insertClientSettingsSchema>;
 
 export type ClientKeyword = typeof clientKeywords.$inferSelect;
 export type InsertClientKeyword = z.infer<typeof insertClientKeywordSchema>;
@@ -1771,6 +1797,9 @@ export const CAPS = {
   USERS_ASSIGN_ROLES: "users_assign_roles",
   PERMISSIONS_MANAGE: "permissions_manage",
 
+  SETTINGS_VIEW: "settings_view",
+  SETTINGS_MANAGE: "settings_manage",
+
   BILLING_VIEW: "billing_view",
   BILLING_MANAGE: "billing_manage",
   AI_USAGE_VIEW: "ai_usage_view",
@@ -1858,6 +1887,7 @@ const CLIENT_ADMIN_CAPS: Cap[] = [
   CAPS.INTEGRATIONS_VIEW, CAPS.INTEGRATIONS_MANAGE, CAPS.INTEGRATION_MONITOR_VIEW,
   CAPS.USERS_VIEW, CAPS.USERS_INVITE, CAPS.USERS_EDIT, CAPS.USERS_DISABLE,
   CAPS.USERS_ASSIGN_ROLES, CAPS.PERMISSIONS_MANAGE,
+  CAPS.SETTINGS_VIEW, CAPS.SETTINGS_MANAGE,
   CAPS.BILLING_VIEW, CAPS.BILLING_MANAGE, CAPS.AI_USAGE_VIEW,
   CAPS.KNOWLEDGE_VIEW, CAPS.KNOWLEDGE_MANAGE, CAPS.KNOWLEDGE_COMPUTE,
   CAPS.FORECAST_VIEW, CAPS.FORECAST_MANAGE, CAPS.FORECAST_COMPUTE,
@@ -1900,6 +1930,7 @@ export const PLAN_FEATURES: Record<string, Cap[]> = {
     CAPS.ANALYTICS_VIEW, CAPS.ANALYTICS_OVERVIEW, CAPS.ANALYTICS_CONTENT_VOLUME,
     CAPS.USERS_VIEW, CAPS.USERS_INVITE, CAPS.USERS_EDIT, CAPS.USERS_DISABLE,
     CAPS.USERS_ASSIGN_ROLES, CAPS.PERMISSIONS_MANAGE,
+    CAPS.SETTINGS_VIEW, CAPS.SETTINGS_MANAGE,
     CAPS.BILLING_VIEW, CAPS.BILLING_MANAGE,
     CAPS.SOURCE_HEALTH_VIEW,
   ],
@@ -1919,6 +1950,7 @@ export const PLAN_FEATURES: Record<string, Cap[]> = {
     CAPS.INTEGRATIONS_VIEW, CAPS.INTEGRATIONS_MANAGE,
     CAPS.USERS_VIEW, CAPS.USERS_INVITE, CAPS.USERS_EDIT, CAPS.USERS_DISABLE,
     CAPS.USERS_ASSIGN_ROLES, CAPS.PERMISSIONS_MANAGE,
+    CAPS.SETTINGS_VIEW, CAPS.SETTINGS_MANAGE,
     CAPS.BILLING_VIEW, CAPS.BILLING_MANAGE,
     CAPS.AI_USAGE_VIEW,
     CAPS.KNOWLEDGE_VIEW, CAPS.KNOWLEDGE_MANAGE,

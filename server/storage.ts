@@ -2,7 +2,7 @@ import { db } from "./db";
 import { isGenericAnalyticsTerm } from "./analytics-noise";
 import {
   users, sources, articles, savedFeedViews, keywords, bookmarks, sourceFetchLogs,
-  clients, clientKeywords, systemSettings, adminAuditLogs,
+  clients, clientSettings, clientKeywords, systemSettings, adminAuditLogs,
   processingJobs, systemErrors, apiKeys, featureFlags, usageMetrics,
   storyClusters, articleAiAnalysis, dailyBriefs, detectedEvents, entityMentions, trendPredictions,
   subscriptions, onboardingState, notificationSettings, whiteLabelSettings, supportTickets,
@@ -18,6 +18,7 @@ import {
   type Bookmark, type InsertBookmark,
   type SourceFetchLog, type InsertSourceFetchLog,
   type Client, type InsertClient,
+  type ClientSettings, type InsertClientSettings,
   type ClientKeyword, type InsertClientKeyword,
   type SystemSetting, type InsertSystemSetting,
   type AdminAuditLog, type InsertAdminAuditLog,
@@ -363,6 +364,10 @@ export interface IStorage {
   createClient(client: InsertClient): Promise<Client>;
   updateClient(id: number, updates: Partial<InsertClient>): Promise<Client | undefined>;
   deleteClient(id: number): Promise<void>;
+
+  // Client Settings
+  getClientSettings(clientId: number): Promise<ClientSettings | undefined>;
+  upsertClientSettings(clientId: number, settings: Partial<InsertClientSettings>): Promise<ClientSettings>;
 
   // Client Keywords
   getClientKeywords(clientId: number): Promise<ClientKeyword[]>;
@@ -2029,6 +2034,38 @@ export class DatabaseStorage implements IStorage {
 
   async deleteClient(id: number): Promise<void> {
     await db.update(clients).set({ active: false }).where(eq(clients.id, id));
+  }
+
+  // === CLIENT SETTINGS ===
+  async getClientSettings(clientId: number): Promise<ClientSettings | undefined> {
+    const [settings] = await db
+      .select()
+      .from(clientSettings)
+      .where(eq(clientSettings.clientId, clientId));
+    return settings;
+  }
+
+  async upsertClientSettings(clientId: number, settings: Partial<InsertClientSettings>): Promise<ClientSettings> {
+    const values = { ...settings, clientId };
+    const [existing] = await db
+      .select()
+      .from(clientSettings)
+      .where(eq(clientSettings.clientId, clientId));
+
+    if (existing) {
+      const [updated] = await db
+        .update(clientSettings)
+        .set({ ...values, updatedAt: new Date() })
+        .where(eq(clientSettings.clientId, clientId))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db
+      .insert(clientSettings)
+      .values(values)
+      .returning();
+    return created;
   }
 
   // === CLIENT KEYWORDS ===

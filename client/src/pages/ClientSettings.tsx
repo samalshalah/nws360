@@ -1,0 +1,370 @@
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bell, FileText, Globe2, Loader2, RefreshCw, Save, Settings, SlidersHorizontal } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { apiRequest } from "@/lib/queryClient";
+import { usePermissions, CAPS } from "@/hooks/use-permissions";
+import { useToast } from "@/hooks/use-toast";
+
+type ClientSettingsPayload = {
+  clientId: number;
+  clientName: string;
+  defaultLanguage: string;
+  feedLiveUpdateEnabled: boolean;
+  feedLiveUpdateIntervalSeconds: number;
+  feedLiveUpdateMode: "notify" | "auto_load";
+  defaultFeedDateRange: "all" | "today" | "week" | "month";
+  defaultArticleRetentionDays: number;
+  defaultSourceIntervalMinutes: number;
+  defaultMaxArticlesPerFetch: number;
+  autoTranslationEnabled: boolean;
+  defaultTargetLanguage: string;
+  reportExportFormat: "txt" | "csv";
+  reportIncludeSummaries: boolean;
+  updatedAt: string | null;
+};
+
+const LANGUAGE_OPTIONS = [
+  { value: "en", label: "English" },
+  { value: "ar", label: "Arabic" },
+  { value: "fr", label: "French" },
+  { value: "es", label: "Spanish" },
+  { value: "tr", label: "Turkish" },
+];
+
+function numberValue(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+export default function ClientSettings() {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { hasCap } = usePermissions();
+  const canManageSettings = hasCap(CAPS.SETTINGS_MANAGE);
+  const [form, setForm] = useState<ClientSettingsPayload | null>(null);
+
+  const { data, isLoading, isFetching } = useQuery<ClientSettingsPayload>({
+    queryKey: ["/api/client/settings"],
+  });
+
+  useEffect(() => {
+    if (data) setForm(data);
+  }, [data]);
+
+  const dirty = useMemo(() => JSON.stringify(data || null) !== JSON.stringify(form || null), [data, form]);
+
+  const updateField = <K extends keyof ClientSettingsPayload>(key: K, value: ClientSettingsPayload[K]) => {
+    setForm((current) => current ? { ...current, [key]: value } : current);
+  };
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (!form) throw new Error("Settings are not loaded");
+      const res = await apiRequest("PUT", "/api/client/settings", {
+        defaultLanguage: form.defaultLanguage,
+        feedLiveUpdateEnabled: form.feedLiveUpdateEnabled,
+        feedLiveUpdateIntervalSeconds: numberValue(form.feedLiveUpdateIntervalSeconds, 15, 300),
+        feedLiveUpdateMode: form.feedLiveUpdateMode,
+        defaultFeedDateRange: form.defaultFeedDateRange,
+        defaultArticleRetentionDays: numberValue(form.defaultArticleRetentionDays, 1, 30),
+        defaultSourceIntervalMinutes: numberValue(form.defaultSourceIntervalMinutes, 5, 1440),
+        defaultMaxArticlesPerFetch: numberValue(form.defaultMaxArticlesPerFetch, 1, 100),
+        autoTranslationEnabled: form.autoTranslationEnabled,
+        defaultTargetLanguage: form.defaultTargetLanguage,
+        reportExportFormat: form.reportExportFormat,
+        reportIncludeSummaries: form.reportIncludeSummaries,
+      });
+      return res.json() as Promise<ClientSettingsPayload>;
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["/api/client/settings"], updated);
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/public"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      toast({ title: t("settings.saved", "Settings saved") });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: t("common.error", "Error"),
+        description: error instanceof Error ? error.message : t("common.tryAgain", "Please try again."),
+      });
+    },
+  });
+
+  if (isLoading || !form) {
+    return (
+      <div className="space-y-5">
+        <Skeleton className="h-16 w-full rounded-md" />
+        <div className="grid gap-4 lg:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-64 w-full rounded-md" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5 animate-in fade-in duration-300">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <Settings className="h-5 w-5 text-primary" />
+            <h1 className="text-2xl font-display font-bold text-foreground" data-testid="text-client-settings-title">
+              {t("settings.title", "Client Settings")}
+            </h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <p className="text-sm text-muted-foreground">{form.clientName}</p>
+            <Badge variant="secondary">Tenant #{form.clientId}</Badge>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {isFetching && <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />}
+          <Button
+            onClick={() => saveMutation.mutate()}
+            disabled={!dirty || !canManageSettings || saveMutation.isPending}
+            data-testid="button-save-client-settings"
+          >
+            {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            <span className="ml-2">{t("common.save", "Save")}</span>
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="rounded-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Bell className="h-4 w-4 text-primary" />
+              {t("settings.feedBehavior", "Feed Behavior")}
+            </CardTitle>
+            <CardDescription>{t("settings.feedBehaviorDescription", "Controls live updates and the default feed window.")}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="feed-live-updates">{t("settings.liveUpdates", "Live updates")}</Label>
+                <p className="text-xs text-muted-foreground">{t("settings.liveUpdatesHint", "Check for new articles while the feed is open.")}</p>
+              </div>
+              <Switch
+                id="feed-live-updates"
+                checked={form.feedLiveUpdateEnabled}
+                onCheckedChange={(checked) => updateField("feedLiveUpdateEnabled", checked)}
+                disabled={!canManageSettings}
+                data-testid="switch-feed-live-updates"
+              />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="feed-update-interval">{t("settings.checkInterval", "Check interval")}</Label>
+                <Input
+                  id="feed-update-interval"
+                  type="number"
+                  min={15}
+                  max={300}
+                  value={form.feedLiveUpdateIntervalSeconds}
+                  onChange={(event) => updateField("feedLiveUpdateIntervalSeconds", numberValue(Number(event.target.value), 15, 300))}
+                  disabled={!canManageSettings}
+                  data-testid="input-feed-update-interval"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>{t("settings.updateMode", "Update mode")}</Label>
+                <Select
+                  value={form.feedLiveUpdateMode}
+                  onValueChange={(value) => updateField("feedLiveUpdateMode", value as ClientSettingsPayload["feedLiveUpdateMode"])}
+                  disabled={!canManageSettings}
+                >
+                  <SelectTrigger data-testid="select-feed-update-mode"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="notify">{t("settings.notifyOnly", "Notify only")}</SelectItem>
+                    <SelectItem value="auto_load">{t("settings.autoLoad", "Auto-load")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>{t("settings.defaultFeedWindow", "Default feed window")}</Label>
+              <Select
+                value={form.defaultFeedDateRange}
+                onValueChange={(value) => updateField("defaultFeedDateRange", value as ClientSettingsPayload["defaultFeedDateRange"])}
+                disabled={!canManageSettings}
+              >
+                <SelectTrigger data-testid="select-default-feed-date-range"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t("common.allTime", "All time")}</SelectItem>
+                  <SelectItem value="today">{t("common.today", "Today")}</SelectItem>
+                  <SelectItem value="week">{t("common.last7Days", "Last 7 days")}</SelectItem>
+                  <SelectItem value="month">{t("common.last30Days", "Last 30 days")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <SlidersHorizontal className="h-4 w-4 text-primary" />
+              {t("settings.sourceDefaults", "Source Defaults")}
+            </CardTitle>
+            <CardDescription>{t("settings.sourceDefaultsDescription", "Used when adding new website, RSS, and social feed sources.")}</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label htmlFor="default-source-interval">{t("settings.fetchEvery", "Fetch every")}</Label>
+              <Input
+                id="default-source-interval"
+                type="number"
+                min={5}
+                max={1440}
+                value={form.defaultSourceIntervalMinutes}
+                onChange={(event) => updateField("defaultSourceIntervalMinutes", numberValue(Number(event.target.value), 5, 1440))}
+                disabled={!canManageSettings}
+                data-testid="input-default-source-interval"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="default-max-articles">{t("settings.postsPerFetch", "Posts/fetch")}</Label>
+              <Input
+                id="default-max-articles"
+                type="number"
+                min={1}
+                max={100}
+                value={form.defaultMaxArticlesPerFetch}
+                onChange={(event) => updateField("defaultMaxArticlesPerFetch", numberValue(Number(event.target.value), 1, 100))}
+                disabled={!canManageSettings}
+                data-testid="input-default-max-articles"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="default-retention">{t("settings.retention", "Retention")}</Label>
+              <Input
+                id="default-retention"
+                type="number"
+                min={1}
+                max={30}
+                value={form.defaultArticleRetentionDays}
+                onChange={(event) => updateField("defaultArticleRetentionDays", numberValue(Number(event.target.value), 1, 30))}
+                disabled={!canManageSettings}
+                data-testid="input-default-retention"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Globe2 className="h-4 w-4 text-primary" />
+              {t("settings.languageTranslation", "Language & Translation")}
+            </CardTitle>
+            <CardDescription>{t("settings.languageTranslationDescription", "Default language choices for tenant users and translated reading.")}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>{t("settings.defaultLanguage", "Default language")}</Label>
+                <Select
+                  value={form.defaultLanguage}
+                  onValueChange={(value) => updateField("defaultLanguage", value)}
+                  disabled={!canManageSettings}
+                >
+                  <SelectTrigger data-testid="select-default-language"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGE_OPTIONS.map((language) => (
+                      <SelectItem key={language.value} value={language.value}>{language.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>{t("settings.targetLanguage", "Target language")}</Label>
+                <Select
+                  value={form.defaultTargetLanguage}
+                  onValueChange={(value) => updateField("defaultTargetLanguage", value)}
+                  disabled={!canManageSettings}
+                >
+                  <SelectTrigger data-testid="select-default-target-language"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGE_OPTIONS.map((language) => (
+                      <SelectItem key={language.value} value={language.value}>{language.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="auto-translation">{t("settings.autoTranslation", "Auto translation")}</Label>
+                <p className="text-xs text-muted-foreground">{t("settings.autoTranslationHint", "Queue translations when translated reading is enabled.")}</p>
+              </div>
+              <Switch
+                id="auto-translation"
+                checked={form.autoTranslationEnabled}
+                onCheckedChange={(checked) => updateField("autoTranslationEnabled", checked)}
+                disabled={!canManageSettings}
+                data-testid="switch-auto-translation"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FileText className="h-4 w-4 text-primary" />
+              {t("settings.reportDefaults", "Report Defaults")}
+            </CardTitle>
+            <CardDescription>{t("settings.reportDefaultsDescription", "Defaults for non-AI report basket exports.")}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="space-y-2">
+              <Label>{t("settings.exportFormat", "Export format")}</Label>
+              <Select
+                value={form.reportExportFormat}
+                onValueChange={(value) => updateField("reportExportFormat", value as ClientSettingsPayload["reportExportFormat"])}
+                disabled={!canManageSettings}
+              >
+                <SelectTrigger data-testid="select-report-export-format"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="txt">{t("settings.textReport", "Text report")}</SelectItem>
+                  <SelectItem value="csv">CSV</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="report-summaries">{t("settings.includeSummaries", "Include summaries")}</Label>
+                <p className="text-xs text-muted-foreground">{t("settings.includeSummariesHint", "Add article summaries to exported report basket files.")}</p>
+              </div>
+              <Switch
+                id="report-summaries"
+                checked={form.reportIncludeSummaries}
+                onCheckedChange={(checked) => updateField("reportIncludeSummaries", checked)}
+                disabled={!canManageSettings}
+                data-testid="switch-report-include-summaries"
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}

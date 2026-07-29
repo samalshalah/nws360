@@ -30,6 +30,7 @@ type PublicSystemSettings = {
   feedLiveUpdateEnabled: boolean;
   feedLiveUpdateIntervalSeconds: number;
   feedLiveUpdateMode: FeedLiveUpdateMode;
+  defaultFeedDateRange?: "all" | "today" | "week" | "month";
 };
 type ArticleLiveStatus = {
   total: number;
@@ -76,6 +77,7 @@ export default function Feed() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [pendingNewCount, setPendingNewCount] = useState(0);
+  const [settingsDefaultApplied, setSettingsDefaultApplied] = useState(false);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>();
   const baselineArticleIdsRef = useRef<Set<number>>(new Set());
   const baselineTotalRef = useRef(0);
@@ -196,6 +198,17 @@ export default function Feed() {
       return res.json();
     },
   });
+
+  useEffect(() => {
+    if (settingsDefaultApplied || !publicSettings?.defaultFeedDateRange) return;
+    const params = new URLSearchParams(searchString);
+    if (!params.has("dateRange") && !params.has("startDate") && !params.has("endDate")) {
+      setFilters(prev => prev.dateRange === "all" && publicSettings.defaultFeedDateRange !== "all"
+        ? { ...prev, dateRange: publicSettings.defaultFeedDateRange as string }
+        : prev);
+    }
+    setSettingsDefaultApplied(true);
+  }, [publicSettings?.defaultFeedDateRange, searchString, settingsDefaultApplied]);
 
   const { data: savedViews = [] } = useQuery<SavedFeedView[]>({
     queryKey: ["/api/feed/views"],

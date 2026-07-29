@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources, useUpdateSource, useBulkSourceMaintenance } from "@/hooks/use-sources";
 import { useKeywords, useCreateKeyword, useDeleteKeyword } from "@/hooks/use-keywords";
@@ -155,6 +155,12 @@ type PreviewResult = {
   error?: string;
 };
 
+type PublicSourceDefaults = {
+  defaultSourceIntervalMinutes?: number;
+  defaultMaxArticlesPerFetch?: number;
+  defaultArticleRetentionDays?: number;
+};
+
 const CHANNEL_OPTIONS = [
   { type: "website", icon: Globe, label: "Website", suffix: "", color: "text-blue-500", needsUrl: false, placeholder: "" },
   { type: "rss", icon: Rss, label: "RSS Feed", suffix: "-RSS", color: "text-orange-500", needsUrl: false, placeholder: "" },
@@ -177,6 +183,7 @@ type ChannelState = {
 function AddSourceView({ onImported }: { onImported?: () => void }) {
   const { t } = useTranslation();
   const { mutate: createSource, isPending: isCreating } = useCreateSource();
+  const settingsTouchedRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<WebsiteSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -202,6 +209,24 @@ function AddSourceView({ onImported }: { onImported?: () => void }) {
   const [isImporting, setIsImporting] = useState(false);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveryDone, setDiscoveryDone] = useState(false);
+
+  const { data: sourceDefaults } = useQuery<PublicSourceDefaults>({
+    queryKey: ["/api/settings/public"],
+  });
+
+  useEffect(() => {
+    if (!sourceDefaults || settingsTouchedRef.current) return;
+    setSettings({
+      intervalMinutes: sourceDefaults.defaultSourceIntervalMinutes ?? 15,
+      maxArticlesPerFetch: sourceDefaults.defaultMaxArticlesPerFetch ?? 10,
+      retentionDays: sourceDefaults.defaultArticleRetentionDays ?? 7,
+    });
+  }, [sourceDefaults]);
+
+  const updateAddSourceSettings = useCallback((updates: Partial<typeof settings>) => {
+    settingsTouchedRef.current = true;
+    setSettings(prev => ({ ...prev, ...updates }));
+  }, []);
 
   const searchWebsites = useCallback(async (query: string) => {
     if (query.length < 2) return;
@@ -659,7 +684,7 @@ function AddSourceView({ onImported }: { onImported?: () => void }) {
                     </div>
                     <Slider
                       value={[settings.maxArticlesPerFetch]}
-                      onValueChange={([val]) => setSettings(prev => ({ ...prev, maxArticlesPerFetch: val }))}
+                      onValueChange={([val]) => updateAddSourceSettings({ maxArticlesPerFetch: val })}
                       min={1} max={50} step={1}
                       data-testid="slider-channel-posts-per-fetch"
                     />
@@ -671,7 +696,7 @@ function AddSourceView({ onImported }: { onImported?: () => void }) {
                     </div>
                     <Slider
                       value={[settings.retentionDays]}
-                      onValueChange={([val]) => setSettings(prev => ({ ...prev, retentionDays: val }))}
+                      onValueChange={([val]) => updateAddSourceSettings({ retentionDays: val })}
                       min={1} max={30} step={1}
                       data-testid="slider-channel-retention"
                     />
@@ -680,7 +705,7 @@ function AddSourceView({ onImported }: { onImported?: () => void }) {
                     <Label>Fetch interval</Label>
                     <Select
                       value={String(settings.intervalMinutes)}
-                      onValueChange={(val) => setSettings(prev => ({ ...prev, intervalMinutes: parseInt(val) }))}
+                      onValueChange={(val) => updateAddSourceSettings({ intervalMinutes: parseInt(val) })}
                     >
                       <SelectTrigger data-testid="select-channel-interval">
                         <SelectValue />

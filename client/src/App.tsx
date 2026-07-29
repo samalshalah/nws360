@@ -49,6 +49,7 @@ import Landing from "@/pages/Landing";
 import NotFound from "@/pages/not-found";
 import NotAuthorized from "@/pages/NotAuthorized";
 import ReportBasket from "@/pages/ReportBasket";
+import ClientSettings from "@/pages/ClientSettings";
 import { AIStagePage } from "@/components/analytics/AIStagePage";
 
 const sentimentPage = () => (
@@ -226,6 +227,9 @@ function Router() {
       </Route>
       <Route path="/knowledge">
         <ProtectedPage component={Knowledge} />
+      </Route>
+      <Route path="/settings">
+        <ProtectedPage component={ClientSettings} />
       </Route>
 
       <Route component={NotFound} />
