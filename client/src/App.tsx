@@ -48,6 +48,7 @@ import Forecasting from "@/pages/Forecasting";
 import Landing from "@/pages/Landing";
 import NotFound from "@/pages/not-found";
 import NotAuthorized from "@/pages/NotAuthorized";
+import ReportBasket from "@/pages/ReportBasket";
 import { AIStagePage } from "@/components/analytics/AIStagePage";
 
 const sentimentPage = () => (
@@ -128,6 +129,9 @@ function Router() {
       </Route>
       <Route path="/feed">
         <ProtectedPage component={Feed} />
+      </Route>
+      <Route path="/reports/basket">
+        <ProtectedPage component={ReportBasket} />
       </Route>
       <Route path="/saved">
         <ProtectedPage component={Saved} />

@@ -15,6 +15,9 @@ import {
   ARTICLE_CATEGORIES,
   ARTICLE_WORKFLOW_STATUSES,
   IRAQ_PROVINCES,
+  getArticleCategoryLabel,
+  getArticleWorkflowStatusLabel,
+  getIraqProvinceLabel,
   isArticleCategoryCode,
   isArticleWorkflowStatusCode,
   isIraqProvinceCode,
@@ -1852,6 +1855,169 @@ export async function registerRoutes(
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=nws360-articles.csv");
     res.send(csvHeader + csvRows);
+  });
+
+  async function buildReportBasketParams(req: any, user: any, limit: number) {
+    const clientId = resolveClientId(user, req);
+    const scopedSourceIds = await getUserSourceIds(user, req);
+    let filteredSourceIds = scopedSourceIds;
+    const sourceNameFilter = req.query.sourceName as string;
+
+    if (sourceNameFilter) {
+      const allSources = await storage.getSources(clientId || undefined);
+      const matchingIds = allSources
+        .filter(s => s.name === sourceNameFilter && (!scopedSourceIds || scopedSourceIds.includes(s.id)))
+        .map(s => s.id);
+      filteredSourceIds = matchingIds.length > 0 ? matchingIds : [-1];
+    }
+
+    const category = req.query.category as string | undefined;
+    if (category && !isArticleCategoryCode(category)) {
+      throw new Error(`Invalid category. Use one of: ${ARTICLE_CATEGORIES.map(item => item.code).join(", ")}`);
+    }
+
+    const province = req.query.province as string | undefined;
+    if (province && !isIraqProvinceCode(province)) {
+      throw new Error(`Invalid province. Use one of: ${IRAQ_PROVINCES.map(item => item.code).join(", ")}`);
+    }
+
+    const sortParam = req.query.sort as string | undefined;
+    const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
+      ? sortParam as any
+      : "newest";
+
+    return {
+      search: req.query.search as string,
+      sourceName: sourceNameFilter,
+      sourceIds: filteredSourceIds,
+      clientId: clientId || undefined,
+      sort,
+      category,
+      province,
+      sourceType: req.query.sourceType as string,
+      startDate: req.query.startDate as string,
+      endDate: req.query.endDate as string,
+      workflowStatus: "for_report",
+      page: req.query.page ? Math.max(1, parseInt(req.query.page as string)) : 1,
+      limit,
+    };
+  }
+
+  function csvCell(value: unknown): string {
+    return `"${String(value ?? "").replace(/"/g, '""')}"`;
+  }
+
+  function reportArticleSummary(article: any): string {
+    return String(article.summary || article.contentClean || article.content || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1200);
+  }
+
+  app.get("/api/reports/basket", requireCapability(CAPS.ARTICLE_VIEW), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    try {
+      const requestedLimit = parseInt(req.query.limit as string);
+      const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, requestedLimit)) : 50;
+      const params = await buildReportBasketParams(req, user, limit);
+      const result = await storage.getArticles(params);
+      res.json({
+        items: result.items,
+        total: result.total,
+        page: params.page,
+        limit: params.limit,
+      });
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("Invalid ")) {
+        return res.status(400).json({ message: err.message });
+      }
+      console.error("Report basket fetch failed:", err);
+      res.status(500).json({ message: "Error fetching report basket" });
+    }
+  });
+
+  app.get("/api/reports/basket/export", requireCapability(CAPS.ARTICLE_EXPORT), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    try {
+      const params = await buildReportBasketParams(req, user, 1000);
+      const result = await storage.getArticles({ ...params, page: 1, limit: 1000 });
+      const format = String(req.query.format || "txt").toLowerCase();
+      const dateLabel = new Date().toISOString().slice(0, 10);
+
+      if (format === "csv") {
+        const header = [
+          "ID",
+          "Title",
+          "Source",
+          "Collected Via",
+          "Category",
+          "Province",
+          "Workflow Status",
+          "Manual Tags",
+          "Published",
+          "URL",
+          "Summary",
+        ].join(",");
+        const rows = result.items.map((article: any) => {
+          const source = article.subSource || article.source?.name || "";
+          const collectedVia = article.subSource ? article.source?.name || "" : "";
+          return [
+            article.id,
+            csvCell(article.title),
+            csvCell(source),
+            csvCell(collectedVia),
+            csvCell(getArticleCategoryLabel(article.category || "general")),
+            csvCell(getIraqProvinceLabel(article.province)),
+            csvCell(getArticleWorkflowStatusLabel(article.workflowStatus || "for_report")),
+            csvCell(Array.isArray(article.manualTags) ? article.manualTags.join("; ") : ""),
+            csvCell(article.publishedAt ? new Date(article.publishedAt).toISOString() : ""),
+            csvCell(article.url || ""),
+            csvCell(reportArticleSummary(article)),
+          ].join(",");
+        });
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename=nws360-report-basket-${dateLabel}.csv`);
+        return res.send([header, ...rows].join("\n"));
+      }
+
+      const lines: string[] = [
+        "NWS360 Report Basket",
+        `Generated: ${new Date().toISOString()}`,
+        `Items: ${result.items.length}`,
+        "",
+      ];
+
+      result.items.forEach((article: any, index: number) => {
+        const source = article.subSource || article.source?.name || "Unknown";
+        const collectedVia = article.subSource && article.source?.name ? ` via ${article.source.name}` : "";
+        const tags = Array.isArray(article.manualTags) && article.manualTags.length > 0
+          ? article.manualTags.join(", ")
+          : "";
+
+        lines.push(`${index + 1}. ${article.title || "Untitled"}`);
+        lines.push(`Source: ${source}${collectedVia}`);
+        lines.push(`Published: ${article.publishedAt ? new Date(article.publishedAt).toISOString() : "Unknown"}`);
+        lines.push(`Category: ${getArticleCategoryLabel(article.category || "general")}`);
+        if (article.province) lines.push(`Province: ${getIraqProvinceLabel(article.province)}`);
+        if (tags) lines.push(`Tags: ${tags}`);
+        if (article.url) lines.push(`URL: ${article.url}`);
+        const summary = reportArticleSummary(article);
+        if (summary) lines.push(`Summary: ${summary}`);
+        lines.push("");
+      });
+
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename=nws360-report-basket-${dateLabel}.txt`);
+      res.send(lines.join("\n"));
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("Invalid ")) {
+        return res.status(400).json({ message: err.message });
+      }
+      console.error("Report basket export failed:", err);
+      res.status(500).json({ message: "Report basket export failed" });
+    }
   });
 
   app.get(api.articles.get.path, async (req, res) => {
