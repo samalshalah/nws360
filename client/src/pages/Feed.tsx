@@ -17,11 +17,10 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { CAPS } from "@shared/schema";
+import { ARTICLE_CATEGORIES, ARTICLE_WORKFLOW_STATUSES, IRAQ_PROVINCES } from "@shared/article-taxonomy";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 
-const CATEGORIES = ["political", "health", "tech", "sports", "business", "entertainment", "science", "urgent", "general"] as const;
-const SOURCE_TYPES = ["rss", "website", "google_news", "twitter", "youtube", "facebook", "instagram", "telegram"] as const;
 const PAGE_SIZE = 20;
 type FeedSort = "newest" | "oldest" | "recently_added" | "source_az" | "title_az" | "engagement";
 type FeedLiveUpdateMode = "notify" | "auto_load";
@@ -80,6 +79,9 @@ export default function Feed() {
       sourceName: undefined as string | undefined,
       sentiment: undefined as string | undefined,
       category: undefined as string | undefined,
+      province: undefined as string | undefined,
+      workflowStatus: undefined as string | undefined,
+      manualTag: undefined as string | undefined,
       sourceType: undefined as string | undefined,
       dateRange: "all" as string,
       sort: parseFeedSort(params.get("sort")),
@@ -93,6 +95,9 @@ export default function Feed() {
     const sourceIdParam = params.get("sourceId");
     const sourceTypeParam = params.get("sourceType");
     const categoryParam = params.get("category");
+    const provinceParam = params.get("province");
+    const workflowStatusParam = params.get("workflowStatus");
+    const manualTagParam = params.get("manualTag");
     const sortParam = params.get("sort");
     const focusParam = params.get("focus");
     const updates: Partial<typeof filters> = {};
@@ -101,6 +106,9 @@ export default function Feed() {
     if (sourceIdParam) updates.sourceId = sourceIdParam;
     if (sourceTypeParam) updates.sourceType = sourceTypeParam;
     if (categoryParam) updates.category = categoryParam;
+    if (provinceParam) updates.province = provinceParam;
+    if (workflowStatusParam) updates.workflowStatus = workflowStatusParam;
+    if (manualTagParam) updates.manualTag = manualTagParam;
     if (sortParam) updates.sort = parseFeedSort(sortParam);
     if (Object.keys(updates).length > 0) {
       setFilters(prev => ({ ...prev, ...updates }));
@@ -153,6 +161,9 @@ export default function Feed() {
     sort: filters.sort,
     sentiment: filters.sentiment,
     category: filters.category,
+    province: filters.province,
+    workflowStatus: filters.workflowStatus,
+    manualTag: filters.manualTag,
     sourceType: filters.sourceType,
     lang: currentLang,
     startDate: dateRange.startDate,
@@ -184,11 +195,14 @@ export default function Feed() {
     if (filters.sort) searchParams.set("sort", filters.sort);
     if (filters.sentiment) searchParams.set("sentiment", filters.sentiment);
     if (filters.category) searchParams.set("category", filters.category);
+    if (filters.province) searchParams.set("province", filters.province);
+    if (filters.workflowStatus) searchParams.set("workflowStatus", filters.workflowStatus);
+    if (filters.manualTag) searchParams.set("manualTag", filters.manualTag);
     if (filters.sourceType) searchParams.set("sourceType", filters.sourceType);
     if (dateRange.startDate) searchParams.set("startDate", dateRange.startDate);
     if (dateRange.endDate) searchParams.set("endDate", dateRange.endDate);
     return searchParams.toString();
-  }, [filters.search, filters.sourceId, filters.sourceName, filters.sort, filters.sentiment, filters.category, filters.sourceType, dateRange.startDate, dateRange.endDate]);
+  }, [filters.search, filters.sourceId, filters.sourceName, filters.sort, filters.sentiment, filters.category, filters.province, filters.workflowStatus, filters.manualTag, filters.sourceType, dateRange.startDate, dateRange.endDate]);
 
   const { data: liveStatus, dataUpdatedAt: liveStatusUpdatedAt } = useQuery<ArticleLiveStatus>({
     queryKey: ["/api/articles/live-status", liveStatusQueryString],
@@ -349,7 +363,12 @@ export default function Feed() {
     if (filters.sort && filters.sort !== DEFAULT_SORT) params.set("sort", filters.sort);
     if (filters.sentiment) params.set("sentiment", filters.sentiment);
     if (filters.category) params.set("category", filters.category);
+    if (filters.province) params.set("province", filters.province);
+    if (filters.workflowStatus) params.set("workflowStatus", filters.workflowStatus);
+    if (filters.manualTag) params.set("manualTag", filters.manualTag);
     if (filters.sourceType) params.set("sourceType", filters.sourceType);
+    if (dateRange.startDate) params.set("startDate", dateRange.startDate);
+    if (dateRange.endDate) params.set("endDate", dateRange.endDate);
     window.open(`/api/articles/export?${params.toString()}`, "_blank");
   };
 
@@ -358,10 +377,10 @@ export default function Feed() {
     resetScroll();
   };
 
-  const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sentiment || filters.category || filters.sourceType || filters.dateRange !== "all";
+  const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sentiment || filters.category || filters.province || filters.workflowStatus || filters.manualTag || filters.sourceType || filters.dateRange !== "all";
 
   const clearFilters = () => {
-    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sentiment: undefined, category: undefined, sourceType: undefined, dateRange: "all", sort: DEFAULT_SORT });
+    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sentiment: undefined, category: undefined, province: undefined, workflowStatus: undefined, manualTag: undefined, sourceType: undefined, dateRange: "all", sort: DEFAULT_SORT });
     setSearchInput("");
     resetScroll();
   };
@@ -421,6 +440,9 @@ export default function Feed() {
     filters.sourceType,
     filters.sentiment,
     filters.category,
+    filters.province,
+    filters.workflowStatus,
+    filters.manualTag,
     filters.dateRange !== "all" ? filters.dateRange : undefined,
   ].filter(Boolean).length;
 
@@ -581,9 +603,43 @@ export default function Feed() {
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">{t("feed.allCategories")}</SelectItem>
-          {CATEGORIES.map(cat => (
-            <SelectItem key={cat} value={cat}>
-              {t(`feed.categories.${cat}`)}
+          {ARTICLE_CATEGORIES.map(category => (
+            <SelectItem key={category.code} value={category.code}>
+              {category.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <Select
+        value={filters.workflowStatus || "all"}
+        onValueChange={(val) => updateFilter("workflowStatus", val === "all" ? undefined : val)}
+      >
+        <SelectTrigger className="h-9 w-full min-w-0 flex-1 basis-0 bg-background" data-testid="select-filter-workflow-status">
+          <SelectValue placeholder="All Status" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Status</SelectItem>
+          {ARTICLE_WORKFLOW_STATUSES.map(status => (
+            <SelectItem key={status.code} value={status.code}>
+              {status.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <Select
+        value={filters.province || "all"}
+        onValueChange={(val) => updateFilter("province", val === "all" ? undefined : val)}
+      >
+        <SelectTrigger className="h-9 w-full min-w-0 flex-1 basis-0 bg-background" data-testid="select-filter-province">
+          <SelectValue placeholder="All Provinces" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Provinces</SelectItem>
+          {IRAQ_PROVINCES.map(province => (
+            <SelectItem key={province.code} value={province.code}>
+              {province.label}
             </SelectItem>
           ))}
         </SelectContent>
@@ -747,7 +803,7 @@ export default function Feed() {
       )}
 
       <div className="hidden md:block">
-        <div className="flex w-full items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2">
           {filterDropdowns}
         </div>
       </div>

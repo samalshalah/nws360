@@ -11,6 +11,14 @@ import { db } from "./db";
 import { analyticsCache, articles, PLAN_LIMITS, SYSTEM_ROLES, CAPS, resolveEffectiveCaps } from "@shared/schema";
 import { isGoogleNewsEditionCode } from "@shared/google-news-regions";
 import { isSourceCategoryCode } from "@shared/source-categories";
+import {
+  ARTICLE_CATEGORIES,
+  ARTICLE_WORKFLOW_STATUSES,
+  IRAQ_PROVINCES,
+  isArticleCategoryCode,
+  isArticleWorkflowStatusCode,
+  isIraqProvinceCode,
+} from "@shared/article-taxonomy";
 import { normalizeWebsiteCollectorConfig, websiteCollectorConfigSchema } from "@shared/source-collector";
 import { normalizeSourceFilterConfig, sourceFilterConfigSchema } from "@shared/source-filter";
 import { classifyFeedImportRow, normalizeSourceImportKey, type ClassifiedFeedImportRow, type FeedImportInputRow } from "@shared/source-import";
@@ -30,6 +38,7 @@ const SYSTEM_CLIENT_ID = 9000;
 const CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram", "youtube"]);
 const DEFAULT_SOURCE_RETENTION_DAYS = 7;
 const BULK_SOURCE_FETCH_CONCURRENCY = 3;
+const MAX_ARTICLE_MANUAL_TAGS = 20;
 const SYSTEM_SETTING_DEFAULTS: Record<string, string> = {
   feedRefreshMinutes: "5",
   rawArticleRetentionDays: "30",
@@ -48,6 +57,68 @@ const SYSTEM_SETTING_DEFAULTS: Record<string, string> = {
   feedLiveUpdateIntervalSeconds: "60",
   feedLiveUpdateMode: "notify",
 };
+
+const articleWorkflowUpdateSchema = z.object({
+  category: z.string().nullable().optional(),
+  province: z.string().nullable().optional(),
+  workflowStatus: z.string().nullable().optional(),
+  manualTags: z.array(z.string()).max(MAX_ARTICLE_MANUAL_TAGS).optional(),
+}).strict();
+
+function normalizeManualTags(tags: string[] | undefined): string[] | undefined {
+  if (!tags) return undefined;
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const rawTag of tags) {
+    const tag = String(rawTag || "").trim().replace(/\s+/g, " ");
+    if (!tag || tag.length > 40) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(tag);
+  }
+  return normalized;
+}
+
+function buildArticleWorkflowUpdates(input: z.infer<typeof articleWorkflowUpdateSchema>): Record<string, any> {
+  const updates: Record<string, any> = {};
+
+  if ("category" in input) {
+    const category = input.category?.trim();
+    if (!category) {
+      updates.category = "general";
+    } else if (!isArticleCategoryCode(category)) {
+      throw new Error(`Invalid category. Use one of: ${ARTICLE_CATEGORIES.map(item => item.code).join(", ")}`);
+    } else {
+      updates.category = category;
+    }
+  }
+
+  if ("province" in input) {
+    const province = input.province?.trim();
+    if (!province || province === "none") {
+      updates.province = null;
+    } else if (!isIraqProvinceCode(province)) {
+      throw new Error(`Invalid province. Use one of: ${IRAQ_PROVINCES.map(item => item.code).join(", ")}`);
+    } else {
+      updates.province = province;
+    }
+  }
+
+  if ("workflowStatus" in input) {
+    const workflowStatus = input.workflowStatus?.trim() || "new";
+    if (!isArticleWorkflowStatusCode(workflowStatus)) {
+      throw new Error(`Invalid workflow status. Use one of: ${ARTICLE_WORKFLOW_STATUSES.map(item => item.code).join(", ")}`);
+    }
+    updates.workflowStatus = workflowStatus;
+  }
+
+  if ("manualTags" in input) {
+    updates.manualTags = normalizeManualTags(input.manualTags) || [];
+  }
+
+  return updates;
+}
 const ALLOWED_SYSTEM_SETTING_KEYS = new Set(Object.keys(SYSTEM_SETTING_DEFAULTS));
 
 function sourceTypeSupportsCollectorConfig(type: string): boolean {
@@ -1656,6 +1727,9 @@ export async function registerRoutes(
         sort,
         sentiment: req.query.sentiment as string,
         category: req.query.category as string,
+        province: req.query.province as string,
+        workflowStatus: req.query.workflowStatus as string,
+        manualTag: req.query.manualTag as string,
         sourceType: req.query.sourceType as string,
         country: req.query.country as string,
         topic: req.query.topic as string,
@@ -1684,6 +1758,15 @@ export async function registerRoutes(
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const scopedSourceIds = await getUserSourceIds(user, req);
+    let filteredSourceIds = scopedSourceIds;
+    const sourceNameFilter = req.query.sourceName as string;
+    if (sourceNameFilter) {
+      const allSources = await storage.getSources(clientId || undefined);
+      const matchingIds = allSources
+        .filter(s => s.name === sourceNameFilter && (!scopedSourceIds || scopedSourceIds.includes(s.id)))
+        .map(s => s.id);
+      filteredSourceIds = matchingIds.length > 0 ? matchingIds : [-1];
+    }
     const sortParam = req.query.sort as string | undefined;
     const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
       ? sortParam as any
@@ -1691,11 +1774,14 @@ export async function registerRoutes(
     const params = {
       search: req.query.search as string,
       sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
-      sourceIds: scopedSourceIds,
+      sourceIds: filteredSourceIds,
       clientId: clientId || undefined,
       sort,
       sentiment: req.query.sentiment as string,
       category: req.query.category as string,
+      province: req.query.province as string,
+      workflowStatus: req.query.workflowStatus as string,
+      manualTag: req.query.manualTag as string,
       sourceType: req.query.sourceType as string,
       startDate: req.query.startDate as string,
       endDate: req.query.endDate as string,
@@ -1703,16 +1789,19 @@ export async function registerRoutes(
       limit: 1000,
     };
     const result = await storage.getArticles(params);
-    const csvHeader = "ID,Title,Source,Collected Via,Category,Sentiment,Published,URL\n";
+    const csvHeader = "ID,Title,Source,Collected Via,Category,Province,Workflow Status,Manual Tags,Sentiment,Published,URL\n";
     const csvRows = result.items.map(a => {
       const title = `"${(a.title || "").replace(/"/g, '""')}"`;
       const source = `"${(a.subSource || a.source?.name || "").replace(/"/g, '""')}"`;
       const collectedVia = `"${(a.subSource ? a.source?.name || "" : "").replace(/"/g, '""')}"`;
       const cat = a.category || "general";
+      const province = a.province || "";
+      const workflowStatus = a.workflowStatus || "new";
+      const manualTags = `"${((a.manualTags || []).join("; ")).replace(/"/g, '""')}"`;
       const sentiment = a.sentimentLabel || "neutral";
       const published = a.publishedAt ? new Date(a.publishedAt).toISOString() : "";
       const url = a.url || "";
-      return `${a.id},${title},${source},${collectedVia},${cat},${sentiment},${published},${url}`;
+      return `${a.id},${title},${source},${collectedVia},${cat},${province},${workflowStatus},${manualTags},${sentiment},${published},${url}`;
     }).join("\n");
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=nws360-articles.csv");
@@ -1728,6 +1817,44 @@ export async function registerRoutes(
     const article = await storage.getArticle(id, clientId || undefined);
     if (!article) return res.status(404).json({ message: "Article not found" });
     res.json(article);
+  });
+
+  app.patch("/api/articles/:id/workflow", requireCapability(CAPS.ARTICLE_EDIT), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid article ID" });
+
+    try {
+      const input = articleWorkflowUpdateSchema.parse(req.body);
+      const updates = buildArticleWorkflowUpdates(input);
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ message: "No article fields provided" });
+      }
+
+      const article = await storage.getArticle(id, clientId);
+      if (!article) return safeNotFound(res);
+
+      const scopedSourceIds = await getUserSourceIds(user, req);
+      if (Array.isArray(scopedSourceIds) && article.sourceId && !scopedSourceIds.includes(article.sourceId)) {
+        return safeNotFound(res);
+      }
+
+      const updated = await storage.updateArticle(id, updates as any);
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid article update" });
+      }
+      if (err instanceof Error && err.message.startsWith("Invalid ")) {
+        return res.status(400).json({ message: err.message });
+      }
+      console.error("Article workflow update failed:", err);
+      res.status(500).json({ message: "Article update failed" });
+    }
   });
 
   // === KEYWORDS (tenant-scoped) ===

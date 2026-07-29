@@ -871,6 +871,15 @@ export class DatabaseStorage implements IStorage {
     if (params?.category) {
       conditions.push(eq(articles.category, params.category));
     }
+    if (params?.province) {
+      conditions.push(eq(articles.province, params.province));
+    }
+    if (params?.workflowStatus) {
+      conditions.push(eq(articles.workflowStatus, params.workflowStatus));
+    }
+    if (params?.manualTag) {
+      conditions.push(sql`${params.manualTag} = ANY(${articles.manualTags})`);
+    }
     if (params?.country) {
       conditions.push(eq(articles.country, params.country));
     }
@@ -935,12 +944,19 @@ export class DatabaseStorage implements IStorage {
       keywords: articles.keywords,
       topics: articles.topics,
       category: articles.category,
+      province: articles.province,
+      workflowStatus: articles.workflowStatus,
+      manualTags: articles.manualTags,
       imageUrl: articles.imageUrl,
       subSource: articles.subSource,
       engagementLikes: articles.engagementLikes,
       engagementComments: articles.engagementComments,
       engagementShares: articles.engagementShares,
       clientId: articles.clientId,
+      crossPosts: articles.crossPosts,
+      aiAnalysisStatus: articles.aiAnalysisStatus,
+      aiRetryCount: articles.aiRetryCount,
+      aiLastRetryAt: articles.aiLastRetryAt,
       createdAt: articles.createdAt,
       source: sources
     })
@@ -982,8 +998,19 @@ export class DatabaseStorage implements IStorage {
       keywords: articles.keywords,
       topics: articles.topics,
       category: articles.category,
+      province: articles.province,
+      workflowStatus: articles.workflowStatus,
+      manualTags: articles.manualTags,
       imageUrl: articles.imageUrl,
       subSource: articles.subSource,
+      engagementLikes: articles.engagementLikes,
+      engagementComments: articles.engagementComments,
+      engagementShares: articles.engagementShares,
+      clientId: articles.clientId,
+      crossPosts: articles.crossPosts,
+      aiAnalysisStatus: articles.aiAnalysisStatus,
+      aiRetryCount: articles.aiRetryCount,
+      aiLastRetryAt: articles.aiLastRetryAt,
       createdAt: articles.createdAt,
       source: sources,
     })
@@ -2354,8 +2381,19 @@ export class DatabaseStorage implements IStorage {
       keywords: articles.keywords,
       topics: articles.topics,
       category: articles.category,
+      province: articles.province,
+      workflowStatus: articles.workflowStatus,
+      manualTags: articles.manualTags,
       imageUrl: articles.imageUrl,
       subSource: articles.subSource,
+      engagementLikes: articles.engagementLikes,
+      engagementComments: articles.engagementComments,
+      engagementShares: articles.engagementShares,
+      clientId: articles.clientId,
+      crossPosts: articles.crossPosts,
+      aiAnalysisStatus: articles.aiAnalysisStatus,
+      aiRetryCount: articles.aiRetryCount,
+      aiLastRetryAt: articles.aiLastRetryAt,
       createdAt: articles.createdAt,
       sourceName: sql<string>`COALESCE(NULLIF(${articles.subSource}, ''), ${sources.name}, 'Unknown')`,
     })

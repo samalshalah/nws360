@@ -4,6 +4,7 @@ import { enqueueAIJob, awaitJobResult } from "./ai/ai-gateway";
 import { fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed, fetchTelegramFeed, fetchSocialRssFeed } from "./web-scraper";
 import { enqueueJob, registerJobHandler, openaiLimiter } from "./processing-queue";
 import { getGoogleNewsEdition } from "@shared/google-news-regions";
+import { ARTICLE_CATEGORIES } from "@shared/article-taxonomy";
 import type { WebsiteCollectorConfig } from "@shared/source-collector";
 import {
   filterSourceItems,
@@ -60,7 +61,7 @@ function truncate(text: string, maxLen: number): string {
   return text.substring(0, maxLen).replace(/\s+\S*$/, "") + "...";
 }
 
-const VALID_CATEGORIES = ["political", "health", "tech", "sports", "business", "entertainment", "science", "urgent", "general"];
+const VALID_CATEGORIES: string[] = ARTICLE_CATEGORIES.map((category) => category.code);
 const MAX_STORED_CONTENT_CHARS = 50_000;
 const MIN_FULL_ARTICLE_GAIN_CHARS = 250;
 const FULL_ARTICLE_JOB_PRIORITY = 6;
@@ -85,7 +86,7 @@ export async function analyzeWithAI(title: string, content: string, clientId?: n
   try {
     const textToAnalyze = truncate(`${title}. ${content}`, 2000);
     const job = await enqueueAIJob(effectiveClientId, "classification", {
-      systemPrompt: 'You analyze news articles. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "topics" (array of 1-3 topic labels like "economy", "elections", "climate", "cybersecurity", "AI", "conflict", "trade", "healthcare"), "summary" (1-2 sentence summary), "category" (exactly one of: political, health, tech, sports, business, entertainment, science, urgent, general), "country" (ISO 3166-1 alpha-2 code of the primary country the article is about, or null if unclear). Respond ONLY with valid JSON.',
+      systemPrompt: `You analyze news articles. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "topics" (array of 1-3 topic labels like "economy", "elections", "climate", "cybersecurity", "AI", "conflict", "trade", "healthcare"), "summary" (1-2 sentence summary), "category" (exactly one of: ${VALID_CATEGORIES.join(", ")}), "country" (ISO 3166-1 alpha-2 code of the primary country the article is about, or null if unclear). Respond ONLY with valid JSON.`,
       userContent: textToAnalyze,
       responseFormat: { type: "json_object" },
     }, 500);
@@ -705,6 +706,9 @@ async function processItems(
       keywords: [] as string[],
       topics: [] as string[],
       category: sourceCategory,
+      province: null,
+      workflowStatus: "new",
+      manualTags: [] as string[],
       imageUrl: item.image || null,
       subSource: item.subSource || null,
       engagementLikes: item.engagementLikes ?? null,

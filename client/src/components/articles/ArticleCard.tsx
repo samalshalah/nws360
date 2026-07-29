@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { formatDistanceToNow } from "date-fns";
-import { ExternalLink, Calendar, Newspaper, Rss, Globe, Send, Youtube, Facebook, Instagram, Twitter, Bookmark, Share2, Search } from "lucide-react";
+import { ExternalLink, Calendar, Newspaper, Rss, Globe, Send, Youtube, Facebook, Instagram, Twitter, Bookmark, Share2, Search, CheckCircle2, MapPin, Tag } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ArticleDetailDialog } from "@/components/articles/ArticleDetailDialog";
+import { getArticleCategoryLabel, getArticleWorkflowStatusLabel, getIraqProvinceLabel } from "@shared/article-taxonomy";
 
 interface ArticleCardProps {
   article: Article & { source: Source | null };
@@ -46,14 +47,36 @@ const platformIcons: Record<string, { icon: typeof Rss; label: string; color: st
 
 const categoryColors: Record<string, string> = {
   political: "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-800",
+  security: "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800",
+  economy: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800",
+  oil_energy: "bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-800",
+  banking_currency: "bg-lime-100 text-lime-800 border-lime-200 dark:bg-lime-900/30 dark:text-lime-300 dark:border-lime-800",
+  foreign_relations: "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800",
+  parliament_law: "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-900/30 dark:text-violet-400 dark:border-violet-800",
+  government_services: "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-900/30 dark:text-sky-400 dark:border-sky-800",
   health: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800",
+  education: "bg-cyan-100 text-cyan-700 border-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400 dark:border-cyan-800",
+  corruption_courts: "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800",
+  provinces: "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-900/30 dark:text-teal-400 dark:border-teal-800",
+  protests_public_opinion: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800",
+  humanitarian_ngos: "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800",
   tech: "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800",
+  environment_water: "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-900/30 dark:text-teal-400 dark:border-teal-800",
+  culture_society: "bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-900/30 dark:text-pink-400 dark:border-pink-800",
   sports: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800",
   business: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800",
   entertainment: "bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-900/30 dark:text-pink-400 dark:border-pink-800",
   science: "bg-cyan-100 text-cyan-700 border-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400 dark:border-cyan-800",
   urgent: "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800",
   general: "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700",
+};
+
+const workflowColors: Record<string, string> = {
+  reviewed: "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800",
+  important: "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800",
+  irrelevant: "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700",
+  for_report: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800",
+  archived: "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-900/30 dark:text-slate-400 dark:border-slate-800",
 };
 
 function getSubSourceFaviconUrl(subSource: string): string | null {
@@ -122,6 +145,9 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
   const SourceIcon = sourceTypeIcons[article.source?.type || "rss"] || Newspaper;
   const displayContent = article.summary || article.content.substring(0, 150) + "...";
   const articleCategory = (article as any).category || "general";
+  const articleWorkflowStatus = (article as any).workflowStatus || "new";
+  const articleProvince = (article as any).province as string | null | undefined;
+  const manualTags = (Array.isArray((article as any).manualTags) ? (article as any).manualTags : []) as string[];
   const hasImage = article.imageUrl && article.imageUrl !== "none" && !imgError;
   const sourceLogoUrl = article.source?.logoUrl || null;
   const subSourceFavicon = article.subSource ? getSubSourceFaviconUrl(article.subSource) : null;
@@ -152,12 +178,49 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
     <button
       onClick={(e) => { e.stopPropagation(); setLocation(`/feed?category=${articleCategory}`); }}
       data-testid={`badge-category-${article.id}`}
+        >
+          <Badge variant="outline" className={cn("text-xs capitalize cursor-pointer", categoryColors[articleCategory] || categoryColors.general)}>
+            {getArticleCategoryLabel(articleCategory)}
+          </Badge>
+        </button>
+  ) : null;
+
+  const workflowBadge = articleWorkflowStatus && articleWorkflowStatus !== "new" ? (
+    <button
+      onClick={(e) => { e.stopPropagation(); setLocation(`/feed?workflowStatus=${articleWorkflowStatus}`); }}
+      data-testid={`badge-workflow-${article.id}`}
     >
-      <Badge variant="outline" className={cn("text-xs capitalize cursor-pointer", categoryColors[articleCategory] || categoryColors.general)}>
-        {t(`feed.categories.${articleCategory}`)}
+      <Badge variant="outline" className={cn("text-xs cursor-pointer", workflowColors[articleWorkflowStatus] || workflowColors.reviewed)}>
+        <CheckCircle2 className="mr-1 h-3 w-3" />
+        {getArticleWorkflowStatusLabel(articleWorkflowStatus)}
       </Badge>
     </button>
   ) : null;
+
+  const provinceBadge = articleProvince ? (
+    <button
+      onClick={(e) => { e.stopPropagation(); setLocation(`/feed?province=${articleProvince}`); }}
+      data-testid={`badge-province-${article.id}`}
+    >
+      <Badge variant="outline" className="cursor-pointer text-xs">
+        <MapPin className="mr-1 h-3 w-3" />
+        {getIraqProvinceLabel(articleProvince)}
+      </Badge>
+    </button>
+  ) : null;
+
+  const manualTagBadges = manualTags.slice(0, 2).map((tag) => (
+    <button
+      key={tag}
+      onClick={(e) => { e.stopPropagation(); setLocation(`/feed?manualTag=${encodeURIComponent(tag)}`); }}
+      data-testid={`badge-manual-tag-${article.id}-${tag}`}
+    >
+      <Badge variant="secondary" className="cursor-pointer text-xs font-normal">
+        <Tag className="mr-1 h-3 w-3" />
+        {tag}
+      </Badge>
+    </button>
+  ));
 
   const sourceInfo = (
     <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground bg-muted/50 px-2 py-1 rounded-md">
@@ -327,6 +390,9 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
             {sourceInfo}
             <div className="flex items-center gap-1.5 flex-wrap">
               {categoryBadge}
+              {workflowBadge}
+              {provinceBadge}
+              {manualTagBadges}
               {sentimentBadge}
             </div>
           </div>
@@ -404,6 +470,9 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
           {sourceInfo}
           <div className="flex items-center gap-1.5 flex-wrap">
             {categoryBadge}
+            {workflowBadge}
+            {provinceBadge}
+            {manualTagBadges}
             {sentimentBadge}
           </div>
         </div>

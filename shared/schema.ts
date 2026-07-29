@@ -95,6 +95,9 @@ export const articles = pgTable("articles", {
   keywords: text("keywords").array(),
   topics: text("topics").array(),
   category: text("category"),
+  province: text("province"),
+  workflowStatus: text("workflow_status").notNull().default("new"),
+  manualTags: text("manual_tags").array().notNull().default([]),
   imageUrl: text("image_url"),
   subSource: text("sub_source"),
   engagementLikes: integer("engagement_likes"),
@@ -1701,6 +1704,7 @@ export const CAPS = {
   ARTICLE_VIEW: "article_view",
   ARTICLE_SAVE: "article_save",
   ARTICLE_EXPORT: "article_export",
+  ARTICLE_EDIT: "article_edit",
 
   SOURCES_VIEW: "sources_view",
   SOURCES_ADD: "sources_add",
@@ -1779,6 +1783,7 @@ const READER_CAPS: Cap[] = [
 
 const ANALYST_CAPS: Cap[] = [
   ...READER_CAPS,
+  CAPS.ARTICLE_EDIT, CAPS.ARTICLE_EXPORT,
   CAPS.ANALYTICS_VIEW, CAPS.ANALYTICS_OVERVIEW, CAPS.ANALYTICS_CONTENT_VOLUME,
   CAPS.ANALYTICS_TRENDING_TOPICS, CAPS.ANALYTICS_KEYWORD_ANALYSIS,
   CAPS.ANALYTICS_TONE_REPORTS, CAPS.ANALYTICS_SOURCE_BEHAVIOR,
@@ -1793,6 +1798,7 @@ const ANALYST_CAPS: Cap[] = [
 
 const EDITOR_CAPS: Cap[] = [
   ...READER_CAPS,
+  CAPS.ARTICLE_EDIT, CAPS.ARTICLE_EXPORT,
   CAPS.KEYWORDS_VIEW, CAPS.KEYWORDS_ADD, CAPS.KEYWORDS_EDIT,
   CAPS.COLLAB_VIEW, CAPS.COLLAB_COMMENTS, CAPS.COLLAB_ANNOTATIONS,
   CAPS.ANALYTICS_CUSTOM_REPORTS,
@@ -1819,7 +1825,7 @@ const INTEGRATIONS_MANAGER_CAPS: Cap[] = [
 
 const CLIENT_ADMIN_CAPS: Cap[] = [
   ...READER_CAPS,
-  CAPS.ARTICLE_EXPORT,
+  CAPS.ARTICLE_EDIT, CAPS.ARTICLE_EXPORT,
   CAPS.SOURCES_VIEW, CAPS.SOURCES_ADD, CAPS.SOURCES_EDIT, CAPS.SOURCES_DELETE,
   CAPS.SOURCE_HEALTH_VIEW,
   CAPS.KEYWORDS_VIEW, CAPS.KEYWORDS_ADD, CAPS.KEYWORDS_EDIT, CAPS.KEYWORDS_DELETE,
@@ -1869,7 +1875,7 @@ export const DEFAULT_CAPS_BY_ROLE: Record<string, Cap[]> = {
 export const PLAN_FEATURES: Record<string, Cap[]> = {
   [PLAN_TIERS.STARTER]: [
     CAPS.FEED_VIEW, CAPS.FEED_SEARCH, CAPS.FEED_FILTER,
-    CAPS.ARTICLE_VIEW, CAPS.ARTICLE_SAVE,
+    CAPS.ARTICLE_VIEW, CAPS.ARTICLE_SAVE, CAPS.ARTICLE_EDIT,
     CAPS.SOURCES_VIEW, CAPS.SOURCES_ADD, CAPS.SOURCES_EDIT, CAPS.SOURCES_DELETE,
     CAPS.KEYWORDS_VIEW, CAPS.KEYWORDS_ADD, CAPS.KEYWORDS_EDIT, CAPS.KEYWORDS_DELETE,
     CAPS.ANALYTICS_VIEW, CAPS.ANALYTICS_OVERVIEW, CAPS.ANALYTICS_CONTENT_VOLUME,
@@ -1880,7 +1886,7 @@ export const PLAN_FEATURES: Record<string, Cap[]> = {
   ],
   [PLAN_TIERS.PRO]: [
     CAPS.FEED_VIEW, CAPS.FEED_SEARCH, CAPS.FEED_FILTER,
-    CAPS.ARTICLE_VIEW, CAPS.ARTICLE_SAVE, CAPS.ARTICLE_EXPORT,
+    CAPS.ARTICLE_VIEW, CAPS.ARTICLE_SAVE, CAPS.ARTICLE_EDIT, CAPS.ARTICLE_EXPORT,
     CAPS.SOURCES_VIEW, CAPS.SOURCES_ADD, CAPS.SOURCES_EDIT, CAPS.SOURCES_DELETE,
     CAPS.SOURCE_HEALTH_VIEW,
     CAPS.KEYWORDS_VIEW, CAPS.KEYWORDS_ADD, CAPS.KEYWORDS_EDIT, CAPS.KEYWORDS_DELETE,
@@ -2081,6 +2087,9 @@ export interface ArticleQueryParams {
   sort?: "newest" | "oldest" | "recently_added" | "source_az" | "title_az" | "engagement";
   sentiment?: string;
   category?: string;
+  province?: string;
+  workflowStatus?: string;
+  manualTag?: string;
   sourceType?: string;
   country?: string;
   topic?: string;

@@ -14,6 +14,9 @@ export function useArticles(params?: ArticleQueryParams) {
         if (params.sourceId) searchParams.set("sourceId", params.sourceId.toString());
         if (params.sentiment) searchParams.set("sentiment", params.sentiment);
         if (params.category) searchParams.set("category", params.category);
+        if (params.province) searchParams.set("province", params.province);
+        if (params.workflowStatus) searchParams.set("workflowStatus", params.workflowStatus);
+        if (params.manualTag) searchParams.set("manualTag", params.manualTag);
         if (params.sourceType) searchParams.set("sourceType", params.sourceType);
         if (params.sourceName) searchParams.set("sourceName", params.sourceName);
         if (params.sort) searchParams.set("sort", params.sort);
