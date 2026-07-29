@@ -69,6 +69,10 @@ export default function Feed() {
   const [allArticles, setAllArticles] = useState<any[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [selectedArticles, setSelectedArticles] = useState<Set<number>>(new Set());
+  const [bulkWorkflowStatus, setBulkWorkflowStatus] = useState("skip");
+  const [bulkCategory, setBulkCategory] = useState("skip");
+  const [bulkProvince, setBulkProvince] = useState("skip");
+  const [bulkTagsInput, setBulkTagsInput] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [pendingNewCount, setPendingNewCount] = useState(0);
@@ -336,6 +340,7 @@ export default function Feed() {
     onSuccess: () => {
       toast({ title: t("feed.bulkDeleteSuccess") });
       setSelectedArticles(new Set());
+      resetBulkControls();
       resetScroll();
       queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
     },
@@ -356,6 +361,53 @@ export default function Feed() {
     },
     onError: () => {
       toast({ title: t("common.error"), variant: "destructive" });
+    },
+  });
+
+  function resetBulkControls() {
+    setBulkWorkflowStatus("skip");
+    setBulkCategory("skip");
+    setBulkProvince("skip");
+    setBulkTagsInput("");
+  }
+
+  const bulkWorkflowMutation = useMutation({
+    mutationFn: async () => {
+      const ids = Array.from(selectedArticles);
+      const manualTags = bulkTagsInput
+        .split(",")
+        .map((tag) => tag.trim().replace(/\s+/g, " "))
+        .filter(Boolean);
+      const payload: Record<string, any> = { ids };
+
+      if (bulkWorkflowStatus !== "skip") payload.workflowStatus = bulkWorkflowStatus;
+      if (bulkCategory !== "skip") payload.category = bulkCategory;
+      if (bulkProvince !== "skip") payload.province = bulkProvince === "none" ? null : bulkProvince;
+      if (manualTags.length > 0) payload.manualTags = manualTags;
+
+      if (Object.keys(payload).length === 1) {
+        throw new Error("Choose a bulk action first.");
+      }
+
+      const res = await apiRequest("POST", "/api/articles/bulk-workflow", payload);
+      return res.json() as Promise<{ requested: number; matched: number; updated: number }>;
+    },
+    onSuccess: (data) => {
+      toast({ title: "Articles updated", description: `${data.updated} article${data.updated === 1 ? "" : "s"} updated` });
+      setSelectedArticles(new Set());
+      resetBulkControls();
+      resetScroll();
+      queryClient.invalidateQueries({
+        predicate: (query) => String(query.queryKey[0] || "").startsWith("/api/articles"),
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/analytics"] });
+    },
+    onError: (error) => {
+      toast({
+        title: "Bulk update failed",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
     },
   });
 
@@ -528,9 +580,12 @@ export default function Feed() {
   const activeSentiment = filters.sentiment || "all";
   const activeSavedView = savedViews.find((view) => String(view.id) === activeSavedViewId);
   const canManageSavedViews = hasCap(CAPS.FEED_FILTER);
+  const canEditArticles = hasCap(CAPS.ARTICLE_EDIT);
   const canExportArticles = hasCap(CAPS.ARTICLE_EXPORT);
   const canRunIntelligence = hasCap(CAPS.INTELLIGENCE_RUN);
   const canDeleteArticles = isAdmin;
+  const canSelectArticles = canEditArticles || canDeleteArticles;
+  const hasBulkWorkflowAction = bulkWorkflowStatus !== "skip" || bulkCategory !== "skip" || bulkProvince !== "skip" || bulkTagsInput.trim().length > 0;
 
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
@@ -920,6 +975,17 @@ export default function Feed() {
                 <RefreshCw className={cn("w-4 h-4", reanalyzeMutation.isPending && "animate-spin")} />
               </Button>
             )}
+            {canSelectArticles && allArticles.length > 0 && (
+              <Button
+                variant={selectedArticles.size > 0 ? "default" : "ghost"}
+                size="icon"
+                onClick={selectAllVisible}
+                data-testid="button-select-visible-articles"
+                title={selectedArticles.size === allArticles.length ? "Clear selection" : "Select visible articles"}
+              >
+                <CheckSquare className="w-4 h-4" />
+              </Button>
+            )}
             {canDeleteArticles && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
@@ -1022,7 +1088,7 @@ export default function Feed() {
                 key={article.id}
                 article={article}
                 selected={selectedArticles.has(article.id)}
-                onToggleSelect={canDeleteArticles ? toggleSelectArticle : undefined}
+                onToggleSelect={canSelectArticles ? toggleSelectArticle : undefined}
                 layout={layout}
               />
             ))}
@@ -1046,29 +1112,99 @@ export default function Feed() {
         </>
       )}
 
-      {canDeleteArticles && selectedArticles.size > 0 && (
+      {canSelectArticles && selectedArticles.size > 0 && (
         <div
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 bg-card border border-border rounded-md shadow-lg"
+          className="fixed bottom-4 left-3 right-3 z-50 mx-auto max-w-6xl rounded-md border border-border bg-card px-3 py-3 shadow-lg"
           data-testid="bulk-actions-bar"
         >
-          <Badge variant="secondary">{selectedArticles.size} {t("feed.selected")}</Badge>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => {
-              if (window.confirm(t("feed.confirmBulkDelete"))) {
-                bulkDeleteMutation.mutate(Array.from(selectedArticles));
-              }
-            }}
-            disabled={bulkDeleteMutation.isPending}
-            data-testid="button-bulk-delete"
-          >
-            <Trash2 className="w-3.5 h-3.5 mr-1.5" />
-            {t("feed.deleteSelected")}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setSelectedArticles(new Set())} data-testid="button-clear-selection">
-            {t("feed.clearSelection")}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary" className="h-9 shrink-0 px-3">{selectedArticles.size} {t("feed.selected")}</Badge>
+
+            {canEditArticles && (
+              <>
+                <Select value={bulkWorkflowStatus} onValueChange={setBulkWorkflowStatus}>
+                  <SelectTrigger className="h-9 w-[145px] bg-background" data-testid="select-bulk-workflow">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="skip">Keep status</SelectItem>
+                    {ARTICLE_WORKFLOW_STATUSES.map(status => (
+                      <SelectItem key={status.code} value={status.code}>{status.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={bulkCategory} onValueChange={setBulkCategory}>
+                  <SelectTrigger className="h-9 w-[170px] bg-background" data-testid="select-bulk-category">
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="skip">Keep category</SelectItem>
+                    {ARTICLE_CATEGORIES.map(category => (
+                      <SelectItem key={category.code} value={category.code}>{category.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={bulkProvince} onValueChange={setBulkProvince}>
+                  <SelectTrigger className="h-9 w-[155px] bg-background" data-testid="select-bulk-province">
+                    <SelectValue placeholder="Province" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="skip">Keep province</SelectItem>
+                    <SelectItem value="none">No province</SelectItem>
+                    {IRAQ_PROVINCES.map(province => (
+                      <SelectItem key={province.code} value={province.code}>{province.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Input
+                  value={bulkTagsInput}
+                  onChange={(event) => setBulkTagsInput(event.target.value)}
+                  placeholder="Tags"
+                  className="h-9 w-[180px] bg-background"
+                  data-testid="input-bulk-tags"
+                />
+
+                <Button
+                  size="sm"
+                  onClick={() => bulkWorkflowMutation.mutate()}
+                  disabled={bulkWorkflowMutation.isPending || !hasBulkWorkflowAction}
+                  data-testid="button-apply-bulk-workflow"
+                >
+                  {bulkWorkflowMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Apply
+                </Button>
+              </>
+            )}
+
+            {canDeleteArticles && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  if (window.confirm(t("feed.confirmBulkDelete"))) {
+                    bulkDeleteMutation.mutate(Array.from(selectedArticles));
+                  }
+                }}
+                disabled={bulkDeleteMutation.isPending}
+                data-testid="button-bulk-delete"
+              >
+                <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                {t("feed.deleteSelected")}
+              </Button>
+            )}
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setSelectedArticles(new Set()); resetBulkControls(); }}
+              data-testid="button-clear-selection"
+            >
+              {t("feed.clearSelection")}
+            </Button>
+          </div>
         </div>
       )}
     </div>

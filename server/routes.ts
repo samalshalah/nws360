@@ -65,6 +65,10 @@ const articleWorkflowUpdateSchema = z.object({
   manualTags: z.array(z.string()).max(MAX_ARTICLE_MANUAL_TAGS).optional(),
 }).strict();
 
+const bulkArticleWorkflowUpdateSchema = articleWorkflowUpdateSchema.extend({
+  ids: z.array(z.coerce.number().int().positive()).min(1).max(500),
+});
+
 const savedFeedViewFiltersSchema = z.object({
   search: z.string().max(200).optional(),
   sourceId: z.string().regex(/^\d+$/).optional(),
@@ -1896,6 +1900,51 @@ export async function registerRoutes(
       }
       console.error("Article workflow update failed:", err);
       res.status(500).json({ message: "Article update failed" });
+    }
+  });
+
+  app.post("/api/articles/bulk-workflow", requireCapability(CAPS.ARTICLE_EDIT), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+
+    try {
+      const input = bulkArticleWorkflowUpdateSchema.parse(req.body);
+      const { ids, ...workflowInput } = input;
+      const updates = buildArticleWorkflowUpdates(workflowInput);
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ message: "No article fields provided" });
+      }
+
+      const uniqueIds = Array.from(new Set(ids));
+      const scopedSourceIds = await getUserSourceIds(user, req);
+      const scopedArticles = await storage.getArticlesByIds(uniqueIds, clientId);
+      const allowedArticles = scopedArticles.filter((article) =>
+        !Array.isArray(scopedSourceIds) || !article.sourceId || scopedSourceIds.includes(article.sourceId)
+      );
+
+      let updated = 0;
+      for (const article of allowedArticles) {
+        const result = await storage.updateArticle(article.id, updates as any);
+        if (result) updated++;
+      }
+
+      if (updated > 0 && Object.prototype.hasOwnProperty.call(updates, "category")) {
+        await db.delete(analyticsCache).where(eq(analyticsCache.clientId, clientId));
+        runAnalyticsComputation().catch(e => console.error("[Analytics] Post-bulk-workflow recomputation error:", e));
+      }
+
+      res.json({ requested: uniqueIds.length, matched: allowedArticles.length, updated });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid bulk article update" });
+      }
+      if (err instanceof Error && err.message.startsWith("Invalid ")) {
+        return res.status(400).json({ message: err.message });
+      }
+      console.error("Bulk article workflow update failed:", err);
+      res.status(500).json({ message: "Bulk article update failed" });
     }
   });
 
