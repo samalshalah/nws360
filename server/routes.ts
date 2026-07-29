@@ -203,6 +203,31 @@ const briefingItemInputSchema = z.object({
   position: z.coerce.number().int().min(0).max(10000).default(0),
 }).strict();
 
+const TEMPLATE_ITEM_TYPES = ["heading", "note", "link"] as const;
+const briefingTemplateSectionSchema = z.object({
+  itemType: z.enum(TEMPLATE_ITEM_TYPES).default("heading"),
+  content: z.string().trim().min(1).max(1000),
+  position: z.coerce.number().int().min(0).max(10000).optional(),
+}).strict();
+
+const briefingTemplateInputSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  description: optionalTrimmedText(1000),
+  sections: z.array(briefingTemplateSectionSchema).min(1).max(30),
+}).strict();
+
+const briefingFromTemplateInputSchema = z.object({
+  templateId: z.coerce.number().int().positive(),
+  title: z.string().trim().min(2).max(160).optional(),
+  summary: optionalTrimmedText(2000),
+}).strict();
+
+const templateFromReportInputSchema = z.object({
+  reportId: z.coerce.number().int().positive(),
+  name: z.string().trim().min(2).max(120).optional(),
+  description: optionalTrimmedText(1000),
+}).strict();
+
 function parseTaskDueDate(value: string | null | undefined): Date | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -5804,7 +5829,7 @@ export async function registerRoutes(
       if (workspace === undefined) return;
     }
     const reports = await storage.getSharedReports({ clientId, workspaceId: wId });
-    res.json(reports);
+    res.json(reports.filter(report => report.status !== "template"));
   });
 
   app.post("/api/collaboration/reports", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
@@ -5896,6 +5921,146 @@ export async function registerRoutes(
     if (!report || report.clientId !== clientId) return res.status(404).json({ message: "Not found" });
     await storage.deleteBriefingItem(parseInt(req.params.id), clientId);
     await storage.updateSharedReport(report.id, {}, clientId);
+    res.json({ success: true });
+  });
+
+  async function buildBriefingTemplateResponse(report: any) {
+    const items = await storage.getBriefingItems(report.id);
+    return {
+      id: report.id,
+      name: report.title,
+      description: report.summary,
+      createdBy: report.createdBy,
+      createdAt: report.createdAt,
+      lastUpdated: report.lastUpdated,
+      sections: items
+        .filter(item => TEMPLATE_ITEM_TYPES.includes(item.itemType as any) && item.content)
+        .map(item => ({
+          id: item.id,
+          itemType: item.itemType,
+          content: item.content,
+          position: item.position || 0,
+        })),
+    };
+  }
+
+  async function createBriefingTemplateFromSections(input: z.infer<typeof briefingTemplateInputSchema>, userId: number, clientId: number) {
+    const template = await storage.createSharedReport({
+      title: input.name,
+      summary: input.description || null,
+      status: "template" as any,
+      createdBy: userId,
+      clientId,
+      shareToken: null,
+    } as any);
+
+    for (let index = 0; index < input.sections.length; index += 1) {
+      const section = input.sections[index];
+      await storage.createBriefingItem({
+        reportId: template.id,
+        itemType: section.itemType,
+        content: section.content,
+        position: section.position ?? index,
+      } as any);
+    }
+
+    return buildBriefingTemplateResponse(template);
+  }
+
+  app.get("/api/collaboration/report-templates", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const reports = await storage.getSharedReports({ clientId });
+    const templates = await Promise.all(
+      reports
+        .filter(report => report.status === "template")
+        .map(report => buildBriefingTemplateResponse(report)),
+    );
+    res.json(templates);
+  });
+
+  app.post("/api/collaboration/report-templates", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const parsed = briefingTemplateInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const template = await createBriefingTemplateFromSections(parsed.data, user.id, clientId);
+    await storage.createActivityEvent({ actorId: user.id, verb: "created_report_template", targetType: "report", targetId: template.id, clientId });
+    res.status(201).json(template);
+  });
+
+  app.post("/api/collaboration/report-templates/from-report", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const parsed = templateFromReportInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const report = await storage.getSharedReport(parsed.data.reportId);
+    if (!report || report.clientId !== clientId || report.status === "template") return res.status(404).json({ message: "Not found" });
+    const items = await storage.getBriefingItems(report.id);
+    const sections = items
+      .filter(item => TEMPLATE_ITEM_TYPES.includes(item.itemType as any) && item.content)
+      .map((item, index) => ({
+        itemType: item.itemType as (typeof TEMPLATE_ITEM_TYPES)[number],
+        content: item.content as string,
+        position: item.position ?? index,
+      }));
+    if (sections.length === 0) {
+      return res.status(400).json({ message: "Only headings, notes, and links can be saved in a template" });
+    }
+    const template = await createBriefingTemplateFromSections({
+      name: parsed.data.name || `${report.title} template`,
+      description: parsed.data.description || report.summary || null,
+      sections,
+    }, user.id, clientId);
+    await storage.createActivityEvent({ actorId: user.id, verb: "created_report_template", targetType: "report", targetId: template.id, clientId });
+    res.status(201).json(template);
+  });
+
+  app.post("/api/collaboration/reports/from-template", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const parsed = briefingFromTemplateInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    const template = await storage.getSharedReport(parsed.data.templateId);
+    if (!template || template.clientId !== clientId || template.status !== "template") return res.status(404).json({ message: "Not found" });
+    const crypto = await import("crypto");
+    const report = await storage.createSharedReport({
+      title: parsed.data.title || `${template.title} - ${new Date().toISOString().slice(0, 10)}`,
+      summary: parsed.data.summary || template.summary || null,
+      status: "draft",
+      createdBy: user.id,
+      clientId,
+      shareToken: crypto.randomBytes(24).toString("hex"),
+    });
+    const sections = await storage.getBriefingItems(template.id);
+    for (const section of sections.filter(item => TEMPLATE_ITEM_TYPES.includes(item.itemType as any) && item.content)) {
+      await storage.createBriefingItem({
+        reportId: report.id,
+        itemType: section.itemType,
+        content: section.content,
+        position: section.position || 0,
+      } as any);
+    }
+    await storage.createActivityEvent({ actorId: user.id, verb: "created_report_from_template", targetType: "report", targetId: report.id, clientId });
+    res.status(201).json(report);
+  });
+
+  app.delete("/api/collaboration/report-templates/:id", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ message: "Not authenticated" });
+    const clientId = requireTenantContext(user, req, res);
+    if (!clientId) return;
+    const template = await storage.getSharedReport(parseInt(req.params.id));
+    if (!template || template.clientId !== clientId || template.status !== "template") return res.status(404).json({ message: "Not found" });
+    await storage.deleteSharedReport(template.id, clientId);
     res.json({ success: true });
   });
 
@@ -6143,7 +6308,7 @@ export async function registerRoutes(
   app.get("/api/shared-report/:token/export", async (req, res) => {
     const report = await storage.getSharedReportByToken(req.params.token);
     if (!report) return res.status(404).json({ message: "Not found" });
-    if (report.status === "archived") return res.status(404).json({ message: "Not found" });
+    if (report.status === "archived" || report.status === "template") return res.status(404).json({ message: "Not found" });
     const payload = await buildSharedReportPayload(report);
     return sendSharedReportExport(res, payload, String(req.query.format || "txt").toLowerCase());
   });
@@ -6151,7 +6316,7 @@ export async function registerRoutes(
   app.get("/api/shared-report/:token", async (req, res) => {
     const report = await storage.getSharedReportByToken(req.params.token);
     if (!report) return res.status(404).json({ message: "Not found" });
-    if (report.status === "archived") return res.status(404).json({ message: "Not found" });
+    if (report.status === "archived" || report.status === "template") return res.status(404).json({ message: "Not found" });
     res.json(await buildSharedReportPayload(report));
   });
 

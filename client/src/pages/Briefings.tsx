@@ -53,6 +53,22 @@ type BriefingItem = {
   createdAt: string | null;
 };
 
+type BriefingTemplateSection = {
+  id?: number;
+  itemType: Exclude<BriefingItemType, "article">;
+  content: string;
+  position: number;
+};
+
+type BriefingTemplate = {
+  id: number;
+  name: string;
+  description: string | null;
+  sections: BriefingTemplateSection[];
+  createdAt: string | null;
+  lastUpdated: string | null;
+};
+
 type ReportBasketResponse = {
   items: any[];
   total: number;
@@ -62,6 +78,14 @@ type ReportBasketResponse = {
 
 const REPORTS_QUERY_KEY = ["/api/collaboration/reports"];
 const BASKET_QUERY_KEY = ["/api/reports/basket", "sort=newest&limit=100"];
+const TEMPLATES_QUERY_KEY = ["/api/collaboration/report-templates"];
+
+const DEFAULT_TEMPLATE_SECTIONS: BriefingTemplateSection[] = [
+  { itemType: "heading", content: "Executive summary", position: 0 },
+  { itemType: "note", content: "Key developments to watch", position: 1 },
+  { itemType: "heading", content: "Source highlights", position: 2 },
+  { itemType: "note", content: "Recommended follow-up", position: 3 },
+];
 
 const STATUS_LABELS: Record<ReportStatus, string> = {
   draft: "Draft",
@@ -119,6 +143,8 @@ export default function Briefings() {
   const [copied, setCopied] = useState(false);
   const [exportFormat, setExportFormat] = useState<"txt" | "html" | "csv" | "json">("txt");
   const [exporting, setExporting] = useState(false);
+  const [templateName, setTemplateName] = useState("Daily news brief");
+  const [selectedTemplateId, setSelectedTemplateId] = useState("none");
 
   const {
     data: reports = [],
@@ -138,9 +164,18 @@ export default function Briefings() {
     },
   });
 
+  const { data: templates = [], isLoading: templatesLoading, refetch: refetchTemplates } = useQuery<BriefingTemplate[]>({
+    queryKey: TEMPLATES_QUERY_KEY,
+  });
+
   const selectedReport = useMemo(
     () => reports.find(report => report.id === selectedReportId) || null,
     [reports, selectedReportId],
+  );
+
+  const selectedTemplate = useMemo(
+    () => templates.find(template => String(template.id) === selectedTemplateId) || null,
+    [selectedTemplateId, templates],
   );
 
   const itemsQueryKey = selectedReportId
@@ -164,6 +199,11 @@ export default function Briefings() {
 
   const addedArticleIds = useMemo(
     () => new Set(items.filter(item => item.itemType === "article" && item.itemRefId).map(item => item.itemRefId as number)),
+    [items],
+  );
+
+  const reusableItemCount = useMemo(
+    () => items.filter(item => item.itemType !== "article" && Boolean(item.content?.trim())).length,
     [items],
   );
 
@@ -194,6 +234,11 @@ export default function Briefings() {
 
   const invalidateReports = () => {
     queryClient.invalidateQueries({ queryKey: REPORTS_QUERY_KEY });
+    queryClient.invalidateQueries({ queryKey: ["/api/collaboration/activity-feed"] });
+  };
+
+  const invalidateTemplates = () => {
+    queryClient.invalidateQueries({ queryKey: TEMPLATES_QUERY_KEY });
     queryClient.invalidateQueries({ queryKey: ["/api/collaboration/activity-feed"] });
   };
 
@@ -312,6 +357,91 @@ export default function Briefings() {
     },
   });
 
+  const createTemplateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/collaboration/report-templates", {
+        name: templateName.trim(),
+        description: "Reusable briefing structure",
+        sections: DEFAULT_TEMPLATE_SECTIONS,
+      });
+      return res.json() as Promise<BriefingTemplate>;
+    },
+    onSuccess: (template) => {
+      invalidateTemplates();
+      setSelectedTemplateId(String(template.id));
+      toast({ title: t("briefings.templateCreated", "Template created") });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: t("common.error", "Error"),
+        description: error instanceof Error ? error.message : t("common.tryAgain", "Please try again."),
+      });
+    },
+  });
+
+  const saveCurrentAsTemplateMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedReport) throw new Error("Select a briefing first");
+      const res = await apiRequest("POST", "/api/collaboration/report-templates/from-report", {
+        reportId: selectedReport.id,
+        name: templateName.trim() || `${selectedReport.title} template`,
+        description: editSummary.trim() || selectedReport.summary || null,
+      });
+      return res.json() as Promise<BriefingTemplate>;
+    },
+    onSuccess: (template) => {
+      invalidateTemplates();
+      setSelectedTemplateId(String(template.id));
+      toast({ title: t("briefings.templateSaved", "Template saved") });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: t("briefings.templateFailed", "Template failed"),
+        description: error instanceof Error ? error.message : t("common.tryAgain", "Please try again."),
+      });
+    },
+  });
+
+  const createFromTemplateMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedTemplate) throw new Error("Select a template first");
+      const res = await apiRequest("POST", "/api/collaboration/reports/from-template", {
+        templateId: selectedTemplate.id,
+        title: newTitle.trim() || `${selectedTemplate.name} - ${new Date().toISOString().slice(0, 10)}`,
+        summary: newSummary.trim() || selectedTemplate.description || null,
+      });
+      return res.json() as Promise<SharedReport>;
+    },
+    onSuccess: (report) => {
+      invalidateReports();
+      queryClient.invalidateQueries({ queryKey: [`/api/collaboration/reports/${report.id}/items`] });
+      setSelectedReportId(report.id);
+      setNewTitle("");
+      setNewSummary("");
+      toast({ title: t("briefings.createdFromTemplate", "Briefing created from template") });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: t("common.error", "Error"),
+        description: error instanceof Error ? error.message : t("common.tryAgain", "Please try again."),
+      });
+    },
+  });
+
+  const deleteTemplateMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/collaboration/report-templates/${id}`);
+    },
+    onSuccess: () => {
+      invalidateTemplates();
+      setSelectedTemplateId("none");
+      toast({ title: t("briefings.templateDeleted", "Template deleted") });
+    },
+  });
+
   const saveSelectedReport = () => {
     if (!selectedReport) return;
     updateReportMutation.mutate({
@@ -404,7 +534,7 @@ export default function Briefings() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => { refetchReports(); refetchItems(); refetchBasket(); }} disabled={reportsFetching} data-testid="button-refresh-briefings">
+          <Button variant="outline" size="sm" onClick={() => { refetchReports(); refetchItems(); refetchBasket(); refetchTemplates(); }} disabled={reportsFetching} data-testid="button-refresh-briefings">
             {reportsFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             <span className="ml-2">{t("common.refresh", "Refresh")}</span>
           </Button>
@@ -492,6 +622,95 @@ export default function Briefings() {
                 {createReportMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 <span className="ml-2">{t("common.create", "Create")}</span>
               </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-md">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <BookOpen className="h-4 w-4 text-primary" />
+                {t("briefings.templates", "Templates")}
+              </CardTitle>
+              <CardDescription>{t("briefings.templatesDescription", "Reuse report structure for daily, weekly, or client-specific briefings.")}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="briefing-template-name">{t("briefings.templateName", "Template name")}</Label>
+                <Input
+                  id="briefing-template-name"
+                  value={templateName}
+                  onChange={(event) => setTemplateName(event.target.value)}
+                  data-testid="input-briefing-template-name"
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => createTemplateMutation.mutate()}
+                  disabled={createTemplateMutation.isPending || templateName.trim().length < 2}
+                  data-testid="button-create-standard-template"
+                >
+                  {createTemplateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  <span className="ml-2">{t("briefings.createOutline", "Create outline")}</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => saveCurrentAsTemplateMutation.mutate()}
+                  disabled={saveCurrentAsTemplateMutation.isPending || !selectedReport || reusableItemCount === 0 || templateName.trim().length < 2}
+                  data-testid="button-save-current-as-template"
+                >
+                  {saveCurrentAsTemplateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  <span className="ml-2">{t("briefings.saveCurrentTemplate", "Save current")}</span>
+                </Button>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId} disabled={templatesLoading || templates.length === 0}>
+                  <SelectTrigger data-testid="select-briefing-template"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t("briefings.noTemplate", "No template selected")}</SelectItem>
+                    {templates.map(template => (
+                      <SelectItem key={template.id} value={String(template.id)}>
+                        {template.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  onClick={() => createFromTemplateMutation.mutate()}
+                  disabled={!selectedTemplate || createFromTemplateMutation.isPending}
+                  data-testid="button-create-from-template"
+                >
+                  {createFromTemplateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  <span className="ml-2">{t("briefings.useTemplate", "Use")}</span>
+                </Button>
+              </div>
+
+              {templates.length > 0 && (
+                <div className="space-y-2" data-testid="list-briefing-templates">
+                  {templates.slice(0, 4).map(template => (
+                    <div key={template.id} className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-foreground">{template.name}</p>
+                        <p className="text-xs text-muted-foreground">{template.sections.length} {t("briefings.sections", "sections")}</p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => deleteTemplateMutation.mutate(template.id)}
+                        disabled={deleteTemplateMutation.isPending}
+                        data-testid={`button-delete-briefing-template-${template.id}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
