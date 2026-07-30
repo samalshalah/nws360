@@ -988,6 +988,7 @@ export default function Feed() {
               >
                 <Search className="w-4 h-4" />
               </Button>
+              {layout !== "front" && (
               <div className="relative">
                 <Button
                   variant={mobileFiltersOpen ? "default" : "ghost"}
@@ -1003,6 +1004,7 @@ export default function Feed() {
                   </span>
                 )}
               </div>
+              )}
             </div>
             {canExportArticles && (
               <Button variant="ghost" size="icon" onClick={handleExport} data-testid="button-export">
@@ -1093,7 +1095,7 @@ export default function Feed() {
         </div>
       )}
 
-      {mobileFiltersOpen && (
+      {layout !== "front" && mobileFiltersOpen && (
         <div className="md:hidden space-y-2" data-testid="mobile-filters-panel">
           {savedViewsControl}
           <div className="grid grid-cols-2 gap-2">
@@ -1102,12 +1104,14 @@ export default function Feed() {
         </div>
       )}
 
+      {layout !== "front" && (
       <div className="hidden md:block">
         <div className="flex w-full flex-wrap items-center gap-2">
           {savedViewsControl}
           {filterDropdowns}
         </div>
       </div>
+      )}
 
       {layout === "front" ? (
         <FeedMagazine
