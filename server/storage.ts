@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { isGenericAnalyticsTerm, normalizeAnalyticsValue } from "./analytics-noise";
-import { getArticleCategoryLabel } from "@shared/article-taxonomy";
+import { getArticleCategoryLabel, normalizeArticleCategoryCode, sortArticleCategoryRows } from "@shared/article-taxonomy";
 import {
   users, sources, articles, savedFeedViews, keywords, bookmarks, sourceFetchLogs,
   clients, clientSettings, clientKeywords, systemSettings, adminAuditLogs,
@@ -200,8 +200,9 @@ function collectAnalyticsSignals(row: AnalyticsTextRow, mode: AnalyticsSignalMod
     const phraseSource = [title, summary].filter(Boolean).join(" ");
     const phrases = extractAnalyticsPhrases(phraseSource, 24);
     const fallbackTerms = extractAnalyticsTerms(phraseSource, 12);
-    const categoryLabel = row.category && !["general", "other"].includes(row.category)
-      ? normalizeAnalyticsValue(getArticleCategoryLabel(row.category))
+    const normalizedCategory = normalizeArticleCategoryCode(row.category);
+    const categoryLabel = normalizedCategory !== "other"
+      ? normalizeAnalyticsValue(getArticleCategoryLabel(normalizedCategory))
       : "";
     const categoryTopic = categoryLabel && isAnalyticsSignalTerm(categoryLabel) ? [categoryLabel] : [];
     return uniqueAnalyticsSignals([...phrases, ...categoryTopic, ...fallbackTerms], 28);
@@ -1015,6 +1016,11 @@ export class DatabaseStorage implements IStorage {
     if (params?.category) {
       conditions.push(eq(articles.category, params.category));
     }
+    if (params?.priorities?.length) {
+      conditions.push(inArray(articles.priority, params.priorities));
+    } else if (params?.priority) {
+      conditions.push(eq(articles.priority, params.priority));
+    }
     if (params?.province) {
       conditions.push(eq(articles.province, params.province));
     }
@@ -1092,6 +1098,7 @@ export class DatabaseStorage implements IStorage {
       keywords: articles.keywords,
       topics: articles.topics,
       category: articles.category,
+      priority: articles.priority,
       province: articles.province,
       workflowStatus: articles.workflowStatus,
       manualTags: articles.manualTags,
@@ -1146,6 +1153,7 @@ export class DatabaseStorage implements IStorage {
       keywords: articles.keywords,
       topics: articles.topics,
       category: articles.category,
+      priority: articles.priority,
       province: articles.province,
       workflowStatus: articles.workflowStatus,
       manualTags: articles.manualTags,
@@ -1577,17 +1585,15 @@ export class DatabaseStorage implements IStorage {
     const activeSources24h = Number((activeSourcesRows.rows[0] as any)?.count || 0);
 
     const categoryRows = await db.execute(sql`
-      SELECT COALESCE(category, 'general') as category, COUNT(*)::int as count
+      SELECT COALESCE(category, 'other') as category, COUNT(*)::int as count
       FROM articles
       WHERE published_at >= NOW() - INTERVAL '7 days' ${sourceFilter}
-      GROUP BY COALESCE(category, 'general')
-      ORDER BY count DESC
-      LIMIT 8
+      GROUP BY COALESCE(category, 'other')
     `);
-    const categoryBreakdown = (categoryRows.rows as any[]).map((r: any) => ({
+    const categoryBreakdown = sortArticleCategoryRows((categoryRows.rows as any[]).map((r: any) => ({
       category: String(r.category),
       count: Number(r.count),
-    }));
+    })));
 
     const topSource24Rows = await db.execute(sql`
       SELECT COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as name, COUNT(a.id)::int as count
@@ -1771,11 +1777,10 @@ export class DatabaseStorage implements IStorage {
     });
 
     const categoryRows = await db.execute(sql`
-      SELECT COALESCE(category, 'general') as category, COUNT(*)::int as count
+      SELECT COALESCE(category, 'other') as category, COUNT(*)::int as count
       FROM articles
       WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
-      GROUP BY category
-      ORDER BY count DESC
+      GROUP BY COALESCE(category, 'other')
     `);
 
     return {
@@ -1787,10 +1792,10 @@ export class DatabaseStorage implements IStorage {
         trendScore,
       })),
       topicTimeline: termStats.timeline.map(({ date, term, count }) => ({ date, topic: term, count })),
-      byCategory: (categoryRows.rows as any[]).map(r => ({
+      byCategory: sortArticleCategoryRows((categoryRows.rows as any[]).map(r => ({
         category: String(r.category),
         count: Number(r.count),
-      })),
+      }))),
       method: "non-ai-phrases",
     };
   }
@@ -1904,14 +1909,13 @@ export class DatabaseStorage implements IStorage {
     `);
 
     const byCategoryRows = await db.execute(sql`
-      SELECT COALESCE(category, 'general') as category,
+      SELECT COALESCE(category, 'other') as category,
         COUNT(*) FILTER (WHERE sentiment_label = 'positive')::int as positive,
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
       WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter}
-      GROUP BY category
-      ORDER BY (COUNT(*)) DESC
+      GROUP BY COALESCE(category, 'other')
     `);
 
     return {
@@ -1933,12 +1937,12 @@ export class DatabaseStorage implements IStorage {
         negative: Number(r.negative),
         neutral: Number(r.neutral),
       })),
-      byCategory: (byCategoryRows.rows as any[]).map(r => ({
+      byCategory: sortArticleCategoryRows((byCategoryRows.rows as any[]).map(r => ({
         category: String(r.category),
         positive: Number(r.positive),
         negative: Number(r.negative),
         neutral: Number(r.neutral),
-      })),
+      }))),
       confidence: await this.getAnalyticsConfidence(start, end, sourceFilter, clientFilter),
     };
   }
@@ -2732,6 +2736,7 @@ export class DatabaseStorage implements IStorage {
       keywords: articles.keywords,
       topics: articles.topics,
       category: articles.category,
+      priority: articles.priority,
       province: articles.province,
       workflowStatus: articles.workflowStatus,
       manualTags: articles.manualTags,

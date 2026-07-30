@@ -199,7 +199,7 @@ export async function runInsightAI(params: RunInsightAIParams): Promise<InsightA
     const simPrompt = 800;
     const simCompletion = 200;
     const stubContent = payload.responseFormat?.type === "json_object"
-      ? JSON.stringify({ sentiment: "neutral", score: 0, keywords: ["dry-run"], topics: ["test"], summary: "Dry-run stub response", category: "general", country: null })
+      ? JSON.stringify({ sentiment: "neutral", score: 0, keywords: ["dry-run"], topics: ["test"], summary: "Dry-run stub response", category: "other", priority: "routine", country: null })
       : "Dry-run stub response";
     result = {
       content: stubContent,

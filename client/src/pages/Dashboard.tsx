@@ -16,7 +16,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { getArticleCategoryLabel } from "@shared/article-taxonomy";
+import { ARTICLE_CATEGORIES, getArticleCategoryLabel } from "@shared/article-taxonomy";
 import { useAnalytics } from "@/hooks/use-analytics";
 import { useArticles } from "@/hooks/use-articles";
 import { ArticleCard } from "@/components/articles/ArticleCard";
@@ -38,28 +38,17 @@ type MetricCardProps = {
 };
 
 const categoryTone: Record<string, string> = {
-  urgent: "bg-red-500",
-  security: "bg-rose-500",
-  political: "bg-blue-500",
-  economy: "bg-emerald-500",
-  oil_energy: "bg-amber-500",
-  foreign_relations: "bg-indigo-500",
-  parliament_law: "bg-violet-500",
-  government_services: "bg-sky-500",
-  health: "bg-teal-500",
-  education: "bg-cyan-500",
-  corruption_courts: "bg-orange-500",
-  provinces: "bg-lime-500",
-  protests_public_opinion: "bg-pink-500",
-  humanitarian_ngos: "bg-green-500",
-  business: "bg-yellow-500",
-  tech: "bg-purple-500",
-  environment_water: "bg-emerald-600",
-  culture_society: "bg-fuchsia-500",
-  sports: "bg-orange-400",
-  science: "bg-cyan-600",
-  entertainment: "bg-pink-400",
-  general: "bg-muted-foreground",
+  iraqi_government: "bg-sky-500",
+  parliament_politics: "bg-violet-500",
+  security_stability: "bg-rose-500",
+  economy_oil_finance: "bg-emerald-500",
+  development_services: "bg-cyan-500",
+  justice_accountability: "bg-orange-500",
+  kurdistan_region: "bg-teal-500",
+  civil_society_humanitarian: "bg-green-500",
+  united_nations: "bg-blue-500",
+  us_iraq_international: "bg-indigo-500",
+  media_narratives: "bg-amber-500",
   other: "bg-muted-foreground",
 };
 
@@ -141,11 +130,12 @@ export default function Dashboard() {
     startDate,
   });
 
-  const categoryBreakdown = (analytics?.categoryBreakdown || [])
-    .filter((item) => item.count > 0)
-    .sort((a, b) => b.count - a.count);
+  const rawCategoryBreakdown = (analytics?.categoryBreakdown || []).filter((item) => item.count > 0);
+  const categoryBreakdown = ARTICLE_CATEGORIES
+    .map((category) => rawCategoryBreakdown.find((item) => item.category === category.code))
+    .filter(Boolean) as { category: string; count: number }[];
   const totalCategoryCount = categoryBreakdown.reduce((sum, item) => sum + item.count, 0);
-  const topCategory = categoryBreakdown[0];
+  const topCategory = [...rawCategoryBreakdown].sort((a, b) => b.count - a.count)[0];
   const headlineSignals = (analytics?.trendingKeywords || []).slice(0, 8);
   const topSources = (analytics?.topSources24h?.length ? analytics.topSources24h : analytics?.topSources || []).slice(0, 5);
   const latestArticles = latestCoverage?.items || [];
@@ -302,7 +292,7 @@ export default function Dashboard() {
               <p className="text-xs text-muted-foreground">Top categories from the last 7 days.</p>
             </div>
             <div className="space-y-3 p-4">
-              {categoryBreakdown.length > 0 ? categoryBreakdown.slice(0, 7).map((item) => {
+              {categoryBreakdown.length > 0 ? categoryBreakdown.map((item) => {
                 const pct = totalCategoryCount > 0 ? Math.max(4, Math.round((item.count / totalCategoryCount) * 100)) : 0;
                 return (
                   <Link key={item.category} href={categoryHref(item.category)}>
@@ -312,7 +302,7 @@ export default function Dashboard() {
                         <span className="text-xs tabular-nums text-muted-foreground">{formatNumber(item.count)}</span>
                       </div>
                       <div className="h-2 rounded-full bg-muted">
-                        <div className={`h-2 rounded-full ${categoryTone[item.category] || categoryTone.general}`} style={{ width: `${pct}%` }} />
+                        <div className={`h-2 rounded-full ${categoryTone[item.category] || categoryTone.other}`} style={{ width: `${pct}%` }} />
                       </div>
                     </div>
                   </Link>

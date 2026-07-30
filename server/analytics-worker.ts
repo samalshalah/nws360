@@ -4,6 +4,7 @@ import { sql, and, gte, lte, eq, desc, or, isNull, ne } from "drizzle-orm";
 import { logSystemError } from "./processing-queue";
 import { storage } from "./storage";
 import { isGenericAnalyticsTerm } from "./analytics-noise";
+import { sortArticleCategoryRows } from "@shared/article-taxonomy";
 
 const AI_SUCCESS_FILTER = sql`(${articles.aiAnalysisStatus} = 'success' OR ${articles.aiAnalysisStatus} IS NULL)`;
 
@@ -120,16 +121,15 @@ async function computeTrendingTopics(periodStart: Date, periodEnd: Date, clientI
 
   const byCategory = await db
     .select({
-      category: articles.category,
+      category: sql<string>`COALESCE(${articles.category}, 'other')`,
       count: sql<number>`count(*)`,
     })
     .from(articles)
     .where(and(...conditions))
-    .groupBy(articles.category)
-    .orderBy(desc(sql`count(*)`));
+    .groupBy(sql`COALESCE(${articles.category}, 'other')`);
 
   const key = clientId ? `client_${clientId}` : "global";
-  await upsertCache("trending_topics", key, { topics: filteredTopics, byCategory }, periodStart, periodEnd, clientId);
+  await upsertCache("trending_topics", key, { topics: filteredTopics, byCategory: sortArticleCategoryRows(byCategory) }, periodStart, periodEnd, clientId);
 }
 
 async function computeSentimentMetrics(periodStart: Date, periodEnd: Date, clientId?: number | null) {

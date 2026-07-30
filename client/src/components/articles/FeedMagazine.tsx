@@ -40,56 +40,80 @@ type CategoryConfig = {
 
 const CATEGORY_NAV: CategoryConfig[] = [
   {
-    code: "political",
-    label: "Politics",
-    description: "Parties, elections, leaders, and political positioning.",
+    code: "iraqi_government",
+    label: "Iraqi Government",
+    description: "Prime Minister, cabinet, ministries, and official state decisions.",
+    icon: Building2,
+  },
+  {
+    code: "parliament_politics",
+    label: "Parliament & Political Affairs",
+    description: "Parliament, parties, elections, coalitions, and political negotiations.",
     icon: Landmark,
   },
   {
-    code: "foreign_relations",
-    label: "Diplomacy",
-    description: "Embassies, neighbors, foreign policy, and international pressure.",
-    icon: Globe2,
-  },
-  {
-    code: "security",
-    label: "Security",
+    code: "security_stability",
+    label: "Security & Stability",
     description: "Military, armed groups, incidents, and public safety signals.",
     icon: ShieldAlert,
   },
   {
-    code: "economy",
-    label: "Economy",
-    description: "Budget, trade, currency, prices, and market developments.",
+    code: "economy_oil_finance",
+    label: "Economy, Oil & Public Finance",
+    description: "Budget, oil, currency, banking, salaries, and economic policy.",
     icon: WalletCards,
   },
   {
-    code: "oil_energy",
-    label: "Oil & Energy",
-    description: "Oil, gas, electricity, exports, and energy policy.",
-    icon: WalletCards,
-  },
-  {
-    code: "government_services",
-    label: "Government",
-    description: "Prime minister, cabinet, ministries, and public services.",
+    code: "development_services",
+    label: "Development & Public Services",
+    description: "Infrastructure, electricity, water, health, education, and services.",
     icon: Building2,
   },
   {
-    code: "parliament_law",
-    label: "Parliament & Law",
-    description: "Parliament, courts, legislation, and regulatory action.",
+    code: "justice_accountability",
+    label: "Justice & Accountability",
+    description: "Courts, corruption, integrity investigations, and rule-of-law issues.",
     icon: Scale,
   },
   {
-    code: "humanitarian_ngos",
-    label: "Organizations",
-    description: "UN, NGOs, humanitarian activity, and civil society work.",
+    code: "kurdistan_region",
+    label: "Kurdistan Region",
+    description: "KRG institutions, Erbil-Baghdad files, oil, salaries, and Peshmerga.",
+    icon: Globe2,
+  },
+  {
+    code: "civil_society_humanitarian",
+    label: "Civil Society & Humanitarian",
+    description: "NGOs, humanitarian affairs, human rights, protests, and public opinion.",
     icon: Users,
+  },
+  {
+    code: "united_nations",
+    label: "UN & International Organizations",
+    description: "UNAMI, UN agencies, multilateral programs, and institutional statements.",
+    icon: Globe2,
+  },
+  {
+    code: "us_iraq_international",
+    label: "U.S.-Iraq & International Relations",
+    description: "U.S.-Iraq relations, diplomacy, neighbors, and foreign policy.",
+    icon: Globe2,
+  },
+  {
+    code: "media_narratives",
+    label: "Media Narratives & Social Trends",
+    description: "Media narratives, coordinated campaigns, hashtags, and viral discourse.",
+    icon: Newspaper,
+  },
+  {
+    code: "other",
+    label: "Other",
+    description: "Items outside the defined diplomatic report taxonomy.",
+    icon: Scale,
   },
 ];
 
-const MAGAZINE_SECTIONS = CATEGORY_NAV.slice(0, 6);
+const MAGAZINE_SECTIONS = CATEGORY_NAV.filter((item) => item.code !== "other").slice(0, 6);
 
 function categoryQueryParams(code: string, startDate?: string, endDate?: string, limit = 4) {
   return {
@@ -216,19 +240,20 @@ function GovernmentDesk({
   endDate?: string;
   onSelectCategory: (category?: string) => void;
 }) {
-  const government = useArticles(categoryQueryParams("government_services", startDate, endDate, 36));
-  const parliament = useArticles(categoryQueryParams("parliament_law", startDate, endDate, 12));
-  const organizations = useArticles(categoryQueryParams("humanitarian_ngos", startDate, endDate, 12));
+  const government = useArticles(categoryQueryParams("iraqi_government", startDate, endDate, 36));
+  const parliament = useArticles(categoryQueryParams("parliament_politics", startDate, endDate, 12));
+  const organizations = useArticles(categoryQueryParams("united_nations", startDate, endDate, 12));
+  const civilSociety = useArticles(categoryQueryParams("civil_society_humanitarian", startDate, endDate, 12));
   const governmentArticles = government.data?.items || [];
   const parliamentArticles = parliament.data?.items || [];
-  const organizationArticles = organizations.data?.items || [];
-  const isLoading = government.isLoading || parliament.isLoading || organizations.isLoading;
+  const organizationArticles = [...(organizations.data?.items || []), ...(civilSociety.data?.items || [])].slice(0, 12);
+  const isLoading = government.isLoading || parliament.isLoading || organizations.isLoading || civilSociety.isLoading;
 
   const lanes = [
     {
       title: "Prime Minister & Cabinet",
       description: "Executive decisions, cabinet meetings, and prime minister activity.",
-      category: "government_services",
+      category: "iraqi_government",
       articles: pickMatchingArticles(
         governmentArticles,
         /رئيس الوزراء|مجلس الوزراء|رئاسة الوزراء|الحكومة|السوداني|prime minister|premier|cabinet/i,
@@ -239,7 +264,7 @@ function GovernmentDesk({
     {
       title: "Ministries",
       description: "Ministry statements, services, appointments, and public-sector activity.",
-      category: "government_services",
+      category: "iraqi_government",
       articles: pickMatchingArticles(
         governmentArticles,
         /وزارة|الوزارة|وزير|الوزير|ministry|minister/i,
@@ -250,13 +275,13 @@ function GovernmentDesk({
     {
       title: "Parliament & Law",
       description: "Legislation, committees, courts, and formal legal decisions.",
-      category: "parliament_law",
+      category: "parliament_politics",
       articles: parliamentArticles.slice(0, 3),
     },
     {
-      title: "Organizations & NGOs",
-      description: "UN agencies, NGOs, humanitarian groups, and civil society signals.",
-      category: "humanitarian_ngos",
+      title: "Organizations & Civil Society",
+      description: "UN agencies, international organizations, NGOs, and public opinion signals.",
+      category: "united_nations",
       articles: organizationArticles.slice(0, 3),
     },
   ];
@@ -273,7 +298,7 @@ function GovernmentDesk({
             A diplomatic watchlist for executive offices, ministries, parliament, and organizations.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => onSelectCategory("government_services")}>
+        <Button variant="outline" size="sm" onClick={() => onSelectCategory("iraqi_government")}>
           Open government feed
         </Button>
       </div>

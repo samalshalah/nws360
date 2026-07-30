@@ -20,7 +20,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { CAPS } from "@shared/schema";
-import { ARTICLE_CATEGORIES, ARTICLE_WORKFLOW_STATUSES, IRAQ_PROVINCES } from "@shared/article-taxonomy";
+import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, ARTICLE_WORKFLOW_STATUSES, IRAQ_PROVINCES } from "@shared/article-taxonomy";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 
@@ -73,6 +73,7 @@ export default function Feed() {
   const [selectedArticles, setSelectedArticles] = useState<Set<number>>(new Set());
   const [bulkWorkflowStatus, setBulkWorkflowStatus] = useState("skip");
   const [bulkCategory, setBulkCategory] = useState("skip");
+  const [bulkPriority, setBulkPriority] = useState("skip");
   const [bulkProvince, setBulkProvince] = useState("skip");
   const [bulkTagsInput, setBulkTagsInput] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -96,6 +97,7 @@ export default function Feed() {
       sourceName: undefined as string | undefined,
       sentiment: undefined as string | undefined,
       category: undefined as string | undefined,
+      priority: undefined as string | undefined,
       province: undefined as string | undefined,
       workflowStatus: undefined as string | undefined,
       manualTag: undefined as string | undefined,
@@ -117,6 +119,7 @@ export default function Feed() {
     const sourceIdParam = params.get("sourceId");
     const sourceTypeParam = params.get("sourceType");
     const categoryParam = params.get("category");
+    const priorityParam = params.get("priority");
     const provinceParam = params.get("province");
     const workflowStatusParam = params.get("workflowStatus");
     const manualTagParam = params.get("manualTag");
@@ -131,6 +134,7 @@ export default function Feed() {
     if (sourceIdParam) updates.sourceId = sourceIdParam;
     if (sourceTypeParam) updates.sourceType = sourceTypeParam;
     if (categoryParam) updates.category = categoryParam;
+    if (priorityParam) updates.priority = priorityParam;
     if (provinceParam) updates.province = provinceParam;
     if (workflowStatusParam) updates.workflowStatus = workflowStatusParam;
     if (manualTagParam) updates.manualTag = manualTagParam;
@@ -192,6 +196,7 @@ export default function Feed() {
     sort: filters.sort,
     sentiment: filters.sentiment,
     category: filters.category,
+    priority: filters.priority,
     province: filters.province,
     workflowStatus: filters.workflowStatus,
     manualTag: filters.manualTag,
@@ -246,6 +251,7 @@ export default function Feed() {
     if (filters.sort) searchParams.set("sort", filters.sort);
     if (filters.sentiment) searchParams.set("sentiment", filters.sentiment);
     if (filters.category) searchParams.set("category", filters.category);
+    if (filters.priority) searchParams.set("priority", filters.priority);
     if (filters.province) searchParams.set("province", filters.province);
     if (filters.workflowStatus) searchParams.set("workflowStatus", filters.workflowStatus);
     if (filters.manualTag) searchParams.set("manualTag", filters.manualTag);
@@ -253,7 +259,7 @@ export default function Feed() {
     if (dateRange.startDate) searchParams.set("startDate", dateRange.startDate);
     if (dateRange.endDate) searchParams.set("endDate", dateRange.endDate);
     return searchParams.toString();
-  }, [filters.search, filters.sourceId, filters.sourceName, filters.sort, filters.sentiment, filters.category, filters.province, filters.workflowStatus, filters.manualTag, filters.sourceType, dateRange.startDate, dateRange.endDate]);
+  }, [filters.search, filters.sourceId, filters.sourceName, filters.sort, filters.sentiment, filters.category, filters.priority, filters.province, filters.workflowStatus, filters.manualTag, filters.sourceType, dateRange.startDate, dateRange.endDate]);
 
   const { data: liveStatus, dataUpdatedAt: liveStatusUpdatedAt } = useQuery<ArticleLiveStatus>({
     queryKey: ["/api/articles/live-status", liveStatusQueryString],
@@ -393,6 +399,7 @@ export default function Feed() {
   function resetBulkControls() {
     setBulkWorkflowStatus("skip");
     setBulkCategory("skip");
+    setBulkPriority("skip");
     setBulkProvince("skip");
     setBulkTagsInput("");
   }
@@ -408,6 +415,7 @@ export default function Feed() {
 
       if (bulkWorkflowStatus !== "skip") payload.workflowStatus = bulkWorkflowStatus;
       if (bulkCategory !== "skip") payload.category = bulkCategory;
+      if (bulkPriority !== "skip") payload.priority = bulkPriority;
       if (bulkProvince !== "skip") payload.province = bulkProvince === "none" ? null : bulkProvince;
       if (manualTags.length > 0) payload.manualTags = manualTags;
 
@@ -447,6 +455,7 @@ export default function Feed() {
     if (filters.sourceName) viewFilters.sourceName = filters.sourceName;
     if (filters.sentiment) viewFilters.sentiment = filters.sentiment;
     if (filters.category) viewFilters.category = filters.category;
+    if (filters.priority) viewFilters.priority = filters.priority;
     if (filters.province) viewFilters.province = filters.province;
     if (filters.workflowStatus) viewFilters.workflowStatus = filters.workflowStatus;
     if (filters.manualTag) viewFilters.manualTag = filters.manualTag;
@@ -462,10 +471,13 @@ export default function Feed() {
       sourceName: typeof saved.sourceName === "string" ? saved.sourceName : undefined,
       sentiment: typeof saved.sentiment === "string" ? saved.sentiment : undefined,
       category: typeof saved.category === "string" ? saved.category : undefined,
+      priority: typeof saved.priority === "string" ? saved.priority : undefined,
       province: typeof saved.province === "string" ? saved.province : undefined,
       workflowStatus: typeof saved.workflowStatus === "string" ? saved.workflowStatus : undefined,
       manualTag: typeof saved.manualTag === "string" ? saved.manualTag : undefined,
       sourceType: typeof saved.sourceType === "string" ? saved.sourceType : undefined,
+      startDate: undefined as string | undefined,
+      endDate: undefined as string | undefined,
       dateRange: typeof saved.dateRange === "string" ? saved.dateRange : "all",
       sort: parseFeedSort(saved.sort),
     };
@@ -537,6 +549,7 @@ export default function Feed() {
     if (filters.sort && filters.sort !== DEFAULT_SORT) params.set("sort", filters.sort);
     if (filters.sentiment) params.set("sentiment", filters.sentiment);
     if (filters.category) params.set("category", filters.category);
+    if (filters.priority) params.set("priority", filters.priority);
     if (filters.province) params.set("province", filters.province);
     if (filters.workflowStatus) params.set("workflowStatus", filters.workflowStatus);
     if (filters.manualTag) params.set("manualTag", filters.manualTag);
@@ -559,10 +572,10 @@ export default function Feed() {
     resetScroll();
   };
 
-  const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sentiment || filters.category || filters.province || filters.workflowStatus || filters.manualTag || filters.sourceType || filters.startDate || filters.endDate || filters.dateRange !== "all";
+  const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sentiment || filters.category || filters.priority || filters.province || filters.workflowStatus || filters.manualTag || filters.sourceType || filters.startDate || filters.endDate || filters.dateRange !== "all";
 
   const clearFilters = () => {
-    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sentiment: undefined, category: undefined, province: undefined, workflowStatus: undefined, manualTag: undefined, sourceType: undefined, startDate: undefined, endDate: undefined, dateRange: "all", sort: DEFAULT_SORT });
+    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sentiment: undefined, category: undefined, priority: undefined, province: undefined, workflowStatus: undefined, manualTag: undefined, sourceType: undefined, startDate: undefined, endDate: undefined, dateRange: "all", sort: DEFAULT_SORT });
     setSearchInput("");
     setActiveSavedViewId(undefined);
     resetScroll();
@@ -618,7 +631,7 @@ export default function Feed() {
   const canRunIntelligence = hasCap(CAPS.INTELLIGENCE_RUN);
   const canDeleteArticles = isAdmin;
   const canSelectArticles = canEditArticles || canDeleteArticles;
-  const hasBulkWorkflowAction = bulkWorkflowStatus !== "skip" || bulkCategory !== "skip" || bulkProvince !== "skip" || bulkTagsInput.trim().length > 0;
+  const hasBulkWorkflowAction = bulkWorkflowStatus !== "skip" || bulkCategory !== "skip" || bulkPriority !== "skip" || bulkProvince !== "skip" || bulkTagsInput.trim().length > 0;
 
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
@@ -628,6 +641,7 @@ export default function Feed() {
     filters.sourceType,
     filters.sentiment,
     filters.category,
+    filters.priority,
     filters.province,
     filters.workflowStatus,
     filters.manualTag,
@@ -883,6 +897,23 @@ export default function Feed() {
           {ARTICLE_CATEGORIES.map(category => (
             <SelectItem key={category.code} value={category.code}>
               {category.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <Select
+        value={filters.priority || "all"}
+        onValueChange={(val) => updateFilter("priority", val === "all" ? undefined : val)}
+      >
+        <SelectTrigger className="h-9 w-full min-w-0 flex-1 basis-0 bg-background" data-testid="select-filter-priority">
+          <SelectValue placeholder="All Priority" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Priority</SelectItem>
+          {ARTICLE_PRIORITIES.map(priority => (
+            <SelectItem key={priority.code} value={priority.code}>
+              {priority.label}
             </SelectItem>
           ))}
         </SelectContent>
@@ -1205,6 +1236,18 @@ export default function Feed() {
                     <SelectItem value="skip">Keep category</SelectItem>
                     {ARTICLE_CATEGORIES.map(category => (
                       <SelectItem key={category.code} value={category.code}>{category.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={bulkPriority} onValueChange={setBulkPriority}>
+                  <SelectTrigger className="h-9 w-[150px] bg-background" data-testid="select-bulk-priority">
+                    <SelectValue placeholder="Priority" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="skip">Keep priority</SelectItem>
+                    {ARTICLE_PRIORITIES.map(priority => (
+                      <SelectItem key={priority.code} value={priority.code}>{priority.label}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

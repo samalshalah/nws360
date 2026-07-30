@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ArticleDetailDialog } from "@/components/articles/ArticleDetailDialog";
-import { getArticleCategoryLabel, getArticleWorkflowStatusLabel, getIraqProvinceLabel } from "@shared/article-taxonomy";
+import { getArticleCategoryLabel, getArticlePriorityLabel, getArticleWorkflowStatusLabel, getIraqProvinceLabel } from "@shared/article-taxonomy";
 
 interface ArticleCardProps {
   article: Article & { source: Source | null };
@@ -46,29 +46,25 @@ const platformIcons: Record<string, { icon: typeof Rss; label: string; color: st
 };
 
 const categoryColors: Record<string, string> = {
-  political: "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-800",
-  security: "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800",
-  economy: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800",
-  oil_energy: "bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-800",
-  banking_currency: "bg-lime-100 text-lime-800 border-lime-200 dark:bg-lime-900/30 dark:text-lime-300 dark:border-lime-800",
-  foreign_relations: "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800",
-  parliament_law: "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-900/30 dark:text-violet-400 dark:border-violet-800",
-  government_services: "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-900/30 dark:text-sky-400 dark:border-sky-800",
-  health: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800",
-  education: "bg-cyan-100 text-cyan-700 border-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400 dark:border-cyan-800",
-  corruption_courts: "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800",
-  provinces: "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-900/30 dark:text-teal-400 dark:border-teal-800",
-  protests_public_opinion: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800",
-  humanitarian_ngos: "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800",
-  tech: "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800",
-  environment_water: "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-900/30 dark:text-teal-400 dark:border-teal-800",
-  culture_society: "bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-900/30 dark:text-pink-400 dark:border-pink-800",
-  sports: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800",
-  business: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800",
-  entertainment: "bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-900/30 dark:text-pink-400 dark:border-pink-800",
-  science: "bg-cyan-100 text-cyan-700 border-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400 dark:border-cyan-800",
+  iraqi_government: "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-900/30 dark:text-sky-400 dark:border-sky-800",
+  parliament_politics: "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-900/30 dark:text-violet-400 dark:border-violet-800",
+  security_stability: "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800",
+  economy_oil_finance: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800",
+  development_services: "bg-cyan-100 text-cyan-700 border-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400 dark:border-cyan-800",
+  justice_accountability: "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800",
+  kurdistan_region: "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-900/30 dark:text-teal-400 dark:border-teal-800",
+  civil_society_humanitarian: "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800",
+  united_nations: "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800",
+  us_iraq_international: "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800",
+  media_narratives: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800",
+  other: "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700",
+};
+
+const priorityColors: Record<string, string> = {
+  important: "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800",
   urgent: "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800",
-  general: "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700",
+  critical: "bg-red-600 text-white border-red-700 dark:bg-red-700 dark:text-white dark:border-red-500",
+  routine: "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700",
 };
 
 const workflowColors: Record<string, string> = {
@@ -144,7 +140,8 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
 
   const SourceIcon = sourceTypeIcons[article.source?.type || "rss"] || Newspaper;
   const displayContent = article.summary || article.content.substring(0, 150) + "...";
-  const articleCategory = (article as any).category || "general";
+  const articleCategory = (article as any).category || "other";
+  const articlePriority = (article as any).priority || "routine";
   const articleWorkflowStatus = (article as any).workflowStatus || "new";
   const articleProvince = (article as any).province as string | null | undefined;
   const manualTags = (Array.isArray((article as any).manualTags) ? (article as any).manualTags : []) as string[];
@@ -174,15 +171,26 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
     </Tooltip>
   ) : null;
 
-  const categoryBadge = articleCategory && articleCategory !== "general" ? (
+  const categoryBadge = articleCategory && articleCategory !== "other" ? (
     <button
       onClick={(e) => { e.stopPropagation(); setLocation(`/feed?category=${articleCategory}`); }}
       data-testid={`badge-category-${article.id}`}
         >
-          <Badge variant="outline" className={cn("text-xs capitalize cursor-pointer", categoryColors[articleCategory] || categoryColors.general)}>
+          <Badge variant="outline" className={cn("text-xs cursor-pointer", categoryColors[articleCategory] || categoryColors.other)}>
             {getArticleCategoryLabel(articleCategory)}
           </Badge>
         </button>
+  ) : null;
+
+  const priorityBadge = articlePriority && articlePriority !== "routine" ? (
+    <button
+      onClick={(e) => { e.stopPropagation(); setLocation(`/feed?priority=${articlePriority}`); }}
+      data-testid={`badge-priority-${article.id}`}
+    >
+      <Badge variant="outline" className={cn("text-xs cursor-pointer", priorityColors[articlePriority] || priorityColors.routine)}>
+        {getArticlePriorityLabel(articlePriority)}
+      </Badge>
+    </button>
   ) : null;
 
   const workflowBadge = articleWorkflowStatus && articleWorkflowStatus !== "new" ? (
@@ -384,6 +392,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
             <div className="flex flex-wrap items-center gap-2">
               {sourceInfo}
               {categoryBadge}
+              {priorityBadge}
               {provinceBadge}
             </div>
             <h2 className="font-display text-2xl font-bold leading-tight text-foreground transition-colors group-hover:text-primary md:text-3xl">
@@ -448,6 +457,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
                 {article.subSource || article.source?.name || t("common.noResults")}
               </span>
               {categoryBadge}
+              {priorityBadge}
             </div>
             <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground transition-colors group-hover:text-primary">
               {article.title}
@@ -516,6 +526,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
             {sourceInfo}
             <div className="flex items-center gap-1.5 flex-wrap">
               {categoryBadge}
+              {priorityBadge}
               {workflowBadge}
               {provinceBadge}
               {manualTagBadges}
@@ -596,6 +607,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
           {sourceInfo}
           <div className="flex items-center gap-1.5 flex-wrap">
             {categoryBadge}
+            {priorityBadge}
             {workflowBadge}
             {provinceBadge}
             {manualTagBadges}

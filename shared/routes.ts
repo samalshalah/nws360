@@ -112,6 +112,7 @@ export const api = {
         sourceName: z.string().optional(),
         sourceType: z.string().optional(),
         category: z.string().optional(),
+        priority: z.string().optional(),
         province: z.string().optional(),
         workflowStatus: z.string().optional(),
         manualTag: z.string().optional(),

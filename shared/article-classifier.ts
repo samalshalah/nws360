@@ -1,8 +1,8 @@
 import {
   ARTICLE_CATEGORIES,
   IRAQ_PROVINCES,
-  isArticleCategoryCode,
   type ArticleCategoryCode,
+  type ArticlePriorityCode,
   type IraqProvinceCode,
 } from "./article-taxonomy";
 
@@ -22,186 +22,130 @@ type ClassificationInput = {
 };
 
 const CATEGORY_CODES = new Set<string>(ARTICLE_CATEGORIES.map((category) => category.code));
-const DEFAULT_CATEGORY: ArticleCategoryCode = "general";
+const DEFAULT_CATEGORY: ArticleCategoryCode = "other";
 
 const CATEGORY_RULES: CategoryRule[] = [
   {
-    category: "urgent",
+    category: "united_nations",
+    weight: 7,
+    terms: [
+      "united nations", "un", "unami", "unicef", "undp", "unhcr", "iom", "who", "wfp", "unesco",
+      "security council", "international organization", "international organizations",
+      "الأمم المتحدة", "الامم المتحدة", "يونامي", "يونيسف", "برنامج الأمم", "مجلس الأمن", "المنظمات الدولية",
+    ],
+  },
+  {
+    category: "kurdistan_region",
+    weight: 7,
+    terms: [
+      "kurdistan", "krg", "kurdistan regional government", "erbil-baghdad", "baghdad-erbil", "peshmerga",
+      "kurdish region", "kurdistan salaries", "kurdistan oil", "erbil", "sulaymaniyah", "duhok",
+      "إقليم كردستان", "اقليم كردستان", "حكومة الإقليم", "حكومة الاقليم", "أربيل", "اربيل", "دهوك",
+      "السليمانية", "البيشمركة", "رواتب الإقليم", "رواتب الاقليم", "نفط الإقليم", "نفط الاقليم",
+    ],
+  },
+  {
+    category: "security_stability",
     weight: 6,
-    terms: ["عاجل", "breaking", "urgent", "developing", "فوري", "تنبيه"],
-  },
-  {
-    category: "political",
-    weight: 4,
     terms: [
-      "سياسة", "السياسة", "سياسي", "سياسية", "انتخابات", "الانتخابات", "مرشح", "مرشحين", "حزب", "احزاب", "الأحزاب",
-      "ائتلاف", "تحالف سياسي", "الاطار التنسيقي", "الإطار التنسيقي", "التيار الصدري", "الصدر", "رئيس الجمهورية",
-      "رئاسة الجمهورية", "المعارضة",
-      "politics", "political", "election", "candidate", "party", "coalition", "president",
-      "opposition",
+      "security", "stability", "military", "defense", "interior ministry", "army", "police", "counterterrorism",
+      "isis", "terrorism", "attack", "strike", "airstrike", "explosion", "blast", "missile", "rocket", "drone",
+      "armed group", "militia", "clashes", "killed", "wounded", "arrest", "border security", "operation",
+      "أمن", "امن", "استقرار", "الجيش", "الشرطة", "الدفاع", "الداخلية", "مكافحة الإرهاب", "مكافحة الارهاب",
+      "داعش", "إرهاب", "ارهاب", "هجوم", "قصف", "انفجار", "صاروخ", "صواريخ", "طائرة مسيرة", "مسيرة",
+      "اشتباكات", "مقتل", "جرحى", "اعتقال", "الحشد", "عملية أمنية", "عملية امنية",
     ],
   },
   {
-    category: "security",
+    category: "justice_accountability",
+    weight: 6,
+    terms: [
+      "justice", "judiciary", "court", "supreme court", "federal court", "integrity commission", "corruption",
+      "accountability", "trial", "warrant", "arrest warrant", "embezzlement", "bribery", "audit", "rule of law",
+      "القضاء", "محكمة", "المحكمة الاتحادية", "النزاهة", "فساد", "مكافحة الفساد", "مساءلة", "محاكمة",
+      "أمر قبض", "امر قبض", "اختلاس", "رشوة", "استرداد الأموال", "استرداد الاموال",
+    ],
+  },
+  {
+    category: "parliament_politics",
     weight: 5,
     terms: [
-      "امن", "أمن", "امني", "أمني", "القوات الامنية", "الجيش", "الدفاع", "الداخلية", "الحشد", "داعش",
-      "قصف", "هجوم", "انفجار", "صاروخ", "صواريخ", "طائرة مسيرة", "مسيّرة", "اشتباك", "مقتل", "اعتقال",
-      "ضربة", "ضربات", "غارة", "غارات", "استهداف", "شن حملة جوية",
-      "ارهاب", "الإرهاب", "مكافحة الارهاب", "مكافحة الإرهاب", "سلاح", "اسلحة", "أسلحة", "حصر السلاح",
-      "تحالف بحري", "بحري دفاعي", "حماية الملاحة", "قواعد عسكرية", "عمليات عسكرية", "باتريوت",
-      "security", "military", "defense", "attack", "strike", "missile", "drone", "isis", "militia", "armed",
-      "terrorism", "counterterrorism", "weapons", "arms", "patriot", "maritime security",
+      "parliament", "council of representatives", "mp", "lawmakers", "legislation", "bill", "vote", "committee",
+      "speaker", "political bloc", "bloc", "coalition", "party", "election", "candidate", "president",
+      "political agreement", "formation", "opposition", "federal council",
+      "البرلمان", "مجلس النواب", "نائب", "نواب", "تشريع", "قانون", "تصويت", "لجنة", "رئيس البرلمان",
+      "كتلة", "تحالف", "حزب", "انتخابات", "مرشح", "رئيس الجمهورية", "اتفاق سياسي", "المعارضة",
     ],
   },
   {
-    category: "oil_energy",
+    category: "iraqi_government",
     weight: 5,
     terms: [
-      "نفط", "النفط", "الطاقة", "كهرباء", "الكهرباء", "غاز", "الغاز", "اوبك", "أوبك", "برميل", "خام",
-      "مصفى", "مصافي", "تصدير النفط", "اسعار النفط", "أسعار النفط", "هرمز", "oil", "energy", "crude",
-      "opec", "gas", "barrel", "refinery", "electricity", "power grid", "hormuz",
+      "iraqi government", "government", "prime minister", "premier", "council of ministers", "cabinet",
+      "ministry", "minister", "federal government", "state agency", "official statement", "sudani", "al-sudani",
+      "الحكومة العراقية", "الحكومة", "رئيس الوزراء", "مجلس الوزراء", "رئاسة الوزراء", "الكابينة",
+      "وزارة", "الوزارة", "وزير", "الوزير", "الحكومة الاتحادية", "بيان رسمي", "السوداني",
     ],
   },
   {
-    category: "foreign_relations",
+    category: "economy_oil_finance",
+    weight: 5,
+    terms: [
+      "economy", "economic", "budget", "public finance", "finance ministry", "central bank", "banking", "bank",
+      "currency", "exchange rate", "dinar", "dollar", "inflation", "investment", "trade", "market", "oil",
+      "gas", "energy", "exports", "oil exports", "barrel", "opec", "revenue", "salary", "salaries", "payroll",
+      "الاقتصاد", "اقتصاد", "الموازنة", "الميزانية", "المالية العامة", "وزارة المالية", "البنك المركزي",
+      "مصرف", "المصارف", "العملة", "سعر الصرف", "الدينار", "الدولار", "تضخم", "استثمار", "تجارة",
+      "نفط", "النفط", "غاز", "طاقة", "صادرات", "تصدير النفط", "برميل", "أوبك", "اوبك", "إيرادات",
+      "ايرادات", "رواتب",
+    ],
+  },
+  {
+    category: "development_services",
     weight: 4,
     terms: [
-      "الخارجية", "دبلوماسي", "دبلوماسية", "سفارة", "سفير", "واشنطن", "امريكا", "أمريكا", "الولايات المتحدة",
-      "امريكي", "أمريكي", "اميركي", "أميركي", "الامريكي", "الأمريكي", "الاميركي", "الأميركي", "ترامب",
-      "ايران", "إيران", "تركيا", "الصين", "روسيا", "السعودية", "الكويت", "سوريا", "الاردن", "لبنان",
-      "قطر", "أيرلندا", "ايرلندا", "اسرائيل", "إسرائيل", "فلسطين", "أوكرانيا", "اوكرانيا", "موسكو",
-      "اتفاق", "عقوبات", "زيارة رسمية", "foreign", "diplomatic", "embassy", "ambassador", "washington",
-      "iran", "turkey", "china", "russia", "qatar", "ireland", "israel", "palestine", "ukraine", "moscow", "sanctions", "bilateral",
+      "development", "public services", "services", "infrastructure", "electricity", "power", "water", "health",
+      "hospital", "education", "school", "university", "municipality", "housing", "roads", "transport", "project",
+      "environment", "drought", "climate", "agriculture", "reconstruction",
+      "تنمية", "الخدمات العامة", "خدمات", "بنى تحتية", "البنى التحتية", "كهرباء", "الماء", "المياه",
+      "صحة", "مستشفى", "تعليم", "تربية", "مدرسة", "جامعة", "بلدية", "إسكان", "اسكان", "طرق",
+      "مشروع", "بيئة", "جفاف", "مناخ", "زراعة", "إعمار", "اعمار",
     ],
   },
   {
-    category: "parliament_law",
+    category: "civil_society_humanitarian",
     weight: 4,
     terms: [
-      "البرلمان", "مجلس النواب", "نائب", "نواب", "قانون", "القانون", "تشريع", "تصويت", "المحكمة",
-      "القضاء", "الدستور", "اللجنة القانونية", "parliament", "law", "legal", "court", "supreme court",
-      "legislation", "bill", "vote",
+      "civil society", "ngo", "ngos", "humanitarian", "human rights", "public opinion", "protest", "demonstration",
+      "activist", "aid", "relief", "displaced", "refugees", "minorities", "women", "youth", "labor union",
+      "المجتمع المدني", "منظمة", "منظمات", "إنساني", "انساني", "حقوق الإنسان", "حقوق الانسان", "الرأي العام",
+      "الرأي", "احتجاج", "تظاهرة", "متظاهر", "ناشط", "مساعدات", "إغاثة", "اغاثة", "نازحين", "لاجئين",
+      "أقليات", "اقليات", "المرأة", "النساء", "الشباب", "نقابة",
     ],
   },
   {
-    category: "corruption_courts",
+    category: "us_iraq_international",
     weight: 4,
     terms: [
-      "فساد", "النزاهة", "اختلاس", "رشوة", "محاكمة", "قضية فساد", "امر قبض", "أمر قبض", "استرداد الاموال",
-      "corruption", "bribery", "embezzlement", "integrity commission", "trial", "warrant",
+      "u.s.", "us ", "united states", "american", "u.s.-iraq", "us-iraq", "embassy", "ambassador",
+      "washington", "state department", "bilateral", "diplomatic", "foreign minister", "foreign ministry",
+      "iran", "turkey", "saudi", "kuwait", "jordan", "syria", "china", "russia", "eu", "european union",
+      "sanctions", "official visit", "international relations", "foreign relations",
+      "الولايات المتحدة", "أمريكا", "امريكا", "الأمريكي", "الامريكي", "السفارة", "سفير", "واشنطن",
+      "الخارجية", "دبلوماسي", "ثنائي", "إيران", "ايران", "تركيا", "السعودية", "الكويت", "الأردن",
+      "الاردن", "سوريا", "الصين", "روسيا", "الاتحاد الأوروبي", "عقوبات", "زيارة رسمية", "العلاقات الدولية",
     ],
   },
   {
-    category: "economy",
-    weight: 3,
-    terms: [
-      "اقتصاد", "الاقتصاد", "المالية", "الموازنة", "ميزانية", "تضخم", "الاسعار", "أسعار", "استثمار",
-      "التجارة", "النمو", "الدينار", "الدولار", "exchange rate", "economy", "economic", "budget",
-      "inflation", "investment", "trade", "prices", "dinar", "dollar",
-    ],
-  },
-  {
-    category: "banking_currency",
+    category: "media_narratives",
     weight: 4,
     terms: [
-      "مصرف", "المصرف", "البنك", "البنك المركزي", "مزاد العملة", "سعر الصرف", "الدينار", "الدولار",
-      "حوالات", "تحويلات", "bank", "central bank", "currency", "exchange rate", "remittance",
+      "media narrative", "narrative", "social media", "online campaign", "coordinated campaign", "hashtag",
+      "misinformation", "disinformation", "rumor", "viral", "trend", "trending", "influencer", "public discourse",
+      "facebook debate", "x debate", "twitter debate", "media monitoring",
+      "سردية", "سرديات", "إعلام", "اعلام", "وسائل التواصل", "التواصل الاجتماعي", "حملة إلكترونية",
+      "حملة الكترونية", "هاشتاغ", "وسم", "معلومات مضللة", "شائعة", "رائج", "ترند", "مؤثر", "خطاب عام",
     ],
-  },
-  {
-    category: "government_services",
-    weight: 3,
-    terms: [
-      "وزارة", "الوزارة", "رئيس الوزراء", "رئاسة الوزراء", "مجلس الوزراء", "السوداني", "خدمات", "رواتب", "تقاعد", "بلدية", "امانة بغداد",
-      "البطاقة الوطنية", "جوازات", "منحة", "government", "ministry", "cabinet", "public services",
-      "prime minister", "premier", "salary", "pension", "municipality",
-    ],
-  },
-  {
-    category: "protests_public_opinion",
-    weight: 4,
-    terms: [
-      "تظاهرة", "تظاهرات", "احتجاج", "احتجاجات", "اعتصام", "متظاهر", "الرأي العام", "غضب شعبي",
-      "protest", "demonstration", "public anger", "public opinion", "sit-in",
-    ],
-  },
-  {
-    category: "humanitarian_ngos",
-    weight: 4,
-    terms: [
-      "منظمة", "منظمات", "الامم المتحدة", "الأمم المتحدة", "يونيسف", "مساعدات", "نازحين", "لاجئين",
-      "انساني", "إنساني", "اغاثة", "ngo", "united nations", "unicef", "humanitarian", "aid", "refugees",
-      "displaced",
-    ],
-  },
-  {
-    category: "health",
-    weight: 4,
-    terms: [
-      "صحة", "الصحة", "مستشفى", "مستشفيات", "مرض", "وباء", "لقاح", "ادوية", "أدوية", "طبيب",
-      "health", "hospital", "disease", "vaccine", "medicine", "medical", "doctor",
-    ],
-  },
-  {
-    category: "education",
-    weight: 4,
-    terms: [
-      "تعليم", "التعليم", "التربية", "مدرسة", "مدارس", "جامعة", "جامعات", "طلبة", "طلاب", "امتحانات",
-      "education", "school", "university", "students", "exam",
-    ],
-  },
-  {
-    category: "environment_water",
-    weight: 4,
-    terms: [
-      "مياه", "المياه", "الماء", "جفاف", "بيئة", "البيئة", "تلوث", "مناخ", "حرائق", "زراعة",
-      "water", "drought", "environment", "pollution", "climate", "agriculture",
-    ],
-  },
-  {
-    category: "business",
-    weight: 3,
-    terms: [
-      "شركة", "شركات", "اعمال", "أعمال", "مشروع", "قطاع خاص", "سوق", "اسهم", "أرباح",
-      "business", "company", "companies", "market", "stock", "profit", "private sector",
-    ],
-  },
-  {
-    category: "tech",
-    weight: 3,
-    terms: [
-      "تكنولوجيا", "تقنية", "رقمي", "سيبراني", "ذكاء اصطناعي", "اتصالات", "انترنت", "منصة",
-      "technology", "tech", "digital", "cyber", "ai", "internet", "telecom",
-    ],
-  },
-  {
-    category: "culture_society",
-    weight: 3,
-    terms: [
-      "ثقافة", "مجتمع", "اجتماعي", "المرأة", "نساء", "شباب", "فنان", "كتاب", "تراث",
-      "culture", "society", "social", "women", "youth", "heritage",
-    ],
-  },
-  {
-    category: "sports",
-    weight: 4,
-    terms: ["رياضة", "رياضي", "كرة", "نادي", "لاعب", "منتخب", "الدوري", "sports", "football", "club", "player", "league"],
-  },
-  {
-    category: "entertainment",
-    weight: 3,
-    terms: ["فن", "فنان", "سينما", "مسلسل", "موسيقى", "ترفيه", "entertainment", "movie", "music", "film", "celebrity"],
-  },
-  {
-    category: "science",
-    weight: 3,
-    terms: ["علوم", "فضاء", "بحث علمي", "science", "space", "research"],
-  },
-  {
-    category: "provinces",
-    weight: 2,
-    terms: ["محافظة", "محافظات", "مجلس المحافظة", "الحكومة المحلية", "local government", "governorate"],
   },
 ];
 
@@ -213,7 +157,7 @@ const PROVINCE_TERMS: Array<{ province: IraqProvinceCode; terms: string[] }> = [
   { province: "duhok", terms: ["دهوك", "duhok", "dohuk"] },
   { province: "nineveh", terms: ["نينوى", "الموصل", "nineveh", "mosul"] },
   { province: "kirkuk", terms: ["كركوك", "kirkuk"] },
-  { province: "anbar", terms: ["الانبار", "الأنبار", "رمادي", "فلوجة", "anbar", "ramadi", "fallujah"] },
+  { province: "anbar", terms: ["الانبار", "الأقبار", "الأانبار", "الأنبار", "رمادي", "فلوجة", "anbar", "ramadi", "fallujah"] },
   { province: "salahuddin", terms: ["صلاح الدين", "تكريت", "salahuddin", "tikrit"] },
   { province: "diyala", terms: ["ديالى", "بعقوبة", "diyala", "baqubah"] },
   { province: "najaf", terms: ["النجف", "نجف", "najaf"] },
@@ -224,6 +168,26 @@ const PROVINCE_TERMS: Array<{ province: IraqProvinceCode; terms: string[] }> = [
   { province: "maysan", terms: ["ميسان", "العمارة", "maysan", "amaraa", "amara"] },
   { province: "qadisiyah", terms: ["القادسية", "الديوانية", "qadisiyah", "diwaniyah"] },
   { province: "muthanna", terms: ["المثنى", "السماوة", "muthanna", "samawah"] },
+];
+
+const CRITICAL_TERMS = [
+  "mass casualty", "mass casualties", "deadly attack", "multiple killed", "killed", "fatal", "explosion", "blast",
+  "missile attack", "rocket attack", "drone attack", "airstrike", "armed clashes", "isis attack",
+  "هجوم", "انفجار", "قصف", "مقتل", "قتلى", "اشتباكات", "صاروخ", "مسيرة", "داعش",
+];
+
+const URGENT_TERMS = [
+  "breaking", "urgent", "developing", "immediate", "emergency", "alert", "just in",
+  "عاجل", "طارئ", "تنبيه", "تطور", "فوري",
+];
+
+const IMPORTANT_TERMS = [
+  "prime minister", "cabinet", "council of ministers", "parliament votes", "parliament approved", "budget",
+  "oil exports", "central bank", "exchange rate", "united nations", "unami", "u.s. embassy", "us embassy",
+  "bilateral", "corruption investigation", "integrity commission", "krg", "salary dispute", "salary disputes", "salaries", "kurdistan salaries",
+  "رئيس الوزراء", "مجلس الوزراء", "صوت البرلمان", "البرلمان يصوت", "الموازنة", "تصدير النفط",
+  "البنك المركزي", "سعر الصرف", "الأمم المتحدة", "يونامي", "السفارة الأمريكية", "السفارة الامريكية",
+  "النزاهة", "تحقيق فساد", "رواتب الإقليم", "رواتب الاقليم",
 ];
 
 function normalizeText(value: string | null | undefined): string {
@@ -239,7 +203,7 @@ function normalizeText(value: string | null | undefined): string {
     .replace(/ة/g, "ه")
     .replace(/[\u064B-\u065F\u0670]/g, "")
     .replace(/\u0640/g, "")
-    .replace(/[^a-z0-9\u0600-\u06FF]+/g, " ")
+    .replace(/[^a-z0-9\u0600-\u06FF.]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -249,54 +213,65 @@ function termHits(text: string, term: string): number {
   if (!normalized) return 0;
   if (normalized.includes(" ")) return text.includes(normalized) ? 1 : 0;
   const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const latinBoundary = /^[a-z0-9]+$/.test(normalized) ? "\\b" : "";
+  const latinBoundary = /^[a-z0-9.]+$/.test(normalized) ? "\\b" : "";
   const re = new RegExp(`${latinBoundary}${escaped}${latinBoundary}`, "g");
   return text.match(re)?.length || 0;
 }
 
-function normalizedSourceCategory(value: string | null | undefined): ArticleCategoryCode | null {
-  const category = String(value || "").trim();
-  if (!category || !isArticleCategoryCode(category)) return null;
-  if (category === "general" || category === "other") return null;
-  return category;
+function hasAnyTerm(text: string, terms: string[]): boolean {
+  return terms.some((term) => termHits(text, term) > 0);
+}
+
+function categoryOrder(category: ArticleCategoryCode): number {
+  return ARTICLE_CATEGORIES.findIndex((item) => item.code === category);
 }
 
 export function classifyArticleCategory(input: ClassificationInput): ArticleCategoryCode {
   const title = normalizeText(input.title);
-  const content = normalizeText(input.summary || input.content);
-  const source = normalizeText([input.sourceName, input.url].filter(Boolean).join(" "));
+  const summary = normalizeText(input.summary);
+  const content = normalizeText(input.content);
   const scores = new Map<ArticleCategoryCode, number>();
 
   for (const rule of CATEGORY_RULES) {
     let score = 0;
     for (const term of rule.terms) {
-      score += termHits(title, term) * rule.weight * 3;
-      score += Math.min(termHits(content, term), 3) * rule.weight;
-      score += termHits(source, term) * Math.max(1, rule.weight - 1);
+      score += termHits(title, term) * rule.weight * 4;
+      score += termHits(summary, term) * rule.weight * 2;
+      score += Math.min(termHits(content, term), 4) * rule.weight;
     }
     if (score > 0) scores.set(rule.category, (scores.get(rule.category) || 0) + score);
   }
 
-  const sourceCategory = normalizedSourceCategory(input.sourceCategory);
-  if (sourceCategory) {
-    scores.set(sourceCategory, (scores.get(sourceCategory) || 0) + 3);
-  }
-
   const ranked = Array.from(scores.entries())
     .filter(([category]) => CATEGORY_CODES.has(category))
-    .sort((a, b) => b[1] - a[1]);
+    .sort((a, b) => b[1] - a[1] || categoryOrder(a[0]) - categoryOrder(b[0]));
 
   const best = ranked[0];
-  if (!best) return sourceCategory || DEFAULT_CATEGORY;
-  if (best[1] < 4) return sourceCategory || DEFAULT_CATEGORY;
+  if (!best || best[1] < 4) return DEFAULT_CATEGORY;
   return best[0];
+}
+
+export function classifyArticlePriority(input: Pick<ClassificationInput, "title" | "content" | "summary">): ArticlePriorityCode {
+  const text = normalizeText([input.title, input.summary, input.content].filter(Boolean).join(" "));
+  const securityCategory = classifyArticleCategory(input) === "security_stability";
+
+  if (securityCategory && hasAnyTerm(text, CRITICAL_TERMS)) {
+    return "critical";
+  }
+  if (hasAnyTerm(text, URGENT_TERMS)) {
+    return "urgent";
+  }
+  if (hasAnyTerm(text, IMPORTANT_TERMS)) {
+    return "important";
+  }
+  return "routine";
 }
 
 export function classifyIraqProvince(input: Pick<ClassificationInput, "title" | "content" | "summary">): IraqProvinceCode | null {
   const title = normalizeText(input.title);
   const summary = normalizeText(input.summary);
   const content = normalizeText(input.content);
-  const text = title || summary || content;
+  const text = [title, summary, content].filter(Boolean).join(" ");
   const ranked = PROVINCE_TERMS.map((rule) => ({
     province: rule.province,
     score: rule.terms.reduce((total, term) => total + termHits(text, term), 0),

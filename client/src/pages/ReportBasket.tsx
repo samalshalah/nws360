@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
-import { ARTICLE_CATEGORIES, IRAQ_PROVINCES } from "@shared/article-taxonomy";
+import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, IRAQ_PROVINCES } from "@shared/article-taxonomy";
 import { CAPS } from "@shared/schema";
 
 type DateRangeValue = "today" | "week" | "month" | "all";
@@ -66,6 +66,7 @@ export default function ReportBasket() {
   const [search, setSearch] = useState("");
   const [dateRange, setDateRange] = useState<DateRangeValue>("week");
   const [category, setCategory] = useState<string>("all");
+  const [priority, setPriority] = useState<string>("all");
   const [province, setProvince] = useState<string>("all");
   const [sourceType, setSourceType] = useState<string>("all");
   const [exporting, setExporting] = useState<ExportFormat | null>(null);
@@ -78,12 +79,13 @@ export default function ReportBasket() {
     params.set("limit", "100");
     if (search.trim()) params.set("search", search.trim());
     if (category !== "all") params.set("category", category);
+    if (priority !== "all") params.set("priority", priority);
     if (province !== "all") params.set("province", province);
     if (sourceType !== "all") params.set("sourceType", sourceType);
     if (range.startDate) params.set("startDate", range.startDate);
     if (range.endDate) params.set("endDate", range.endDate);
     return params.toString();
-  }, [category, province, range.endDate, range.startDate, search, sourceType]);
+  }, [category, priority, province, range.endDate, range.startDate, search, sourceType]);
 
   const {
     data,
@@ -101,12 +103,13 @@ export default function ReportBasket() {
 
   const articles = data?.items || [];
   const total = data?.total || 0;
-  const hasFilters = Boolean(search.trim()) || category !== "all" || province !== "all" || sourceType !== "all" || dateRange !== "week";
+  const hasFilters = Boolean(search.trim()) || category !== "all" || priority !== "all" || province !== "all" || sourceType !== "all" || dateRange !== "week";
 
   const resetFilters = () => {
     setSearch("");
     setDateRange("week");
     setCategory("all");
+    setPriority("all");
     setProvince("all");
     setSourceType("all");
   };
@@ -210,6 +213,18 @@ export default function ReportBasket() {
             <SelectContent>
               <SelectItem value="all">{t("feed.allCategories", "All categories")}</SelectItem>
               {ARTICLE_CATEGORIES.map((item) => (
+                <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={priority} onValueChange={setPriority}>
+            <SelectTrigger className="h-9 min-w-[135px] lg:w-[150px]" data-testid="select-report-basket-priority">
+              <SelectValue placeholder="All priority" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All priority</SelectItem>
+              {ARTICLE_PRIORITIES.map((item) => (
                 <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>
               ))}
             </SelectContent>

@@ -118,6 +118,7 @@ export const articles = pgTable("articles", {
   keywords: text("keywords").array(),
   topics: text("topics").array(),
   category: text("category"),
+  priority: text("priority").notNull().default("routine"),
   province: text("province"),
   workflowStatus: text("workflow_status").notNull().default("new"),
   manualTags: text("manual_tags").array().notNull().default([]),
@@ -134,6 +135,8 @@ export const articles = pgTable("articles", {
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_articles_client_id").on(table.clientId),
+  index("idx_articles_client_category").on(table.clientId, table.category),
+  index("idx_articles_client_priority").on(table.clientId, table.priority),
   uniqueIndex("articles_client_url_idx").on(table.clientId, table.url),
 ]);
 
@@ -2178,6 +2181,8 @@ export interface ArticleQueryParams {
   sort?: "newest" | "oldest" | "recently_added" | "source_az" | "title_az" | "engagement";
   sentiment?: string;
   category?: string;
+  priority?: string;
+  priorities?: string[];
   province?: string;
   workflowStatus?: string;
   manualTag?: string;

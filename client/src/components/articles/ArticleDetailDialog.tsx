@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import { Bookmark, Calendar, CheckSquare, ExternalLink, Loader2, Save, Share2 } from "lucide-react";
 import { CAPS, type Article, type Source } from "@shared/schema";
-import { ARTICLE_CATEGORIES, ARTICLE_WORKFLOW_STATUSES, IRAQ_PROVINCES, getArticleCategoryLabel, getArticleWorkflowStatusLabel, getIraqProvinceLabel } from "@shared/article-taxonomy";
+import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, ARTICLE_WORKFLOW_STATUSES, IRAQ_PROVINCES, getArticleCategoryLabel, getArticlePriorityLabel, getArticleWorkflowStatusLabel, getIraqProvinceLabel } from "@shared/article-taxonomy";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,14 +51,16 @@ export function ArticleDetailDialog({
   const content = article.content.trim();
   const summary = article.summary?.trim();
   const initialManualTags = Array.isArray((article as any).manualTags) ? (article as any).manualTags as string[] : [];
-  const [category, setCategory] = useState((article as any).category || "general");
+  const [category, setCategory] = useState((article as any).category || "other");
+  const [priority, setPriority] = useState((article as any).priority || "routine");
   const [province, setProvince] = useState((article as any).province || "none");
   const [workflowStatus, setWorkflowStatus] = useState((article as any).workflowStatus || "new");
   const [tagsInput, setTagsInput] = useState(initialManualTags.join(", "));
 
   useEffect(() => {
     if (!open) return;
-    setCategory((article as any).category || "general");
+    setCategory((article as any).category || "other");
+    setPriority((article as any).priority || "routine");
     setProvince((article as any).province || "none");
     setWorkflowStatus((article as any).workflowStatus || "new");
     setTagsInput(initialManualTags.join(", "));
@@ -73,6 +75,7 @@ export function ArticleDetailDialog({
 
       const res = await apiRequest("PATCH", `/api/articles/${article.id}/workflow`, {
         category,
+        priority,
         province: province === "none" ? null : province,
         workflowStatus,
         manualTags,
@@ -167,7 +170,7 @@ export function ArticleDetailDialog({
 
             {canEditArticle ? (
               <div className="mt-5 rounded-md border bg-muted/30 p-3">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
                   <div className="space-y-1.5">
                     <Label className="text-xs">Workflow</Label>
                     <Select value={workflowStatus} onValueChange={setWorkflowStatus}>
@@ -189,6 +192,19 @@ export function ArticleDetailDialog({
                       </SelectTrigger>
                       <SelectContent>
                         {ARTICLE_CATEGORIES.map((item) => (
+                          <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Priority</Label>
+                    <Select value={priority} onValueChange={setPriority}>
+                      <SelectTrigger className="bg-background" data-testid={`select-article-priority-${article.id}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ARTICLE_PRIORITIES.map((item) => (
                           <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>
                         ))}
                       </SelectContent>
@@ -243,6 +259,9 @@ export function ArticleDetailDialog({
                 ) : null}
                 {(article as any).workflowStatus ? (
                   <Badge variant="outline">{getArticleWorkflowStatusLabel((article as any).workflowStatus)}</Badge>
+                ) : null}
+                {(article as any).priority && (article as any).priority !== "routine" ? (
+                  <Badge variant="outline">{getArticlePriorityLabel((article as any).priority)}</Badge>
                 ) : null}
                 {(article as any).province ? (
                   <Badge variant="outline">{getIraqProvinceLabel((article as any).province)}</Badge>

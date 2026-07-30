@@ -81,6 +81,7 @@ export async function runAIRetryQueue() {
             topics: analysis.topics,
             summary: analysis.summary,
             category: analysis.category,
+            priority: analysis.priority,
             country: analysis.country,
             aiAnalysisStatus: "success",
             aiRetryCount: retryCount,

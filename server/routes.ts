@@ -13,12 +13,15 @@ import { isGoogleNewsEditionCode } from "@shared/google-news-regions";
 import { isSourceCategoryCode } from "@shared/source-categories";
 import {
   ARTICLE_CATEGORIES,
+  ARTICLE_PRIORITIES,
   ARTICLE_WORKFLOW_STATUSES,
   IRAQ_PROVINCES,
   getArticleCategoryLabel,
+  getArticlePriorityLabel,
   getArticleWorkflowStatusLabel,
   getIraqProvinceLabel,
   isArticleCategoryCode,
+  isArticlePriorityCode,
   isArticleWorkflowStatusCode,
   isIraqProvinceCode,
 } from "@shared/article-taxonomy";
@@ -93,6 +96,7 @@ const clientSettingsInputSchema = z.object({
 
 const articleWorkflowUpdateSchema = z.object({
   category: z.string().nullable().optional(),
+  priority: z.string().nullable().optional(),
   province: z.string().nullable().optional(),
   workflowStatus: z.string().nullable().optional(),
   manualTags: z.array(z.string()).max(MAX_ARTICLE_MANUAL_TAGS).optional(),
@@ -108,6 +112,7 @@ const savedFeedViewFiltersSchema = z.object({
   sourceName: z.string().max(200).optional(),
   sentiment: z.enum(["positive", "negative", "neutral"]).optional(),
   category: z.string().max(80).optional(),
+  priority: z.string().max(80).optional(),
   province: z.string().max(80).optional(),
   workflowStatus: z.string().max(80).optional(),
   manualTag: z.string().max(80).optional(),
@@ -485,12 +490,20 @@ function buildArticleWorkflowUpdates(input: z.infer<typeof articleWorkflowUpdate
   if ("category" in input) {
     const category = input.category?.trim();
     if (!category) {
-      updates.category = "general";
+      updates.category = "other";
     } else if (!isArticleCategoryCode(category)) {
       throw new Error(`Invalid category. Use one of: ${ARTICLE_CATEGORIES.map(item => item.code).join(", ")}`);
     } else {
       updates.category = category;
     }
+  }
+
+  if ("priority" in input) {
+    const priority = input.priority?.trim() || "routine";
+    if (!isArticlePriorityCode(priority)) {
+      throw new Error(`Invalid priority. Use one of: ${ARTICLE_PRIORITIES.map(item => item.code).join(", ")}`);
+    }
+    updates.priority = priority;
   }
 
   if ("province" in input) {
@@ -530,6 +543,9 @@ function normalizeSavedFeedViewFilters(input: z.infer<typeof savedFeedViewFilter
 
   if (filters.category && !isArticleCategoryCode(filters.category)) {
     throw new Error(`Invalid category. Use one of: ${ARTICLE_CATEGORIES.map(item => item.code).join(", ")}`);
+  }
+  if (filters.priority && !isArticlePriorityCode(filters.priority)) {
+    throw new Error(`Invalid priority. Use one of: ${ARTICLE_PRIORITIES.map(item => item.code).join(", ")}`);
   }
   if (filters.province && !isIraqProvinceCode(filters.province)) {
     throw new Error(`Invalid province. Use one of: ${IRAQ_PROVINCES.map(item => item.code).join(", ")}`);
@@ -2119,6 +2135,7 @@ export async function registerRoutes(
         sort,
         sentiment: req.query.sentiment as string,
         category: req.query.category as string,
+        priority: req.query.priority as string,
         province: req.query.province as string,
         sourceType: req.query.sourceType as string,
         country: req.query.country as string,
@@ -2191,10 +2208,11 @@ export async function registerRoutes(
       }
       const since = req.query.since as string;
       const result = await storage.getArticles({
-        category: "urgent",
+        priorities: ["urgent", "critical"],
         sourceIds: scopedSourceIds,
         clientId: clientId || undefined,
         startDate: since || new Date(Date.now() - 3600000).toISOString(),
+        sort: "newest",
         limit: 10,
         page: 1,
       });
@@ -2225,6 +2243,7 @@ export async function registerRoutes(
         sort,
         sentiment: req.query.sentiment as string,
         category: req.query.category as string,
+        priority: req.query.priority as string,
         province: req.query.province as string,
         workflowStatus: req.query.workflowStatus as string,
         manualTag: req.query.manualTag as string,
@@ -2270,6 +2289,7 @@ export async function registerRoutes(
       sort,
       sentiment: req.query.sentiment as string,
       category: req.query.category as string,
+      priority: req.query.priority as string,
       province: req.query.province as string,
       workflowStatus: req.query.workflowStatus as string,
       manualTag: req.query.manualTag as string,
@@ -2280,19 +2300,20 @@ export async function registerRoutes(
       limit: 1000,
     };
     const result = await storage.getArticles(params);
-    const csvHeader = "ID,Title,Source,Collected Via,Category,Province,Workflow Status,Manual Tags,Sentiment,Published,URL\n";
+    const csvHeader = "ID,Title,Source,Collected Via,Category,Priority,Province,Workflow Status,Manual Tags,Sentiment,Published,URL\n";
     const csvRows = result.items.map(a => {
       const title = `"${(a.title || "").replace(/"/g, '""')}"`;
       const source = `"${(a.subSource || a.source?.name || "").replace(/"/g, '""')}"`;
       const collectedVia = `"${(a.subSource ? a.source?.name || "" : "").replace(/"/g, '""')}"`;
-      const cat = a.category || "general";
+      const cat = a.category || "other";
+      const priority = (a as any).priority || "routine";
       const province = a.province || "";
       const workflowStatus = a.workflowStatus || "new";
       const manualTags = `"${((a.manualTags || []).join("; ")).replace(/"/g, '""')}"`;
       const sentiment = a.sentimentLabel || "neutral";
       const published = a.publishedAt ? new Date(a.publishedAt).toISOString() : "";
       const url = a.url || "";
-      return `${a.id},${title},${source},${collectedVia},${cat},${province},${workflowStatus},${manualTags},${sentiment},${published},${url}`;
+      return `${a.id},${title},${source},${collectedVia},${cat},${priority},${province},${workflowStatus},${manualTags},${sentiment},${published},${url}`;
     }).join("\n");
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=nws360-articles.csv");
@@ -2307,6 +2328,11 @@ export async function registerRoutes(
     const category = req.query.category as string | undefined;
     if (category && !isArticleCategoryCode(category)) {
       throw new Error(`Invalid category. Use one of: ${ARTICLE_CATEGORIES.map(item => item.code).join(", ")}`);
+    }
+
+    const priority = req.query.priority as string | undefined;
+    if (priority && !isArticlePriorityCode(priority)) {
+      throw new Error(`Invalid priority. Use one of: ${ARTICLE_PRIORITIES.map(item => item.code).join(", ")}`);
     }
 
     const province = req.query.province as string | undefined;
@@ -2326,6 +2352,7 @@ export async function registerRoutes(
       clientId: clientId || undefined,
       sort,
       category,
+      priority,
       province,
       sourceType: req.query.sourceType as string,
       startDate: req.query.startDate as string,
@@ -2391,6 +2418,7 @@ export async function registerRoutes(
           "Source",
           "Collected Via",
           "Category",
+          "Priority",
           "Province",
           "Workflow Status",
           "Manual Tags",
@@ -2406,7 +2434,8 @@ export async function registerRoutes(
             csvCell(article.title),
             csvCell(source),
             csvCell(collectedVia),
-            csvCell(getArticleCategoryLabel(article.category || "general")),
+            csvCell(getArticleCategoryLabel(article.category || "other")),
+            csvCell(getArticlePriorityLabel(article.priority || "routine")),
             csvCell(getIraqProvinceLabel(article.province)),
             csvCell(getArticleWorkflowStatusLabel(article.workflowStatus || "for_report")),
             csvCell(Array.isArray(article.manualTags) ? article.manualTags.join("; ") : ""),
@@ -2437,7 +2466,8 @@ export async function registerRoutes(
         lines.push(`${index + 1}. ${article.title || "Untitled"}`);
         lines.push(`Source: ${source}${collectedVia}`);
         lines.push(`Published: ${article.publishedAt ? new Date(article.publishedAt).toISOString() : "Unknown"}`);
-        lines.push(`Category: ${getArticleCategoryLabel(article.category || "general")}`);
+        lines.push(`Category: ${getArticleCategoryLabel(article.category || "other")}`);
+        lines.push(`Priority: ${getArticlePriorityLabel(article.priority || "routine")}`);
         if (article.province) lines.push(`Province: ${getIraqProvinceLabel(article.province)}`);
         if (tags) lines.push(`Tags: ${tags}`);
         if (article.url) lines.push(`URL: ${article.url}`);
@@ -3006,6 +3036,9 @@ export async function registerRoutes(
     if (!clientId) return res.status(400).json({ message: "Tenant context required" });
     const { ids, category } = req.body;
     if (!Array.isArray(ids) || ids.length === 0 || !category) return res.status(400).json({ message: "ids and category required" });
+    if (!isArticleCategoryCode(category)) {
+      return res.status(400).json({ message: `Invalid category. Use one of: ${ARTICLE_CATEGORIES.map(item => item.code).join(", ")}` });
+    }
     const updated = await storage.updateArticlesCategory(ids, category, clientId);
     res.json({ updated });
   });
@@ -3695,6 +3728,7 @@ export async function registerRoutes(
       search: req.query.search as string,
       sentiment: req.query.sentiment as string,
       category: req.query.category as string,
+      priority: req.query.priority as string,
       country: req.query.country as string,
       topic: req.query.topic as string,
       startDate: req.query.startDate as string,
@@ -3715,6 +3749,7 @@ export async function registerRoutes(
         collectedVia: a.subSource ? a.source?.name || null : null,
         sourceType: a.source?.type || null,
         category: a.category,
+        priority: (a as any).priority || "routine",
         sentimentLabel: a.sentimentLabel,
         sentimentScore: a.sentimentScore,
         keywords: a.keywords,

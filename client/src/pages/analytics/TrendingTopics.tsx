@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { TimeRangeFilter, useTimeRange } from "@/components/analytics/TimeRangeFilter";
 import { Badge } from "@/components/ui/badge";
 import { useLocation } from "wouter";
+import { getArticleCategoryLabel } from "@shared/article-taxonomy";
 
 const TOPIC_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
 
@@ -33,6 +34,10 @@ export default function TrendingTopics() {
   }, [] as Record<string, any>[]) || [];
 
   const topTopics = Array.from(new Set(data?.topicTimeline.map(t => t.topic) || []));
+  const categoryData = data?.byCategory.map((item) => ({
+    ...item,
+    categoryLabel: getArticleCategoryLabel(item.category),
+  })) || [];
 
   const SENTIMENT_COLORS: Record<string, string> = { positive: '#22c55e', neutral: '#64748b', negative: '#ef4444' };
 
@@ -127,9 +132,9 @@ export default function TrendingTopics() {
             <CardContent>
               <div className="h-[300px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={data?.byCategory}>
+                  <BarChart data={categoryData}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis dataKey="category" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                    <XAxis dataKey="categoryLabel" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} interval={0} angle={-20} textAnchor="end" height={80} />
                     <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
                     <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
                     <Bar dataKey="count" name={t("analyticsPages.contentVolume.articles")} fill="#8b5cf6" radius={[4, 4, 0, 0]} />

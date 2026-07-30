@@ -4,8 +4,8 @@ import { enqueueAIJob, awaitJobResult } from "./ai/ai-gateway";
 import { fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed, fetchTelegramFeed, fetchSocialRssFeed } from "./web-scraper";
 import { enqueueJob, registerJobHandler, openaiLimiter } from "./processing-queue";
 import { getGoogleNewsEdition } from "@shared/google-news-regions";
-import { ARTICLE_CATEGORIES } from "@shared/article-taxonomy";
-import { classifyArticleCategory, classifyIraqProvince } from "@shared/article-classifier";
+import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES } from "@shared/article-taxonomy";
+import { classifyArticleCategory, classifyArticlePriority, classifyIraqProvince } from "@shared/article-classifier";
 import type { WebsiteCollectorConfig } from "@shared/source-collector";
 import {
   filterSourceItems,
@@ -63,6 +63,7 @@ function truncate(text: string, maxLen: number): string {
 }
 
 const VALID_CATEGORIES: string[] = ARTICLE_CATEGORIES.map((category) => category.code);
+const VALID_PRIORITIES: string[] = ARTICLE_PRIORITIES.map((priority) => priority.code);
 const MAX_STORED_CONTENT_CHARS = 50_000;
 const MIN_FULL_ARTICLE_GAIN_CHARS = 250;
 const FULL_ARTICLE_JOB_PRIORITY = 6;
@@ -78,6 +79,7 @@ export type AIAnalysisResult = {
   topics: string[];
   summary: string;
   category: string;
+  priority: string;
   country: string | null;
   aiAnalysisStatus: "success" | "failed";
 };
@@ -87,14 +89,17 @@ export async function analyzeWithAI(title: string, content: string, clientId?: n
   try {
     const textToAnalyze = truncate(`${title}. ${content}`, 2000);
     const job = await enqueueAIJob(effectiveClientId, "classification", {
-      systemPrompt: `You analyze news articles. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "topics" (array of 1-3 topic labels like "economy", "elections", "climate", "cybersecurity", "AI", "conflict", "trade", "healthcare"), "summary" (1-2 sentence summary), "category" (exactly one of: ${VALID_CATEGORIES.join(", ")}), "country" (ISO 3166-1 alpha-2 code of the primary country the article is about, or null if unclear). Respond ONLY with valid JSON.`,
+      systemPrompt: `You analyze Iraq news articles for an Iraq Daily Media Report. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "topics" (array of 1-3 subject labels), "summary" (1-2 sentence summary), "category" (exactly one of: ${VALID_CATEGORIES.join(", ")}), "priority" (exactly one of: ${VALID_PRIORITIES.join(", ")}), "country" (ISO 3166-1 alpha-2 code of the primary country the article is about, or null if unclear). Category must describe the article subject only; never use source type, platform, language, province, or urgency as a category. Respond ONLY with valid JSON.`,
       userContent: textToAnalyze,
       responseFormat: { type: "json_object" },
     }, 500);
 
     const aiResult = await awaitJobResult(job.id);
     const result = JSON.parse(aiResult.content || "{}");
-    const cat = typeof result.category === "string" ? result.category.toLowerCase() : "general";
+    const deterministicCategory = classifyArticleCategory({ title, content });
+    const deterministicPriority = classifyArticlePriority({ title, content });
+    const cat = typeof result.category === "string" ? result.category.toLowerCase().trim() : deterministicCategory;
+    const priority = typeof result.priority === "string" ? result.priority.toLowerCase().trim() : deterministicPriority;
     const validSentiments = ["positive", "negative", "neutral"];
     const rawSentiment = typeof result.sentiment === "string" ? result.sentiment.toLowerCase() : "neutral";
     return {
@@ -103,19 +108,23 @@ export async function analyzeWithAI(title: string, content: string, clientId?: n
       keywords: Array.isArray(result.keywords) ? result.keywords : [],
       topics: Array.isArray(result.topics) ? result.topics : [],
       summary: result.summary || truncate(content, 200),
-      category: VALID_CATEGORIES.includes(cat) ? cat : "general",
+      category: VALID_CATEGORIES.includes(cat) ? cat : deterministicCategory,
+      priority: VALID_PRIORITIES.includes(priority) ? priority : deterministicPriority,
       country: typeof result.country === "string" && result.country.length === 2 ? result.country.toUpperCase() : null,
       aiAnalysisStatus: "success",
     };
   } catch (e) {
     console.error("AI analysis failed:", e);
+    const deterministicCategory = classifyArticleCategory({ title, content });
+    const deterministicPriority = classifyArticlePriority({ title, content });
     return {
       sentimentLabel: null as any,
       sentimentScore: null as any,
       keywords: [],
       topics: [],
       summary: truncate(content, 200),
-      category: "general",
+      category: deterministicCategory,
+      priority: deterministicPriority,
       country: null,
       aiAnalysisStatus: "failed",
     };
@@ -656,28 +665,29 @@ async function processItems(
     const clientId = source.clientId;
     if (!clientId) continue;
 
-    const sourceCategory = source.category && VALID_CATEGORIES.includes(source.category)
-      ? source.category
-      : "general";
     const classifyItem = (inputTitle: string, inputContent: string) => {
       const category = classifyArticleCategory({
         title: inputTitle,
         content: inputContent,
         sourceName: source.name,
-        sourceCategory,
+        sourceCategory: source.category,
         url: item.url,
       });
+      const priority = classifyArticlePriority({ title: inputTitle, content: inputContent });
       const province = classifyIraqProvince({ title: inputTitle, content: inputContent });
-      return { category, province };
+      return { category, priority, province };
     };
 
     const existing = await storage.getArticleByUrl(item.url, clientId);
     if (existing) {
       const classification = classifyItem(item.title || existing.title || "", item.content || existing.contentClean || existing.content || "");
       const updates: Record<string, any> = {};
-      if (classification.category !== "general" && (!existing.category || existing.category === "general" || existing.category === "other")) {
+      if (classification.category !== "other" && (!existing.category || existing.category === "general" || existing.category === "other")) {
         updates.category = classification.category;
         updates.sourceId = source.id;
+      }
+      if (classification.priority !== "routine" && (!(existing as any).priority || (existing as any).priority === "routine")) {
+        updates.priority = classification.priority;
       }
       if (classification.province && !existing.province) {
         updates.province = classification.province;
@@ -702,9 +712,12 @@ async function processItems(
           updates.crossPosts = [...existingCrossPosts, { platform, url: item.url, sourceId: source.id }];
           console.log(`[Worker] Cross-post added: "${title.substring(0, 50)}..." on ${platform}`);
         }
-        if (classification.category !== "general" && (!titleDup.category || titleDup.category === "general" || titleDup.category === "other")) {
+        if (classification.category !== "other" && (!titleDup.category || titleDup.category === "general" || titleDup.category === "other")) {
           updates.category = classification.category;
           updates.sourceId = source.id;
+        }
+        if (classification.priority !== "routine" && (!(titleDup as any).priority || (titleDup as any).priority === "routine")) {
+          updates.priority = classification.priority;
         }
         if (classification.province && !titleDup.province) {
           updates.province = classification.province;
@@ -737,6 +750,7 @@ async function processItems(
       keywords: [] as string[],
       topics: [] as string[],
       category: classification.category,
+      priority: classification.priority,
       province: classification.province,
       workflowStatus: "new",
       manualTags: [] as string[],
@@ -823,8 +837,16 @@ async function handleExtractArticleContent(payload: {
     url: extracted.finalUrl || article.url,
     sourceCategory: article.category,
   });
-  if (classification !== "general" && (!article.category || article.category === "general" || article.category === "other")) {
+  if (classification !== "other" && (!article.category || article.category === "general" || article.category === "other")) {
     updates.category = classification;
+  }
+  const priority = classifyArticlePriority({
+    title: extracted.title || article.title,
+    summary: extracted.excerpt || article.summary,
+    content: extractedContent || currentContent,
+  });
+  if (priority !== "routine" && (!(article as any).priority || (article as any).priority === "routine")) {
+    updates.priority = priority;
   }
   const province = classifyIraqProvince({
     title: extracted.title || article.title,
@@ -874,6 +896,7 @@ async function handleAnalyzeArticle(payload: { articleId: number }): Promise<any
     keywords: analysis.keywords,
     topics: analysis.topics,
     category: analysis.category,
+    priority: analysis.priority,
     aiAnalysisStatus: analysis.aiAnalysisStatus,
   };
 

@@ -2,7 +2,7 @@ import "dotenv/config";
 import { and, eq, sql } from "drizzle-orm";
 import { db, pool } from "../server/db";
 import { articles, sources } from "../shared/schema";
-import { classifyArticleCategory, classifyIraqProvince } from "../shared/article-classifier";
+import { classifyArticleCategory, classifyArticlePriority, classifyIraqProvince } from "../shared/article-classifier";
 
 const args = new Map<string, string>();
 for (const arg of process.argv.slice(2)) {
@@ -33,6 +33,7 @@ const rows = await db
     summary: articles.summary,
     url: articles.url,
     category: articles.category,
+    priority: articles.priority,
     province: articles.province,
     sourceName: sources.name,
     sourceCategory: sources.category,
@@ -44,6 +45,7 @@ const rows = await db
   .limit(limit || 100000);
 
 const categoryCounts = new Map<string, number>();
+const priorityCounts = new Map<string, number>();
 const provinceCounts = new Map<string, number>();
 let changed = 0;
 
@@ -61,12 +63,19 @@ for (const row of rows) {
     summary: row.summary,
     content: row.contentClean || row.content,
   });
+  const priority = classifyArticlePriority({
+    title: row.title,
+    summary: row.summary,
+    content: row.contentClean || row.content,
+  });
 
   categoryCounts.set(category, (categoryCounts.get(category) || 0) + 1);
+  priorityCounts.set(priority, (priorityCounts.get(priority) || 0) + 1);
   if (province) provinceCounts.set(province, (provinceCounts.get(province) || 0) + 1);
 
-  const updates: { category?: string; province?: string | null } = {};
+  const updates: { category?: string; priority?: string; province?: string | null } = {};
   if (category !== row.category) updates.category = category;
+  if (priority !== (row.priority || "routine")) updates.priority = priority;
   const nextProvince = province || null;
   if (nextProvince !== (row.province || null)) updates.province = nextProvince;
   if (Object.keys(updates).length === 0) continue;
@@ -82,6 +91,7 @@ console.log(JSON.stringify({
   scanned: rows.length,
   changed,
   categories: Array.from(categoryCounts.entries()).sort((a, b) => b[1] - a[1]).map(([category, count]) => ({ category, count })),
+  priorities: Array.from(priorityCounts.entries()).sort((a, b) => b[1] - a[1]).map(([priority, count]) => ({ priority, count })),
   provinces: Array.from(provinceCounts.entries()).sort((a, b) => b[1] - a[1]).map(([province, count]) => ({ province, count })),
 }, null, 2));
 
