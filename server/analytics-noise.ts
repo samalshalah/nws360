@@ -341,7 +341,7 @@ const NOISE_PHRASES = new Set([
 
 const ALLOWED_SHORT_TERMS = new Set(["ai"]);
 
-function normalizeAnalyticsValue(value: string): string {
+export function normalizeAnalyticsValue(value: string): string {
   return value
     .normalize("NFKC")
     .toLowerCase()

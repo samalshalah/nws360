@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAnalytics } from "@/hooks/use-analytics";
@@ -12,12 +13,26 @@ export function RightPanel() {
   const { t } = useTranslation();
   const [, setLocation] = useLocation();
   const { data: analytics, isLoading, dataUpdatedAt } = useAnalytics();
+  const topicRange = useMemo(() => {
+    const end = new Date();
+    const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+    return { startDate: start.toISOString(), endDate: end.toISOString() };
+  }, []);
 
   const { data: sentimentTrend } = useQuery<{ date: string; positive: number; negative: number; neutral: number }[]>({
     queryKey: ["/api/analytics/sentiment-trend"],
   });
 
-  const trendingTopics = (analytics?.trendingKeywords || []).slice(0, 5);
+  const { data: topicSignals } = useQuery<{
+    topics: { topic: string; count: number; sentiment: string; previousCount?: number; trendScore?: number }[];
+  }>({
+    queryKey: [`/api/analytics/trending-topics?startDate=${topicRange.startDate}&endDate=${topicRange.endDate}`],
+  });
+
+  const trendingTopics = (topicSignals?.topics || [])
+    .map(topic => ({ text: topic.topic, value: topic.count }))
+    .slice(0, 5);
+  const fallbackTrendingKeywords = (analytics?.trendingKeywords || []).slice(0, 5);
 
   const volumeData = sentimentTrend
     ? sentimentTrend.slice(-24).map((d) => ({
@@ -61,9 +76,9 @@ export function RightPanel() {
           <TrendingUp className="w-3.5 h-3.5" />
           {t("rightPanel.trendingTopics")}
         </div>
-        {trendingTopics.length > 0 ? (
+        {(trendingTopics.length > 0 || fallbackTrendingKeywords.length > 0) ? (
           <div className="space-y-0.5">
-            {trendingTopics.map((topic: { text: string; value: number }, index: number) => (
+            {(trendingTopics.length > 0 ? trendingTopics : fallbackTrendingKeywords).map((topic: { text: string; value: number }, index: number) => (
               <button
                 key={topic.text}
                 data-testid={`right-panel-trending-${index}`}

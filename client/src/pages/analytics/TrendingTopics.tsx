@@ -15,7 +15,7 @@ export default function TrendingTopics() {
   const [, setLocation] = useLocation();
 
   const { data, isLoading } = useQuery<{
-    topics: { topic: string; count: number; sentiment: string }[];
+    topics: { topic: string; count: number; sentiment: string; previousCount?: number; trendScore?: number }[];
     topicTimeline: { date: string; topic: string; count: number }[];
     byCategory: { category: string; count: number }[];
   }>({

@@ -14,7 +14,7 @@ export default function KeywordAnalysis() {
   const [, setLocation] = useLocation();
 
   const { data, isLoading } = useQuery<{
-    topKeywords: { keyword: string; count: number; avgSentiment: number }[];
+    topKeywords: { keyword: string; count: number; avgSentiment: number; previousCount?: number; trendScore?: number }[];
     keywordTimeline: { date: string; keyword: string; count: number }[];
   }>({
     queryKey: [`/api/analytics/keyword-analysis?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],

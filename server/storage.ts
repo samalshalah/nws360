@@ -1,5 +1,6 @@
 import { db } from "./db";
-import { isGenericAnalyticsTerm } from "./analytics-noise";
+import { isGenericAnalyticsTerm, normalizeAnalyticsValue } from "./analytics-noise";
+import { getArticleCategoryLabel } from "@shared/article-taxonomy";
 import {
   users, sources, articles, savedFeedViews, keywords, bookmarks, sourceFetchLogs,
   clients, clientSettings, clientKeywords, systemSettings, adminAuditLogs,
@@ -130,57 +131,158 @@ const ANALYTICS_STOP_WORDS = new Set([
 function isAnalyticsSignalTerm(value: unknown): boolean {
   const term = String(value || "").trim();
   if (!term) return false;
-  const normalized = term
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[\u064B-\u065F\u0670]/g, "")
-    .replace(/\u0640/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const normalized = normalizeAnalyticsValue(term);
   return !ANALYTICS_STOP_WORDS.has(normalized) && !isGenericAnalyticsTerm(term);
 }
 
+type AnalyticsSignalMode = "keyword" | "topic";
+
 type AnalyticsTextRow = {
+  id?: number | string | null;
   title: string | null;
+  summary?: string | null;
+  content?: string | null;
+  contentClean?: string | null;
   publishedAt: Date | string | null;
+  category?: string | null;
+  sentimentScore?: number | string | null;
 };
 
-function extractAnalyticsTerms(value: string | null | undefined): string[] {
+type AnalyticsSnapshotOptions = {
+  mode?: AnalyticsSignalMode;
+  previousRows?: AnalyticsTextRow[];
+  sortBy?: "count" | "trend";
+};
+
+function analyticsTokens(value: string | null | undefined): string[] {
   if (!value) return [];
-  const normalized = value
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[\u064B-\u065F\u0670]/g, "")
-    .replace(/\u0640/g, "");
-  const tokens = normalized.match(/[A-Za-z0-9\u0600-\u06FF]{2,}/g) || [];
-  return Array.from(new Set(tokens.filter(isAnalyticsSignalTerm))).slice(0, 24);
+  return normalizeAnalyticsValue(value).match(/[a-z0-9\u0600-\u06FF]{2,}/g) || [];
 }
 
-function buildAnalyticsTermSnapshot(rows: AnalyticsTextRow[], topLimit = 25, timelineLimit = 10, minCount = 2) {
-  const counts = new Map<string, number>();
-  const countsByDate = new Map<string, Map<string, number>>();
+function uniqueAnalyticsSignals(values: string[], limit: number): string[] {
+  return Array.from(new Set(values.filter(isAnalyticsSignalTerm))).slice(0, limit);
+}
 
-  rows.forEach((row) => {
-    const terms = extractAnalyticsTerms(row.title);
-    let date = "";
-    if (row.publishedAt) {
-      const parsed = new Date(row.publishedAt);
-      if (!Number.isNaN(parsed.getTime())) date = parsed.toISOString().slice(0, 10);
+function extractAnalyticsTerms(value: string | null | undefined, limit = 32): string[] {
+  return uniqueAnalyticsSignals(analyticsTokens(value), limit);
+}
+
+function extractAnalyticsPhrases(value: string | null | undefined, limit = 24): string[] {
+  const tokens = analyticsTokens(value).filter(isAnalyticsSignalTerm);
+  const phrases: string[] = [];
+  for (const size of [3, 2]) {
+    for (let index = 0; index <= tokens.length - size; index += 1) {
+      const phrase = tokens.slice(index, index + size).join(" ");
+      if (!isGenericAnalyticsTerm(phrase)) phrases.push(phrase);
     }
+  }
+  return uniqueAnalyticsSignals(phrases, limit);
+}
+
+function parseAnalyticsDate(row: AnalyticsTextRow): string {
+  if (!row.publishedAt) return "";
+  const parsed = new Date(row.publishedAt);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toISOString().slice(0, 10);
+}
+
+function parseAnalyticsSentiment(row: AnalyticsTextRow): number | null {
+  const score = Number(row.sentimentScore);
+  return Number.isFinite(score) ? score : null;
+}
+
+function collectAnalyticsSignals(row: AnalyticsTextRow, mode: AnalyticsSignalMode): string[] {
+  const title = row.title || "";
+  const summary = row.summary || "";
+  const body = row.contentClean || row.content || "";
+
+  if (mode === "topic") {
+    const phraseSource = [title, summary].filter(Boolean).join(" ");
+    const phrases = extractAnalyticsPhrases(phraseSource, 24);
+    const fallbackTerms = extractAnalyticsTerms(phraseSource, 12);
+    const categoryLabel = row.category && !["general", "other"].includes(row.category)
+      ? normalizeAnalyticsValue(getArticleCategoryLabel(row.category))
+      : "";
+    const categoryTopic = categoryLabel && isAnalyticsSignalTerm(categoryLabel) ? [categoryLabel] : [];
+    return uniqueAnalyticsSignals([...phrases, ...categoryTopic, ...fallbackTerms], 28);
+  }
+
+  return uniqueAnalyticsSignals([
+    ...extractAnalyticsTerms(title, 24),
+    ...extractAnalyticsTerms(summary, 32),
+    ...extractAnalyticsTerms(body, 64),
+  ], 80);
+}
+
+function addAnalyticsCounts(
+  rows: AnalyticsTextRow[],
+  mode: AnalyticsSignalMode,
+  counts: Map<string, number>,
+  countsByDate?: Map<string, Map<string, number>>,
+  sentimentSums?: Map<string, number>,
+  sentimentCounts?: Map<string, number>,
+) {
+  rows.forEach((row) => {
+    const terms = collectAnalyticsSignals(row, mode);
+    const date = countsByDate ? parseAnalyticsDate(row) : "";
+    const sentiment = sentimentSums && sentimentCounts ? parseAnalyticsSentiment(row) : null;
 
     terms.forEach((term) => {
       counts.set(term, (counts.get(term) || 0) + 1);
-      if (!date) return;
-      const dayCounts = countsByDate.get(date) || new Map<string, number>();
-      dayCounts.set(term, (dayCounts.get(term) || 0) + 1);
-      countsByDate.set(date, dayCounts);
+      if (date && countsByDate) {
+        const dayCounts = countsByDate.get(date) || new Map<string, number>();
+        dayCounts.set(term, (dayCounts.get(term) || 0) + 1);
+        countsByDate.set(date, dayCounts);
+      }
+      if (sentiment !== null && sentimentSums && sentimentCounts) {
+        sentimentSums.set(term, (sentimentSums.get(term) || 0) + sentiment);
+        sentimentCounts.set(term, (sentimentCounts.get(term) || 0) + 1);
+      }
     });
   });
+}
+
+function calculateAnalyticsTrendScore(count: number, previousCount: number): number {
+  const lift = Math.max(0, count - previousCount);
+  const newSignalBonus = previousCount === 0 ? Math.min(count, 5) : 0;
+  return count + lift * 1.25 + newSignalBonus;
+}
+
+function buildAnalyticsTermSnapshot(
+  rows: AnalyticsTextRow[],
+  topLimit = 25,
+  timelineLimit = 10,
+  minCount = 2,
+  options: AnalyticsSnapshotOptions = {},
+) {
+  const mode = options.mode || "keyword";
+  const sortBy = options.sortBy || "count";
+  const counts = new Map<string, number>();
+  const previousCounts = new Map<string, number>();
+  const countsByDate = new Map<string, Map<string, number>>();
+  const sentimentSums = new Map<string, number>();
+  const sentimentCounts = new Map<string, number>();
+
+  addAnalyticsCounts(rows, mode, counts, countsByDate, sentimentSums, sentimentCounts);
+  if (options.previousRows?.length) {
+    addAnalyticsCounts(options.previousRows, mode, previousCounts);
+  }
 
   const top = Array.from(counts.entries())
     .filter(([, count]) => count >= minCount)
-    .map(([term, count]) => ({ term, count }))
-    .sort((a, b) => b.count - a.count || a.term.localeCompare(b.term))
+    .map(([term, count]) => {
+      const previousCount = previousCounts.get(term) || 0;
+      const trendScore = calculateAnalyticsTrendScore(count, previousCount);
+      const sentimentCount = sentimentCounts.get(term) || 0;
+      const avgSentiment = sentimentCount > 0 ? Math.round((sentimentSums.get(term) || 0) / sentimentCount) : 0;
+      return { term, count, previousCount, trendScore, avgSentiment };
+    })
+    .sort((a, b) => {
+      if (sortBy === "trend") {
+        return b.trendScore - a.trendScore || b.count - a.count || a.term.localeCompare(b.term);
+      }
+      return b.count - a.count || b.trendScore - a.trendScore || a.term.localeCompare(b.term);
+    })
     .slice(0, topLimit);
   const timelineTerms = new Set(top.slice(0, timelineLimit).map((item) => item.term));
   const timeline = Array.from(countsByDate.entries())
@@ -190,6 +292,15 @@ function buildAnalyticsTermSnapshot(rows: AnalyticsTextRow[], topLimit = 25, tim
       .map(([term, count]) => ({ date, term, count })));
 
   return { top, timeline };
+}
+
+function getPreviousAnalyticsWindow(start: Date, end: Date): { start: Date; end: Date } {
+  const minimumWindowMs = 24 * 60 * 60 * 1000;
+  const windowMs = Math.max(end.getTime() - start.getTime(), minimumWindowMs);
+  return {
+    start: new Date(start.getTime() - windowMs),
+    end: start,
+  };
 }
 
 type EmailSubscriptionScope = {
@@ -307,15 +418,17 @@ export interface IStorage {
 
   // Analytics - Trending Topics
   getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
-    topics: { topic: string; count: number; sentiment: string }[];
+    topics: { topic: string; count: number; sentiment: string; previousCount?: number; trendScore?: number }[];
     topicTimeline: { date: string; topic: string; count: number }[];
     byCategory: { category: string; count: number }[];
+    method?: string;
   }>;
 
   // Analytics - Keyword Analysis
   getKeywordAnalysis(startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
-    topKeywords: { keyword: string; count: number; avgSentiment: number }[];
+    topKeywords: { keyword: string; count: number; avgSentiment: number; previousCount?: number; trendScore?: number }[];
     keywordTimeline: { date: string; keyword: string; count: number }[];
+    method?: string;
   }>;
 
   // Analytics - Sentiment Reports
@@ -1405,31 +1518,26 @@ export class DatabaseStorage implements IStorage {
       );
     }
 
-    const keywordRows = await db.execute(sql`
-      SELECT kw as keyword, COUNT(*)::int as count
-      FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL ${sourceFilter} ${aiFilter}
-      GROUP BY kw
-      ORDER BY count DESC
-      LIMIT 50
+    const termRows = await db.execute(sql`
+      SELECT
+        id,
+        title,
+        summary,
+        LEFT(COALESCE(content_clean, content, ''), 3500) as content,
+        published_at as "publishedAt",
+        category,
+        sentiment_score as "sentimentScore"
+      FROM articles
+      WHERE published_at >= NOW() - INTERVAL '7 days' ${sourceFilter}
     `);
-    const trendingKeywords = (keywordRows.rows as any[])
-      .filter((r: any) => isAnalyticsSignalTerm(r.keyword))
-      .slice(0, 10)
-      .map((r: any) => ({
-        text: String(r.keyword),
-        value: Number(r.count),
-      }));
-
-    if (trendingKeywords.length === 0) {
-      const termRows = await db.execute(sql`
-        SELECT title, published_at as "publishedAt"
-        FROM articles
-        WHERE published_at >= NOW() - INTERVAL '7 days' ${sourceFilter}
-      `);
-      const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 10, 5, 2);
-      trendingKeywords.push(...termStats.top.map(({ term, count }) => ({ text: term, value: count })));
-    }
+    const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 10, 5, 2, {
+      mode: "keyword",
+      sortBy: "trend",
+    });
+    const trendingKeywords = termStats.top.map(({ term, count }) => ({
+      text: term,
+      value: count,
+    }));
 
     const topSourceRows = await db.execute(sql`
       SELECT COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as name, COUNT(a.id)::int as count
@@ -1624,19 +1732,43 @@ export class DatabaseStorage implements IStorage {
 
   async getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
-      return { topics: [], topicTimeline: [], byCategory: [], method: "title-terms" };
+      return { topics: [], topicTimeline: [], byCategory: [], method: "non-ai-phrases" };
     }
     const start = new Date(startDate);
     const end = new Date(endDate);
+    const previousWindow = getPreviousAnalyticsWindow(start, end);
     const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
 
     const termRows = await db.execute(sql`
-      SELECT title, published_at as "publishedAt"
+      SELECT
+        id,
+        title,
+        summary,
+        LEFT(COALESCE(content_clean, content, ''), 1800) as content,
+        published_at as "publishedAt",
+        category,
+        sentiment_score as "sentimentScore"
       FROM articles
       WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
     `);
-    const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 20, 8);
+    const previousTermRows = await db.execute(sql`
+      SELECT
+        id,
+        title,
+        summary,
+        LEFT(COALESCE(content_clean, content, ''), 1800) as content,
+        published_at as "publishedAt",
+        category,
+        sentiment_score as "sentimentScore"
+      FROM articles
+      WHERE published_at >= ${previousWindow.start} AND published_at < ${previousWindow.end} ${sourceFilter} ${clientFilter}
+    `);
+    const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 20, 8, 2, {
+      mode: "topic",
+      previousRows: previousTermRows.rows as unknown as AnalyticsTextRow[],
+      sortBy: "trend",
+    });
 
     const categoryRows = await db.execute(sql`
       SELECT COALESCE(category, 'general') as category, COUNT(*)::int as count
@@ -1647,13 +1779,19 @@ export class DatabaseStorage implements IStorage {
     `);
 
     return {
-      topics: termStats.top.map(({ term, count }) => ({ topic: term, count, sentiment: "neutral" })),
+      topics: termStats.top.map(({ term, count, avgSentiment, previousCount, trendScore }) => ({
+        topic: term,
+        count,
+        sentiment: avgSentiment > 15 ? "positive" : avgSentiment < -15 ? "negative" : "neutral",
+        previousCount,
+        trendScore,
+      })),
       topicTimeline: termStats.timeline.map(({ date, term, count }) => ({ date, topic: term, count })),
       byCategory: (categoryRows.rows as any[]).map(r => ({
         category: String(r.category),
         count: Number(r.count),
       })),
-      method: "title-terms",
+      method: "non-ai-phrases",
     };
   }
 
@@ -1663,20 +1801,50 @@ export class DatabaseStorage implements IStorage {
     }
     const start = new Date(startDate);
     const end = new Date(endDate);
+    const previousWindow = getPreviousAnalyticsWindow(start, end);
     const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
 
     const termRows = await db.execute(sql`
-      SELECT title, published_at as "publishedAt"
+      SELECT
+        id,
+        title,
+        summary,
+        LEFT(COALESCE(content_clean, content, ''), 3500) as content,
+        published_at as "publishedAt",
+        category,
+        sentiment_score as "sentimentScore"
       FROM articles
       WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter}
     `);
-    const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 25, 10);
+    const previousTermRows = await db.execute(sql`
+      SELECT
+        id,
+        title,
+        summary,
+        LEFT(COALESCE(content_clean, content, ''), 3500) as content,
+        published_at as "publishedAt",
+        category,
+        sentiment_score as "sentimentScore"
+      FROM articles
+      WHERE published_at >= ${previousWindow.start} AND published_at < ${previousWindow.end} ${sourceFilter} ${clientFilter}
+    `);
+    const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 25, 10, 2, {
+      mode: "keyword",
+      previousRows: previousTermRows.rows as unknown as AnalyticsTextRow[],
+      sortBy: "count",
+    });
 
     return {
-      topKeywords: termStats.top.map(({ term, count }) => ({ keyword: term, count, avgSentiment: 0 })),
+      topKeywords: termStats.top.map(({ term, count, avgSentiment, previousCount, trendScore }) => ({
+        keyword: term,
+        count,
+        avgSentiment,
+        previousCount,
+        trendScore,
+      })),
       keywordTimeline: termStats.timeline.map(({ date, term, count }) => ({ date, keyword: term, count })),
-      method: "title-terms",
+      method: "non-ai-article-text",
     };
   }
 
@@ -1942,12 +2110,22 @@ export class DatabaseStorage implements IStorage {
       LIMIT 5
     `);
 
-    const topicRows = await db.execute(sql`
-      SELECT kw as topic, COUNT(*)::int as count
-      FROM articles, unnest(keywords) as kw
-      WHERE keywords IS NOT NULL AND published_at >= ${dayStart} AND published_at <= ${dayEnd} ${sourceFilterPlain} ${clientFilterPlain}
-      GROUP BY kw ORDER BY count DESC LIMIT 1
+    const topicTermRows = await db.execute(sql`
+      SELECT
+        id,
+        title,
+        summary,
+        LEFT(COALESCE(content_clean, content, ''), 1800) as content,
+        published_at as "publishedAt",
+        category,
+        sentiment_score as "sentimentScore"
+      FROM articles
+      WHERE published_at >= ${dayStart} AND published_at <= ${dayEnd} ${sourceFilterPlain} ${clientFilterPlain}
     `);
+    const dailyTopicStats = buildAnalyticsTermSnapshot(topicTermRows.rows as unknown as AnalyticsTextRow[], 1, 1, 1, {
+      mode: "topic",
+      sortBy: "count",
+    });
 
     const currentSentimentRows = await db.execute(sql`
       SELECT
@@ -1992,7 +2170,7 @@ export class DatabaseStorage implements IStorage {
         sourceName: String(r.sourceName || ""),
         sentiment: String(r.sentiment || "neutral"),
       })),
-      biggestTopic: String((topicRows.rows[0] as any)?.topic || ""),
+      biggestTopic: dailyTopicStats.top[0]?.term || "",
       sentimentShift: {
         previous: { positive: Number(prevSent.positive), negative: Number(prevSent.negative), neutral: Number(prevSent.neutral) },
         current: { positive: Number(currentSent.positive), negative: Number(currentSent.negative), neutral: Number(currentSent.neutral) },

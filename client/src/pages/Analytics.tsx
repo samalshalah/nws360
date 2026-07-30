@@ -67,7 +67,7 @@ export default function Analytics() {
   });
 
   const { data: topics, isLoading: topicsLoading } = useQuery<{
-    topics: { topic: string; count: number; sentiment: string }[];
+    topics: { topic: string; count: number; sentiment: string; previousCount?: number; trendScore?: number }[];
     topicTimeline: { date: string; topic: string; count: number }[];
     byCategory: { category: string; count: number }[];
   }>({
@@ -287,7 +287,7 @@ export default function Analytics() {
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
             <div className="flex items-center gap-1">
               <CardTitle className="text-base font-semibold">{t("analytics.trendingKeywords")}</CardTitle>
-              <CardInfo description="The most frequently appearing keywords across recent articles. Larger values indicate higher prominence in current coverage." />
+              <CardInfo description="Non-AI topic phrases ranked by current coverage and movement against the previous period." />
             </div>
             <div className="flex items-center gap-1">
               <ExportButton csvData={topTopics.map(t => ({ topic: t.topic, count: t.count, sentiment: t.sentiment }))} filename="nws360-topics" />
