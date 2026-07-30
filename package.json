@@ -17,6 +17,7 @@
     "db:migrate:client-settings": "node scripts/migrate-client-settings.cjs",
     "db:migrate:alert-rules": "node scripts/migrate-alert-rules.cjs",
     "test:filters": "tsx scripts/test-source-filters.ts",
+    "data:backfill-categories": "tsx scripts/backfill-article-categories.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

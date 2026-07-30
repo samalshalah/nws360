@@ -2105,15 +2105,7 @@ export async function registerRoutes(
       const user = req.user as any;
       const clientId = resolveClientId(user, req);
       const scopedSourceIds = await getUserSourceIds(user, req);
-      let filteredSourceIds = scopedSourceIds;
-      const sourceNameFilter = req.query.sourceName as string;
-      if (sourceNameFilter) {
-        const allSources = await storage.getSources(clientId || undefined);
-        const matchingIds = allSources
-          .filter(s => s.name === sourceNameFilter && (!scopedSourceIds || scopedSourceIds.includes(s.id)))
-          .map(s => s.id);
-        filteredSourceIds = matchingIds.length > 0 ? matchingIds : [-1];
-      }
+      const sourceNameFilter = typeof req.query.sourceName === "string" ? req.query.sourceName : undefined;
       const sortParam = req.query.sort as string | undefined;
       const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
         ? sortParam as any
@@ -2121,7 +2113,8 @@ export async function registerRoutes(
       const params = {
         search: req.query.search as string,
         sourceId: req.query.sourceId && !isNaN(parseInt(req.query.sourceId as string)) ? parseInt(req.query.sourceId as string) : undefined,
-        sourceIds: filteredSourceIds,
+        sourceIds: scopedSourceIds,
+        sourceName: sourceNameFilter,
         clientId: clientId || undefined,
         sort,
         sentiment: req.query.sentiment as string,
@@ -2218,15 +2211,7 @@ export async function registerRoutes(
       const user = req.user as any;
       const clientId = resolveClientId(user, req);
       const scopedSourceIds = await getUserSourceIds(user, req);
-      let filteredSourceIds = scopedSourceIds;
-      const sourceNameFilter = req.query.sourceName as string;
-      if (sourceNameFilter) {
-        const allSources = await storage.getSources(clientId || undefined);
-        const matchingIds = allSources
-          .filter(s => s.name === sourceNameFilter && (!scopedSourceIds || scopedSourceIds.includes(s.id)))
-          .map(s => s.id);
-        filteredSourceIds = matchingIds.length > 0 ? matchingIds : [-1];
-      }
+      const sourceNameFilter = typeof req.query.sourceName === "string" ? req.query.sourceName : undefined;
       const sortParam = req.query.sort as string | undefined;
       const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
         ? sortParam as any
@@ -2234,7 +2219,8 @@ export async function registerRoutes(
       const result = await storage.getArticles({
         search: req.query.search as string,
         sourceId: req.query.sourceId && !isNaN(parseInt(req.query.sourceId as string)) ? parseInt(req.query.sourceId as string) : undefined,
-        sourceIds: filteredSourceIds,
+        sourceIds: scopedSourceIds,
+        sourceName: sourceNameFilter,
         clientId: clientId || undefined,
         sort,
         sentiment: req.query.sentiment as string,
@@ -2270,15 +2256,7 @@ export async function registerRoutes(
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const scopedSourceIds = await getUserSourceIds(user, req);
-    let filteredSourceIds = scopedSourceIds;
-    const sourceNameFilter = req.query.sourceName as string;
-    if (sourceNameFilter) {
-      const allSources = await storage.getSources(clientId || undefined);
-      const matchingIds = allSources
-        .filter(s => s.name === sourceNameFilter && (!scopedSourceIds || scopedSourceIds.includes(s.id)))
-        .map(s => s.id);
-      filteredSourceIds = matchingIds.length > 0 ? matchingIds : [-1];
-    }
+    const sourceNameFilter = typeof req.query.sourceName === "string" ? req.query.sourceName : undefined;
     const sortParam = req.query.sort as string | undefined;
     const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
       ? sortParam as any
@@ -2286,7 +2264,8 @@ export async function registerRoutes(
     const params = {
       search: req.query.search as string,
       sourceId: req.query.sourceId ? parseInt(req.query.sourceId as string) : undefined,
-      sourceIds: filteredSourceIds,
+      sourceIds: scopedSourceIds,
+      sourceName: sourceNameFilter,
       clientId: clientId || undefined,
       sort,
       sentiment: req.query.sentiment as string,
@@ -2323,16 +2302,7 @@ export async function registerRoutes(
   async function buildReportBasketParams(req: any, user: any, limit: number) {
     const clientId = resolveClientId(user, req);
     const scopedSourceIds = await getUserSourceIds(user, req);
-    let filteredSourceIds = scopedSourceIds;
-    const sourceNameFilter = req.query.sourceName as string;
-
-    if (sourceNameFilter) {
-      const allSources = await storage.getSources(clientId || undefined);
-      const matchingIds = allSources
-        .filter(s => s.name === sourceNameFilter && (!scopedSourceIds || scopedSourceIds.includes(s.id)))
-        .map(s => s.id);
-      filteredSourceIds = matchingIds.length > 0 ? matchingIds : [-1];
-    }
+    const sourceNameFilter = typeof req.query.sourceName === "string" ? req.query.sourceName : undefined;
 
     const category = req.query.category as string | undefined;
     if (category && !isArticleCategoryCode(category)) {
@@ -2352,7 +2322,7 @@ export async function registerRoutes(
     return {
       search: req.query.search as string,
       sourceName: sourceNameFilter,
-      sourceIds: filteredSourceIds,
+      sourceIds: scopedSourceIds,
       clientId: clientId || undefined,
       sort,
       category,

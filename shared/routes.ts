@@ -175,6 +175,13 @@ export const api = {
         200: z.object({
           totalArticles: z.number(),
           sourcesCount: z.number(),
+          articlesLast24h: z.number().optional(),
+          articlesPrevious24h: z.number().optional(),
+          activeSources24h: z.number().optional(),
+          categoryBreakdown: z.array(z.object({
+            category: z.string(),
+            count: z.number(),
+          })).optional(),
           sentimentDistribution: z.array(z.object({
             name: z.string(),
             value: z.number(),
@@ -187,6 +194,11 @@ export const api = {
             name: z.string(),
             count: z.number(),
           })).optional(),
+          topSources24h: z.array(z.object({
+            name: z.string(),
+            count: z.number(),
+          })).optional(),
+          latestPublishedAt: z.string().or(z.date()).nullable().optional(),
         }),
       },
     },

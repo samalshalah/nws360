@@ -285,8 +285,14 @@ export interface IStorage {
   getStats(sourceIds?: number[]): Promise<{
     totalArticles: number;
     sourcesCount: number;
+    articlesLast24h?: number;
+    articlesPrevious24h?: number;
+    activeSources24h?: number;
+    categoryBreakdown?: { category: string; count: number }[];
     sentimentDistribution: { name: string; value: number }[];
     trendingKeywords: { text: string; value: number }[];
+    topSources24h?: { name: string; count: number }[];
+    latestPublishedAt?: Date | null;
   }>;
   getSentimentTrend(sourceIds?: number[]): Promise<{ date: string; positive: number; negative: number; neutral: number }[]>;
 
@@ -915,6 +921,10 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(sources.type, params.sourceType));
       needsSourceJoin = true;
     }
+    if (params?.sourceName) {
+      conditions.push(sql`COALESCE(NULLIF(${articles.subSource}, ''), ${sources.name}, 'Unknown') = ${params.sourceName}`);
+      needsSourceJoin = true;
+    }
     if (params?.startDate) {
       conditions.push(gte(articles.publishedAt, new Date(params.startDate)));
     }
@@ -1411,6 +1421,16 @@ export class DatabaseStorage implements IStorage {
         value: Number(r.count),
       }));
 
+    if (trendingKeywords.length === 0) {
+      const termRows = await db.execute(sql`
+        SELECT title, published_at as "publishedAt"
+        FROM articles
+        WHERE published_at >= NOW() - INTERVAL '7 days' ${sourceFilter}
+      `);
+      const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 10, 5, 2);
+      trendingKeywords.push(...termStats.top.map(({ term, count }) => ({ text: term, value: count })));
+    }
+
     const topSourceRows = await db.execute(sql`
       SELECT COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as name, COUNT(a.id)::int as count
       FROM articles a
@@ -1425,12 +1445,76 @@ export class DatabaseStorage implements IStorage {
       count: Number(r.count),
     }));
 
+    const last24Rows = await db.execute(sql`
+      SELECT COUNT(*)::int as count
+      FROM articles
+      WHERE published_at >= NOW() - INTERVAL '24 hours' ${sourceFilter}
+    `);
+    const articlesLast24h = Number((last24Rows.rows[0] as any)?.count || 0);
+
+    const previous24Rows = await db.execute(sql`
+      SELECT COUNT(*)::int as count
+      FROM articles
+      WHERE published_at >= NOW() - INTERVAL '48 hours'
+        AND published_at < NOW() - INTERVAL '24 hours'
+        ${sourceFilter}
+    `);
+    const articlesPrevious24h = Number((previous24Rows.rows[0] as any)?.count || 0);
+
+    const activeSourcesRows = await db.execute(sql`
+      SELECT COUNT(DISTINCT source_id)::int as count
+      FROM articles
+      WHERE published_at >= NOW() - INTERVAL '24 hours' ${sourceFilter}
+    `);
+    const activeSources24h = Number((activeSourcesRows.rows[0] as any)?.count || 0);
+
+    const categoryRows = await db.execute(sql`
+      SELECT COALESCE(category, 'general') as category, COUNT(*)::int as count
+      FROM articles
+      WHERE published_at >= NOW() - INTERVAL '7 days' ${sourceFilter}
+      GROUP BY COALESCE(category, 'general')
+      ORDER BY count DESC
+      LIMIT 8
+    `);
+    const categoryBreakdown = (categoryRows.rows as any[]).map((r: any) => ({
+      category: String(r.category),
+      count: Number(r.count),
+    }));
+
+    const topSource24Rows = await db.execute(sql`
+      SELECT COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as name, COUNT(a.id)::int as count
+      FROM articles a
+      LEFT JOIN sources s ON a.source_id = s.id
+      WHERE a.published_at >= NOW() - INTERVAL '24 hours' ${joinedSourceIdFilter}
+      GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
+      ORDER BY count DESC
+      LIMIT 5
+    `);
+    const topSources24h = (topSource24Rows.rows as any[]).map((r: any) => ({
+      name: String(r.name),
+      count: Number(r.count),
+    }));
+
+    const latestRows = await db.execute(sql`
+      SELECT MAX(COALESCE(published_at, ingested_at, created_at)) as latest
+      FROM articles
+      WHERE 1=1 ${sourceFilter}
+    `);
+    const latestValue = (latestRows.rows[0] as any)?.latest;
+    const latestPublishedAt = latestValue ? new Date(latestValue) : null;
+
     return {
       totalArticles,
       sourcesCount,
+      articlesLast24h,
+      articlesPrevious24h,
+      activeSources24h,
+      categoryBreakdown,
       sentimentDistribution,
       trendingKeywords,
       topSources,
+      topSources24h,
+      latestPublishedAt,
     };
   }
 

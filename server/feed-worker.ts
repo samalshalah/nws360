@@ -5,6 +5,7 @@ import { fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFe
 import { enqueueJob, registerJobHandler, openaiLimiter } from "./processing-queue";
 import { getGoogleNewsEdition } from "@shared/google-news-regions";
 import { ARTICLE_CATEGORIES } from "@shared/article-taxonomy";
+import { classifyArticleCategory, classifyIraqProvince } from "@shared/article-classifier";
 import type { WebsiteCollectorConfig } from "@shared/source-collector";
 import {
   filterSourceItems,
@@ -658,10 +659,31 @@ async function processItems(
     const sourceCategory = source.category && VALID_CATEGORIES.includes(source.category)
       ? source.category
       : "general";
+    const classifyItem = (inputTitle: string, inputContent: string) => {
+      const category = classifyArticleCategory({
+        title: inputTitle,
+        content: inputContent,
+        sourceName: source.name,
+        sourceCategory,
+        url: item.url,
+      });
+      const province = classifyIraqProvince({ title: inputTitle, content: inputContent });
+      return { category, province };
+    };
+
     const existing = await storage.getArticleByUrl(item.url, clientId);
     if (existing) {
-      if (sourceCategory !== "general" && existing.category === "general") {
-        await storage.updateArticle(existing.id, { category: sourceCategory, sourceId: source.id });
+      const classification = classifyItem(item.title || existing.title || "", item.content || existing.contentClean || existing.content || "");
+      const updates: Record<string, any> = {};
+      if (classification.category !== "general" && (!existing.category || existing.category === "general" || existing.category === "other")) {
+        updates.category = classification.category;
+        updates.sourceId = source.id;
+      }
+      if (classification.province && !existing.province) {
+        updates.province = classification.province;
+      }
+      if (Object.keys(updates).length > 0) {
+        await storage.updateArticle(existing.id, updates);
       }
       continue;
     }
@@ -674,13 +696,21 @@ async function processItems(
         const platform = detectPlatform(item.url) || "web";
         const existingCrossPosts = Array.isArray(titleDup.crossPosts) ? titleDup.crossPosts as { platform: string; url: string; sourceId: number }[] : [];
         const alreadyTracked = existingCrossPosts.some(cp => cp.url === item.url);
+        const classification = classifyItem(title, item.content || titleDup.contentClean || titleDup.content || "");
+        const updates: Record<string, any> = {};
         if (!alreadyTracked) {
-          const updated = [...existingCrossPosts, { platform, url: item.url, sourceId: source.id }];
-          await storage.updateArticle(titleDup.id, { crossPosts: updated });
+          updates.crossPosts = [...existingCrossPosts, { platform, url: item.url, sourceId: source.id }];
           console.log(`[Worker] Cross-post added: "${title.substring(0, 50)}..." on ${platform}`);
         }
-        if (sourceCategory !== "general" && titleDup.category === "general") {
-          await storage.updateArticle(titleDup.id, { category: sourceCategory, sourceId: source.id });
+        if (classification.category !== "general" && (!titleDup.category || titleDup.category === "general" || titleDup.category === "other")) {
+          updates.category = classification.category;
+          updates.sourceId = source.id;
+        }
+        if (classification.province && !titleDup.province) {
+          updates.province = classification.province;
+        }
+        if (Object.keys(updates).length > 0) {
+          await storage.updateArticle(titleDup.id, updates);
         }
         continue;
       }
@@ -690,6 +720,7 @@ async function processItems(
     if (!contentRaw && !title) continue;
 
     const contentClean = cleanText(contentRaw);
+    const classification = classifyItem(title, contentClean);
 
     const article = {
       title,
@@ -705,8 +736,8 @@ async function processItems(
       sentimentScore: null,
       keywords: [] as string[],
       topics: [] as string[],
-      category: sourceCategory,
-      province: null,
+      category: classification.category,
+      province: classification.province,
       workflowStatus: "new",
       manualTags: [] as string[],
       imageUrl: item.image || null,
@@ -785,6 +816,22 @@ async function handleExtractArticleContent(payload: {
     updates.contentClean = truncate(extractedContent, MAX_STORED_CONTENT_CHARS);
     updates.summary = truncate(extracted.excerpt || extractedContent, 200);
   }
+  const classification = classifyArticleCategory({
+    title: extracted.title || article.title,
+    summary: extracted.excerpt || article.summary,
+    content: extractedContent || currentContent,
+    url: extracted.finalUrl || article.url,
+    sourceCategory: article.category,
+  });
+  if (classification !== "general" && (!article.category || article.category === "general" || article.category === "other")) {
+    updates.category = classification;
+  }
+  const province = classifyIraqProvince({
+    title: extracted.title || article.title,
+    summary: extracted.excerpt || article.summary,
+    content: extractedContent || currentContent,
+  });
+  if (province && !article.province) updates.province = province;
   if (article.title === "Untitled" && extracted.title) updates.title = extracted.title;
   if (!article.imageUrl && extracted.image) updates.imageUrl = extracted.image;
   if (extracted.publishedAt) updates.publishedAt = extracted.publishedAt;
