@@ -339,6 +339,27 @@ async function validateBriefingScheduleTarget(config: BriefingScheduleConfig | n
 function filterDeliveryResultsForClient(result: any, clientId: number) {
   const results = Array.isArray(result?.results)
     ? result.results.filter((item: any) => Number(item?.clientId) === clientId)
+      .map((item: any) => {
+        const recipients = Array.isArray(item?.recipients)
+          ? item.recipients.map((email: unknown) => String(email || "").trim()).filter(Boolean)
+          : [];
+        const recipientCount = Number(item?.recipientCount) || recipients.length || (item?.email ? 1 : 0);
+        return {
+          scheduleId: Number(item?.scheduleId) || null,
+          clientId,
+          email: String(item?.email || ""),
+          scheduleLabel: item?.scheduleLabel ? String(item.scheduleLabel) : null,
+          recipients,
+          recipientCount,
+          status: String(item?.status || "unknown"),
+          subject: item?.subject ? String(item.subject) : null,
+          sourceType: item?.sourceType ? String(item.sourceType) : null,
+          itemCount: Number(item?.itemCount) || 0,
+          articleCount: Number(item?.articleCount) || 0,
+          providerMessageId: item?.providerMessageId ? String(item.providerMessageId) : null,
+          error: item?.error ? String(item.error).slice(0, 500) : null,
+        };
+      })
     : [];
   return {
     checked: results.length,
@@ -347,6 +368,9 @@ function filterDeliveryResultsForClient(result: any, clientId: number) {
     skipped: results.filter((item: any) => item.status === "not_due").length,
     providerMissing: results.filter((item: any) => item.status === "provider_not_configured").length,
     failed: results.filter((item: any) => item.status === "failed").length,
+    totalRecipients: results.reduce((total: number, item: any) => total + (Number(item.recipientCount) || 0), 0),
+    totalItems: results.reduce((total: number, item: any) => total + (Number(item.itemCount) || 0), 0),
+    totalArticles: results.reduce((total: number, item: any) => total + (Number(item.articleCount) || 0), 0),
     results,
   };
 }
@@ -357,6 +381,9 @@ function formatDeliveryHistoryJob(job: typeof processingJobs.$inferSelect, clien
   const result = filterDeliveryResultsForClient(rawResult, clientId);
   const ownsPayload = Number(payload.clientId) === clientId;
   if (!ownsPayload && result.results.length === 0) return null;
+  const scheduleIds = Array.from(new Set(result.results.map((item: any) => item.scheduleId).filter(Boolean)));
+  const startedAt = job.startedAt ? new Date(job.startedAt).getTime() : null;
+  const completedAt = job.completedAt ? new Date(job.completedAt).getTime() : null;
 
   return {
     id: job.id,
@@ -364,11 +391,14 @@ function formatDeliveryHistoryJob(job: typeof processingJobs.$inferSelect, clien
     dryRun: Boolean(payload.dryRun),
     force: Boolean(payload.force),
     manual: Boolean(payload.manual),
-    scheduleId: payload.scheduleId || null,
+    scheduleId: payload.scheduleId || (scheduleIds.length === 1 ? scheduleIds[0] : null),
+    scheduleIds,
+    provider: rawResult.provider || null,
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     completedAt: job.completedAt,
     runAt: job.runAt,
+    durationMs: startedAt && completedAt ? Math.max(0, completedAt - startedAt) : null,
     error: job.lastError,
     summary: result,
   };
@@ -6142,7 +6172,24 @@ export async function registerRoutes(
       dryRun: parsed.data.dryRun,
       force: parsed.data.force,
     });
-    res.json(result);
+    const jobId = await recordCompletedJob("DELIVER_BRIEFINGS", {
+      actorId: user.id,
+      clientId,
+      scheduleId: parsed.data.scheduleId || null,
+      dryRun: parsed.data.dryRun,
+      force: parsed.data.force,
+      manual: true,
+      scope: "due",
+    }, result);
+    await storage.createActivityEvent({
+      actorId: user.id,
+      verb: parsed.data.dryRun ? "tested_due_briefing_delivery" : "ran_due_briefing_delivery",
+      targetType: "email_subscription",
+      targetId: parsed.data.scheduleId || null,
+      metadata: { jobId, scheduleCount: result.checked },
+      clientId,
+    });
+    res.json({ ...result, jobId });
   });
 
   app.get("/api/collaboration/reports", requireCapability(CAPS.COLLAB_VIEW), async (req, res) => {

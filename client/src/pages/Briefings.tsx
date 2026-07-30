@@ -136,16 +136,23 @@ type BriefingDeliverySummary = {
   skipped: number;
   providerMissing: number;
   failed: number;
+  totalRecipients?: number;
+  totalItems?: number;
+  totalArticles?: number;
   results: Array<{
-    scheduleId: number;
+    scheduleId: number | null;
     clientId: number;
     email: string;
+    scheduleLabel?: string | null;
     recipients?: string[];
     recipientCount?: number;
-    status: "sent" | "dry_run" | "provider_not_configured" | "failed" | "not_due";
+    status: string;
+    subject?: string | null;
+    sourceType?: string | null;
     itemCount?: number;
     articleCount?: number;
-    error?: string;
+    providerMessageId?: string | null;
+    error?: string | null;
   }>;
 };
 
@@ -156,10 +163,13 @@ type BriefingDeliveryHistoryItem = {
   force: boolean;
   manual: boolean;
   scheduleId: number | null;
+  scheduleIds?: number[];
+  provider?: BriefingDeliveryStatus["provider"] | null;
   createdAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
   runAt: string | null;
+  durationMs?: number | null;
   error: string | null;
   summary: BriefingDeliverySummary;
 };
@@ -280,7 +290,7 @@ function formatScheduleCadence(schedule: BriefingSchedule) {
 }
 
 function formatDeliverySummary(summary: BriefingDeliverySummary) {
-  const recipientCount = summary.results.reduce((total, result) => total + (result.recipientCount || result.recipients?.length || 0), 0);
+  const recipientCount = summary.totalRecipients ?? summary.results.reduce((total, result) => total + (result.recipientCount || result.recipients?.length || 0), 0);
   const parts = [
     summary.sent > 0 ? `${summary.sent} sent` : "",
     summary.dryRun > 0 ? `${summary.dryRun} test` : "",
@@ -288,8 +298,36 @@ function formatDeliverySummary(summary: BriefingDeliverySummary) {
     summary.failed > 0 ? `${summary.failed} failed` : "",
     summary.skipped > 0 ? `${summary.skipped} skipped` : "",
     recipientCount > 1 ? `${recipientCount} recipients` : "",
+    summary.totalItems ? `${summary.totalItems} items` : "",
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(", ") : `${summary.checked} checked`;
+}
+
+function deliveryStatusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
+  if (status === "sent") return "default";
+  if (status === "failed" || status === "provider_not_configured") return "destructive";
+  if (status === "dry_run") return "secondary";
+  return "outline";
+}
+
+function deliveryStatusLabel(status: string) {
+  if (status === "dry_run") return "Test";
+  if (status === "provider_not_configured") return "Provider missing";
+  if (status === "not_due") return "Skipped";
+  return status.replace(/_/g, " ");
+}
+
+function formatRecipients(result: BriefingDeliverySummary["results"][number]) {
+  const recipients = result.recipients && result.recipients.length > 0 ? result.recipients : [result.email].filter(Boolean);
+  if (recipients.length === 0) return "No recipients";
+  if (recipients.length === 1) return recipients[0];
+  return `${recipients[0]} +${recipients.length - 1}`;
+}
+
+function formatDuration(ms?: number | null) {
+  if (!ms) return "";
+  if (ms < 1000) return `${ms}ms`;
+  return `${Math.round(ms / 1000)}s`;
 }
 
 export default function Briefings() {
@@ -1369,27 +1407,74 @@ export default function Briefings() {
                     </div>
                   ) : deliveryHistory?.items?.length ? (
                     <div className="space-y-2" data-testid="list-briefing-delivery-history">
-                      {deliveryHistory.items.slice(0, 5).map(item => (
-                        <div key={item.id} className="rounded-md border border-border/60 px-3 py-2">
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Badge variant={item.summary.failed > 0 ? "destructive" : item.summary.sent > 0 ? "default" : "secondary"}>
-                                  {item.status}
-                                </Badge>
-                                {item.manual && <Badge variant="outline">{t("briefings.manualRun", "Manual")}</Badge>}
-                                {item.dryRun && <Badge variant="outline">{t("briefings.testRun", "Test")}</Badge>}
+                      {deliveryHistory.items.slice(0, 5).map(item => {
+                        const visibleResults = item.summary.results.slice(0, 3);
+                        return (
+                          <div key={item.id} className="rounded-md border border-border/60 px-3 py-2">
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant={item.summary.failed > 0 ? "destructive" : item.summary.sent > 0 ? "default" : "secondary"}>
+                                    {item.status}
+                                  </Badge>
+                                  {item.manual && <Badge variant="outline">{t("briefings.manualRun", "Manual")}</Badge>}
+                                  {item.dryRun && <Badge variant="outline">{t("briefings.testRun", "Test")}</Badge>}
+                                  {item.durationMs ? <Badge variant="outline">{formatDuration(item.durationMs)}</Badge> : null}
+                                </div>
+                                <p className="mt-1 text-xs text-muted-foreground">{formatDeliverySummary(item.summary)}</p>
                               </div>
-                              <p className="mt-1 text-xs text-muted-foreground">{formatDeliverySummary(item.summary)}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {item.completedAt || item.createdAt
+                                  ? formatDistanceToNow(new Date(item.completedAt || item.createdAt || Date.now()), { addSuffix: true })
+                                  : t("common.notAvailable", "Not available")}
+                              </p>
                             </div>
-                            <p className="text-xs text-muted-foreground">
-                              {item.completedAt || item.createdAt
-                                ? formatDistanceToNow(new Date(item.completedAt || item.createdAt || Date.now()), { addSuffix: true })
-                                : t("common.notAvailable", "Not available")}
-                            </p>
+
+                            {visibleResults.length > 0 && (
+                              <div className="mt-2 space-y-2">
+                                {visibleResults.map((result, index) => (
+                                  <div key={`${item.id}-${result.scheduleId || index}`} className="rounded-md bg-muted/30 px-2 py-2">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <div className="min-w-0 flex items-center gap-2">
+                                        <Badge variant={deliveryStatusVariant(result.status)}>{deliveryStatusLabel(result.status)}</Badge>
+                                        <span className="truncate text-xs font-medium text-foreground">
+                                          {result.scheduleLabel || result.email || (result.scheduleId ? `Schedule #${result.scheduleId}` : t("briefings.schedule", "Schedule"))}
+                                        </span>
+                                      </div>
+                                      <span className="text-xs text-muted-foreground">
+                                        {result.itemCount || 0} {t("briefings.itemsCount", "items")} / {result.articleCount || 0} {t("briefings.articles", "articles")}
+                                      </span>
+                                    </div>
+                                    <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                                      <Mail className="h-3 w-3 shrink-0" />
+                                      <span className="truncate">{formatRecipients(result)}</span>
+                                    </p>
+                                    {result.subject && (
+                                      <p className="mt-1 truncate text-xs text-muted-foreground">{result.subject}</p>
+                                    )}
+                                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                                      {result.sourceType && <span>{result.sourceType}</span>}
+                                      {result.providerMessageId && <span>ID {result.providerMessageId}</span>}
+                                    </div>
+                                    {result.error && (
+                                      <p className="mt-1 text-xs text-destructive">{result.error}</p>
+                                    )}
+                                  </div>
+                                ))}
+                                {item.summary.results.length > visibleResults.length && (
+                                  <p className="text-xs text-muted-foreground">
+                                    +{item.summary.results.length - visibleResults.length} {t("briefings.moreDeliveryResults", "more delivery results")}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                            {item.error && (
+                              <p className="mt-2 text-xs text-destructive">{item.error}</p>
+                            )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="rounded-md border border-dashed border-border/70 bg-muted/20 px-4 py-5 text-center text-sm text-muted-foreground" data-testid="empty-briefing-delivery-history">

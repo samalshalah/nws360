@@ -36,9 +36,12 @@ export type BriefingDeliveryResult = {
   scheduleId: number;
   clientId: number;
   email: string;
+  scheduleLabel?: string | null;
   recipients?: string[];
   recipientCount?: number;
   status: "sent" | "dry_run" | "provider_not_configured" | "failed" | "not_due";
+  subject?: string;
+  sourceType?: BriefingDeliveryPreview["sourceType"];
   itemCount?: number;
   articleCount?: number;
   providerMessageId?: string | null;
@@ -181,16 +184,18 @@ async function buildReportLines(report: SharedReport, items: BriefingItem[], cli
       const article = articleMap.get(item.itemRefId);
       articleCount += 1;
       if (article) {
+        const articleUrl = article.url || "";
         textLines.push(`- ${article.title}`);
         textLines.push(`  ${sourceName(article)}${articleDate(article) ? ` | ${articleDate(article)}` : ""}`);
         if (item.content) textLines.push(`  ${item.content}`);
-        textLines.push(`  ${article.url}`, "");
+        if (articleUrl) textLines.push(`  ${articleUrl}`);
+        textLines.push("");
         htmlLines.push(`
           <article>
             <h3>${escapeHtml(article.title)}</h3>
             <p><strong>${escapeHtml(sourceName(article))}</strong>${articleDate(article) ? ` | ${escapeHtml(articleDate(article))}` : ""}</p>
             ${item.content ? `<p>${escapeHtml(item.content)}</p>` : ""}
-            <p><a href="${escapeHtml(article.url)}">Open source article</a></p>
+            ${articleUrl ? `<p><a href="${escapeHtml(articleUrl)}">Open source article</a></p>` : ""}
           </article>
         `);
       } else {
@@ -209,16 +214,18 @@ function buildLatestLines(articles: ArticleWithSource[]) {
 
   for (const article of articles) {
     const snippet = articleSnippet(article);
+    const articleUrl = article.url || "";
     textLines.push(`- ${article.title}`);
     textLines.push(`  ${sourceName(article)}${articleDate(article) ? ` | ${articleDate(article)}` : ""}`);
     if (snippet) textLines.push(`  ${snippet}`);
-    textLines.push(`  ${article.url}`, "");
+    if (articleUrl) textLines.push(`  ${articleUrl}`);
+    textLines.push("");
     htmlLines.push(`
       <article>
         <h3>${escapeHtml(article.title)}</h3>
         <p><strong>${escapeHtml(sourceName(article))}</strong>${articleDate(article) ? ` | ${escapeHtml(articleDate(article))}` : ""}</p>
         ${snippet ? `<p>${escapeHtml(snippet)}</p>` : ""}
-        <p><a href="${escapeHtml(article.url)}">Open source article</a></p>
+        ${articleUrl ? `<p><a href="${escapeHtml(articleUrl)}">Open source article</a></p>` : ""}
       </article>
     `);
   }
@@ -380,38 +387,40 @@ async function sendViaResend(input: { to: string[]; subject: string; text: strin
 
 export async function deliverBriefingSchedule(schedule: EmailSubscription, options: { force?: boolean; dryRun?: boolean } = {}): Promise<BriefingDeliveryResult> {
   const recipients = getScheduleRecipients(schedule);
+  const config = getScheduleConfig(schedule);
+  const baseResult = {
+    scheduleId: schedule.id,
+    clientId: schedule.clientId,
+    email: schedule.email,
+    scheduleLabel: config.label || schedule.email,
+    recipients,
+    recipientCount: recipients.length,
+  };
   if (!schedule.active || schedule.sendBriefing === false) {
-    return { scheduleId: schedule.id, clientId: schedule.clientId, email: schedule.email, recipients, recipientCount: recipients.length, status: "not_due" };
+    return { ...baseResult, status: "not_due" };
   }
   if (!options.force && !isScheduleDue(schedule)) {
-    return { scheduleId: schedule.id, clientId: schedule.clientId, email: schedule.email, recipients, recipientCount: recipients.length, status: "not_due" };
+    return { ...baseResult, status: "not_due" };
   }
 
   try {
     const provider = getEmailProviderStatus();
     if (!options.dryRun && !provider.configured) {
       return {
-        scheduleId: schedule.id,
-        clientId: schedule.clientId,
-        email: schedule.email,
-        recipients,
-        recipientCount: recipients.length,
+        ...baseResult,
         status: "provider_not_configured",
       };
     }
 
     const preview = await buildBriefingDeliveryPreview(schedule);
     const now = new Date().toISOString();
-    const config = getScheduleConfig(schedule);
 
     if (options.dryRun) {
       return {
-        scheduleId: schedule.id,
-        clientId: schedule.clientId,
-        email: schedule.email,
-        recipients,
-        recipientCount: recipients.length,
+        ...baseResult,
         status: "dry_run",
+        subject: preview.subject,
+        sourceType: preview.sourceType,
         itemCount: preview.itemCount,
         articleCount: preview.articleCount,
       };
@@ -438,19 +447,16 @@ export async function deliverBriefingSchedule(schedule: EmailSubscription, optio
     } as any, { clientId: schedule.clientId });
 
     return {
-      scheduleId: schedule.id,
-      clientId: schedule.clientId,
-      email: schedule.email,
-      recipients,
-      recipientCount: recipients.length,
+      ...baseResult,
       status: sendResult.status,
+      subject: preview.subject,
+      sourceType: preview.sourceType,
       itemCount: preview.itemCount,
       articleCount: preview.articleCount,
       providerMessageId: sendResult.providerMessageId,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const config = getScheduleConfig(schedule);
     await storage.updateEmailSubscription(schedule.id, {
       customSchedule: {
         ...config,
@@ -459,7 +465,7 @@ export async function deliverBriefingSchedule(schedule: EmailSubscription, optio
         lastDeliveryError: message.slice(0, 500),
       },
     } as any, { clientId: schedule.clientId });
-    return { scheduleId: schedule.id, clientId: schedule.clientId, email: schedule.email, recipients, recipientCount: recipients.length, status: "failed", error: message };
+    return { ...baseResult, status: "failed", error: message };
   }
 }
 
