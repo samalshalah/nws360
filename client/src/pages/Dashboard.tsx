@@ -84,8 +84,8 @@ function MetricCard({ title, value, detail, href, icon: Icon, tone }: MetricCard
         <CardContent className="flex h-full items-center justify-between gap-4 p-4">
           <div className="min-w-0">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
-            <p className="mt-2 text-2xl font-bold tabular-nums text-foreground">{value}</p>
-            <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>
+            <p className="mt-2 text-2xl font-bold leading-tight tabular-nums text-foreground">{value}</p>
+            <p className="mt-1 text-xs leading-tight text-muted-foreground">{detail}</p>
           </div>
           <div className={`rounded-md p-3 ${tone}`}>
             <Icon className="h-5 w-5 text-white" />
@@ -184,11 +184,11 @@ export default function Dashboard() {
       </div>
 
       {isLoadingAnalytics ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
           {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-28 rounded-md" />)}
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
           {metricCards.map((card) => <MetricCard key={card.title} {...card} />)}
         </div>
       )}
