@@ -249,8 +249,26 @@ const normalizedTopicListSchema = z.preprocess((value) => {
   return topics;
 }, z.array(z.string().min(1).max(80)).max(30).default([]));
 
+const normalizedEmailListSchema = z.preprocess((value) => {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[\n,;]+/)
+      : [];
+  const seen = new Set<string>();
+  const emails: string[] = [];
+  for (const raw of rawValues) {
+    const email = String(raw || "").trim().toLowerCase();
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    emails.push(email);
+  }
+  return emails;
+}, z.array(z.string().email().max(254)).max(50).optional());
+
 const briefingScheduleConfigSchema = z.object({
   label: optionalTrimmedText(120),
+  recipients: normalizedEmailListSchema,
   deliveryTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default("08:00"),
   timezone: z.string().trim().min(2).max(80).default("Asia/Baghdad"),
   dayOfWeek: z.coerce.number().int().min(0).max(6).nullable().optional(),
@@ -279,6 +297,21 @@ const briefingScheduleInputSchema = emailSubscriptionInputSchema.extend({
 const briefingScheduleUpdateSchema = briefingScheduleInputSchema.partial();
 
 type BriefingScheduleConfig = z.infer<typeof briefingScheduleConfigSchema>;
+
+function withNormalizedScheduleRecipients<T extends { email?: string; customSchedule?: BriefingScheduleConfig | null }>(input: T): T {
+  if (!input.email || !input.customSchedule) return input;
+  const recipients = Array.from(new Set([
+    input.email.trim().toLowerCase(),
+    ...(input.customSchedule.recipients || []).map(email => email.trim().toLowerCase()),
+  ].filter(Boolean)));
+  return {
+    ...input,
+    customSchedule: {
+      ...input.customSchedule,
+      recipients,
+    },
+  };
+}
 
 async function validateBriefingScheduleTarget(config: BriefingScheduleConfig | null | undefined, clientId: number, res: Response): Promise<boolean> {
   if (!config) return true;
@@ -5420,7 +5453,8 @@ export async function registerRoutes(
     const parsed = emailSubscriptionInputSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
     if (!(await validateBriefingScheduleTarget(parsed.data.customSchedule, clientId, res))) return;
-    const sub = await storage.createEmailSubscription({ ...parsed.data, userId: user.id, clientId });
+    const data = withNormalizedScheduleRecipients(parsed.data);
+    const sub = await storage.createEmailSubscription({ ...data, userId: user.id, clientId });
     res.status(201).json(sub);
   });
 
@@ -5431,7 +5465,8 @@ export async function registerRoutes(
     const parsed = emailSubscriptionUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
     if ("customSchedule" in parsed.data && !(await validateBriefingScheduleTarget(parsed.data.customSchedule, clientId, res))) return;
-    const sub = await storage.updateEmailSubscription(parseInt(req.params.id), parsed.data, { userId: user.id, clientId });
+    const data = withNormalizedScheduleRecipients(parsed.data);
+    const sub = await storage.updateEmailSubscription(parseInt(req.params.id), data, { userId: user.id, clientId });
     if (!sub) return res.status(404).json({ message: "Not found" });
     res.json(sub);
   });
@@ -5995,8 +6030,9 @@ export async function registerRoutes(
     const parsed = briefingScheduleInputSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
     if (!(await validateBriefingScheduleTarget(parsed.data.customSchedule, clientId, res))) return;
+    const data = withNormalizedScheduleRecipients(parsed.data);
     const schedule = await storage.createEmailSubscription({
-      ...parsed.data,
+      ...data,
       sendBriefing: true,
       userId: user.id,
       clientId,
@@ -6013,8 +6049,9 @@ export async function registerRoutes(
     const parsed = briefingScheduleUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
     if ("customSchedule" in parsed.data && !(await validateBriefingScheduleTarget(parsed.data.customSchedule, clientId, res))) return;
+    const data = withNormalizedScheduleRecipients(parsed.data);
     const schedule = await storage.updateEmailSubscription(parseInt(req.params.id), {
-      ...parsed.data,
+      ...data,
       sendBriefing: true,
     }, { clientId });
     if (!schedule) return res.status(404).json({ message: "Not found" });

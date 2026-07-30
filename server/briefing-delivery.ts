@@ -3,6 +3,7 @@ import type { Article, BriefingItem, EmailSubscription, SharedReport } from "@sh
 
 type ScheduleConfig = {
   label?: string | null;
+  recipients?: string[] | null;
   deliveryTime?: string;
   timezone?: string;
   dayOfWeek?: number | null;
@@ -16,6 +17,7 @@ type ScheduleConfig = {
   lastDeliveredAt?: string | null;
   lastDeliveryProviderId?: string | null;
   lastDeliveryItemCount?: number | null;
+  lastDeliveryRecipientCount?: number | null;
 };
 
 type ArticleWithSource = Article & { source: { name?: string | null } | null };
@@ -34,6 +36,8 @@ export type BriefingDeliveryResult = {
   scheduleId: number;
   clientId: number;
   email: string;
+  recipients?: string[];
+  recipientCount?: number;
   status: "sent" | "dry_run" | "provider_not_configured" | "failed" | "not_due";
   itemCount?: number;
   articleCount?: number;
@@ -58,6 +62,26 @@ function getScheduleConfig(schedule: EmailSubscription): ScheduleConfig {
   return schedule.customSchedule && typeof schedule.customSchedule === "object"
     ? { ...(schedule.customSchedule as ScheduleConfig) }
     : {};
+}
+
+function normalizeEmailList(values: unknown[]): string[] {
+  const seen = new Set<string>();
+  const emails: string[] = [];
+  for (const value of values) {
+    const email = String(value || "").trim().toLowerCase();
+    if (!email || seen.has(email)) continue;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+    seen.add(email);
+    emails.push(email);
+  }
+  return emails;
+}
+
+function getScheduleRecipients(schedule: EmailSubscription): string[] {
+  const config = getScheduleConfig(schedule);
+  const configuredRecipients = Array.isArray(config.recipients) ? config.recipients : [];
+  const recipients = normalizeEmailList([schedule.email, ...configuredRecipients]);
+  return recipients.length > 0 ? recipients : [schedule.email];
 }
 
 function escapeHtml(value: string) {
@@ -328,7 +352,7 @@ function isScheduleDue(schedule: EmailSubscription, now = new Date()) {
   return !lastAttempt || lastAttempt.dateKey !== current.dateKey;
 }
 
-async function sendViaResend(input: { to: string; subject: string; text: string; html: string }) {
+async function sendViaResend(input: { to: string[]; subject: string; text: string; html: string }) {
   const status = getEmailProviderStatus();
   if (!status.configured) return { status: "provider_not_configured" as const };
 
@@ -340,7 +364,7 @@ async function sendViaResend(input: { to: string; subject: string; text: string;
     },
     body: JSON.stringify({
       from: status.from,
-      to: [input.to],
+      to: input.to,
       subject: input.subject,
       text: input.text,
       html: input.html,
@@ -355,11 +379,12 @@ async function sendViaResend(input: { to: string; subject: string; text: string;
 }
 
 export async function deliverBriefingSchedule(schedule: EmailSubscription, options: { force?: boolean; dryRun?: boolean } = {}): Promise<BriefingDeliveryResult> {
+  const recipients = getScheduleRecipients(schedule);
   if (!schedule.active || schedule.sendBriefing === false) {
-    return { scheduleId: schedule.id, clientId: schedule.clientId, email: schedule.email, status: "not_due" };
+    return { scheduleId: schedule.id, clientId: schedule.clientId, email: schedule.email, recipients, recipientCount: recipients.length, status: "not_due" };
   }
   if (!options.force && !isScheduleDue(schedule)) {
-    return { scheduleId: schedule.id, clientId: schedule.clientId, email: schedule.email, status: "not_due" };
+    return { scheduleId: schedule.id, clientId: schedule.clientId, email: schedule.email, recipients, recipientCount: recipients.length, status: "not_due" };
   }
 
   try {
@@ -369,6 +394,8 @@ export async function deliverBriefingSchedule(schedule: EmailSubscription, optio
         scheduleId: schedule.id,
         clientId: schedule.clientId,
         email: schedule.email,
+        recipients,
+        recipientCount: recipients.length,
         status: "provider_not_configured",
       };
     }
@@ -382,6 +409,8 @@ export async function deliverBriefingSchedule(schedule: EmailSubscription, optio
         scheduleId: schedule.id,
         clientId: schedule.clientId,
         email: schedule.email,
+        recipients,
+        recipientCount: recipients.length,
         status: "dry_run",
         itemCount: preview.itemCount,
         articleCount: preview.articleCount,
@@ -389,7 +418,7 @@ export async function deliverBriefingSchedule(schedule: EmailSubscription, optio
     }
 
     const sendResult = await sendViaResend({
-      to: schedule.email,
+      to: recipients,
       subject: preview.subject,
       text: preview.text,
       html: preview.html,
@@ -404,6 +433,7 @@ export async function deliverBriefingSchedule(schedule: EmailSubscription, optio
         lastDeliveredAt: now,
         lastDeliveryProviderId: sendResult.providerMessageId,
         lastDeliveryItemCount: preview.itemCount,
+        lastDeliveryRecipientCount: recipients.length,
       },
     } as any, { clientId: schedule.clientId });
 
@@ -411,6 +441,8 @@ export async function deliverBriefingSchedule(schedule: EmailSubscription, optio
       scheduleId: schedule.id,
       clientId: schedule.clientId,
       email: schedule.email,
+      recipients,
+      recipientCount: recipients.length,
       status: sendResult.status,
       itemCount: preview.itemCount,
       articleCount: preview.articleCount,
@@ -427,7 +459,7 @@ export async function deliverBriefingSchedule(schedule: EmailSubscription, optio
         lastDeliveryError: message.slice(0, 500),
       },
     } as any, { clientId: schedule.clientId });
-    return { scheduleId: schedule.id, clientId: schedule.clientId, email: schedule.email, status: "failed", error: message };
+    return { scheduleId: schedule.id, clientId: schedule.clientId, email: schedule.email, recipients, recipientCount: recipients.length, status: "failed", error: message };
   }
 }
 

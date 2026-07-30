@@ -78,6 +78,7 @@ type BriefingFrequency = "realtime" | "daily" | "weekly" | "monthly";
 
 type BriefingScheduleConfig = {
   label?: string | null;
+  recipients?: string[] | null;
   deliveryTime?: string;
   timezone?: string;
   dayOfWeek?: number | null;
@@ -90,6 +91,7 @@ type BriefingScheduleConfig = {
   lastDeliveryError?: string | null;
   lastDeliveredAt?: string | null;
   lastDeliveryItemCount?: number | null;
+  lastDeliveryRecipientCount?: number | null;
 };
 
 type BriefingSchedule = {
@@ -138,6 +140,8 @@ type BriefingDeliverySummary = {
     scheduleId: number;
     clientId: number;
     email: string;
+    recipients?: string[];
+    recipientCount?: number;
     status: "sent" | "dry_run" | "provider_not_configured" | "failed" | "not_due";
     itemCount?: number;
     articleCount?: number;
@@ -246,6 +250,15 @@ function splitTopicInput(value: string) {
   )).slice(0, 30);
 }
 
+function splitEmailInput(value: string) {
+  return Array.from(new Set(
+    value
+      .split(/[\n,;]+/)
+      .map(email => email.trim().toLowerCase())
+      .filter(email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)),
+  )).slice(0, 50);
+}
+
 function getScheduleConfig(schedule: BriefingSchedule): BriefingScheduleConfig {
   return schedule.customSchedule && typeof schedule.customSchedule === "object"
     ? schedule.customSchedule
@@ -267,12 +280,14 @@ function formatScheduleCadence(schedule: BriefingSchedule) {
 }
 
 function formatDeliverySummary(summary: BriefingDeliverySummary) {
+  const recipientCount = summary.results.reduce((total, result) => total + (result.recipientCount || result.recipients?.length || 0), 0);
   const parts = [
     summary.sent > 0 ? `${summary.sent} sent` : "",
     summary.dryRun > 0 ? `${summary.dryRun} test` : "",
     summary.providerMissing > 0 ? `${summary.providerMissing} provider missing` : "",
     summary.failed > 0 ? `${summary.failed} failed` : "",
     summary.skipped > 0 ? `${summary.skipped} skipped` : "",
+    recipientCount > 1 ? `${recipientCount} recipients` : "",
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(", ") : `${summary.checked} checked`;
 }
@@ -649,8 +664,11 @@ export default function Briefings() {
 
   const createScheduleMutation = useMutation({
     mutationFn: async () => {
+      const recipients = splitEmailInput(scheduleEmail);
+      if (recipients.length === 0) throw new Error("Add at least one valid recipient email");
       const customSchedule: BriefingScheduleConfig = {
         label: scheduleLabel.trim(),
+        recipients,
         deliveryTime: scheduleTime,
         timezone: scheduleTimezone.trim() || "Asia/Baghdad",
       };
@@ -667,7 +685,7 @@ export default function Briefings() {
         customSchedule.templateId = selectedTemplate.id;
       }
       const res = await apiRequest("POST", "/api/collaboration/briefing-schedules", {
-        email: scheduleEmail.trim(),
+        email: recipients[0],
         topics: splitTopicInput(scheduleTopics),
         frequency: scheduleFrequency,
         sendAlerts: false,
@@ -1081,15 +1099,18 @@ export default function Briefings() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="briefing-schedule-email">{t("briefings.recipientEmail", "Recipient email")}</Label>
-                    <Input
+                    <Label htmlFor="briefing-schedule-email">{t("briefings.recipientEmails", "Recipients")}</Label>
+                    <Textarea
                       id="briefing-schedule-email"
-                      type="email"
                       value={scheduleEmail}
                       onChange={(event) => setScheduleEmail(event.target.value)}
-                      placeholder="analyst@example.org"
-                      data-testid="input-briefing-schedule-email"
+                      placeholder="analyst@example.org, editor@example.org"
+                      className="min-h-[76px]"
+                      data-testid="textarea-briefing-schedule-recipients"
                     />
+                    <p className="text-xs text-muted-foreground">
+                      {t("briefings.recipientHelp", "Separate emails with commas, semicolons, or new lines.")}
+                    </p>
                   </div>
                 </div>
 
@@ -1184,7 +1205,7 @@ export default function Briefings() {
 
                 <Button
                   onClick={() => createScheduleMutation.mutate()}
-                  disabled={createScheduleMutation.isPending || scheduleLabel.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(scheduleEmail.trim())}
+                  disabled={createScheduleMutation.isPending || scheduleLabel.trim().length < 2 || splitEmailInput(scheduleEmail).length === 0}
                   data-testid="button-create-briefing-schedule"
                 >
                   {createScheduleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />}
@@ -1205,6 +1226,7 @@ export default function Briefings() {
                   <div className="space-y-2" data-testid="list-briefing-schedules">
                     {schedules.slice(0, 5).map(schedule => {
                       const config = getScheduleConfig(schedule);
+                      const recipients = config.recipients && config.recipients.length > 0 ? config.recipients : [schedule.email];
                       return (
                         <div key={schedule.id} className="rounded-md border border-border/60 px-3 py-2">
                           <div className="flex items-start justify-between gap-3">
@@ -1216,7 +1238,9 @@ export default function Briefings() {
                               </div>
                               <p className="flex items-center gap-1 text-xs text-muted-foreground">
                                 <Mail className="h-3 w-3" />
-                                <span className="truncate">{schedule.email}</span>
+                                <span className="truncate">
+                                  {recipients[0]}{recipients.length > 1 ? ` +${recipients.length - 1}` : ""}
+                                </span>
                               </p>
                               <p className="flex items-center gap-1 text-xs text-muted-foreground">
                                 <Clock className="h-3 w-3" />
@@ -1231,6 +1255,7 @@ export default function Briefings() {
                               {config.lastDeliveryStatus && (
                                 <p className="text-xs text-muted-foreground">
                                   {t("briefings.lastDelivery", "Last delivery")}: {config.lastDeliveryStatus}
+                                  {config.lastDeliveryRecipientCount ? ` (${config.lastDeliveryRecipientCount} recipients)` : ""}
                                   {config.lastDeliveryAttemptAt ? ` - ${formatDistanceToNow(new Date(config.lastDeliveryAttemptAt), { addSuffix: true })}` : ""}
                                 </p>
                               )}
