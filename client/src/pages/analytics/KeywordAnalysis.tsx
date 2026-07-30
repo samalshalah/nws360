@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, LineChart, Line, Legend } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { useTranslation } from "react-i18next";
 import { TimeRangeFilter, useTimeRange } from "@/components/analytics/TimeRangeFilter";
 import { useLocation } from "wouter";
@@ -32,19 +33,18 @@ export default function KeywordAnalysis() {
 
   const topKeywordsForChart = Array.from(new Set(data?.keywordTimeline.map(t => t.keyword) || []));
 
-  const getSentimentColor = (score: number) => {
-    if (score > 20) return '#22c55e';
-    if (score < -20) return '#ef4444';
-    return '#64748b';
-  };
-
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-keyword-analysis-title">
-          {t("analyticsPages.keywordAnalysis.title")}
-        </h1>
-        <p className="text-muted-foreground">{t("analyticsPages.keywordAnalysis.subtitle")}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-2xl font-bold text-foreground" data-testid="text-keyword-analysis-title">
+            {t("analyticsPages.keywordAnalysis.title")}
+          </h1>
+          <Badge variant="secondary">Non-AI</Badge>
+        </div>
+        <p className="max-w-3xl text-sm text-muted-foreground">
+          Keywords are counted from article titles, summaries, and article text after generic source words and URL fragments are removed.
+        </p>
       </div>
 
       <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
@@ -79,7 +79,12 @@ export default function KeywordAnalysis() {
                           style={{ width: `${pct}%` }}
                         />
                       </div>
-                      <span className="text-xs text-muted-foreground w-8 text-right shrink-0">{kw.count}</span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {typeof kw.previousCount === "number" && kw.count > kw.previousCount && (
+                          <Badge variant="outline" className="text-[10px]">+{kw.count - kw.previousCount}</Badge>
+                        )}
+                        <span className="text-xs text-muted-foreground w-8 text-right">{kw.count}</span>
+                      </div>
                     </button>
                   );
                 })}

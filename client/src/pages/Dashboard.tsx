@@ -3,12 +3,15 @@ import { Link } from "wouter";
 import { formatDistanceToNow } from "date-fns";
 import {
   ArrowUpRight,
-  BarChart3,
+  CheckCircle2,
   Clock3,
+  ClipboardList,
+  FileText,
   Layers,
   Newspaper,
   RadioTower,
   Search,
+  Settings,
   TrendingUp,
   type LucideIcon,
 } from "lucide-react";
@@ -96,6 +99,38 @@ function MetricCard({ title, value, detail, href, icon: Icon, tone }: MetricCard
   );
 }
 
+function WorkflowStep({
+  title,
+  detail,
+  href,
+  icon: Icon,
+  cta,
+}: {
+  title: string;
+  detail: string;
+  href: string;
+  icon: LucideIcon;
+  cta: string;
+}) {
+  return (
+    <Link href={href}>
+      <div className="flex h-full items-start gap-3 rounded-md border border-border/60 bg-card p-4 transition hover:border-primary/50 hover:bg-muted/20">
+        <div className="rounded-md bg-primary/10 p-2 text-primary">
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{detail}</p>
+          <div className="mt-3 inline-flex items-center text-xs font-medium text-primary">
+            {cta}
+            <ArrowUpRight className="ml-1 h-3.5 w-3.5" />
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
 export default function Dashboard() {
   const { t } = useTranslation();
   const { data: analytics, isLoading: isLoadingAnalytics, dataUpdatedAt: analyticsUpdatedAt } = useAnalytics();
@@ -153,6 +188,30 @@ export default function Dashboard() {
     },
   ];
 
+  const workflowSteps = [
+    {
+      title: "Collect",
+      detail: "Confirm sources are active and the newest coverage is arriving from the right outlets.",
+      href: "/sources/manage",
+      icon: RadioTower,
+      cta: "Manage sources",
+    },
+    {
+      title: "Review",
+      detail: "Read the newest category-led feed, mark important items, and remove irrelevant noise.",
+      href: "/feed?sort=newest",
+      icon: CheckCircle2,
+      cta: "Review news",
+    },
+    {
+      title: "Report",
+      detail: "Move useful articles into the report basket and prepare the client briefing.",
+      href: "/reports/basket",
+      icon: ClipboardList,
+      cta: "Build report",
+    },
+  ];
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -169,7 +228,7 @@ export default function Dashboard() {
             )}
           </div>
           <p className="max-w-3xl text-sm text-muted-foreground">
-            {t("dashboard.clientSubtitle", "A live read of what changed across your monitored sources, organized for editorial and reporting decisions.")}
+            {t("dashboard.clientSubtitle", "A daily intelligence desk for collecting coverage, reviewing what matters, and preparing reports from your monitored sources.")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -182,6 +241,22 @@ export default function Dashboard() {
           </Link>
         </div>
       </div>
+
+      <section className="rounded-md border border-border/60 bg-muted/20 p-4" data-testid="section-dashboard-working-flow">
+        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">Today&apos;s working flow</h2>
+            <p className="text-xs text-muted-foreground">Start here when you open the platform. These are the three jobs the system is built around.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">Non-AI live monitoring</Badge>
+            <Badge variant="secondary">AI analysis optional later</Badge>
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          {workflowSteps.map((step) => <WorkflowStep key={step.title} {...step} />)}
+        </div>
+      </section>
 
       {isLoadingAnalytics ? (
         <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
@@ -289,7 +364,7 @@ export default function Dashboard() {
           <section className="rounded-md border border-border/60 bg-card p-4" data-testid="section-dashboard-actions">
             <div className="flex items-start gap-3">
               <div className="rounded-md bg-primary/10 p-2 text-primary">
-                <BarChart3 className="h-5 w-5" />
+                <FileText className="h-5 w-5" />
               </div>
               <div className="min-w-0 space-y-2">
                 <h2 className="text-sm font-semibold text-foreground">Next reporting action</h2>
@@ -304,6 +379,23 @@ export default function Dashboard() {
                     <Button size="sm">Briefings</Button>
                   </Link>
                 </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-md border border-border/60 bg-card p-4" data-testid="section-dashboard-setup-health">
+            <div className="flex items-start gap-3">
+              <div className="rounded-md bg-muted p-2 text-muted-foreground">
+                <Settings className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 space-y-2">
+                <h2 className="text-sm font-semibold text-foreground">Workspace setup</h2>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Use settings for feed refresh, retention, default sorting, and report preferences.
+                </p>
+                <Link href="/settings">
+                  <Button size="sm" variant="outline">Open settings</Button>
+                </Link>
               </div>
             </div>
           </section>

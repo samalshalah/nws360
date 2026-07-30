@@ -66,7 +66,7 @@ export default function Analytics() {
     queryKey: [`/api/analytics/content-volume?startDate=${timeRange.startDate}&endDate=${timeRange.endDate}`],
   });
 
-  const { data: topics, isLoading: topicsLoading } = useQuery<{
+  const { data: topics } = useQuery<{
     topics: { topic: string; count: number; sentiment: string; previousCount?: number; trendScore?: number }[];
     topicTimeline: { date: string; topic: string; count: number }[];
     byCategory: { category: string; count: number }[];
@@ -128,13 +128,54 @@ export default function Analytics() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="text-xl font-bold text-foreground" data-testid="text-analytics-title">
-            {t("analytics.title")}
-          </h1>
-          <UpdatedAt timestamp={dataUpdatedAt ? new Date(dataUpdatedAt) : null} />
+        <div className="space-y-1">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-xl font-bold text-foreground" data-testid="text-analytics-title">
+              Analysis Center
+            </h1>
+            <UpdatedAt timestamp={dataUpdatedAt ? new Date(dataUpdatedAt) : null} />
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Live non-AI measurements for coverage volume, topics, keywords, categories, and source behavior.
+          </p>
         </div>
         <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <Card>
+          <CardContent className="p-4">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-foreground">Coverage signals</span>
+              <Badge variant="secondary">Working now</Badge>
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Counts articles, sources, topics, keywords, and category movement without using AI.
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-foreground">Interpretation</span>
+              <Badge variant="outline">AI add-on</Badge>
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Tone, narrative comparison, forecasting, and generated intelligence remain gated for the AI stage.
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-foreground">Reporting</span>
+              <Badge variant="secondary">Client workflow</Badge>
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Use analysis to decide what to review, then move selected articles into reports and briefings.
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

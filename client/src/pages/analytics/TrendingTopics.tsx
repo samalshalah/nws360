@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, LineChart, Line, Legend, PieChart, Pie, Cell } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, LineChart, Line, Legend } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "react-i18next";
 import { TimeRangeFilter, useTimeRange } from "@/components/analytics/TimeRangeFilter";
@@ -39,10 +39,15 @@ export default function TrendingTopics() {
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-trending-topics-title">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-2xl font-bold text-foreground" data-testid="text-trending-topics-title">
           {t("analyticsPages.trendingTopics.title")}
-        </h1>
-        <p className="text-muted-foreground">{t("analyticsPages.trendingTopics.subtitle")}</p>
+          </h1>
+          <Badge variant="secondary">Non-AI</Badge>
+        </div>
+        <p className="max-w-3xl text-sm text-muted-foreground">
+          Topic phrases are counted from headlines and summaries, then ranked against the previous matching period to show what is gaining attention.
+        </p>
       </div>
 
       <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
@@ -77,7 +82,12 @@ export default function TrendingTopics() {
                           style={{ width: `${pct}%`, backgroundColor: SENTIMENT_COLORS[topic.sentiment] || '#64748b' }}
                         />
                       </div>
-                      <Badge variant="secondary" className="shrink-0">{topic.count}</Badge>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {typeof topic.previousCount === "number" && topic.count > topic.previousCount && (
+                          <Badge variant="outline" className="text-[10px]">+{topic.count - topic.previousCount}</Badge>
+                        )}
+                        <Badge variant="secondary">{topic.count}</Badge>
+                      </div>
                     </button>
                   );
                 })}
