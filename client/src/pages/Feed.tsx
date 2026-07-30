@@ -3,6 +3,7 @@ import { useArticles } from "@/hooks/use-articles";
 import { useSources } from "@/hooks/use-sources";
 import { useAnalytics } from "@/hooks/use-analytics";
 import { ArticleCard } from "@/components/articles/ArticleCard";
+import { FeedMagazine } from "@/components/articles/FeedMagazine";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -82,8 +83,9 @@ export default function Feed() {
   const baselineArticleIdsRef = useRef<Set<number>>(new Set());
   const baselineTotalRef = useRef(0);
   const baselineReadyRef = useRef(false);
-  const [layout, setLayout] = useState<"grid" | "list">(() => {
-    return (localStorage.getItem("feed-layout") as "grid" | "list") || "grid";
+  const [layout, setLayout] = useState<"front" | "grid" | "list">(() => {
+    const storedLayout = localStorage.getItem("feed-layout-v2");
+    return storedLayout === "grid" || storedLayout === "list" || storedLayout === "front" ? storedLayout : "front";
   });
 
   const [filters, setFilters] = useState(() => {
@@ -950,17 +952,28 @@ export default function Feed() {
           <div className="hidden shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5 md:flex">
             <Button
               size="icon"
+              variant={layout === "front" ? "default" : "ghost"}
+              onClick={() => { setLayout("front"); localStorage.setItem("feed-layout-v2", "front"); }}
+              data-testid="button-layout-front"
+              title="Front page"
+            >
+              <Newspaper className="w-4 h-4" />
+            </Button>
+            <Button
+              size="icon"
               variant={layout === "grid" ? "default" : "ghost"}
-              onClick={() => { setLayout("grid"); localStorage.setItem("feed-layout", "grid"); }}
+              onClick={() => { setLayout("grid"); localStorage.setItem("feed-layout-v2", "grid"); }}
               data-testid="button-layout-grid"
+              title="Grid view"
             >
               <LayoutGrid className="w-4 h-4" />
             </Button>
             <Button
               size="icon"
               variant={layout === "list" ? "default" : "ghost"}
-              onClick={() => { setLayout("list"); localStorage.setItem("feed-layout", "list"); }}
+              onClick={() => { setLayout("list"); localStorage.setItem("feed-layout-v2", "list"); }}
               data-testid="button-layout-list"
+              title="List view"
             >
               <List className="w-4 h-4" />
             </Button>
@@ -1096,7 +1109,21 @@ export default function Feed() {
         </div>
       </div>
 
-      {isLoadingArticles && page === 1 ? (
+      {layout === "front" ? (
+        <FeedMagazine
+          latestArticles={allArticles}
+          total={articlesData?.total}
+          isLoading={isLoadingArticles && page === 1}
+          startDate={dateRange.startDate}
+          endDate={dateRange.endDate}
+          activeCategory={filters.category}
+          onSelectCategory={(category) => updateFilter("category", category)}
+          onOpenListView={() => {
+            setLayout("list");
+            localStorage.setItem("feed-layout-v2", "list");
+          }}
+        />
+      ) : isLoadingArticles && page === 1 ? (
         <div className={cn(
           layout === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "flex flex-col gap-4"
         )}>

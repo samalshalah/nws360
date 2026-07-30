@@ -31,6 +31,17 @@ const CATEGORY_RULES: CategoryRule[] = [
     terms: ["عاجل", "breaking", "urgent", "developing", "فوري", "تنبيه"],
   },
   {
+    category: "political",
+    weight: 4,
+    terms: [
+      "سياسة", "السياسة", "سياسي", "سياسية", "انتخابات", "الانتخابات", "مرشح", "مرشحين", "حزب", "احزاب", "الأحزاب",
+      "ائتلاف", "تحالف سياسي", "الاطار التنسيقي", "الإطار التنسيقي", "التيار الصدري", "الصدر", "رئيس الجمهورية",
+      "رئاسة الجمهورية", "المعارضة",
+      "politics", "political", "election", "candidate", "party", "coalition", "president",
+      "opposition",
+    ],
+  },
+  {
     category: "security",
     weight: 5,
     terms: [
@@ -102,9 +113,9 @@ const CATEGORY_RULES: CategoryRule[] = [
     category: "government_services",
     weight: 3,
     terms: [
-      "وزارة", "الوزارة", "رئاسة الوزراء", "مجلس الوزراء", "خدمات", "رواتب", "تقاعد", "بلدية", "امانة بغداد",
+      "وزارة", "الوزارة", "رئيس الوزراء", "رئاسة الوزراء", "مجلس الوزراء", "السوداني", "خدمات", "رواتب", "تقاعد", "بلدية", "امانة بغداد",
       "البطاقة الوطنية", "جوازات", "منحة", "government", "ministry", "cabinet", "public services",
-      "salary", "pension", "municipality",
+      "prime minister", "premier", "salary", "pension", "municipality",
     ],
   },
   {

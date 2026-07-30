@@ -19,7 +19,7 @@ interface ArticleCardProps {
   article: Article & { source: Source | null };
   selected?: boolean;
   onToggleSelect?: (id: number) => void;
-  layout?: "grid" | "list";
+  layout?: "grid" | "list" | "headline" | "compact";
 }
 
 const sourceTypeIcons: Record<string, typeof Rss> = {
@@ -337,6 +337,132 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
       onShare={handleShare}
     />
   );
+
+  if (layout === "headline") {
+    return (
+      <>
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.18 }}
+          role="button"
+          tabIndex={0}
+          onClick={() => setDetailOpen(true)}
+          onKeyDown={(e) => {
+            if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+              e.preventDefault();
+              setDetailOpen(true);
+            }
+          }}
+          className={cn(
+            "group grid min-h-[360px] cursor-pointer overflow-hidden rounded-md border bg-card shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 lg:grid-cols-[minmax(0,1.08fr)_minmax(330px,0.92fr)]",
+            selected ? "border-primary ring-1 ring-primary/30" : "border-border/50"
+          )}
+          data-testid={`card-article-headline-${article.id}`}
+        >
+          {selectCheckbox}
+          <div className="relative min-h-[220px] overflow-hidden bg-muted">
+            {hasImage ? (
+              <img
+                src={article.imageUrl!}
+                alt={article.title}
+                className="h-full min-h-[220px] w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                loading="lazy"
+                onError={() => setImgError(true)}
+              />
+            ) : (
+              <div className="flex h-full min-h-[220px] items-center justify-center bg-gradient-to-br from-muted to-muted/60">
+                {faviconUrl ? (
+                  <img src={faviconUrl} alt={article.subSource || article.source?.name || ""} className="h-16 w-16 rounded-md" loading="lazy" />
+                ) : (
+                  <SourceIcon className="h-14 w-14 text-muted-foreground/30" />
+                )}
+              </div>
+            )}
+          </div>
+          <div className="flex min-w-0 flex-col gap-4 p-5 md:p-6">
+            <div className="flex flex-wrap items-center gap-2">
+              {sourceInfo}
+              {categoryBadge}
+              {provinceBadge}
+            </div>
+            <h2 className="font-display text-2xl font-bold leading-tight text-foreground transition-colors group-hover:text-primary md:text-3xl">
+              {article.title}
+            </h2>
+            <p className="line-clamp-4 text-sm leading-relaxed text-muted-foreground">
+              {displayContent}
+            </p>
+            <div className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-border/50 pt-4">
+              <div className="flex flex-wrap items-center gap-3">
+                {timeInfo}
+                {workflowBadge}
+                {manualTagBadges}
+                {crossPostIcons}
+              </div>
+              {actionButtons}
+            </div>
+          </div>
+        </motion.div>
+        {articleDialog}
+      </>
+    );
+  }
+
+  if (layout === "compact") {
+    return (
+      <>
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.15 }}
+          role="button"
+          tabIndex={0}
+          onClick={() => setDetailOpen(true)}
+          onKeyDown={(e) => {
+            if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+              e.preventDefault();
+              setDetailOpen(true);
+            }
+          }}
+          className="group flex cursor-pointer gap-3 rounded-md border border-border/50 bg-card p-3 transition hover:border-primary/40 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          data-testid={`card-article-compact-${article.id}`}
+        >
+          <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
+            {hasImage ? (
+              <img
+                src={article.imageUrl!}
+                alt={article.title}
+                className="h-full w-full object-cover"
+                loading="lazy"
+                onError={() => setImgError(true)}
+              />
+            ) : faviconUrl ? (
+              <img src={faviconUrl} alt={article.subSource || article.source?.name || ""} className="h-8 w-8 rounded-md" loading="lazy" />
+            ) : (
+              <SourceIcon className="h-7 w-7 text-muted-foreground/35" />
+            )}
+          </div>
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {article.subSource || article.source?.name || t("common.noResults")}
+              </span>
+              {categoryBadge}
+            </div>
+            <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground transition-colors group-hover:text-primary">
+              {article.title}
+            </h3>
+            <div className="flex flex-wrap items-center gap-2">
+              {timeInfo}
+              {provinceBadge}
+              {crossPostIcons}
+            </div>
+          </div>
+        </motion.div>
+        {articleDialog}
+      </>
+    );
+  }
 
   if (layout === "list") {
     return (
