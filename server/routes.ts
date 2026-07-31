@@ -29,6 +29,7 @@ import {
 import { normalizeWebsiteCollectorConfig, websiteCollectorConfigSchema } from "@shared/source-collector";
 import { normalizeSourceFilterConfig, sourceFilterConfigSchema } from "@shared/source-filter";
 import { classifyFeedImportRow, normalizeSourceImportKey, type ClassifiedFeedImportRow, type FeedImportInputRow } from "@shared/source-import";
+import { ARTICLE_RELEVANCE_STATUSES, isArticleRelevanceStatus } from "@shared/workspace-relevance";
 import { discoverPublisherCategories, type DiscoveredPublisherCategory } from "./publisher-discovery";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
@@ -109,6 +110,12 @@ const articleWorkflowUpdateSchema = z.object({
   manualTags: z.array(z.string()).max(MAX_ARTICLE_MANUAL_TAGS).optional(),
 }).strict();
 
+const articleRelevanceUpdateSchema = z.object({
+  relevanceStatus: z.enum(ARTICLE_RELEVANCE_STATUSES),
+  relevanceReason: z.string().trim().max(500).optional(),
+  workspaceId: z.coerce.number().int().positive().optional(),
+}).strict();
+
 const bulkArticleWorkflowUpdateSchema = articleWorkflowUpdateSchema.extend({
   ids: z.array(z.coerce.number().int().positive()).min(1).max(500),
 });
@@ -123,6 +130,11 @@ const savedFeedViewFiltersSchema = z.object({
   province: z.string().max(80).optional(),
   workflowStatus: z.string().max(80).optional(),
   manualTag: z.string().max(80).optional(),
+  relevanceStatus: z.enum(ARTICLE_RELEVANCE_STATUSES).optional(),
+  workspaceId: z.coerce.number().int().positive().optional(),
+  includeContextual: z.boolean().optional(),
+  includeNeedsReview: z.boolean().optional(),
+  includeNotRelevant: z.boolean().optional(),
   sourceType: z.string().max(60).optional(),
   dateRange: z.enum(["all", "today", "week", "month"]).optional(),
   sort: z.enum(["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"]).optional(),
@@ -148,6 +160,24 @@ const optionalPositiveInt = z.preprocess((value) => {
   if (value === undefined || value === null || value === "") return null;
   return value;
 }, z.coerce.number().int().positive().nullable().optional());
+
+function booleanQuery(value: unknown): boolean | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (Array.isArray(value)) return booleanQuery(value[0]);
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return undefined;
+}
+
+function relevanceQueryStatuses(value: unknown): string[] | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const rawValues = Array.isArray(value) ? value : String(value).split(",");
+  const statuses = rawValues
+    .map((item) => String(item).trim())
+    .filter(isArticleRelevanceStatus);
+  return statuses.length > 0 ? Array.from(new Set(statuses)) : undefined;
+}
 
 const alertRuleBaseInputSchema = z.object({
   name: z.string().trim().min(2).max(100),
@@ -834,6 +864,22 @@ async function resolveUserCaps(user: any): Promise<string[]> {
     aiEnabled,
     user.capabilities || [],
   );
+}
+
+async function canAccessRelevanceReview(user: any, req: Request): Promise<boolean> {
+  if (isSystemAdmin(user)) {
+    const ctx = resolveTenantContext(user, req);
+    if (!ctx.tenantId) return true;
+    return resolveEffectiveCaps(
+      user.role,
+      user.userType || null,
+      "enterprise",
+      true,
+      user.capabilities || null,
+    ).includes(CAPS.ARTICLE_EDIT);
+  }
+  const userCaps = await resolveUserCaps(user);
+  return userCaps.includes(CAPS.ARTICLE_EDIT);
 }
 
 function requireCapability(...caps: string[]) {
@@ -2140,6 +2186,16 @@ export async function registerRoutes(
       const clientId = resolveClientId(user, req);
       const scopedSourceIds = await getUserSourceIds(user, req);
       const sourceNameFilter = typeof req.query.sourceName === "string" ? req.query.sourceName : undefined;
+      const requestedRelevanceExpansion = Boolean(
+        req.query.relevanceStatus ||
+        req.query.relevanceStatuses ||
+        booleanQuery(req.query.includeContextual) ||
+        booleanQuery(req.query.includeNeedsReview) ||
+        booleanQuery(req.query.includeNotRelevant)
+      );
+      if (requestedRelevanceExpansion && !(await canAccessRelevanceReview(user, req))) {
+        return res.status(403).json({ message: "Insufficient permissions for relevance review scope" });
+      }
       const sortParam = req.query.sort as string | undefined;
       const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
         ? sortParam as any
@@ -2155,6 +2211,12 @@ export async function registerRoutes(
         category: req.query.category as string,
         priority: req.query.priority as string,
         province: req.query.province as string,
+        relevanceStatus: isArticleRelevanceStatus(req.query.relevanceStatus) ? req.query.relevanceStatus : undefined,
+        relevanceStatuses: relevanceQueryStatuses(req.query.relevanceStatuses),
+        workspaceId: req.query.workspaceId && !isNaN(parseInt(req.query.workspaceId as string)) ? parseInt(req.query.workspaceId as string) : undefined,
+        includeContextual: booleanQuery(req.query.includeContextual),
+        includeNeedsReview: booleanQuery(req.query.includeNeedsReview),
+        includeNotRelevant: booleanQuery(req.query.includeNotRelevant),
         sourceType: req.query.sourceType as string,
         country: req.query.country as string,
         topic: req.query.topic as string,
@@ -2166,7 +2228,7 @@ export async function registerRoutes(
       };
 
       const result = await storage.getArticles(params);
-      
+
       const targetLang = params.lang?.split("-")[0];
       if (targetLang && targetLang !== "en") {
         const articlesToTranslate = result.items.filter((article) => {
@@ -2203,7 +2265,7 @@ export async function registerRoutes(
           }
         }));
       }
-      
+
       res.json({
         items: result.items,
         total: result.total,
@@ -2559,6 +2621,68 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/articles/:id/relevance", requireCapability(CAPS.ARTICLE_EDIT), async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "Tenant context required" });
+
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid article ID" });
+
+    try {
+      const input = articleRelevanceUpdateSchema.parse(req.body);
+      const article = await storage.getArticle(id, clientId);
+      if (!article) return safeNotFound(res);
+
+      const scopedSourceIds = await getUserSourceIds(user, req);
+      if (Array.isArray(scopedSourceIds) && article.sourceId && !scopedSourceIds.includes(article.sourceId)) {
+        return safeNotFound(res);
+      }
+
+      const updated = await storage.updateArticleRelevance(id, {
+        relevanceStatus: input.relevanceStatus,
+        relevanceConfidence: 100,
+        relevanceReason: input.relevanceReason || "Manually reviewed by analyst.",
+        relevanceMethod: "manual",
+        relevanceReviewedBy: user.id,
+        relevanceReviewedAt: new Date(),
+      } as any, clientId);
+
+      if (input.workspaceId) {
+        const workspace = await storage.getWorkspace(input.workspaceId);
+        if (!workspace || workspace.clientId !== clientId) return safeNotFound(res);
+        await storage.upsertArticleWorkspaceRelevance({
+          articleId: id,
+          workspaceId: input.workspaceId,
+          clientId,
+          relevanceStatus: input.relevanceStatus,
+          confidence: 100,
+          shortReason: input.relevanceReason || "Manually reviewed by analyst.",
+          matchedScope: ["manual_review"],
+          principalCountries: [],
+          materiallyAffectedCountries: [],
+          supportingSignals: [],
+          relevanceMethod: "manual",
+          manualOverride: true,
+          reviewedBy: user.id,
+          reviewedAt: new Date(),
+          evaluatedAt: new Date(),
+        } as any);
+      }
+
+      await db.delete(analyticsCache).where(eq(analyticsCache.clientId, clientId));
+      runAnalyticsComputation().catch(e => console.error("[Analytics] Post-relevance-review recomputation error:", e));
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid relevance update" });
+      }
+      console.error("Article relevance update failed:", err);
+      res.status(500).json({ message: "Article relevance update failed" });
+    }
+  });
+
   app.post("/api/articles/bulk-workflow", requireCapability(CAPS.ARTICLE_EDIT), async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
@@ -2733,7 +2857,7 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid article ID" });
     const { targetLanguage } = req.body;
-    
+
     if (!targetLanguage) {
       return res.status(400).json({ message: "targetLanguage is required" });
     }
@@ -2807,7 +2931,7 @@ export async function registerRoutes(
 
   // === RE-ANALYZE ARTICLES ===
   app.post("/api/reanalyze", requireAiEnabled(), requireCapability(CAPS.INTELLIGENCE_RUN), async (req, res) => {
-    
+
     try {
       const user = req.user as any;
       const clientId = resolveClientId(user, req);
@@ -2824,7 +2948,7 @@ export async function registerRoutes(
       const unanalyzed = allArticles.items.filter(
         a => a.aiAnalysisStatus === "skipped" || ((!a.sentimentLabel || a.sentimentLabel === "neutral") && a.sentimentScore === 0 && (!a.keywords || a.keywords.length === 0))
       );
-      
+
       const toEnqueue = unanalyzed.slice(0, 100);
       const batchId = `reanalyze-${Date.now()}`;
       let enqueued = 0;
@@ -2847,7 +2971,7 @@ export async function registerRoutes(
       }
 
       console.log(`[Reanalyze] Enqueued ${enqueued}/${toEnqueue.length} articles (batch: ${batchId})`);
-      
+
       res.json({ success: true, batchId, enqueued, total: unanalyzed.length, message: "Articles queued for re-analysis. Check queue stats for progress." });
     } catch (err) {
       console.error("[Reanalyze] Error:", err);
@@ -3851,7 +3975,7 @@ export async function registerRoutes(
       const start = Date.now();
       await db.execute(sql`SELECT 1`);
       const latencyMs = Date.now() - start;
-      const tableStats = await db.execute(sql`SELECT 
+      const tableStats = await db.execute(sql`SELECT
         (SELECT count(*) FROM articles) as articles_count,
         (SELECT count(*) FROM sources) as sources_count,
         (SELECT count(*) FROM users) as users_count`);

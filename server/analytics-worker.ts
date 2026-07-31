@@ -7,6 +7,7 @@ import { isGenericAnalyticsTerm } from "./analytics-noise";
 import { mergeArticleCategoryRows } from "@shared/article-taxonomy";
 
 const AI_SUCCESS_FILTER = sql`(${articles.aiAnalysisStatus} = 'success' OR ${articles.aiAnalysisStatus} IS NULL)`;
+const ACCEPTED_RELEVANCE_FILTER = sql`COALESCE(${articles.relevanceStatus}, 'direct_scope_match') IN ('direct_scope_match', 'material_scope_impact')`;
 
 async function upsertCache(metricType: string, metricKey: string, data: any, periodStart: Date, periodEnd: Date, clientId?: number | null) {
   const conditions = [
@@ -49,7 +50,7 @@ function buildClientCondition(clientId?: number | null) {
 }
 
 async function computeConfidenceCounts(periodStart: Date, periodEnd: Date, clientId?: number | null) {
-  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd)];
+  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd), ACCEPTED_RELEVANCE_FILTER];
   const cc = buildClientCondition(clientId);
   if (cc) conditions.push(cc);
 
@@ -67,7 +68,7 @@ async function computeConfidenceCounts(periodStart: Date, periodEnd: Date, clien
 }
 
 async function computeVolumeMetrics(periodStart: Date, periodEnd: Date, clientId?: number | null) {
-  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd)];
+  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd), ACCEPTED_RELEVANCE_FILTER];
   const cc = buildClientCondition(clientId);
   if (cc) conditions.push(cc);
 
@@ -101,7 +102,7 @@ async function computeVolumeMetrics(periodStart: Date, periodEnd: Date, clientId
 }
 
 async function computeTrendingTopics(periodStart: Date, periodEnd: Date, clientId?: number | null) {
-  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd), AI_SUCCESS_FILTER];
+  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd), AI_SUCCESS_FILTER, ACCEPTED_RELEVANCE_FILTER];
   const cc = buildClientCondition(clientId);
   if (cc) conditions.push(cc);
 
@@ -133,7 +134,7 @@ async function computeTrendingTopics(periodStart: Date, periodEnd: Date, clientI
 }
 
 async function computeSentimentMetrics(periodStart: Date, periodEnd: Date, clientId?: number | null) {
-  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd), AI_SUCCESS_FILTER];
+  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd), AI_SUCCESS_FILTER, ACCEPTED_RELEVANCE_FILTER];
   const cc = buildClientCondition(clientId);
   if (cc) conditions.push(cc);
 
@@ -163,7 +164,7 @@ async function computeSentimentMetrics(periodStart: Date, periodEnd: Date, clien
 }
 
 async function computeKeywordMetrics(periodStart: Date, periodEnd: Date, clientId?: number | null) {
-  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd), AI_SUCCESS_FILTER];
+  const conditions = [gte(articles.publishedAt, periodStart), lte(articles.publishedAt, periodEnd), AI_SUCCESS_FILTER, ACCEPTED_RELEVANCE_FILTER];
   const cc = buildClientCondition(clientId);
   if (cc) conditions.push(cc);
 

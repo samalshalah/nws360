@@ -66,6 +66,7 @@ const OPERATIONAL_TABLE_NAMES = new Set([
   "annotations",
   "api_keys",
   "article_ai_analysis",
+  "article_workspace_relevance",
   "article_appearances",
   "article_translations",
   "articles",

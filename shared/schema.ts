@@ -5,6 +5,7 @@ import { relations, sql } from "drizzle-orm";
 import type { WebsiteCollectorConfig } from "./source-collector";
 import type { SourceFilterConfig } from "./source-filter";
 import { normalizeUserScopeClientAssignment } from "./user-scope";
+import type { WorkspaceProfile } from "./workspace-relevance";
 
 // === CLIENTS ===
 export const clients = pgTable("clients", {
@@ -163,6 +164,14 @@ export const articles = pgTable("articles", {
   engagementShares: integer("engagement_shares"),
   clientId: integer("client_id").notNull(),
   crossPosts: jsonb("cross_posts").$type<{ platform: string; url: string; sourceId: number }[]>().default([]),
+  relevanceStatus: text("relevance_status").notNull().default("direct_scope_match"),
+  relevanceConfidence: integer("relevance_confidence"),
+  relevanceReason: text("relevance_reason"),
+  relevanceMethod: text("relevance_method").notNull().default("migration"),
+  relevanceMatchedSignals: text("relevance_matched_signals").array().notNull().default([]),
+  relevanceEvaluatedAt: timestamp("relevance_evaluated_at"),
+  relevanceReviewedBy: integer("relevance_reviewed_by").references(() => users.id),
+  relevanceReviewedAt: timestamp("relevance_reviewed_at"),
   aiAnalysisStatus: text("ai_analysis_status").default("skipped"),
   aiRetryCount: integer("ai_retry_count").default(0),
   aiLastRetryAt: timestamp("ai_last_retry_at"),
@@ -171,10 +180,64 @@ export const articles = pgTable("articles", {
   index("idx_articles_client_id").on(table.clientId),
   index("idx_articles_client_category").on(table.clientId, table.category),
   index("idx_articles_client_priority").on(table.clientId, table.priority),
+  index("idx_articles_client_relevance").on(table.clientId, table.relevanceStatus),
+  index("idx_articles_relevance_review").on(table.clientId, table.relevanceStatus, table.relevanceEvaluatedAt),
   uniqueIndex("articles_client_url_idx").on(table.clientId, table.url),
 ]);
 
 export const insertArticleSchema = createInsertSchema(articles).omit({ id: true, createdAt: true });
+
+// === REJECTED INGESTION ITEMS (Relevance Gate Audit) ===
+export const rejectedIngestionItems = pgTable("rejected_ingestion_items", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull(),
+  sourceId: integer("source_id").references(() => sources.id, { onDelete: "cascade" }),
+  url: text("url"),
+  title: text("title"),
+  publishedAt: timestamp("published_at"),
+  rejectionStatus: text("rejection_status").notNull(),
+  rejectionReason: text("rejection_reason"),
+  matchedSignals: text("matched_signals").array().notNull().default([]),
+  dedupeKey: text("dedupe_key").notNull(),
+  evaluatedAt: timestamp("evaluated_at").defaultNow(),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("rejected_items_client_source_key").on(table.clientId, table.sourceId, table.dedupeKey),
+  index("idx_rejected_items_client_status").on(table.clientId, table.rejectionStatus),
+  index("idx_rejected_items_source").on(table.sourceId),
+]);
+
+export const insertRejectedIngestionItemSchema = createInsertSchema(rejectedIngestionItems).omit({ id: true, evaluatedAt: true, createdAt: true });
+
+// === ARTICLE RELEVANCE BY MONITORING WORKSPACE ===
+export const articleWorkspaceRelevance = pgTable("article_workspace_relevance", {
+  id: serial("id").primaryKey(),
+  articleId: integer("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
+  workspaceId: integer("workspace_id").notNull(),
+  clientId: integer("client_id").notNull(),
+  relevanceStatus: text("relevance_status").notNull().default("needs_review"),
+  confidence: integer("confidence").notNull().default(0),
+  shortReason: text("short_reason"),
+  matchedScope: text("matched_scope").array().notNull().default([]),
+  principalCountries: text("principal_countries").array().notNull().default([]),
+  materiallyAffectedCountries: text("materially_affected_countries").array().notNull().default([]),
+  supportingSignals: text("supporting_signals").array().notNull().default([]),
+  relevanceMethod: text("relevance_method").notNull().default("deterministic"),
+  manualOverride: boolean("manual_override").notNull().default(false),
+  reviewedBy: integer("reviewed_by").references(() => users.id),
+  reviewedAt: timestamp("reviewed_at"),
+  reopenedAt: timestamp("reopened_at"),
+  evaluatedAt: timestamp("evaluated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("article_workspace_relevance_unique").on(table.articleId, table.workspaceId),
+  index("idx_article_workspace_relevance_client").on(table.clientId, table.relevanceStatus),
+  index("idx_article_workspace_relevance_workspace").on(table.workspaceId, table.relevanceStatus),
+]);
+
+export const insertArticleWorkspaceRelevanceSchema = createInsertSchema(articleWorkspaceRelevance).omit({ id: true, createdAt: true, updatedAt: true });
 
 // === SAVED FEED VIEWS ===
 export const savedFeedViews = pgTable("saved_feed_views", {
@@ -983,6 +1046,12 @@ export type InsertBookmark = z.infer<typeof insertBookmarkSchema>;
 export type SourceFetchLog = typeof sourceFetchLogs.$inferSelect;
 export type InsertSourceFetchLog = z.infer<typeof insertSourceFetchLogSchema>;
 
+export type RejectedIngestionItem = typeof rejectedIngestionItems.$inferSelect;
+export type InsertRejectedIngestionItem = z.infer<typeof insertRejectedIngestionItemSchema>;
+
+export type ArticleWorkspaceRelevance = typeof articleWorkspaceRelevance.$inferSelect;
+export type InsertArticleWorkspaceRelevance = z.infer<typeof insertArticleWorkspaceRelevanceSchema>;
+
 export type Client = typeof clients.$inferSelect;
 export type InsertClient = z.infer<typeof insertClientSchema>;
 
@@ -1096,6 +1165,27 @@ export const workspaces = pgTable("workspaces", {
   clientId: integer("client_id").notNull(),
   name: text("name").notNull(),
   description: text("description"),
+  scopeMode: text("scope_mode").notNull().default("mixed"),
+  globalScope: boolean("global_scope").notNull().default(false),
+  primaryCountries: text("primary_countries").array().notNull().default([]),
+  secondaryCountries: text("secondary_countries").array().notNull().default([]),
+  regions: text("regions").array().notNull().default([]),
+  subnationalAreas: text("subnational_areas").array().notNull().default([]),
+  topics: text("topics").array().notNull().default([]),
+  subtopics: text("subtopics").array().notNull().default([]),
+  industries: text("industries").array().notNull().default([]),
+  entities: text("entities").array().notNull().default([]),
+  organizations: text("organizations").array().notNull().default([]),
+  people: text("people").array().notNull().default([]),
+  projects: text("projects").array().notNull().default([]),
+  events: text("events").array().notNull().default([]),
+  multilingualAliases: jsonb("multilingual_aliases").$type<WorkspaceProfile["multilingualAliases"]>(),
+  inclusionPhrases: text("inclusion_phrases").array().notNull().default([]),
+  exclusionPhrases: text("exclusion_phrases").array().notNull().default([]),
+  impactPhrases: text("impact_phrases").array().notNull().default([]),
+  contextualPhrases: text("contextual_phrases").array().notNull().default([]),
+  preferredLanguages: text("preferred_languages").array().notNull().default([]),
+  includeContextualByDefault: boolean("include_contextual_by_default").notNull().default(false),
   createdBy: integer("created_by"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -2240,6 +2330,12 @@ export interface ArticleQueryParams {
   province?: string;
   workflowStatus?: string;
   manualTag?: string;
+  relevanceStatus?: string;
+  relevanceStatuses?: string[];
+  workspaceId?: number;
+  includeContextual?: boolean;
+  includeNeedsReview?: boolean;
+  includeNotRelevant?: boolean;
   sourceType?: string;
   country?: string;
   topic?: string;

@@ -41,8 +41,6 @@ const NOISE_WORDS = new Set([
   "images",
   "investigate",
   "investigates",
-  "iraq",
-  "iraqi",
   "journalist",
   "journalists",
   "latest",
