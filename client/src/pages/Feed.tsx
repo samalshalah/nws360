@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
-import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe, LayoutGrid, List, ArrowDownUp, BookmarkPlus, MapPin, FolderOpen, ChevronDown } from "lucide-react";
+import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe, LayoutGrid, List, ArrowDownUp, BookmarkPlus, ChevronDown } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -749,149 +749,162 @@ export default function Feed() {
     </div>
   );
 
-  const activeCategoryLabel = filters.category ? getArticleCategoryLabel(filters.category, embassyProfile) : "Categories";
-  const activeSourceLabel = filters.sourceName || "Sources";
-  const activeCityLabel = filters.province
-    ? IRAQ_PROVINCES.find((province) => province.code === filters.province)?.label || filters.province
-    : "Cities";
+  const primaryCategoryNav = [
+    { code: "iraqi_government", label: "Government" },
+    { code: "parliament_politics", label: "Politics" },
+    { code: "security_stability", label: "Security" },
+    { code: "economy_oil_finance", label: "Economy" },
+    { code: "development_services", label: "Services" },
+    { code: "regional_international_relations", label: "International" },
+    { code: "client_bilateral_relations", label: "Bilateral" },
+  ];
+  const primaryCategoryCodes = new Set(primaryCategoryNav.map((item) => item.code));
+  const secondaryCategoryNav = ARTICLE_CATEGORIES.filter((category) => !primaryCategoryCodes.has(category.code));
 
-  const browseTriggerClass = (active: boolean) => cn(
-    "h-9 max-w-full justify-between gap-2 rounded-md",
-    active ? "shadow-sm" : "bg-background"
+  const navLinkClass = (active: boolean) => cn(
+    "relative flex h-11 shrink-0 items-center px-3 text-sm font-semibold transition-colors",
+    "text-muted-foreground hover:text-foreground",
+    "after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-primary after:opacity-0 after:transition-opacity",
+    active && "text-foreground after:opacity-100"
   );
 
-  const browseMenuItemClass = (active: boolean) => cn(
-    "justify-between gap-3",
+  const navMenuTriggerClass = (active: boolean) => cn(
+    navLinkClass(active),
+    "gap-1 rounded-none bg-transparent hover:bg-transparent focus:bg-transparent"
+  );
+
+  const navMenuItemClass = (active: boolean) => cn(
+    "gap-3",
     active && "bg-accent text-accent-foreground font-medium"
   );
 
   const browseNavigation = (
     <nav
-      className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 bg-card p-2 shadow-sm"
+      className="border-y border-border/70 bg-background"
       data-testid="feed-browse-navigation"
       aria-label="Feed browse navigation"
     >
-      <span className="hidden px-1 text-xs font-semibold uppercase text-muted-foreground sm:inline">Browse</span>
-      <Button
-        variant={!activeBrowseNavigation ? "default" : "outline"}
-        size="sm"
-        className="h-9 shrink-0"
-        onClick={clearBrowseNavigation}
-        data-testid="button-browse-all-news"
-      >
-        <Newspaper className="mr-1.5 h-4 w-4" />
-        All news
-      </Button>
+      <div className="flex min-w-0 items-center overflow-x-auto">
+        <button
+          type="button"
+          className={navLinkClass(!activeBrowseNavigation)}
+          onClick={clearBrowseNavigation}
+          data-testid="button-browse-home"
+        >
+          Home
+        </button>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant={filters.category ? "default" : "outline"}
-            size="sm"
-            className={browseTriggerClass(Boolean(filters.category))}
-            data-testid="menu-browse-categories"
+        {primaryCategoryNav.map((item) => (
+          <button
+            key={item.code}
+            type="button"
+            className={navLinkClass(filters.category === item.code)}
+            onClick={() => updateBrowseFilter("category", item.code)}
+            data-testid={`button-nav-category-${item.code}`}
           >
-            <FolderOpen className="h-4 w-4 shrink-0" />
-            <span className="max-w-[180px] truncate">{activeCategoryLabel}</span>
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-72">
-          <DropdownMenuLabel>Categories</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className={browseMenuItemClass(!filters.category)}
-            onSelect={() => updateBrowseFilter("category", undefined)}
-            data-testid="menu-item-category-all"
-          >
-            All categories
-          </DropdownMenuItem>
-          {ARTICLE_CATEGORIES.map(category => (
-            <DropdownMenuItem
-              key={category.code}
-              className={browseMenuItemClass(filters.category === category.code)}
-              onSelect={() => updateBrowseFilter("category", category.code)}
-              data-testid={`menu-item-category-${category.code}`}
-            >
-              <span className="truncate">{getArticleCategoryLabel(category.code, embassyProfile)}</span>
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+            {item.label}
+          </button>
+        ))}
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant={filters.sourceName ? "default" : "outline"}
-            size="sm"
-            className={browseTriggerClass(Boolean(filters.sourceName))}
-            data-testid="menu-browse-sources"
-          >
-            <Rss className="h-4 w-4 shrink-0" />
-            <span className="max-w-[180px] truncate">{activeSourceLabel}</span>
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="max-h-[min(70vh,460px)] w-80">
-          <DropdownMenuLabel>Sources</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className={browseMenuItemClass(!filters.sourceName)}
-            onSelect={() => updateBrowseFilter("sourceName", undefined)}
-            data-testid="menu-item-source-all"
-          >
-            All sources
-          </DropdownMenuItem>
-          {uniqueSourceNames.length === 0 ? (
-            <DropdownMenuItem disabled>No sources loaded</DropdownMenuItem>
-          ) : uniqueSourceNames.map(name => (
-            <DropdownMenuItem
-              key={name}
-              className={browseMenuItemClass(filters.sourceName === name)}
-              onSelect={() => updateBrowseFilter("sourceName", name)}
-              data-testid={`menu-item-source-${name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={navMenuTriggerClass(Boolean(filters.category && !primaryCategoryCodes.has(filters.category)))}
+              data-testid="menu-browse-more-sections"
             >
-              <span className="truncate">{name}</span>
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+              More
+              <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-72">
+            <DropdownMenuLabel>Sections</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {secondaryCategoryNav.map(category => (
+              <DropdownMenuItem
+                key={category.code}
+                className={navMenuItemClass(filters.category === category.code)}
+                onSelect={() => updateBrowseFilter("category", category.code)}
+                data-testid={`menu-item-category-${category.code}`}
+              >
+                <span className="truncate">{getArticleCategoryLabel(category.code, embassyProfile)}</span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant={filters.province ? "default" : "outline"}
-            size="sm"
-            className={browseTriggerClass(Boolean(filters.province))}
-            data-testid="menu-browse-cities"
-          >
-            <MapPin className="h-4 w-4 shrink-0" />
-            <span className="max-w-[150px] truncate">{activeCityLabel}</span>
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-64">
-          <DropdownMenuLabel>Cities</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className={browseMenuItemClass(!filters.province)}
-            onSelect={() => updateBrowseFilter("province", undefined)}
-            data-testid="menu-item-city-all"
-          >
-            All cities
-          </DropdownMenuItem>
-          {IRAQ_PROVINCES.map(province => (
-            <DropdownMenuItem
-              key={province.code}
-              className={browseMenuItemClass(filters.province === province.code)}
-              onSelect={() => updateBrowseFilter("province", province.code)}
-              data-testid={`menu-item-city-${province.code}`}
-            >
-              {province.label}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+        <div className="ml-auto flex shrink-0 items-center border-l border-border/70 pl-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className={navMenuTriggerClass(Boolean(filters.sourceName))}
+                data-testid="menu-browse-sources"
+              >
+                Sources
+                <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-[min(70vh,460px)] w-80">
+              <DropdownMenuLabel>Sources</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className={navMenuItemClass(!filters.sourceName)}
+                onSelect={() => updateBrowseFilter("sourceName", undefined)}
+                data-testid="menu-item-source-all"
+              >
+                All sources
+              </DropdownMenuItem>
+              {uniqueSourceNames.length === 0 ? (
+                <DropdownMenuItem disabled>No sources loaded</DropdownMenuItem>
+              ) : uniqueSourceNames.map(name => (
+                <DropdownMenuItem
+                  key={name}
+                  className={navMenuItemClass(filters.sourceName === name)}
+                  onSelect={() => updateBrowseFilter("sourceName", name)}
+                  data-testid={`menu-item-source-${name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`}
+                >
+                  <span className="truncate">{name}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className={navMenuTriggerClass(Boolean(filters.province))}
+                data-testid="menu-browse-cities"
+              >
+                Cities
+                <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuLabel>Cities</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className={navMenuItemClass(!filters.province)}
+                onSelect={() => updateBrowseFilter("province", undefined)}
+                data-testid="menu-item-city-all"
+              >
+                All cities
+              </DropdownMenuItem>
+              {IRAQ_PROVINCES.map(province => (
+                <DropdownMenuItem
+                  key={province.code}
+                  className={navMenuItemClass(filters.province === province.code)}
+                  onSelect={() => updateBrowseFilter("province", province.code)}
+                  data-testid={`menu-item-city-${province.code}`}
+                >
+                  {province.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
     </nav>
   );
 
