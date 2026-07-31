@@ -17,8 +17,10 @@
     "db:migrate:client-settings": "node scripts/migrate-client-settings.cjs",
     "db:migrate:alert-rules": "node scripts/migrate-alert-rules.cjs",
     "db:migrate:iraq-taxonomy": "node scripts/migrate-iraq-report-taxonomy.cjs",
+    "reclassify:iraq-taxonomy": "node scripts/reclassify-iraq-taxonomy.cjs",
     "test:filters": "tsx scripts/test-source-filters.ts",
     "test:article-classifier": "tsx scripts/test-article-classifier.ts",
+    "test:iraq-taxonomy-migration": "node scripts/test-iraq-taxonomy-migration.cjs",
     "data:backfill-categories": "tsx scripts/backfill-article-categories.ts",
     "db:push": "drizzle-kit push"
   },

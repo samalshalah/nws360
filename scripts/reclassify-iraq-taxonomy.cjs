@@ -2,9 +2,9 @@ require("dotenv").config();
 require("tsx/cjs");
 
 const { Client } = require("pg");
-const { runIraqTaxonomyMigration } = require("./iraq-taxonomy-migration-lib.cjs");
+const { runIraqTaxonomyReclassifier } = require("./iraq-taxonomy-migration-lib.cjs");
 
-runIraqTaxonomyMigration({
+runIraqTaxonomyReclassifier({
   Client,
   argv: process.argv.slice(2),
   cwd: process.cwd(),

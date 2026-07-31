@@ -145,17 +145,64 @@ Urgency must never return as an article category. A story can be `client_bilater
 ## Migration And Backfill
 
 - Preview migration only: `npm run db:migrate:iraq-taxonomy`
-- Apply migration after review: `node scripts/migrate-iraq-report-taxonomy.cjs --apply`
+- Apply migration after a verified Neon backup: `npm run db:migrate:iraq-taxonomy -- --apply --confirm-backup`
+- Preview selected unclear articles: `npm run reclassify:iraq-taxonomy -- --dry-run`
 - Deterministic classifier backfill preview: `npm run data:backfill-categories -- --dryRun=true --clientId=<id>`
 - Apply deterministic backfill for one tenant after review: `npm run data:backfill-categories -- --clientId=<id>`
 
-The Iraq taxonomy migration is dry-run by default. It reports:
+## Safe Migration of Existing Articles
+
+The Iraq taxonomy migration is dry-run by default. `npm run db:migrate:iraq-taxonomy` must not change the database. It reviews existing articles in place and proposes only two article-field changes:
+
+- `category`
+- `priority`
+
+The migration must not delete articles, re-import feeds, regenerate IDs, change tenant/source ownership, rewrite titles/content/summaries/URLs/dates/language/country/province, overwrite keywords/topics/manual tags/workflow fields, or break bookmarks, translations, report-basket items, discussions, annotations, tasks, alerts, or other article relationships.
+
+Dry-run output includes:
 
 - Number of records using every old category
+- Number of records using every old priority
 - Proposed new category counts
+- Proposed new priority counts
 - Number of records moved to each category
 - Priority changes
-- Records that cannot be classified safely
-- Final total record count
+- Records requiring updates and records unchanged
+- Records ending in `other`
+- Records with insufficient title/content
+- Counts grouped by `clientId`
+- Up to 20 uncertain samples with article ID, client ID, title, old/new category, old/new priority, and classification reason
+- Final total article count
+- Structured JSON audit metadata with migration name, timestamp, mode, git SHA, database identifier without credentials, movements, integrity snapshot, duration, and success/failure
+
+Apply mode is intentionally gated:
+
+```bash
+npm run db:migrate:iraq-taxonomy -- --apply --confirm-backup
+```
+
+`--apply` without `--confirm-backup` aborts before connecting to the database. The command prints:
+
+```text
+Create and verify a Neon database backup before applying this migration.
+```
+
+Apply mode runs in a transaction. Before and after the update it verifies:
+
+- Article count and article IDs are unchanged
+- Tenant ownership, source ownership, URL, workflow status, manual tags, title/content/summary/date/language/location/engagement/cross-post fields are unchanged
+- Relationship counts and article-link checksums are unchanged for `article_id` tables and article-target collaboration/report tables
+- Only valid category and priority codes are written
+
+If any integrity check fails, the transaction rolls back and exits non-zero.
+
+Uncertain records are preserved. The migration reports them for review but does not overwrite workflow status or manual tags. Use targeted reclassification for selected unclear articles:
+
+```bash
+npm run reclassify:iraq-taxonomy -- --dry-run
+npm run reclassify:iraq-taxonomy -- --category other --limit 50 --dry-run
+npm run reclassify:iraq-taxonomy -- --client-id <id> --category other --limit 100 --dry-run
+npm run reclassify:iraq-taxonomy -- --article-id <id> --apply --confirm-backup
+```
 
 The migration is idempotent, preserves tenant isolation, and does not delete article records.
