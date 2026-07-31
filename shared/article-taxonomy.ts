@@ -272,6 +272,23 @@ export function normalizeArticleCategoryCode(value: unknown, fallback: ArticleCa
   return LEGACY_ARTICLE_CATEGORY_MAP[code] || fallback;
 }
 
+export function getArticleCategoryFilterCodes(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  const code = value.trim();
+  if (!code) return [];
+
+  const isCurrentCode = isArticleCategoryCode(code);
+  const isLegacyCode = Object.prototype.hasOwnProperty.call(LEGACY_ARTICLE_CATEGORY_MAP, code);
+  if (!isCurrentCode && !isLegacyCode) return [code];
+
+  const normalized = normalizeArticleCategoryCode(code);
+  const codes = new Set<string>([normalized, code]);
+  for (const [legacyCode, currentCode] of Object.entries(LEGACY_ARTICLE_CATEGORY_MAP)) {
+    if (currentCode === normalized) codes.add(legacyCode);
+  }
+  return Array.from(codes);
+}
+
 export function isArticleCategoryCode(value: unknown): value is ArticleCategoryCode {
   return typeof value === "string" && ARTICLE_CATEGORIES.some((category) => category.code === value);
 }
@@ -290,6 +307,28 @@ export function sortArticleCategoryRows<T extends { category: string | null | un
     const bOrder = ARTICLE_CATEGORY_ORDER.get(normalizeArticleCategoryCode(b.category)) ?? Number.MAX_SAFE_INTEGER;
     return aOrder - bOrder;
   });
+}
+
+export function mergeArticleCategoryRows<T extends { category: string | null | undefined }>(rows: T[]): T[] {
+  const merged = new Map<ArticleCategoryCode, any>();
+
+  for (const row of rows) {
+    const category = normalizeArticleCategoryCode(row.category);
+    const current = merged.get(category);
+    if (!current) {
+      merged.set(category, { ...row, category });
+      continue;
+    }
+
+    for (const [key, value] of Object.entries(row)) {
+      if (key === "category") continue;
+      if (typeof value === "number" && typeof current[key] === "number") {
+        current[key] += value;
+      }
+    }
+  }
+
+  return sortArticleCategoryRows(Array.from(merged.values())) as T[];
 }
 
 export function isArticlePriorityCode(value: unknown): value is ArticlePriorityCode {

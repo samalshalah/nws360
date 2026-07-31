@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { isGenericAnalyticsTerm, normalizeAnalyticsValue } from "./analytics-noise";
-import { getArticleCategoryLabel, normalizeArticleCategoryCode, sortArticleCategoryRows } from "@shared/article-taxonomy";
+import { getArticleCategoryFilterCodes, getArticleCategoryLabel, mergeArticleCategoryRows, normalizeArticleCategoryCode } from "@shared/article-taxonomy";
 import {
   users, sources, articles, savedFeedViews, keywords, bookmarks, sourceFetchLogs,
   clients, clientSettings, clientKeywords, systemSettings, adminAuditLogs,
@@ -1014,7 +1014,8 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(articles.sentimentLabel, params.sentiment));
     }
     if (params?.category) {
-      conditions.push(eq(articles.category, params.category));
+      const categoryCodes = getArticleCategoryFilterCodes(params.category);
+      conditions.push(categoryCodes.length > 1 ? inArray(articles.category, categoryCodes) : eq(articles.category, params.category));
     }
     if (params?.priorities?.length) {
       conditions.push(inArray(articles.priority, params.priorities));
@@ -1590,7 +1591,7 @@ export class DatabaseStorage implements IStorage {
       WHERE published_at >= NOW() - INTERVAL '7 days' ${sourceFilter}
       GROUP BY COALESCE(category, 'other')
     `);
-    const categoryBreakdown = sortArticleCategoryRows((categoryRows.rows as any[]).map((r: any) => ({
+    const categoryBreakdown = mergeArticleCategoryRows((categoryRows.rows as any[]).map((r: any) => ({
       category: String(r.category),
       count: Number(r.count),
     })));
@@ -1792,7 +1793,7 @@ export class DatabaseStorage implements IStorage {
         trendScore,
       })),
       topicTimeline: termStats.timeline.map(({ date, term, count }) => ({ date, topic: term, count })),
-      byCategory: sortArticleCategoryRows((categoryRows.rows as any[]).map(r => ({
+      byCategory: mergeArticleCategoryRows((categoryRows.rows as any[]).map(r => ({
         category: String(r.category),
         count: Number(r.count),
       }))),
@@ -1937,7 +1938,7 @@ export class DatabaseStorage implements IStorage {
         negative: Number(r.negative),
         neutral: Number(r.neutral),
       })),
-      byCategory: sortArticleCategoryRows((byCategoryRows.rows as any[]).map(r => ({
+      byCategory: mergeArticleCategoryRows((byCategoryRows.rows as any[]).map(r => ({
         category: String(r.category),
         positive: Number(r.positive),
         negative: Number(r.negative),
