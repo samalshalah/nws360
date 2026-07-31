@@ -1,8 +1,12 @@
 import {
   ARTICLE_CATEGORIES,
+  CLIENT_BILATERAL_CATEGORY_CODE,
   IRAQ_PROVINCES,
+  getEmbassyProfileTerms,
+  normalizeEmbassyProfile,
   type ArticleCategoryCode,
   type ArticlePriorityCode,
+  type EmbassyProfile,
   type IraqProvinceCode,
 } from "./article-taxonomy";
 
@@ -27,10 +31,10 @@ const DEFAULT_CATEGORY: ArticleCategoryCode = "other";
 const CATEGORY_RULES: CategoryRule[] = [
   {
     category: "united_nations",
-    weight: 7,
+    weight: 8,
     terms: [
       "united nations", "un", "unami", "unicef", "undp", "unhcr", "iom", "who", "wfp", "unesco",
-      "security council", "international organization", "international organizations",
+      "world bank", "imf", "security council", "international organization", "international organizations",
       "الأمم المتحدة", "الامم المتحدة", "يونامي", "يونيسف", "برنامج الأمم", "مجلس الأمن", "المنظمات الدولية",
     ],
   },
@@ -39,7 +43,7 @@ const CATEGORY_RULES: CategoryRule[] = [
     weight: 7,
     terms: [
       "kurdistan", "krg", "kurdistan regional government", "erbil-baghdad", "baghdad-erbil", "peshmerga",
-      "kurdish region", "kurdistan salaries", "kurdistan oil", "erbil", "sulaymaniyah", "duhok",
+      "kurdish region", "kurdistan salaries", "kurdistan oil", "sulaymaniyah", "duhok",
       "إقليم كردستان", "اقليم كردستان", "حكومة الإقليم", "حكومة الاقليم", "أربيل", "اربيل", "دهوك",
       "السليمانية", "البيشمركة", "رواتب الإقليم", "رواتب الاقليم", "نفط الإقليم", "نفط الاقليم",
     ],
@@ -124,29 +128,48 @@ const CATEGORY_RULES: CategoryRule[] = [
     ],
   },
   {
-    category: "us_iraq_international",
-    weight: 4,
+    category: "regional_international_relations",
+    weight: 5,
     terms: [
-      "u.s.", "us ", "united states", "american", "u.s.-iraq", "us-iraq", "embassy", "ambassador",
-      "washington", "state department", "bilateral", "diplomatic", "foreign minister", "foreign ministry",
-      "iran", "turkey", "saudi", "kuwait", "jordan", "syria", "china", "russia", "eu", "european union",
-      "sanctions", "official visit", "international relations", "foreign relations",
-      "الولايات المتحدة", "أمريكا", "امريكا", "الأمريكي", "الامريكي", "السفارة", "سفير", "واشنطن",
-      "الخارجية", "دبلوماسي", "ثنائي", "إيران", "ايران", "تركيا", "السعودية", "الكويت", "الأردن",
-      "الاردن", "سوريا", "الصين", "روسيا", "الاتحاد الأوروبي", "عقوبات", "زيارة رسمية", "العلاقات الدولية",
+      "foreign relations", "international relations", "foreign policy", "diplomatic", "diplomacy", "bilateral",
+      "foreign minister", "foreign ministry", "official visit", "agreement", "treaty", "sanctions", "embassy",
+      "ambassador", "neighboring states", "regional powers", "iran", "turkey", "saudi", "kuwait", "jordan",
+      "syria", "china", "russia", "european union", "eu", "france", "french", "united kingdom", "british",
+      "uk", "germany", "german", "italy", "italian", "spain", "spanish", "canada", "australia", "qatar",
+      "uae", "emirates", "egypt", "lebanon",
+      "العلاقات الدولية", "العلاقات الخارجية", "السياسة الخارجية", "دبلوماسي", "دبلوماسية", "ثنائي",
+      "وزارة الخارجية", "وزير الخارجية", "زيارة رسمية", "اتفاقية", "معاهدة", "عقوبات", "السفارة", "سفير",
+      "إيران", "ايران", "تركيا", "السعودية", "الكويت", "الأردن", "الاردن", "سوريا", "الصين", "روسيا",
+      "الاتحاد الأوروبي", "فرنسا", "فرنسي", "بريطانيا", "المملكة المتحدة", "ألمانيا", "المانيا", "قطر",
+      "الإمارات", "الامارات", "مصر", "لبنان",
     ],
   },
   {
     category: "media_narratives",
-    weight: 4,
+    weight: 6,
     terms: [
-      "media narrative", "narrative", "social media", "online campaign", "coordinated campaign", "hashtag",
-      "misinformation", "disinformation", "rumor", "viral", "trend", "trending", "influencer", "public discourse",
-      "facebook debate", "x debate", "twitter debate", "media monitoring",
+      "media narrative", "narrative", "social media", "online campaign", "coordinated campaign", "campaign",
+      "hashtag", "misinformation", "disinformation", "rumor", "viral", "trend", "trending", "influencer",
+      "public discourse", "facebook debate", "x debate", "twitter debate", "media monitoring",
       "سردية", "سرديات", "إعلام", "اعلام", "وسائل التواصل", "التواصل الاجتماعي", "حملة إلكترونية",
-      "حملة الكترونية", "هاشتاغ", "وسم", "معلومات مضللة", "شائعة", "رائج", "ترند", "مؤثر", "خطاب عام",
+      "حملة الكترونية", "حملة", "هاشتاغ", "وسم", "معلومات مضللة", "شائعة", "رائج", "ترند", "مؤثر", "خطاب عام",
     ],
   },
+];
+
+const BILATERAL_RELATIONSHIP_TERMS = [
+  "bilateral", "relations", "relationship", "partnership", "cooperation", "agreement", "memorandum",
+  "mou", "visit", "official visit", "meeting", "meets", "met with", "talks", "discuss", "security cooperation",
+  "development program", "cultural program", "exchange program", "trade mission", "investment", "visa",
+  "consular", "embassy", "ambassador", "foreign minister", "state department", "support", "funded",
+  "company", "companies", "nationals", "citizens", "statement",
+  "ثنائي", "العلاقات", "شراكة", "تعاون", "اتفاق", "مذكرة", "زيارة", "اجتماع", "يلتقي", "التقى",
+  "مباحثات", "يناقش", "ناقش", "تعاون أمني", "تعاون امني", "برنامج", "ثقافي", "تبادل", "تجارة",
+  "استثمار", "تأشيرة", "تاشيرة", "قنصلي", "السفارة", "سفير", "الخارجية", "دعم", "تمويل", "شركة", "مواطنين", "بيان",
+];
+
+const IRAQ_CONTEXT_TERMS = [
+  "iraq", "iraqi", "baghdad", "erbil", "basra", "العراق", "العراقي", "العراقية", "بغداد", "أربيل", "اربيل", "البصرة",
 ];
 
 const PROVINCE_TERMS: Array<{ province: IraqProvinceCode; terms: string[] }> = [
@@ -157,7 +180,7 @@ const PROVINCE_TERMS: Array<{ province: IraqProvinceCode; terms: string[] }> = [
   { province: "duhok", terms: ["دهوك", "duhok", "dohuk"] },
   { province: "nineveh", terms: ["نينوى", "الموصل", "nineveh", "mosul"] },
   { province: "kirkuk", terms: ["كركوك", "kirkuk"] },
-  { province: "anbar", terms: ["الانبار", "الأقبار", "الأانبار", "الأنبار", "رمادي", "فلوجة", "anbar", "ramadi", "fallujah"] },
+  { province: "anbar", terms: ["الانبار", "الأنبار", "رمادي", "فلوجة", "anbar", "ramadi", "fallujah"] },
   { province: "salahuddin", terms: ["صلاح الدين", "تكريت", "salahuddin", "tikrit"] },
   { province: "diyala", terms: ["ديالى", "بعقوبة", "diyala", "baqubah"] },
   { province: "najaf", terms: ["النجف", "نجف", "najaf"] },
@@ -183,10 +206,10 @@ const URGENT_TERMS = [
 
 const IMPORTANT_TERMS = [
   "prime minister", "cabinet", "council of ministers", "parliament votes", "parliament approved", "budget",
-  "oil exports", "central bank", "exchange rate", "united nations", "unami", "u.s. embassy", "us embassy",
+  "oil exports", "central bank", "exchange rate", "united nations", "unami", "embassy", "ambassador",
   "bilateral", "corruption investigation", "integrity commission", "krg", "salary dispute", "salary disputes", "salaries", "kurdistan salaries",
   "رئيس الوزراء", "مجلس الوزراء", "صوت البرلمان", "البرلمان يصوت", "الموازنة", "تصدير النفط",
-  "البنك المركزي", "سعر الصرف", "الأمم المتحدة", "يونامي", "السفارة الأمريكية", "السفارة الامريكية",
+  "البنك المركزي", "سعر الصرف", "الأمم المتحدة", "يونامي", "السفارة", "سفير",
   "النزاهة", "تحقيق فساد", "رواتب الإقليم", "رواتب الاقليم",
 ];
 
@@ -213,9 +236,22 @@ function termHits(text: string, term: string): number {
   if (!normalized) return 0;
   if (normalized.includes(" ")) return text.includes(normalized) ? 1 : 0;
   const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const latinBoundary = /^[a-z0-9.]+$/.test(normalized) ? "\\b" : "";
-  const re = new RegExp(`${latinBoundary}${escaped}${latinBoundary}`, "g");
+  if (/^[a-z0-9.]+$/.test(normalized)) {
+    const re = new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, "g");
+    return text.match(re)?.length || 0;
+  }
+  const re = new RegExp(escaped, "g");
   return text.match(re)?.length || 0;
+}
+
+function weightedTermHits(title: string, summary: string, content: string, terms: string[], contentCap = 4): number {
+  let score = 0;
+  for (const term of terms) {
+    score += termHits(title, term) * 4;
+    score += termHits(summary, term) * 2;
+    score += Math.min(termHits(content, term), contentCap);
+  }
+  return score;
 }
 
 function hasAnyTerm(text: string, terms: string[]): boolean {
@@ -226,7 +262,39 @@ function categoryOrder(category: ArticleCategoryCode): number {
   return ARTICLE_CATEGORIES.findIndex((item) => item.code === category);
 }
 
-export function classifyArticleCategory(input: ClassificationInput): ArticleCategoryCode {
+function clientBilateralScore(
+  input: ClassificationInput,
+  title: string,
+  summary: string,
+  content: string,
+  embassyProfile?: EmbassyProfile | null,
+): number {
+  const profile = normalizeEmbassyProfile(embassyProfile);
+  if (!profile) return 0;
+
+  const profileTerms = getEmbassyProfileTerms(profile);
+  if (profileTerms.length === 0) return 0;
+
+  const profileScore = weightedTermHits(title, summary, content, profileTerms, 3);
+  if (profileScore <= 0) return 0;
+
+  const embassyScore = weightedTermHits(title, summary, content, profile.embassyAliases || [], 3);
+  const ambassadorScore = weightedTermHits(title, summary, content, profile.ambassadorAliases || [], 3);
+  const relationshipScore = weightedTermHits(title, summary, content, BILATERAL_RELATIONSHIP_TERMS, 4);
+  const iraqScore = weightedTermHits(title, summary, content, IRAQ_CONTEXT_TERMS, 4);
+  const directMissionMention = embassyScore + ambassadorScore;
+
+  if (directMissionMention > 0) {
+    return 12 + directMissionMention * 3 + relationshipScore;
+  }
+  if (relationshipScore > 0 && iraqScore > 0) {
+    return 12 + profileScore * 4 + relationshipScore * 3;
+  }
+
+  return 0;
+}
+
+export function classifyArticleCategory(input: ClassificationInput, embassyProfile?: EmbassyProfile | null): ArticleCategoryCode {
   const title = normalizeText(input.title);
   const summary = normalizeText(input.summary);
   const content = normalizeText(input.content);
@@ -242,6 +310,11 @@ export function classifyArticleCategory(input: ClassificationInput): ArticleCate
     if (score > 0) scores.set(rule.category, (scores.get(rule.category) || 0) + score);
   }
 
+  const bilateralScore = clientBilateralScore(input, title, summary, content, embassyProfile);
+  if (bilateralScore > 0) {
+    scores.set(CLIENT_BILATERAL_CATEGORY_CODE, bilateralScore);
+  }
+
   const ranked = Array.from(scores.entries())
     .filter(([category]) => CATEGORY_CODES.has(category))
     .sort((a, b) => b[1] - a[1] || categoryOrder(a[0]) - categoryOrder(b[0]));
@@ -251,9 +324,12 @@ export function classifyArticleCategory(input: ClassificationInput): ArticleCate
   return best[0];
 }
 
-export function classifyArticlePriority(input: Pick<ClassificationInput, "title" | "content" | "summary">): ArticlePriorityCode {
+export function classifyArticlePriority(
+  input: Pick<ClassificationInput, "title" | "content" | "summary">,
+  embassyProfile?: EmbassyProfile | null,
+): ArticlePriorityCode {
   const text = normalizeText([input.title, input.summary, input.content].filter(Boolean).join(" "));
-  const securityCategory = classifyArticleCategory(input) === "security_stability";
+  const securityCategory = classifyArticleCategory(input, embassyProfile) === "security_stability";
 
   if (securityCategory && hasAnyTerm(text, CRITICAL_TERMS)) {
     return "critical";

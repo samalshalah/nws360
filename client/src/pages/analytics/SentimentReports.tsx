@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "react-i18next";
 import { TimeRangeFilter, useTimeRange } from "@/components/analytics/TimeRangeFilter";
 import { getArticleCategoryLabel } from "@shared/article-taxonomy";
+import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
 
 const SENTIMENT_COLORS: Record<string, string> = {
   positive: '#22c55e',
@@ -14,6 +15,7 @@ const SENTIMENT_COLORS: Record<string, string> = {
 
 export default function SentimentReports() {
   const { t } = useTranslation();
+  const embassyProfile = useEmbassyProfile();
   const [timeRange, setTimeRange] = useTimeRange("7d");
 
   const { data, isLoading } = useQuery<{
@@ -32,7 +34,7 @@ export default function SentimentReports() {
   ] : [];
   const categoryData = data?.byCategory.map((item) => ({
     ...item,
-    categoryLabel: getArticleCategoryLabel(item.category),
+    categoryLabel: getArticleCategoryLabel(item.category, embassyProfile),
   })) || [];
 
   return (

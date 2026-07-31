@@ -22,6 +22,7 @@ export async function runAIRetryQueue() {
         title: articles.title,
         content: articles.content,
         contentClean: articles.contentClean,
+        clientId: articles.clientId,
         aiRetryCount: articles.aiRetryCount,
         aiLastRetryAt: articles.aiLastRetryAt,
       })
@@ -69,7 +70,7 @@ export async function runAIRetryQueue() {
         })
         .where(eq(articles.id, article.id));
 
-      const analysis = await analyzeWithAI(article.title, textContent);
+      const analysis = await analyzeWithAI(article.title, textContent, article.clientId ?? undefined);
 
       if (analysis.aiAnalysisStatus === "success") {
         await db

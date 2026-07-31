@@ -11,8 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
-import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, IRAQ_PROVINCES } from "@shared/article-taxonomy";
+import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, IRAQ_PROVINCES, getArticleCategoryLabel } from "@shared/article-taxonomy";
 import { CAPS } from "@shared/schema";
+import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
 
 type DateRangeValue = "today" | "week" | "month" | "all";
 type ExportFormat = "txt" | "csv";
@@ -62,6 +63,7 @@ export default function ReportBasket() {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { hasCap } = usePermissions();
+  const embassyProfile = useEmbassyProfile();
   const canExport = hasCap(CAPS.ARTICLE_EXPORT);
   const [search, setSearch] = useState("");
   const [dateRange, setDateRange] = useState<DateRangeValue>("week");
@@ -213,7 +215,7 @@ export default function ReportBasket() {
             <SelectContent>
               <SelectItem value="all">{t("feed.allCategories", "All categories")}</SelectItem>
               {ARTICLE_CATEGORIES.map((item) => (
-                <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>
+                <SelectItem key={item.code} value={item.code}>{getArticleCategoryLabel(item.code, embassyProfile)}</SelectItem>
               ))}
             </SelectContent>
           </Select>

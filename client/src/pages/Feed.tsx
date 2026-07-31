@@ -20,7 +20,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { CAPS } from "@shared/schema";
-import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, ARTICLE_WORKFLOW_STATUSES, IRAQ_PROVINCES } from "@shared/article-taxonomy";
+import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, ARTICLE_WORKFLOW_STATUSES, IRAQ_PROVINCES, getArticleCategoryLabel, type EmbassyProfile } from "@shared/article-taxonomy";
+import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +33,7 @@ type PublicSystemSettings = {
   feedLiveUpdateIntervalSeconds: number;
   feedLiveUpdateMode: FeedLiveUpdateMode;
   defaultFeedDateRange?: "all" | "today" | "week" | "month";
+  embassyProfile?: EmbassyProfile | null;
 };
 type ArticleLiveStatus = {
   total: number;
@@ -62,6 +64,7 @@ export default function Feed() {
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const { hasCap, isAdmin } = usePermissions();
+  const embassyProfile = useEmbassyProfile();
   const currentLang = i18n.language?.split("-")[0] || "en";
   const searchString = useSearch();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -896,7 +899,7 @@ export default function Feed() {
           <SelectItem value="all">{t("feed.allCategories")}</SelectItem>
           {ARTICLE_CATEGORIES.map(category => (
             <SelectItem key={category.code} value={category.code}>
-              {category.label}
+              {getArticleCategoryLabel(category.code, embassyProfile)}
             </SelectItem>
           ))}
         </SelectContent>
@@ -1235,7 +1238,7 @@ export default function Feed() {
                   <SelectContent>
                     <SelectItem value="skip">Keep category</SelectItem>
                     {ARTICLE_CATEGORIES.map(category => (
-                      <SelectItem key={category.code} value={category.code}>{category.label}</SelectItem>
+                      <SelectItem key={category.code} value={category.code}>{getArticleCategoryLabel(category.code, embassyProfile)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

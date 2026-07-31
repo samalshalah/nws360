@@ -19,6 +19,7 @@ import { useTranslation } from "react-i18next";
 import { ARTICLE_CATEGORIES, getArticleCategoryLabel } from "@shared/article-taxonomy";
 import { useAnalytics } from "@/hooks/use-analytics";
 import { useArticles } from "@/hooks/use-articles";
+import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
 import { ArticleCard } from "@/components/articles/ArticleCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,7 +48,8 @@ const categoryTone: Record<string, string> = {
   kurdistan_region: "bg-teal-500",
   civil_society_humanitarian: "bg-green-500",
   united_nations: "bg-blue-500",
-  us_iraq_international: "bg-indigo-500",
+  client_bilateral_relations: "bg-indigo-500",
+  regional_international_relations: "bg-purple-500",
   media_narratives: "bg-amber-500",
   other: "bg-muted-foreground",
 };
@@ -122,6 +124,7 @@ function WorkflowStep({
 
 export default function Dashboard() {
   const { t } = useTranslation();
+  const embassyProfile = useEmbassyProfile();
   const { data: analytics, isLoading: isLoadingAnalytics, dataUpdatedAt: analyticsUpdatedAt } = useAnalytics();
   const startDate = useMemo(() => new Date(Date.now() - DAY_MS).toISOString(), []);
   const { data: latestCoverage, isLoading: latestLoading } = useArticles({
@@ -162,7 +165,7 @@ export default function Dashboard() {
     },
     {
       title: "Lead category",
-      value: topCategory ? getArticleCategoryLabel(topCategory.category) : "No signal",
+      value: topCategory ? getArticleCategoryLabel(topCategory.category, embassyProfile) : "No signal",
       detail: topCategory ? `${formatNumber(topCategory.count)} articles this week` : "category data is not ready",
       href: topCategory ? categoryHref(topCategory.category) : "/feed",
       icon: Layers,
@@ -298,7 +301,7 @@ export default function Dashboard() {
                   <Link key={item.category} href={categoryHref(item.category)}>
                     <div className="group space-y-1 rounded-md px-2 py-1 transition hover:bg-muted/40">
                       <div className="flex items-center justify-between gap-3 text-sm">
-                        <span className="truncate font-medium text-foreground">{getArticleCategoryLabel(item.category)}</span>
+                        <span className="truncate font-medium text-foreground">{getArticleCategoryLabel(item.category, embassyProfile)}</span>
                         <span className="text-xs tabular-nums text-muted-foreground">{formatNumber(item.count)}</span>
                       </div>
                       <div className="h-2 rounded-full bg-muted">

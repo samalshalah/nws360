@@ -22,10 +22,22 @@ async function main() {
         default_target_language text DEFAULT 'en',
         report_export_format text NOT NULL DEFAULT 'txt',
         report_include_summaries boolean DEFAULT true,
+        home_country_code text,
+        home_country_name text,
+        home_country_aliases text[],
+        embassy_aliases text[],
+        ambassador_aliases text[],
+        bilateral_category_label text,
         created_at timestamp DEFAULT now(),
         updated_at timestamp DEFAULT now()
       )
     `);
+    await client.query(`ALTER TABLE client_settings ADD COLUMN IF NOT EXISTS home_country_code text`);
+    await client.query(`ALTER TABLE client_settings ADD COLUMN IF NOT EXISTS home_country_name text`);
+    await client.query(`ALTER TABLE client_settings ADD COLUMN IF NOT EXISTS home_country_aliases text[]`);
+    await client.query(`ALTER TABLE client_settings ADD COLUMN IF NOT EXISTS embassy_aliases text[]`);
+    await client.query(`ALTER TABLE client_settings ADD COLUMN IF NOT EXISTS ambassador_aliases text[]`);
+    await client.query(`ALTER TABLE client_settings ADD COLUMN IF NOT EXISTS bilateral_category_label text`);
     await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_client_settings_client ON client_settings (client_id)`);
     await client.query(`
       INSERT INTO client_settings (client_id)

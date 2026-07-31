@@ -1,8 +1,9 @@
 import "dotenv/config";
 import { and, eq, sql } from "drizzle-orm";
 import { db, pool } from "../server/db";
-import { articles, sources } from "../shared/schema";
+import { articles, clientSettings, clients, sources } from "../shared/schema";
 import { classifyArticleCategory, classifyArticlePriority, classifyIraqProvince } from "../shared/article-classifier";
+import { buildClientEmbassyProfile } from "../server/embassy-profile";
 
 const args = new Map<string, string>();
 for (const arg of process.argv.slice(2)) {
@@ -27,6 +28,7 @@ if (clientId) conditions.push(eq(articles.clientId, clientId));
 const rows = await db
   .select({
     id: articles.id,
+    clientId: articles.clientId,
     title: articles.title,
     content: articles.content,
     contentClean: articles.contentClean,
@@ -44,12 +46,21 @@ const rows = await db
   .orderBy(sql`${articles.id} ASC`)
   .limit(limit || 100000);
 
+const clientRows = await db.select().from(clients);
+const settingsRows = await db.select().from(clientSettings);
+const clientsById = new Map(clientRows.map((row) => [row.id, row]));
+const settingsByClientId = new Map(settingsRows.map((row) => [row.clientId, row]));
+
 const categoryCounts = new Map<string, number>();
 const priorityCounts = new Map<string, number>();
 const provinceCounts = new Map<string, number>();
 let changed = 0;
 
 for (const row of rows) {
+  const embassyProfile = buildClientEmbassyProfile(
+    clientsById.get(row.clientId),
+    settingsByClientId.get(row.clientId),
+  );
   const category = classifyArticleCategory({
     title: row.title,
     summary: row.summary,
@@ -57,7 +68,7 @@ for (const row of rows) {
     sourceName: row.sourceName,
     sourceCategory: row.sourceCategory,
     url: row.url,
-  });
+  }, embassyProfile);
   const province = classifyIraqProvince({
     title: row.title,
     summary: row.summary,
@@ -67,7 +78,7 @@ for (const row of rows) {
     title: row.title,
     summary: row.summary,
     content: row.contentClean || row.content,
-  });
+  }, embassyProfile);
 
   categoryCounts.set(category, (categoryCounts.get(category) || 0) + 1);
   priorityCounts.set(priority, (priorityCounts.get(priority) || 0) + 1);

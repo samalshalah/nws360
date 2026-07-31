@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useArticles } from "@/hooks/use-articles";
 import { ArticleCard } from "@/components/articles/ArticleCard";
 import { getArticleCategoryLabel } from "@shared/article-taxonomy";
+import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
 import { cn } from "@/lib/utils";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -94,9 +95,15 @@ const CATEGORY_NAV: CategoryConfig[] = [
     icon: Globe2,
   },
   {
-    code: "us_iraq_international",
-    label: "U.S.-Iraq & International Relations",
-    description: "U.S.-Iraq relations, diplomacy, neighbors, and foreign policy.",
+    code: "client_bilateral_relations",
+    label: "Bilateral Relations",
+    description: "Tenant embassy relations with Iraq, including statements, visits, agreements, and consular issues.",
+    icon: Globe2,
+  },
+  {
+    code: "regional_international_relations",
+    label: "Regional & International Relations",
+    description: "Iraq's diplomacy with neighboring states, regional powers, and foreign governments.",
     icon: Globe2,
   },
   {
@@ -157,9 +164,11 @@ function MagazineCategorySection({
   active: boolean;
   onSelectCategory: (category?: string) => void;
 }) {
+  const embassyProfile = useEmbassyProfile();
   const { data, isLoading } = useArticles(categoryQueryParams(config.code, startDate, endDate, 4));
   const articles = data?.items || [];
   const Icon = config.icon;
+  const categoryLabel = getArticleCategoryLabel(config.code, embassyProfile);
 
   return (
     <section className={cn("rounded-md border bg-card", active ? "border-primary/60" : "border-border/60")} data-testid={`magazine-section-${config.code}`}>
@@ -167,7 +176,7 @@ function MagazineCategorySection({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <Icon className="h-4 w-4 text-primary" />
-            <h2 className="text-base font-semibold text-foreground">{config.label}</h2>
+            <h2 className="text-base font-semibold text-foreground">{categoryLabel}</h2>
             {typeof data?.total === "number" && (
               <Badge variant="secondary" className="h-5 px-1.5 text-[11px] tabular-nums">{data.total}</Badge>
             )}
@@ -186,7 +195,7 @@ function MagazineCategorySection({
           articles.slice(0, 3).map((article: any) => <ArticleCard key={article.id} article={article} layout="compact" />)
         ) : (
           <p className="rounded-md border border-dashed border-border/70 bg-muted/20 px-3 py-6 text-center text-sm text-muted-foreground">
-            No recent {config.label.toLowerCase()} items in this period.
+            No recent {categoryLabel.toLowerCase()} items in this period.
           </p>
         )}
       </div>
@@ -327,6 +336,7 @@ export function FeedMagazine({
   onSelectCategory,
   onOpenListView,
 }: FeedMagazineProps) {
+  const embassyProfile = useEmbassyProfile();
   const defaultStartDate = useMemo(() => new Date(Date.now() - 7 * DAY_MS).toISOString(), []);
   const effectiveStartDate = startDate || defaultStartDate;
   const leadArticle = latestArticles.find((article) => article.imageUrl && article.imageUrl !== "none") || latestArticles[0];
@@ -372,7 +382,7 @@ export function FeedMagazine({
                 onClick={() => onSelectCategory(item.code)}
               >
                 <Icon className="mr-1.5 h-3.5 w-3.5" />
-                {item.label}
+                {getArticleCategoryLabel(item.code, embassyProfile)}
               </Button>
             );
           })}
@@ -436,7 +446,7 @@ export function FeedMagazine({
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 p-4">
           <div>
             <h2 className="text-base font-semibold text-foreground">
-              {activeCategory ? `${getArticleCategoryLabel(activeCategory)} Stream` : "Latest Stream"}
+              {activeCategory ? `${getArticleCategoryLabel(activeCategory, embassyProfile)} Stream` : "Latest Stream"}
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">The current filtered feed, shown as a scan list.</p>
           </div>

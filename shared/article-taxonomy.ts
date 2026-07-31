@@ -1,75 +1,123 @@
+export const CLIENT_BILATERAL_CATEGORY_CODE = "client_bilateral_relations" as const;
+
+export type EmbassyProfile = {
+  homeCountryCode?: string | null;
+  homeCountryName?: string | null;
+  homeCountryAliases?: string[] | null;
+  embassyAliases?: string[] | null;
+  ambassadorAliases?: string[] | null;
+  bilateralCategoryLabel?: string | null;
+};
+
+export const US_EMBASSY_BAGHDAD_PROFILE: Required<EmbassyProfile> = {
+  homeCountryCode: "US",
+  homeCountryName: "United States",
+  homeCountryAliases: [
+    "United States",
+    "United States of America",
+    "U.S.",
+    "US",
+    "USA",
+    "America",
+    "American",
+    "الولايات المتحدة",
+    "الولايات المتحدة الأمريكية",
+    "أميركا",
+    "أمريكا",
+    "أمريكي",
+    "الأمريكية",
+  ],
+  embassyAliases: [
+    "U.S. Embassy Baghdad",
+    "United States Embassy Baghdad",
+    "U.S. Embassy in Iraq",
+    "American Embassy Baghdad",
+    "السفارة الأمريكية",
+    "سفارة الولايات المتحدة",
+    "السفارة الأميركية",
+  ],
+  ambassadorAliases: [],
+  bilateralCategoryLabel: "U.S.-Iraq Relations",
+};
+
 export const ARTICLE_CATEGORIES = [
   {
     code: "iraqi_government",
     label: "Iraqi Government",
     labelAr: "الحكومة العراقية",
-    description: "Federal executive activity, the Prime Minister, Council of Ministers, ministries, state agencies, and official government decisions.",
+    description: "Prime Minister's Office, Presidency, Council of Ministers, federal ministries, state institutions, government decisions, appointments, programs, official statements, and executive activity.",
   },
   {
     code: "parliament_politics",
     label: "Parliament & Political Affairs",
     labelAr: "البرلمان والشؤون السياسية",
-    description: "Parliament, legislation, parties, elections, coalitions, political blocs, and formal political negotiations.",
+    description: "Council of Representatives, legislation, political parties, coalitions, elections, parliamentary committees, negotiations, and disputes among political actors.",
   },
   {
     code: "security_stability",
     label: "Security & Stability",
     labelAr: "الأمن والاستقرار",
-    description: "Security incidents, military activity, armed groups, terrorism, public safety, border security, and stability risks.",
+    description: "Terrorism, armed groups, militias, border security, military activity, police activity, violent incidents, organized crime, demonstrations involving security concerns, and threats to stability.",
   },
   {
     code: "economy_oil_finance",
     label: "Economy, Oil & Public Finance",
     labelAr: "الاقتصاد والنفط والمالية العامة",
-    description: "Budget, currency, banking, markets, public finance, oil, gas, energy exports, salaries, and economic policy.",
+    description: "Federal budget, oil and gas, exports, banking, currency, salaries, employment, inflation, trade, investment, private-sector activity, and public finance.",
   },
   {
     code: "development_services",
     label: "Development & Public Services",
     labelAr: "التنمية والخدمات العامة",
-    description: "Infrastructure, electricity, water, health, education, municipalities, housing, transportation, environment, and service delivery.",
+    description: "Reconstruction, electricity, water, roads, housing, transportation, healthcare services, education services, infrastructure, municipal services, and development projects.",
   },
   {
     code: "justice_accountability",
     label: "Justice, Corruption & Accountability",
     labelAr: "العدالة والفساد والمساءلة",
-    description: "Courts, judiciary, integrity investigations, corruption, accountability, warrants, trials, and rule-of-law issues.",
+    description: "Courts, judiciary, corruption investigations, Integrity Commission activity, audits, legal accountability, arrests involving public officials, and rule-of-law developments.",
   },
   {
     code: "kurdistan_region",
     label: "Kurdistan Region",
     labelAr: "إقليم كردستان",
-    description: "KRG institutions, Erbil-Baghdad disputes, Kurdistan oil and salaries, Peshmerga, and Kurdistan Region political or service issues.",
+    description: "Kurdistan Regional Government, Erbil-Baghdad relations, Kurdish political parties, regional salaries, oil exports, security, institutions, and Kurdistan-specific developments.",
   },
   {
     code: "civil_society_humanitarian",
     label: "Civil Society, Humanitarian Affairs & Public Opinion",
     labelAr: "المجتمع المدني والشؤون الإنسانية والرأي العام",
-    description: "NGOs, humanitarian needs, displaced communities, human rights, protests, activists, civil society, and public opinion.",
+    description: "NGOs, human rights, displacement, minorities, women, youth, humanitarian programs, protests, public reaction, social concerns, and civil-society activity.",
   },
   {
     code: "united_nations",
     label: "United Nations & International Organizations",
     labelAr: "الأمم المتحدة والمنظمات الدولية",
-    description: "UNAMI, UN agencies, international organizations, multilateral programs, humanitarian agencies, and international institutional statements.",
+    description: "UNAMI, UNDP, UNICEF, WHO, IOM, UNHCR, WFP, UNESCO, World Bank, IMF, international organizations, donor programs, and international development institutions.",
   },
   {
-    code: "us_iraq_international",
-    label: "U.S.-Iraq & International Relations",
-    labelAr: "العلاقات الأمريكية العراقية والدولية",
-    description: "U.S.-Iraq relations, embassies, diplomatic engagement, neighboring states, foreign policy, bilateral meetings, and international relations.",
+    code: CLIENT_BILATERAL_CATEGORY_CODE,
+    label: "Bilateral Relations",
+    labelAr: "العلاقات الثنائية",
+    description: "Relations between Iraq and the tenant embassy's home country, including embassy statements, ambassador activity, official visits, bilateral agreements, trade, investment, security cooperation, cultural programs, development projects, visas, consular issues, and mentions of the tenant country's nationals, organizations, and companies.",
+  },
+  {
+    code: "regional_international_relations",
+    label: "Regional & International Relations",
+    labelAr: "العلاقات الإقليمية والدولية",
+    description: "Iraq's relations with countries other than the tenant embassy's home country, neighboring states, regional powers, international diplomacy, sanctions, treaties, foreign-policy developments, and multilateral relations not led by the United Nations.",
   },
   {
     code: "media_narratives",
     label: "Media Narratives & Social Trends",
     labelAr: "السرديات الإعلامية والاتجاهات الاجتماعية",
-    description: "Media narratives, information campaigns, disinformation, coordinated online discourse, viral public debate, and social trend analysis.",
+    description: "Major media narratives, coordinated messaging, misinformation, social-media trends, influencer activity, changes in public discourse, and differences in how outlets frame the same issue.",
   },
   {
     code: "other",
     label: "Other",
     labelAr: "أخرى",
-    description: "Items that do not fit a defined Iraq Daily Media Report subject category.",
+    description: "Relevant Iraq coverage that cannot reasonably be assigned to another category.",
   },
 ] as const;
 
@@ -129,7 +177,9 @@ export const LEGACY_ARTICLE_CATEGORY_MAP: Record<string, ArticleCategoryCode> = 
   economy: "economy_oil_finance",
   oil_energy: "economy_oil_finance",
   banking_currency: "economy_oil_finance",
-  foreign_relations: "us_iraq_international",
+  foreign_relations: "regional_international_relations",
+  us_iraq_international: CLIENT_BILATERAL_CATEGORY_CODE,
+  bilateral_international_relations: "regional_international_relations",
   parliament_law: "parliament_politics",
   government_services: "iraqi_government",
   health: "development_services",
@@ -149,6 +199,71 @@ export const LEGACY_ARTICLE_CATEGORY_MAP: Record<string, ArticleCategoryCode> = 
   other: "other",
 };
 
+function uniqueTrimmed(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const cleaned = value.trim().replace(/\s+/g, " ");
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(cleaned);
+  }
+  return result;
+}
+
+function cleanedString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const cleaned = value.trim().replace(/\s+/g, " ");
+  return cleaned || null;
+}
+
+export function normalizeEmbassyProfile(profile?: EmbassyProfile | null): EmbassyProfile | null {
+  if (!profile) return null;
+  const normalized: EmbassyProfile = {
+    homeCountryCode: cleanedString(profile.homeCountryCode)?.toUpperCase() || null,
+    homeCountryName: cleanedString(profile.homeCountryName),
+    homeCountryAliases: uniqueTrimmed(profile.homeCountryAliases),
+    embassyAliases: uniqueTrimmed(profile.embassyAliases),
+    ambassadorAliases: uniqueTrimmed(profile.ambassadorAliases),
+    bilateralCategoryLabel: cleanedString(profile.bilateralCategoryLabel),
+  };
+
+  const hasProfileValue = Boolean(
+    normalized.homeCountryCode ||
+    normalized.homeCountryName ||
+    normalized.bilateralCategoryLabel ||
+    normalized.homeCountryAliases?.length ||
+    normalized.embassyAliases?.length ||
+    normalized.ambassadorAliases?.length,
+  );
+  return hasProfileValue ? normalized : null;
+}
+
+export function getEmbassyProfileTerms(profile?: EmbassyProfile | null): string[] {
+  const normalized = normalizeEmbassyProfile(profile);
+  if (!normalized) return [];
+  return uniqueTrimmed([
+    normalized.homeCountryCode,
+    normalized.homeCountryName,
+    ...(normalized.homeCountryAliases || []),
+    ...(normalized.embassyAliases || []),
+    ...(normalized.ambassadorAliases || []),
+  ]);
+}
+
+export function getBilateralCategoryLabel(profile?: EmbassyProfile | null): string {
+  const normalized = normalizeEmbassyProfile(profile);
+  if (!normalized) return "Bilateral Relations";
+  if (normalized.bilateralCategoryLabel) return normalized.bilateralCategoryLabel;
+  if (normalized.homeCountryCode === "US") return "U.S.-Iraq Relations";
+  if (normalized.homeCountryName) return `${normalized.homeCountryName}-Iraq Relations`;
+  return "Bilateral Relations";
+}
+
 export function normalizeArticleCategoryCode(value: unknown, fallback: ArticleCategoryCode = "other"): ArticleCategoryCode {
   if (typeof value !== "string") return fallback;
   const code = value.trim();
@@ -161,8 +276,11 @@ export function isArticleCategoryCode(value: unknown): value is ArticleCategoryC
   return typeof value === "string" && ARTICLE_CATEGORIES.some((category) => category.code === value);
 }
 
-export function getArticleCategoryLabel(code: string | null | undefined): string {
+export function getArticleCategoryLabel(code: string | null | undefined, embassyProfile?: EmbassyProfile | null): string {
   const normalized = normalizeArticleCategoryCode(code);
+  if (normalized === CLIENT_BILATERAL_CATEGORY_CODE) {
+    return getBilateralCategoryLabel(embassyProfile);
+  }
   return ARTICLE_CATEGORIES.find((category) => category.code === normalized)?.label || normalized;
 }
 

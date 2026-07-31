@@ -7,11 +7,13 @@ import { TimeRangeFilter, useTimeRange } from "@/components/analytics/TimeRangeF
 import { Badge } from "@/components/ui/badge";
 import { useLocation } from "wouter";
 import { getArticleCategoryLabel } from "@shared/article-taxonomy";
+import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
 
 const TOPIC_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
 
 export default function TrendingTopics() {
   const { t } = useTranslation();
+  const embassyProfile = useEmbassyProfile();
   const [timeRange, setTimeRange] = useTimeRange("7d");
   const [, setLocation] = useLocation();
 
@@ -36,7 +38,7 @@ export default function TrendingTopics() {
   const topTopics = Array.from(new Set(data?.topicTimeline.map(t => t.topic) || []));
   const categoryData = data?.byCategory.map((item) => ({
     ...item,
-    categoryLabel: getArticleCategoryLabel(item.category),
+    categoryLabel: getArticleCategoryLabel(item.category, embassyProfile),
   })) || [];
 
   const SENTIMENT_COLORS: Record<string, string> = { positive: '#22c55e', neutral: '#64748b', negative: '#ef4444' };

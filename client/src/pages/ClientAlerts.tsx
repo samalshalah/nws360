@@ -16,7 +16,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { ARTICLE_CATEGORIES, IRAQ_PROVINCES } from "@shared/article-taxonomy";
+import { ARTICLE_CATEGORIES, IRAQ_PROVINCES, getArticleCategoryLabel, type EmbassyProfile } from "@shared/article-taxonomy";
 import { CAPS, type AlertRule, type Article, type Source } from "@shared/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useSources } from "@/hooks/use-sources";
 import { useToast } from "@/hooks/use-toast";
+import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
 import { apiRequest } from "@/lib/queryClient";
 
 type AlertRuleArticle = Article & { source: Source | null };
@@ -148,14 +149,14 @@ function hasCondition(payload: AlertRulePayload) {
   return Boolean(payload.searchTerm || payload.sourceId || payload.sourceType || payload.category || payload.province);
 }
 
-function ruleConditions(rule: AlertRule, sourcesById: Map<number, Source>) {
+function ruleConditions(rule: AlertRule, sourcesById: Map<number, Source>, embassyProfile?: EmbassyProfile | null) {
   const conditions: string[] = [];
   if (rule.searchTerm) conditions.push(`Keyword: ${rule.searchTerm}`);
   if (rule.sourceId) {
     conditions.push(`Source: ${sourcesById.get(rule.sourceId)?.name || `#${rule.sourceId}`}`);
   }
   if (rule.sourceType) conditions.push(`Type: ${SOURCE_TYPES.find(item => item.value === rule.sourceType)?.label || rule.sourceType}`);
-  if (rule.category) conditions.push(`Category: ${ARTICLE_CATEGORIES.find(item => item.code === rule.category)?.label || rule.category}`);
+  if (rule.category) conditions.push(`Category: ${getArticleCategoryLabel(rule.category, embassyProfile)}`);
   if (rule.province) conditions.push(`Province: ${IRAQ_PROVINCES.find(item => item.code === rule.province)?.label || rule.province}`);
   return conditions;
 }
@@ -178,6 +179,7 @@ export default function ClientAlerts() {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
   const { hasCap } = usePermissions();
+  const embassyProfile = useEmbassyProfile();
   const canManageAlerts = hasCap(CAPS.ALERTS_MANAGE);
   const [form, setForm] = useState<AlertRuleForm>(INITIAL_FORM);
   const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
@@ -469,7 +471,7 @@ export default function ClientAlerts() {
                 <SelectTrigger data-testid="select-alert-category"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">{t("common.any", "Any")}</SelectItem>
-                  {ARTICLE_CATEGORIES.map(item => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}
+                  {ARTICLE_CATEGORIES.map(item => <SelectItem key={item.code} value={item.code}>{getArticleCategoryLabel(item.code, embassyProfile)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -529,7 +531,7 @@ export default function ClientAlerts() {
       <div className="space-y-3" data-testid="list-alert-rules">
         {rules.length > 0 ? rules.map(rule => {
           const summary = summaryByRuleId.get(rule.id);
-          const conditions = ruleConditions(rule, sourcesById);
+          const conditions = ruleConditions(rule, sourcesById, embassyProfile);
           return (
             <div key={rule.id} className="rounded-md border border-border/60 bg-card p-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">

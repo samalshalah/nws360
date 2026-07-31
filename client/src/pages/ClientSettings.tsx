@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, FileText, Globe2, Loader2, RefreshCw, Save, Settings, SlidersHorizontal } from "lucide-react";
+import { Bell, FileText, Globe2, Landmark, Loader2, RefreshCw, Save, Settings, SlidersHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,9 +10,11 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/queryClient";
 import { usePermissions, CAPS } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
+import type { EmbassyProfile } from "@shared/article-taxonomy";
 
 type ClientSettingsPayload = {
   clientId: number;
@@ -29,6 +31,13 @@ type ClientSettingsPayload = {
   defaultTargetLanguage: string;
   reportExportFormat: "txt" | "csv";
   reportIncludeSummaries: boolean;
+  homeCountryCode: string | null;
+  homeCountryName: string | null;
+  homeCountryAliases: string[];
+  embassyAliases: string[];
+  ambassadorAliases: string[];
+  bilateralCategoryLabel: string | null;
+  embassyProfile?: EmbassyProfile | null;
   updatedAt: string | null;
 };
 
@@ -43,6 +52,32 @@ const LANGUAGE_OPTIONS = [
 function numberValue(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function parseAliasList(value: string): string[] {
+  const seen = new Set<string>();
+  const aliases: string[] = [];
+  value
+    .split(/[\n,]+/)
+    .map((item) => item.trim().replace(/\s+/g, " "))
+    .filter(Boolean)
+    .forEach((item) => {
+      const key = item.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        aliases.push(item);
+      }
+    });
+  return aliases;
+}
+
+function aliasListValue(values?: string[] | null): string {
+  return Array.isArray(values) ? values.join("\n") : "";
+}
+
+function nullableText(value: string | null | undefined): string | null {
+  const cleaned = String(value || "").trim().replace(/\s+/g, " ");
+  return cleaned || null;
 }
 
 export default function ClientSettings() {
@@ -83,6 +118,12 @@ export default function ClientSettings() {
         defaultTargetLanguage: form.defaultTargetLanguage,
         reportExportFormat: form.reportExportFormat,
         reportIncludeSummaries: form.reportIncludeSummaries,
+        homeCountryCode: nullableText(form.homeCountryCode),
+        homeCountryName: nullableText(form.homeCountryName),
+        homeCountryAliases: form.homeCountryAliases || [],
+        embassyAliases: form.embassyAliases || [],
+        ambassadorAliases: form.ambassadorAliases || [],
+        bilateralCategoryLabel: nullableText(form.bilateralCategoryLabel),
       });
       return res.json() as Promise<ClientSettingsPayload>;
     },
@@ -212,6 +253,92 @@ export default function ClientSettings() {
                   <SelectItem value="month">{t("common.last30Days", "Last 30 days")}</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-md lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Landmark className="h-4 w-4 text-primary" />
+              {t("settings.embassyProfile", "Embassy Profile")}
+            </CardTitle>
+            <CardDescription>{t("settings.embassyProfileDescription", "Controls the tenant-specific bilateral relations label and non-AI classification terms.")}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="grid gap-3 md:grid-cols-[140px_minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="space-y-2">
+                <Label htmlFor="home-country-code">{t("settings.homeCountryCode", "Country code")}</Label>
+                <Input
+                  id="home-country-code"
+                  value={form.homeCountryCode || ""}
+                  onChange={(event) => updateField("homeCountryCode", event.target.value.toUpperCase())}
+                  placeholder="US"
+                  disabled={!canManageSettings}
+                  data-testid="input-home-country-code"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="home-country-name">{t("settings.homeCountryName", "Home country")}</Label>
+                <Input
+                  id="home-country-name"
+                  value={form.homeCountryName || ""}
+                  onChange={(event) => updateField("homeCountryName", event.target.value)}
+                  placeholder="United States"
+                  disabled={!canManageSettings}
+                  data-testid="input-home-country-name"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bilateral-label">{t("settings.bilateralCategoryLabel", "Bilateral label")}</Label>
+                <Input
+                  id="bilateral-label"
+                  value={form.bilateralCategoryLabel || ""}
+                  onChange={(event) => updateField("bilateralCategoryLabel", event.target.value)}
+                  placeholder="U.S.-Iraq Relations"
+                  disabled={!canManageSettings}
+                  data-testid="input-bilateral-category-label"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="home-country-aliases">{t("settings.homeCountryAliases", "Country aliases")}</Label>
+                <Textarea
+                  id="home-country-aliases"
+                  value={aliasListValue(form.homeCountryAliases)}
+                  onChange={(event) => updateField("homeCountryAliases", parseAliasList(event.target.value))}
+                  placeholder={"United States\nU.S.\nAmerica"}
+                  disabled={!canManageSettings}
+                  className="min-h-32"
+                  data-testid="textarea-home-country-aliases"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="embassy-aliases">{t("settings.embassyAliases", "Embassy aliases")}</Label>
+                <Textarea
+                  id="embassy-aliases"
+                  value={aliasListValue(form.embassyAliases)}
+                  onChange={(event) => updateField("embassyAliases", parseAliasList(event.target.value))}
+                  placeholder={"U.S. Embassy Baghdad\nUnited States Embassy Baghdad"}
+                  disabled={!canManageSettings}
+                  className="min-h-32"
+                  data-testid="textarea-embassy-aliases"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ambassador-aliases">{t("settings.ambassadorAliases", "Ambassador aliases")}</Label>
+                <Textarea
+                  id="ambassador-aliases"
+                  value={aliasListValue(form.ambassadorAliases)}
+                  onChange={(event) => updateField("ambassadorAliases", parseAliasList(event.target.value))}
+                  placeholder={"Ambassador name\nArabic spelling"}
+                  disabled={!canManageSettings}
+                  className="min-h-32"
+                  data-testid="textarea-ambassador-aliases"
+                />
+              </div>
             </div>
           </CardContent>
         </Card>

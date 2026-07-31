@@ -21,6 +21,7 @@ import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
 
 interface ArticleDetailDialogProps {
   article: Article & { source: Source | null };
@@ -42,6 +43,7 @@ export function ArticleDetailDialog({
   const { t } = useTranslation();
   const { toast } = useToast();
   const { hasCap, authContext } = usePermissions();
+  const embassyProfile = useEmbassyProfile();
   const canEditArticle = hasCap(CAPS.ARTICLE_EDIT);
   const canCreateTask = hasCap(CAPS.COLLAB_TASKS);
   const publishedAt = article.publishedAt ? new Date(article.publishedAt) : null;
@@ -192,7 +194,7 @@ export function ArticleDetailDialog({
                       </SelectTrigger>
                       <SelectContent>
                         {ARTICLE_CATEGORIES.map((item) => (
-                          <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>
+                          <SelectItem key={item.code} value={item.code}>{getArticleCategoryLabel(item.code, embassyProfile)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -255,7 +257,7 @@ export function ArticleDetailDialog({
             ) : (
               <div className="mt-5 flex flex-wrap gap-2" aria-label="Article organization">
                 {(article as any).category ? (
-                  <Badge variant="outline">{getArticleCategoryLabel((article as any).category)}</Badge>
+                  <Badge variant="outline">{getArticleCategoryLabel((article as any).category, embassyProfile)}</Badge>
                 ) : null}
                 {(article as any).workflowStatus ? (
                   <Badge variant="outline">{getArticleWorkflowStatusLabel((article as any).workflowStatus)}</Badge>

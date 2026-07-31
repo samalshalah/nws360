@@ -8,6 +8,7 @@ import { startFeedWorker, fetchSourceFeed, analyzeWithAI, registerArticleAnalysi
 import { enqueueAIJob, awaitJobResult, checkClientAiBudget } from "./ai/ai-gateway";
 import { startScheduler, stopScheduler, _schedulerTickForTesting } from "./ai/ai-scheduler";
 import { db } from "./db";
+import { buildClientEmbassyProfile } from "./embassy-profile";
 import { analyticsCache, articles, processingJobs, PLAN_LIMITS, SYSTEM_ROLES, CAPS, resolveEffectiveCaps, type AlertRule } from "@shared/schema";
 import { isGoogleNewsEditionCode } from "@shared/google-news-regions";
 import { isSourceCategoryCode } from "@shared/source-categories";
@@ -92,6 +93,12 @@ const clientSettingsInputSchema = z.object({
   defaultTargetLanguage: z.string().trim().min(2).max(12).optional(),
   reportExportFormat: z.enum(["txt", "csv"]).optional(),
   reportIncludeSummaries: z.boolean().optional(),
+  homeCountryCode: z.string().trim().min(1).max(12).nullable().optional(),
+  homeCountryName: z.string().trim().min(1).max(120).nullable().optional(),
+  homeCountryAliases: z.array(z.string().trim().min(1).max(160)).max(80).optional(),
+  embassyAliases: z.array(z.string().trim().min(1).max(160)).max(80).optional(),
+  ambassadorAliases: z.array(z.string().trim().min(1).max(160)).max(80).optional(),
+  bilateralCategoryLabel: z.string().trim().min(1).max(160).nullable().optional(),
 }).strict();
 
 const articleWorkflowUpdateSchema = z.object({
@@ -615,6 +622,7 @@ function numberSetting(settings: Record<string, string>, key: string, min: numbe
 }
 
 function buildClientSettingsPayload(client: any, settings: any) {
+  const embassyProfile = buildClientEmbassyProfile(client, settings);
   return {
     clientId: client.id,
     clientName: client.name,
@@ -630,16 +638,24 @@ function buildClientSettingsPayload(client: any, settings: any) {
     defaultTargetLanguage: settings?.defaultTargetLanguage || client.defaultLanguage || CLIENT_SETTING_DEFAULTS.defaultTargetLanguage,
     reportExportFormat: settings?.reportExportFormat || CLIENT_SETTING_DEFAULTS.reportExportFormat,
     reportIncludeSummaries: settings?.reportIncludeSummaries ?? CLIENT_SETTING_DEFAULTS.reportIncludeSummaries,
+    homeCountryCode: settings?.homeCountryCode ?? embassyProfile?.homeCountryCode ?? null,
+    homeCountryName: settings?.homeCountryName ?? embassyProfile?.homeCountryName ?? null,
+    homeCountryAliases: settings?.homeCountryAliases ?? embassyProfile?.homeCountryAliases ?? [],
+    embassyAliases: settings?.embassyAliases ?? embassyProfile?.embassyAliases ?? [],
+    ambassadorAliases: settings?.ambassadorAliases ?? embassyProfile?.ambassadorAliases ?? [],
+    bilateralCategoryLabel: settings?.bilateralCategoryLabel ?? embassyProfile?.bilateralCategoryLabel ?? null,
+    embassyProfile,
     updatedAt: settings?.updatedAt || null,
   };
 }
 
-function publicSystemSettings(settings: Record<string, string>, clientSettings?: any) {
+function publicSystemSettings(settings: Record<string, string>, clientSettings?: any, client?: any) {
   const withDefaults = systemSettingsWithDefaults(settings);
   const rawMode = clientSettings?.feedLiveUpdateMode || withDefaults.feedLiveUpdateMode;
   const mode = rawMode === "auto_load" ? "auto_load" : "notify";
   const rawDateRange = clientSettings?.defaultFeedDateRange || CLIENT_SETTING_DEFAULTS.defaultFeedDateRange;
   const defaultFeedDateRange = ["all", "today", "week", "month"].includes(rawDateRange) ? rawDateRange : "all";
+  const embassyProfile = buildClientEmbassyProfile(client, clientSettings);
   return {
     feedLiveUpdateEnabled: clientSettings?.feedLiveUpdateEnabled ?? booleanSetting(withDefaults, "feedLiveUpdateEnabled"),
     feedLiveUpdateIntervalSeconds: clientSettings?.feedLiveUpdateIntervalSeconds ?? numberSetting(withDefaults, "feedLiveUpdateIntervalSeconds", 15, 300),
@@ -648,6 +664,7 @@ function publicSystemSettings(settings: Record<string, string>, clientSettings?:
     defaultSourceIntervalMinutes: clientSettings?.defaultSourceIntervalMinutes ?? CLIENT_SETTING_DEFAULTS.defaultSourceIntervalMinutes,
     defaultMaxArticlesPerFetch: clientSettings?.defaultMaxArticlesPerFetch ?? CLIENT_SETTING_DEFAULTS.defaultMaxArticlesPerFetch,
     defaultArticleRetentionDays: clientSettings?.defaultArticleRetentionDays ?? CLIENT_SETTING_DEFAULTS.defaultArticleRetentionDays,
+    embassyProfile,
   };
 }
 
@@ -983,11 +1000,12 @@ export async function registerRoutes(
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
-    const [settings, tenantSettings] = await Promise.all([
+    const [settings, tenantSettings, client] = await Promise.all([
       storage.getSystemSettings(),
       clientId ? storage.getClientSettings(clientId) : Promise.resolve(undefined),
+      clientId ? storage.getClient(clientId) : Promise.resolve(undefined),
     ]);
-    res.json(publicSystemSettings(settings, tenantSettings));
+    res.json(publicSystemSettings(settings, tenantSettings, client));
   });
 
   app.get("/api/client/settings", requireCapability(CAPS.SETTINGS_VIEW), async (req, res) => {
@@ -2402,7 +2420,11 @@ export async function registerRoutes(
     const user = req.user as any;
     try {
       const clientId = resolveClientId(user, req);
-      const tenantSettings = clientId ? await storage.getClientSettings(clientId) : undefined;
+      const [tenantSettings, tenant] = await Promise.all([
+        clientId ? storage.getClientSettings(clientId) : Promise.resolve(undefined),
+        clientId ? storage.getClient(clientId) : Promise.resolve(undefined),
+      ]);
+      const embassyProfile = buildClientEmbassyProfile(tenant, tenantSettings);
       const params = await buildReportBasketParams(req, user, 1000);
       const result = await storage.getArticles({ ...params, page: 1, limit: 1000 });
       const format = String(req.query.format || tenantSettings?.reportExportFormat || "txt").toLowerCase();
@@ -2434,7 +2456,7 @@ export async function registerRoutes(
             csvCell(article.title),
             csvCell(source),
             csvCell(collectedVia),
-            csvCell(getArticleCategoryLabel(article.category || "other")),
+            csvCell(getArticleCategoryLabel(article.category || "other", embassyProfile)),
             csvCell(getArticlePriorityLabel(article.priority || "routine")),
             csvCell(getIraqProvinceLabel(article.province)),
             csvCell(getArticleWorkflowStatusLabel(article.workflowStatus || "for_report")),
@@ -2466,7 +2488,7 @@ export async function registerRoutes(
         lines.push(`${index + 1}. ${article.title || "Untitled"}`);
         lines.push(`Source: ${source}${collectedVia}`);
         lines.push(`Published: ${article.publishedAt ? new Date(article.publishedAt).toISOString() : "Unknown"}`);
-        lines.push(`Category: ${getArticleCategoryLabel(article.category || "other")}`);
+        lines.push(`Category: ${getArticleCategoryLabel(article.category || "other", embassyProfile)}`);
         lines.push(`Priority: ${getArticlePriorityLabel(article.priority || "routine")}`);
         if (article.province) lines.push(`Province: ${getIraqProvinceLabel(article.province)}`);
         if (tags) lines.push(`Tags: ${tags}`);

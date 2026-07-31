@@ -14,6 +14,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ArticleDetailDialog } from "@/components/articles/ArticleDetailDialog";
 import { getArticleCategoryLabel, getArticlePriorityLabel, getArticleWorkflowStatusLabel, getIraqProvinceLabel } from "@shared/article-taxonomy";
+import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
 
 interface ArticleCardProps {
   article: Article & { source: Source | null };
@@ -55,7 +56,8 @@ const categoryColors: Record<string, string> = {
   kurdistan_region: "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-900/30 dark:text-teal-400 dark:border-teal-800",
   civil_society_humanitarian: "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800",
   united_nations: "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800",
-  us_iraq_international: "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800",
+  client_bilateral_relations: "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800",
+  regional_international_relations: "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-800",
   media_narratives: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800",
   other: "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700",
 };
@@ -93,6 +95,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
   const { t } = useTranslation();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const embassyProfile = useEmbassyProfile();
   const [imgError, setImgError] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
 
@@ -177,7 +180,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
       data-testid={`badge-category-${article.id}`}
         >
           <Badge variant="outline" className={cn("text-xs cursor-pointer", categoryColors[articleCategory] || categoryColors.other)}>
-            {getArticleCategoryLabel(articleCategory)}
+            {getArticleCategoryLabel(articleCategory, embassyProfile)}
           </Badge>
         </button>
   ) : null;

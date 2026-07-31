@@ -38,6 +38,12 @@ export const clientSettings = pgTable("client_settings", {
   defaultTargetLanguage: text("default_target_language").default("en"),
   reportExportFormat: text("report_export_format").notNull().default("txt"),
   reportIncludeSummaries: boolean("report_include_summaries").default(true),
+  homeCountryCode: text("home_country_code"),
+  homeCountryName: text("home_country_name"),
+  homeCountryAliases: text("home_country_aliases").array(),
+  embassyAliases: text("embassy_aliases").array(),
+  ambassadorAliases: text("ambassador_aliases").array(),
+  bilateralCategoryLabel: text("bilateral_category_label"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [

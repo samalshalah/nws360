@@ -4,8 +4,9 @@ import { enqueueAIJob, awaitJobResult } from "./ai/ai-gateway";
 import { fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed, fetchTelegramFeed, fetchSocialRssFeed } from "./web-scraper";
 import { enqueueJob, registerJobHandler, openaiLimiter } from "./processing-queue";
 import { getGoogleNewsEdition } from "@shared/google-news-regions";
-import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES } from "@shared/article-taxonomy";
+import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, CLIENT_BILATERAL_CATEGORY_CODE, getArticleCategoryLabel, type EmbassyProfile } from "@shared/article-taxonomy";
 import { classifyArticleCategory, classifyArticlePriority, classifyIraqProvince } from "@shared/article-classifier";
+import { buildClientEmbassyProfile } from "./embassy-profile";
 import type { WebsiteCollectorConfig } from "@shared/source-collector";
 import {
   filterSourceItems,
@@ -71,6 +72,8 @@ const DEFAULT_SOURCE_RETENTION_DAYS = 7;
 const MAX_SOURCE_RETENTION_DAYS = 30;
 const FACEBOOK_MAX_ARTICLE_AGE_DAYS = 30;
 const FACEBOOK_MAX_ARTICLE_AGE_MS = FACEBOOK_MAX_ARTICLE_AGE_DAYS * 24 * 60 * 60 * 1000;
+const EMBASSY_PROFILE_CACHE_MS = 5 * 60 * 1000;
+const embassyProfileCache = new Map<number, { profile: EmbassyProfile | null; expiresAt: number }>();
 
 export type AIAnalysisResult = {
   sentimentLabel: string;
@@ -84,20 +87,51 @@ export type AIAnalysisResult = {
   aiAnalysisStatus: "success" | "failed";
 };
 
+async function getEmbassyProfileForClient(clientId?: number | null): Promise<EmbassyProfile | null> {
+  if (!clientId) return null;
+  const cached = embassyProfileCache.get(clientId);
+  if (cached && cached.expiresAt > Date.now()) return cached.profile;
+
+  const [client, settings] = await Promise.all([
+    storage.getClient(clientId),
+    storage.getClientSettings(clientId),
+  ]);
+  const profile = buildClientEmbassyProfile(client, settings);
+  embassyProfileCache.set(clientId, { profile, expiresAt: Date.now() + EMBASSY_PROFILE_CACHE_MS });
+  return profile;
+}
+
+function categoryPrompt(embassyProfile?: EmbassyProfile | null): string {
+  const definitions = ARTICLE_CATEGORIES
+    .map((category) => `${category.code} (${getArticleCategoryLabel(category.code, embassyProfile)}): ${category.description}`)
+    .join("; ");
+  const aliases = [
+    ...(embassyProfile?.homeCountryAliases || []),
+    ...(embassyProfile?.embassyAliases || []),
+    ...(embassyProfile?.ambassadorAliases || []),
+  ].slice(0, 30);
+  const profileHint = embassyProfile
+    ? ` For ${CLIENT_BILATERAL_CATEGORY_CODE}, classify only when Iraq's relationship with ${embassyProfile.homeCountryName || "the tenant home country"} is central, not when the country is mentioned incidentally. Tenant aliases: ${aliases.join(", ") || "none configured"}.`
+    : ` ${CLIENT_BILATERAL_CATEGORY_CODE} is tenant-specific; use it only when tenant embassy profile terms are provided and central.`;
+  return `${definitions}.${profileHint}`;
+}
+
 export async function analyzeWithAI(title: string, content: string, clientId?: number): Promise<AIAnalysisResult> {
   const effectiveClientId = clientId || 0;
+  let embassyProfile: EmbassyProfile | null = null;
   try {
+    embassyProfile = await getEmbassyProfileForClient(clientId);
     const textToAnalyze = truncate(`${title}. ${content}`, 2000);
     const job = await enqueueAIJob(effectiveClientId, "classification", {
-      systemPrompt: `You analyze Iraq news articles for an Iraq Daily Media Report. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "topics" (array of 1-3 subject labels), "summary" (1-2 sentence summary), "category" (exactly one of: ${VALID_CATEGORIES.join(", ")}), "priority" (exactly one of: ${VALID_PRIORITIES.join(", ")}), "country" (ISO 3166-1 alpha-2 code of the primary country the article is about, or null if unclear). Category must describe the article subject only; never use source type, platform, language, province, or urgency as a category. Respond ONLY with valid JSON.`,
+      systemPrompt: `You analyze Iraq news articles for an Iraq Daily Media Report. Return JSON with: "sentiment" (positive/negative/neutral), "score" (-100 to 100), "keywords" (array of 3-5 key terms), "topics" (array of 1-3 subject labels), "summary" (1-2 sentence summary), "category" (exactly one of: ${VALID_CATEGORIES.join(", ")}), "priority" (exactly one of: ${VALID_PRIORITIES.join(", ")}), "country" (ISO 3166-1 alpha-2 code of the primary country the article is about, or null if unclear). Category definitions: ${categoryPrompt(embassyProfile)} Category must describe the article subject only; never use source type, platform, language, province, or urgency as a category. Respond ONLY with valid JSON.`,
       userContent: textToAnalyze,
       responseFormat: { type: "json_object" },
     }, 500);
 
     const aiResult = await awaitJobResult(job.id);
     const result = JSON.parse(aiResult.content || "{}");
-    const deterministicCategory = classifyArticleCategory({ title, content });
-    const deterministicPriority = classifyArticlePriority({ title, content });
+    const deterministicCategory = classifyArticleCategory({ title, content }, embassyProfile);
+    const deterministicPriority = classifyArticlePriority({ title, content }, embassyProfile);
     const cat = typeof result.category === "string" ? result.category.toLowerCase().trim() : deterministicCategory;
     const priority = typeof result.priority === "string" ? result.priority.toLowerCase().trim() : deterministicPriority;
     const validSentiments = ["positive", "negative", "neutral"];
@@ -115,8 +149,8 @@ export async function analyzeWithAI(title: string, content: string, clientId?: n
     };
   } catch (e) {
     console.error("AI analysis failed:", e);
-    const deterministicCategory = classifyArticleCategory({ title, content });
-    const deterministicPriority = classifyArticlePriority({ title, content });
+    const deterministicCategory = classifyArticleCategory({ title, content }, embassyProfile);
+    const deterministicPriority = classifyArticlePriority({ title, content }, embassyProfile);
     return {
       sentimentLabel: null as any,
       sentimentScore: null as any,
@@ -657,6 +691,7 @@ async function processItems(
   const filteredItems = filterSourceItems(recencyFilteredItems, source.filterConfig);
   const rejectedCount = recencyFilteredItems.length - filteredItems.length;
   if (rejectedCount > 0) console.log(`[Worker] ${source.name}: feed filters rejected ${rejectedCount} article(s)`);
+  const embassyProfile = await getEmbassyProfileForClient(source.clientId);
 
   for (const rawItem of filteredItems.slice(0, source.maxArticlesPerFetch || 10)) {
     let item = rawItem;
@@ -672,8 +707,8 @@ async function processItems(
         sourceName: source.name,
         sourceCategory: source.category,
         url: item.url,
-      });
-      const priority = classifyArticlePriority({ title: inputTitle, content: inputContent });
+      }, embassyProfile);
+      const priority = classifyArticlePriority({ title: inputTitle, content: inputContent }, embassyProfile);
       const province = classifyIraqProvince({ title: inputTitle, content: inputContent });
       return { category, priority, province };
     };
@@ -823,6 +858,7 @@ async function handleExtractArticleContent(payload: {
   const shouldUseExtracted =
     extractedContent.length >= 180 &&
     (currentContent.length < 800 || extractedContent.length > currentContent.length + MIN_FULL_ARTICLE_GAIN_CHARS);
+  const embassyProfile = await getEmbassyProfileForClient(clientId);
 
   const updates: Record<string, any> = {};
   if (shouldUseExtracted) {
@@ -836,7 +872,7 @@ async function handleExtractArticleContent(payload: {
     content: extractedContent || currentContent,
     url: extracted.finalUrl || article.url,
     sourceCategory: article.category,
-  });
+  }, embassyProfile);
   if (classification !== "other" && (!article.category || article.category === "general" || article.category === "other")) {
     updates.category = classification;
   }
@@ -844,7 +880,7 @@ async function handleExtractArticleContent(payload: {
     title: extracted.title || article.title,
     summary: extracted.excerpt || article.summary,
     content: extractedContent || currentContent,
-  });
+  }, embassyProfile);
   if (priority !== "routine" && (!(article as any).priority || (article as any).priority === "routine")) {
     updates.priority = priority;
   }
