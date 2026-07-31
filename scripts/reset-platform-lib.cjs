@@ -3,6 +3,20 @@ const { scryptSync, timingSafeEqual } = require("crypto");
 
 const REQUIRED_CONFIRMATION = "RESET-NWS360";
 const LOCK_NAME = "nws360-platform-reset";
+const SYSTEM_ADMIN_ROLE = "admin";
+const PLATFORM_USER_SCOPE = "platform";
+const PLATFORM_PERMISSION_CODES = ["platform:admin:any"];
+const PLATFORM_APP_CAPS = [
+  "admin_system_dashboard",
+  "admin_tenant_switch",
+  "admin_impersonate",
+  "admin_audit_logs",
+  "admin_operations",
+  "admin_job_monitor",
+  "admin_product_analytics",
+];
+const PLATFORM_AUTHORITY_CODES = new Set([...PLATFORM_PERMISSION_CODES, ...PLATFORM_APP_CAPS]);
+const USER_SCOPE_CLIENT_CONSTRAINT = "users_scope_client_id_ck";
 
 const TENANT_REFERENCE_COLUMNS = new Set([
   "client_id",
@@ -232,6 +246,22 @@ function verifyPasswordHash(password, hash) {
   return stored.length === candidate.length && timingSafeEqual(candidate, stored);
 }
 
+function normalizeStringArray(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map((item) => String(item)).filter(Boolean);
+  if (typeof value === "string") {
+    if (value.startsWith("{") && value.endsWith("}")) {
+      return value.slice(1, -1).split(",").map((item) => item.trim().replace(/^"|"$/g, "")).filter(Boolean);
+    }
+    return [value];
+  }
+  return [];
+}
+
+function relevantPlatformAuthorityCodes(values) {
+  return Array.from(new Set(normalizeStringArray(values).filter((item) => PLATFORM_AUTHORITY_CODES.has(item))));
+}
+
 async function discoverDatabase(client) {
   const tablesResult = await client.query(`
     SELECT table_schema, table_name
@@ -420,7 +450,47 @@ async function loadAdmin(client, adminId) {
   return result.rows[0] || null;
 }
 
-function validateAdminForReset(admin, adminId) {
+async function loadEffectivePlatformPermissionCodes(client, userId, availableTables) {
+  const requiredTables = [
+    "public.user_permission_groups",
+    "public.group_permissions",
+    "public.user_permissions",
+    "public.permissions",
+  ];
+  if (!requiredTables.every((table) => availableTables.has(table))) {
+    return [];
+  }
+
+  const groupPermissions = await client.query(`
+    SELECT DISTINCT p.code
+      FROM public.user_permission_groups upg
+      JOIN public.group_permissions gp ON gp.group_id = upg.group_id
+      JOIN public.permissions p ON p.id = gp.permission_id
+     WHERE upg.user_id = $1
+       AND p.code = ANY($2::text[])
+  `, [userId, PLATFORM_PERMISSION_CODES]);
+
+  const directPermissions = await client.query(`
+    SELECT p.code,
+           up.granted
+      FROM public.user_permissions up
+      JOIN public.permissions p ON p.id = up.permission_id
+     WHERE up.user_id = $1
+       AND p.code = ANY($2::text[])
+  `, [userId, PLATFORM_PERMISSION_CODES]);
+
+  const codes = new Set(groupPermissions.rows.map((row) => row.code));
+  for (const row of directPermissions.rows) {
+    if (row.granted === false) {
+      codes.delete(row.code);
+    } else {
+      codes.add(row.code);
+    }
+  }
+  return Array.from(codes);
+}
+
+function assertAdminRecordUsable(admin, adminId) {
   if (!admin) throw new Error(`Preserved administrator ${adminId} does not exist`);
   if (admin.disabled) throw new Error(`Preserved administrator ${adminId} is disabled`);
   if (!validatePasswordHashFormat(admin.password)) {
@@ -428,9 +498,64 @@ function validateAdminForReset(admin, adminId) {
   }
 }
 
-async function buildResetReport(client, options, discovery, classified, deletionOrder, beforeAdmin) {
+function buildAdminQualification(admin, platformPermissionCodes = []) {
+  const capabilityAuthority = relevantPlatformAuthorityCodes(admin.capabilities);
+  const permissionAuthority = relevantPlatformAuthorityCodes(platformPermissionCodes);
+  const relevantEffectivePlatformCapabilities = Array.from(new Set([
+    ...(admin.userScope === PLATFORM_USER_SCOPE ? ["user_scope:platform"] : []),
+    ...capabilityAuthority,
+    ...permissionAuthority,
+  ]));
+
+  const hasAdminRole = admin.role === SYSTEM_ADMIN_ROLE;
+  const hasPlatformAuthority = admin.userScope === PLATFORM_USER_SCOPE
+    || capabilityAuthority.length > 0
+    || permissionAuthority.length > 0;
+  const qualifies = hasAdminRole && hasPlatformAuthority;
+
+  let reason = "Account has the platform administrator role and platform authority.";
+  if (!hasAdminRole && !hasPlatformAuthority) {
+    reason = "Account is not the platform administrator role and has no platform-management authority.";
+  } else if (!hasAdminRole) {
+    reason = `Account role '${admin.role}' is not the platform administrator role '${SYSTEM_ADMIN_ROLE}'.`;
+  } else if (!hasPlatformAuthority) {
+    reason = "Account has the administrator role but no platform-management authority through userScope, capabilities, or platform permissions.";
+  }
+
+  return {
+    qualified: qualifies,
+    role: admin.role,
+    userScope: admin.userScope,
+    clientId: admin.clientId,
+    relevantEffectivePlatformCapabilities,
+    reason,
+  };
+}
+
+function validateAdminForReset(admin, adminId, qualification) {
+  assertAdminRecordUsable(admin, adminId);
+  if (!qualification?.qualified) {
+    throw new Error(`Preserved administrator ${adminId} is not authorized for platform reset: ${qualification?.reason || "qualification failed"}`);
+  }
+}
+
+async function inspectUserScopeClientCompatibility(client) {
+  const result = await client.query(`
+    SELECT user_scope AS "userScope",
+           COUNT(*)::int AS count
+      FROM public.users
+     WHERE (user_scope = 'platform' AND client_id IS NOT NULL)
+        OR (user_scope <> 'platform' AND client_id IS NULL)
+     GROUP BY user_scope
+     ORDER BY user_scope
+  `);
+  return result.rows;
+}
+
+async function buildResetReport(client, options, discovery, classified, deletionOrder, beforeAdmin, adminQualification) {
   const plannedTables = [...classified.resetTables, ...classified.partialResetTables];
   const currentCounts = await countTables(client, plannedTables);
+  const scopeClientCompatibility = await inspectUserScopeClientCompatibility(client);
 
   const userCountsResult = await client.query(`
     SELECT
@@ -474,7 +599,7 @@ async function buildResetReport(client, options, discovery, classified, deletion
 
   return {
     mode: options.mode,
-    readyForApply: classified.unhandledTables.length === 0,
+    readyForApply: classified.unhandledTables.length === 0 && adminQualification.qualified,
     confirmationRequired: options.mode === "dry-run" ? REQUIRED_CONFIRMATION : undefined,
     preservedAdmin: {
       id: beforeAdmin.id,
@@ -484,8 +609,10 @@ async function buildResetReport(client, options, discovery, classified, deletion
       clientId: beforeAdmin.clientId,
       disabled: beforeAdmin.disabled,
     },
+    adminQualification,
     summaryCounts,
     currentUserCounts: userCountsResult.rows[0],
+    userScopeClientCompatibility: scopeClientCompatibility,
     discoveredOperationalTables: plannedTables.map((table) => table.key),
     currentRowCountByTable: currentCounts,
     proposedDeletionOrder: deletionOrder.map((table) => ({
@@ -499,6 +626,7 @@ async function buildResetReport(client, options, discovery, classified, deletion
     unhandledTableRisks: classified.unhandledTables,
     requiredSchemaChanges: [
       "ALTER TABLE public.users ALTER COLUMN client_id DROP NOT NULL",
+      `ALTER TABLE public.users ADD CONSTRAINT ${USER_SCOPE_CLIENT_CONSTRAINT}`,
       "ALTER TABLE public.admin_audit_logs ALTER COLUMN client_id DROP NOT NULL",
       "ALTER TABLE public.api_keys ALTER COLUMN client_id DROP NOT NULL",
       "CREATE TABLE IF NOT EXISTS public.platform_reset_audit",
@@ -529,6 +657,33 @@ async function ensureSupportSchema(client) {
   await client.query(`
     CREATE INDEX IF NOT EXISTS idx_platform_reset_audit_created
       ON public.platform_reset_audit (created_at)
+  `);
+}
+
+async function ensureUserScopeClientConstraint(client) {
+  const incompatible = await inspectUserScopeClientCompatibility(client);
+  if (incompatible.length > 0) {
+    throw new Error(`Cannot add ${USER_SCOPE_CLIENT_CONSTRAINT}; incompatible users remain: ${JSON.stringify(incompatible)}`);
+  }
+  await client.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conname = '${USER_SCOPE_CLIENT_CONSTRAINT}'
+           AND conrelid = 'public.users'::regclass
+      ) THEN
+        ALTER TABLE public.users
+          ADD CONSTRAINT ${USER_SCOPE_CLIENT_CONSTRAINT}
+          CHECK (
+            (user_scope = 'platform' AND client_id IS NULL)
+            OR
+            (user_scope <> 'platform' AND client_id IS NOT NULL)
+          );
+      END IF;
+    END
+    $$;
   `);
 }
 
@@ -761,13 +916,18 @@ async function runPlatformReset(client, options) {
   const discovery = await discoverDatabase(client);
   const classified = classifyTables(discovery);
   const deletionOrder = buildDeletionOrder(classified, discovery.foreignKeys);
+  const availableTables = new Set(discovery.tables.map((table) => tableKey(table)));
   const adminBefore = await loadAdmin(client, options.preserveAdminId);
-  validateAdminForReset(adminBefore, options.preserveAdminId);
-  const dryRunReport = await buildResetReport(client, options, discovery, classified, deletionOrder, adminBefore);
+  assertAdminRecordUsable(adminBefore, options.preserveAdminId);
+  const platformPermissionCodes = await loadEffectivePlatformPermissionCodes(client, options.preserveAdminId, availableTables);
+  const adminQualification = buildAdminQualification(adminBefore, platformPermissionCodes);
+  const dryRunReport = await buildResetReport(client, options, discovery, classified, deletionOrder, adminBefore, adminQualification);
 
   if (options.mode === "dry-run") {
     return dryRunReport;
   }
+
+  validateAdminForReset(adminBefore, options.preserveAdminId, adminQualification);
 
   if (classified.unhandledTables.length > 0) {
     throw new Error(`Unhandled operational table(s) discovered: ${classified.unhandledTables.map((table) => table.key).join(", ")}`);
@@ -788,14 +948,14 @@ async function runPlatformReset(client, options) {
       throw new Error(`Unhandled operational table(s) discovered after support schema check: ${reclassified.unhandledTables.map((table) => table.key).join(", ")}`);
     }
     const refreshedDeletionOrder = buildDeletionOrder(reclassified, rediscovery.foreignKeys);
-    const availableTables = new Set(rediscovery.tables.map((table) => tableKey(table)));
+    const refreshedAvailableTables = new Set(rediscovery.tables.map((table) => tableKey(table)));
 
     const convertedAdmin = await convertAdmin(client, options.preserveAdminId);
     if (convertedAdmin.username !== adminBefore.username || convertedAdmin.password !== adminBefore.password) {
       throw new Error("Admin conversion changed immutable credentials");
     }
 
-    const neutralizedJobs = await neutralizeActiveTenantJobs(client, availableTables);
+    const neutralizedJobs = await neutralizeActiveTenantJobs(client, refreshedAvailableTables);
     const deletedCounts = await executeDeletionPlan(client, refreshedDeletionOrder, options.preserveAdminId);
 
     if (options.simulateFailureAt === "after-delete") {
@@ -804,13 +964,14 @@ async function runPlatformReset(client, options) {
 
     const sequences = await resetSequences(client, refreshedDeletionOrder, options.preserveAdminId);
     const finalAdmin = await verifyFinalState(client, reclassified, adminBefore, options.preserveAdminId);
+    await ensureUserScopeClientConstraint(client);
     const orphanedRecords = await countOrphans(client, rediscovery.foreignKeys);
     if (orphanedRecords.length > 0) {
       throw new Error(`Final integrity check failed: orphaned records remain: ${JSON.stringify(orphanedRecords)}`);
     }
 
     const finalCounts = await countTables(client, [...reclassified.resetTables, ...reclassified.partialResetTables]);
-    if (availableTables.has("public.platform_reset_audit")) {
+    if (refreshedAvailableTables.has("public.platform_reset_audit")) {
       const auditCount = await countTableRows(client, { table_schema: "public", table_name: "platform_reset_audit", key: "public.platform_reset_audit" });
       finalCounts["public.platform_reset_audit"] = auditCount + 1;
     }

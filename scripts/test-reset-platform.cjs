@@ -33,6 +33,7 @@ class MockPgClient {
     this.tables = new Map();
     this.foreignKeys = [];
     this.sequences = {};
+    this.constraints = new Set();
     this.transactionSnapshot = null;
     this.adminHash = options.adminHash || makeHash();
     this.addDefaultTables(options);
@@ -86,10 +87,11 @@ class MockPgClient {
       "capabilities",
       "created_at",
     ], [
-      { id: 10, username: "admin@nws360.com", password: this.adminHash, role: "client_admin", user_scope: "tenant", user_type: "executive", parent_id: null, client_id: 1, disabled: disabledAdmin, capabilities: ["platform:admin:any"], created_at: "2026-01-01T00:00:00.000Z" },
+      { id: 10, username: "admin@nws360.com", password: this.adminHash, role: "admin", user_scope: "platform", user_type: "executive", parent_id: null, client_id: null, disabled: disabledAdmin, capabilities: ["admin_system_dashboard"], created_at: "2026-01-01T00:00:00.000Z" },
       { id: 11, username: "test@nws360.com", password: makeHash("Test@@##"), role: "client", user_scope: "tenant", user_type: "reader", parent_id: 10, client_id: 1, disabled: false, capabilities: [], created_at: "2026-01-02T00:00:00.000Z" },
       { id: 12, username: "test2@nws360.com", password: makeHash("Test@@##"), role: "client", user_scope: "tenant", user_type: "reader", parent_id: 10, client_id: 2, disabled: false, capabilities: [], created_at: "2026-01-03T00:00:00.000Z" },
     ]);
+    Object.assign(this.tables.get("public.users").rows[0], options.adminOverrides || {});
 
     this.addTable("public", "clients", [
       { name: "id", nullable: false },
@@ -248,6 +250,7 @@ class MockPgClient {
       tables: deepClone(Object.fromEntries([...this.tables.entries()].map(([key, table]) => [key, table.rows]))),
       nullable: deepClone(Object.fromEntries([...this.tables.entries()].map(([key, table]) => [key, Object.fromEntries(table.columns.map((column) => [column.name, column.nullable]))]))),
       sequences: deepClone(this.sequences),
+      constraints: [...this.constraints],
     };
   }
 
@@ -269,6 +272,7 @@ class MockPgClient {
       }
     }
     this.sequences = snapshot.sequences;
+    this.constraints = new Set(snapshot.constraints || []);
   }
 
   getTable(schema, name) {
@@ -354,6 +358,44 @@ class MockPgClient {
       return { rows: row ? [this.toAdminRow(row)] : [], rowCount: row ? 1 : 0 };
     }
 
+    if (sql.startsWith("SELECT DISTINCT p.code FROM public.user_permission_groups")) {
+      const userId = params[0];
+      const allowed = new Set(params[1] || []);
+      const groups = this.getTable("public", "user_permission_groups").rows.filter((row) => row.user_id === userId);
+      const groupIds = new Set(groups.map((row) => row.group_id));
+      const permissionIds = new Set(this.getTable("public", "group_permissions").rows
+        .filter((row) => groupIds.has(row.group_id))
+        .map((row) => row.permission_id));
+      const rows = this.getTable("public", "permissions").rows
+        .filter((row) => permissionIds.has(row.id) && allowed.has(row.code))
+        .map((row) => ({ code: row.code }));
+      return { rows, rowCount: rows.length };
+    }
+
+    if (sql.startsWith("SELECT p.code, up.granted FROM public.user_permissions")) {
+      const userId = params[0];
+      const allowed = new Set(params[1] || []);
+      const direct = this.getTable("public", "user_permissions").rows.filter((row) => row.user_id === userId);
+      const rows = direct.map((row) => {
+        const permission = this.getTable("public", "permissions").rows.find((perm) => perm.id === row.permission_id);
+        return permission && allowed.has(permission.code) ? { code: permission.code, granted: row.granted } : null;
+      }).filter(Boolean);
+      return { rows, rowCount: rows.length };
+    }
+
+    if (sql.startsWith("SELECT user_scope AS \"userScope\"")) {
+      const counts = new Map();
+      for (const row of this.getTable("public", "users").rows) {
+        const incompatible = (row.user_scope === "platform" && row.client_id !== null && row.client_id !== undefined)
+          || (row.user_scope !== "platform" && (row.client_id === null || row.client_id === undefined));
+        if (incompatible) {
+          counts.set(row.user_scope, (counts.get(row.user_scope) || 0) + 1);
+        }
+      }
+      const rows = [...counts.entries()].map(([userScope, count]) => ({ userScope, count }));
+      return { rows, rowCount: rows.length };
+    }
+
     if (sql.includes("COUNT(*) FILTER") && sql.includes("FROM public.users")) {
       const rows = this.getTable("public", "users").rows;
       return {
@@ -437,6 +479,10 @@ class MockPgClient {
       return { rows: [], rowCount: 0 };
     }
     if (sql.startsWith("CREATE INDEX IF NOT EXISTS")) {
+      return { rows: [], rowCount: 0 };
+    }
+    if (sql.startsWith("DO $$ BEGIN")) {
+      this.constraints.add("users_scope_client_id_ck");
       return { rows: [], rowCount: 0 };
     }
 
@@ -559,10 +605,62 @@ async function testDryRunChangesNothing() {
   const report = await runPlatformReset(client, { mode: "dry-run", preserveAdminId: 10 });
   assert.deepStrictEqual(client.snapshot(), before, "dry run changed mock database state");
   assert.strictEqual(report.mode, "dry-run");
+  assert.strictEqual(report.readyForApply, true, "authorized admin dry-run should be ready for apply");
   assert.strictEqual(report.preservedAdmin.id, 10);
   assert.strictEqual(report.preservedAdmin.username, "admin@nws360.com");
+  assert.strictEqual(report.adminQualification.qualified, true);
+  assert.strictEqual(report.adminQualification.role, "admin");
+  assert.strictEqual(report.adminQualification.userScope, "platform");
+  assert(report.adminQualification.relevantEffectivePlatformCapabilities.includes("user_scope:platform"));
+  assert(!JSON.stringify(report).includes(before.tables["public.users"][0].password), "dry-run report exposed password hash");
   assert(report.discoveredOperationalTables.includes("public.clients"));
   assert(report.proposedDeletionOrder.some((entry) => entry.table === "public.clients"));
+}
+
+async function testAdminQualification() {
+  const authorizedByPermission = new MockPgClient({
+    adminOverrides: {
+      user_scope: "tenant",
+      client_id: 1,
+      capabilities: [],
+    },
+  });
+  const permissionReport = await runPlatformReset(authorizedByPermission, { mode: "dry-run", preserveAdminId: 10 });
+  assert.strictEqual(permissionReport.adminQualification.qualified, true, "admin role with platform permission should qualify");
+  assert(permissionReport.adminQualification.relevantEffectivePlatformCapabilities.includes("platform:admin:any"));
+
+  const normalTenant = new MockPgClient();
+  const normalReport = await runPlatformReset(normalTenant, { mode: "dry-run", preserveAdminId: 11 });
+  assert.strictEqual(normalReport.readyForApply, false, "normal tenant user should not be ready for apply");
+  assert.strictEqual(normalReport.adminQualification.qualified, false);
+  assert.match(normalReport.adminQualification.reason, /not the platform administrator role/i);
+  await assert.rejects(
+    () => runPlatformReset(new MockPgClient(), { mode: "apply", preserveAdminId: 11, confirmation: REQUIRED_CONFIRMATION }),
+    /not authorized for platform reset/,
+  );
+
+  const clientAdmin = new MockPgClient({
+    adminOverrides: {
+      role: "client_admin",
+      user_scope: "tenant",
+      client_id: 1,
+      capabilities: [],
+    },
+  });
+  const clientAdminReport = await runPlatformReset(clientAdmin, { mode: "dry-run", preserveAdminId: 10 });
+  assert.strictEqual(clientAdminReport.readyForApply, false, "client admin without platform authority should not be ready");
+  assert.strictEqual(clientAdminReport.adminQualification.qualified, false);
+  await assert.rejects(
+    () => runPlatformReset(new MockPgClient({
+      adminOverrides: {
+        role: "client_admin",
+        user_scope: "tenant",
+        client_id: 1,
+        capabilities: [],
+      },
+    }), { mode: "apply", preserveAdminId: 10, confirmation: REQUIRED_CONFIRMATION }),
+    /not authorized for platform reset/,
+  );
 }
 
 function testArgumentValidation() {
@@ -579,6 +677,10 @@ async function testInvalidAndDisabledAdminAbort() {
   await assert.rejects(
     () => runPlatformReset(new MockPgClient(), { mode: "dry-run", preserveAdminId: 999 }),
     /does not exist/,
+  );
+  await assert.rejects(
+    () => runPlatformReset(new MockPgClient({ adminHash: "not-a-valid-hash" }), { mode: "dry-run", preserveAdminId: 10 }),
+    /valid password hash format/,
   );
   await assert.rejects(
     () => runPlatformReset(new MockPgClient({ disabledAdmin: true }), { mode: "dry-run", preserveAdminId: 10 }),
@@ -646,6 +748,7 @@ async function testSuccessfulApply() {
   assert.strictEqual(client.tables.get("public.user_permissions").rows.length, 1, "admin direct permission was not preserved alone");
   assert.strictEqual(client.tables.get("public.user_permissions").rows[0].user_id, 10);
   assert.strictEqual(client.tables.get("public.platform_reset_audit").rows.length, 1, "reset audit row was not recorded");
+  assert(client.constraints.has("users_scope_client_id_ck"), "user scope/client check constraint was not added");
   assert(client.sequences.public_users_id_seq > 10, "users sequence was not kept above preserved admin");
   assert.strictEqual(client.sequences.public_clients_id_seq, 1, "client sequence was not reset");
 }
@@ -679,6 +782,7 @@ function testZeroStateAndNoDemoRecreation() {
 async function main() {
   const checks = [
     ["dry-run changes nothing", testDryRunChangesNothing],
+    ["admin qualification", testAdminQualification],
     ["argument validation", testArgumentValidation],
     ["invalid and disabled admin abort", testInvalidAndDisabledAdminAbort],
     ["unhandled table blocks apply", testUnhandledTableBlocksApply],

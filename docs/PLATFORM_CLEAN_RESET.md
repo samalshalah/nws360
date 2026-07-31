@@ -27,6 +27,8 @@ The preserved administrator is converted to platform scope:
 - `client_id = NULL`
 - `disabled = false`
 
+The selected account must already qualify as a platform administrator before apply mode is allowed. It must use the existing platform administrator role (`admin`) and already carry platform-management authority through platform scope, a platform admin capability, or the legacy `platform:admin:any` permission model. A tenant user, analyst, editor, or client administrator is not promoted just because its ID is passed to the command.
+
 The reset preserves the administrator's:
 
 - `id`
@@ -36,6 +38,11 @@ The reset preserves the administrator's:
 - `created_at`
 
 Tenant users must keep `user_scope = 'tenant'` and require a real `client_id`. The reset does not create a fake client for the administrator.
+
+The users table is protected by `users_scope_client_id_ck`:
+
+- `user_scope = 'platform'` requires `client_id IS NULL`
+- every non-platform scope requires `client_id IS NOT NULL`
 
 ## Dry Run
 
@@ -48,6 +55,7 @@ npm run reset:platform -- --dry-run --preserve-admin-id <id>
 Review the JSON output before applying. It reports:
 
 - Preserved admin ID and username
+- Admin qualification status, role, user scope, relevant platform capabilities, and qualification reason
 - Client, tenant-user, source, article, report, alert, briefing, and job counts
 - Every discovered operational table
 - Current row counts by table
@@ -73,6 +81,7 @@ There is no backup confirmation flag. The reset assumes the current data is inte
 Apply mode:
 
 - Aborts if the preserved admin ID is missing, invalid, or disabled
+- Aborts if the preserved admin is not already an authorized platform administrator
 - Aborts if the confirmation text is wrong
 - Aborts if an unhandled operational table is discovered
 - Uses a PostgreSQL advisory transaction lock to prevent concurrent resets
@@ -89,6 +98,7 @@ Apply mode:
 The reset also applies the minimal support DDL needed for the target model:
 
 - `public.users.client_id` nullable
+- `public.users` protected by `users_scope_client_id_ck`
 - `public.admin_audit_logs.client_id` nullable
 - `public.api_keys.client_id` nullable
 - `public.platform_reset_audit` exists

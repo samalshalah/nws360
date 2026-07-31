@@ -1,9 +1,10 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb, uniqueIndex, index, uuid } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, uniqueIndex, index, uuid, check } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import type { WebsiteCollectorConfig } from "./source-collector";
 import type { SourceFilterConfig } from "./source-filter";
+import { normalizeUserScopeClientAssignment } from "./user-scope";
 
 // === CLIENTS ===
 export const clients = pgTable("clients", {
@@ -65,9 +66,36 @@ export const users = pgTable("users", {
   disabled: boolean("disabled").default(false),
   capabilities: text("capabilities").array(),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  check("users_scope_client_id_ck", sql`
+    (
+      ${table.userScope} = 'platform'
+      AND ${table.clientId} IS NULL
+    )
+    OR
+    (
+      ${table.userScope} <> 'platform'
+      AND ${table.clientId} IS NOT NULL
+    )
+  `),
+]);
 
-export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
+export const insertUserSchema = createInsertSchema(users)
+  .omit({ id: true, createdAt: true })
+  .superRefine((value, ctx) => {
+    try {
+      normalizeUserScopeClientAssignment(
+        { userScope: value.userScope, clientId: value.clientId ?? null },
+        { mode: "create" },
+      );
+    } catch (error) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["clientId"],
+        message: error instanceof Error ? error.message : "Invalid user scope/client assignment",
+      });
+    }
+  });
 
 // === SOURCES ===
 export const sources = pgTable("sources", {

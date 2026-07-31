@@ -105,6 +105,7 @@ import {
   type InsightJob, type InsertInsightJob,
   type AiUsageLog, type InsertAiUsageLog,
 } from "@shared/schema";
+import { normalizeUserScopeClientAssignment } from "@shared/user-scope";
 import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
 const AUTO_PAUSE_THRESHOLD_DB = 5;
@@ -319,6 +320,13 @@ export class TenantNotFoundError extends Error {
 export function assertTenant(recordClientId: number | null | undefined, requestClientId: number | null | undefined): void {
   if (requestClientId != null && recordClientId != null && recordClientId !== requestClientId) {
     throw new TenantNotFoundError();
+  }
+}
+
+async function assertClientExists(clientId: number): Promise<void> {
+  const [client] = await db.select({ id: clients.id }).from(clients).where(eq(clients.id, clientId)).limit(1);
+  if (!client) {
+    throw new Error(`Client ${clientId} does not exist`);
   }
 }
 
@@ -904,7 +912,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db.insert(users).values(insertUser).returning();
+    const normalized = normalizeUserScopeClientAssignment(
+      { userScope: insertUser.userScope, clientId: insertUser.clientId ?? null },
+      { mode: "create" },
+    );
+    if (normalized.clientId !== null) {
+      await assertClientExists(normalized.clientId);
+    }
+    const [user] = await db.insert(users).values({
+      ...insertUser,
+      userScope: normalized.userScope,
+      clientId: normalized.clientId,
+    } as any).returning();
     return user;
   }
 
@@ -2438,7 +2457,24 @@ export class DatabaseStorage implements IStorage {
 
   // === USER MANAGEMENT EXTENSIONS ===
   async updateUser(id: number, updates: Partial<{ role: string; userScope: string; clientId: number | null; disabled: boolean; password: string }>): Promise<User | undefined> {
-    const [user] = await db.update(users).set(updates).where(eq(users.id, id)).returning();
+    let safeUpdates: typeof updates = updates;
+    if (Object.prototype.hasOwnProperty.call(updates, "userScope") || Object.prototype.hasOwnProperty.call(updates, "clientId")) {
+      const existing = await this.getUser(id);
+      if (!existing) return undefined;
+      const normalized = normalizeUserScopeClientAssignment(
+        { userScope: updates.userScope, clientId: updates.clientId },
+        { mode: "update", existing },
+      );
+      if (normalized.clientId !== null) {
+        await assertClientExists(normalized.clientId);
+      }
+      safeUpdates = {
+        ...updates,
+        userScope: normalized.userScope,
+        clientId: normalized.clientId,
+      };
+    }
+    const [user] = await db.update(users).set(safeUpdates as any).where(eq(users.id, id)).returning();
     return user;
   }
 
