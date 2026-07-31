@@ -7,8 +7,9 @@ import { FeedMagazine } from "@/components/articles/FeedMagazine";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
-import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe, LayoutGrid, List, ArrowDownUp, BookmarkPlus, PanelLeft, MapPin, FolderOpen } from "lucide-react";
+import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe, LayoutGrid, List, ArrowDownUp, BookmarkPlus, MapPin, FolderOpen, ChevronDown } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -593,6 +594,28 @@ export default function Feed() {
     resetScroll();
   };
 
+  const updateBrowseFilter = (key: "category" | "sourceName" | "province", value: string | undefined) => {
+    setActiveSavedViewId(undefined);
+    setFilters(prev => ({
+      ...prev,
+      [key]: value,
+      ...(key === "sourceName" ? { sourceId: undefined } : {}),
+    }));
+    resetScroll();
+  };
+
+  const clearBrowseNavigation = () => {
+    setActiveSavedViewId(undefined);
+    setFilters(prev => ({
+      ...prev,
+      category: undefined,
+      sourceId: undefined,
+      sourceName: undefined,
+      province: undefined,
+    }));
+    resetScroll();
+  };
+
   const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sentiment || filters.category || filters.priority || filters.province || filters.workflowStatus || filters.manualTag || filters.sourceType || filters.startDate || filters.endDate || filters.dateRange !== "all";
 
   const clearFilters = () => {
@@ -655,13 +678,12 @@ export default function Feed() {
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
+  const activeBrowseNavigation = Boolean(filters.category || filters.sourceId || filters.sourceName || filters.province);
+
   const activeFilterCount = [
-    filters.sourceName,
     filters.sourceType,
     filters.sentiment,
-    filters.category,
     filters.priority,
-    filters.province,
     filters.workflowStatus,
     filters.manualTag,
     filters.startDate || filters.endDate,
@@ -725,6 +747,152 @@ export default function Feed() {
         </div>
       )}
     </div>
+  );
+
+  const activeCategoryLabel = filters.category ? getArticleCategoryLabel(filters.category, embassyProfile) : "Categories";
+  const activeSourceLabel = filters.sourceName || "Sources";
+  const activeCityLabel = filters.province
+    ? IRAQ_PROVINCES.find((province) => province.code === filters.province)?.label || filters.province
+    : "Cities";
+
+  const browseTriggerClass = (active: boolean) => cn(
+    "h-9 max-w-full justify-between gap-2 rounded-md",
+    active ? "shadow-sm" : "bg-background"
+  );
+
+  const browseMenuItemClass = (active: boolean) => cn(
+    "justify-between gap-3",
+    active && "bg-accent text-accent-foreground font-medium"
+  );
+
+  const browseNavigation = (
+    <nav
+      className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 bg-card p-2 shadow-sm"
+      data-testid="feed-browse-navigation"
+      aria-label="Feed browse navigation"
+    >
+      <span className="hidden px-1 text-xs font-semibold uppercase text-muted-foreground sm:inline">Browse</span>
+      <Button
+        variant={!activeBrowseNavigation ? "default" : "outline"}
+        size="sm"
+        className="h-9 shrink-0"
+        onClick={clearBrowseNavigation}
+        data-testid="button-browse-all-news"
+      >
+        <Newspaper className="mr-1.5 h-4 w-4" />
+        All news
+      </Button>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant={filters.category ? "default" : "outline"}
+            size="sm"
+            className={browseTriggerClass(Boolean(filters.category))}
+            data-testid="menu-browse-categories"
+          >
+            <FolderOpen className="h-4 w-4 shrink-0" />
+            <span className="max-w-[180px] truncate">{activeCategoryLabel}</span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-72">
+          <DropdownMenuLabel>Categories</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className={browseMenuItemClass(!filters.category)}
+            onSelect={() => updateBrowseFilter("category", undefined)}
+            data-testid="menu-item-category-all"
+          >
+            All categories
+          </DropdownMenuItem>
+          {ARTICLE_CATEGORIES.map(category => (
+            <DropdownMenuItem
+              key={category.code}
+              className={browseMenuItemClass(filters.category === category.code)}
+              onSelect={() => updateBrowseFilter("category", category.code)}
+              data-testid={`menu-item-category-${category.code}`}
+            >
+              <span className="truncate">{getArticleCategoryLabel(category.code, embassyProfile)}</span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant={filters.sourceName ? "default" : "outline"}
+            size="sm"
+            className={browseTriggerClass(Boolean(filters.sourceName))}
+            data-testid="menu-browse-sources"
+          >
+            <Rss className="h-4 w-4 shrink-0" />
+            <span className="max-w-[180px] truncate">{activeSourceLabel}</span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="max-h-[min(70vh,460px)] w-80">
+          <DropdownMenuLabel>Sources</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className={browseMenuItemClass(!filters.sourceName)}
+            onSelect={() => updateBrowseFilter("sourceName", undefined)}
+            data-testid="menu-item-source-all"
+          >
+            All sources
+          </DropdownMenuItem>
+          {uniqueSourceNames.length === 0 ? (
+            <DropdownMenuItem disabled>No sources loaded</DropdownMenuItem>
+          ) : uniqueSourceNames.map(name => (
+            <DropdownMenuItem
+              key={name}
+              className={browseMenuItemClass(filters.sourceName === name)}
+              onSelect={() => updateBrowseFilter("sourceName", name)}
+              data-testid={`menu-item-source-${name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`}
+            >
+              <span className="truncate">{name}</span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant={filters.province ? "default" : "outline"}
+            size="sm"
+            className={browseTriggerClass(Boolean(filters.province))}
+            data-testid="menu-browse-cities"
+          >
+            <MapPin className="h-4 w-4 shrink-0" />
+            <span className="max-w-[150px] truncate">{activeCityLabel}</span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-64">
+          <DropdownMenuLabel>Cities</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className={browseMenuItemClass(!filters.province)}
+            onSelect={() => updateBrowseFilter("province", undefined)}
+            data-testid="menu-item-city-all"
+          >
+            All cities
+          </DropdownMenuItem>
+          {IRAQ_PROVINCES.map(province => (
+            <DropdownMenuItem
+              key={province.code}
+              className={browseMenuItemClass(filters.province === province.code)}
+              onSelect={() => updateBrowseFilter("province", province.code)}
+              data-testid={`menu-item-city-${province.code}`}
+            >
+              {province.label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </nav>
   );
 
   const savedViewsControl = canManageSavedViews ? (
@@ -930,109 +1098,6 @@ export default function Feed() {
     </>
   );
 
-  const railButtonClass = (active: boolean) => cn(
-    "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
-    active
-      ? "bg-primary text-primary-foreground shadow-sm"
-      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-  );
-
-  const railSectionTitleClass = "px-2.5 text-[11px] font-semibold uppercase text-muted-foreground";
-
-  const filterRail = (mobile = false) => (
-    <aside
-      className={cn(
-        "rounded-md border border-border/60 bg-card p-3 shadow-sm",
-        !mobile && "sticky top-4 max-h-[calc(100vh-7rem)] overflow-hidden"
-      )}
-      data-testid={mobile ? "mobile-feed-filter-rail" : "feed-filter-rail"}
-    >
-      <div className="mb-3 flex items-center justify-between gap-2 border-b border-border/60 pb-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <PanelLeft className="h-4 w-4 text-primary" />
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-foreground">Browse feed</p>
-            <p className="text-xs text-muted-foreground">Categories, sources, cities</p>
-          </div>
-        </div>
-        {hasActiveFilters && (
-          <Button variant="ghost" size="sm" className="h-8 shrink-0 px-2" onClick={clearFilters} data-testid="button-clear-filter-rail">
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        )}
-      </div>
-
-      <div className={cn("space-y-4", !mobile && "max-h-[calc(100vh-12rem)] overflow-y-auto pr-1")}>
-        <section className="space-y-1" data-testid="feed-category-sidebar">
-          <div className={railSectionTitleClass}>Categories</div>
-          <button
-            className={railButtonClass(!filters.category)}
-            onClick={() => updateFilter("category", undefined)}
-            data-testid="button-sidebar-category-all"
-          >
-            <span className="truncate">All categories</span>
-            <FolderOpen className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          </button>
-          {ARTICLE_CATEGORIES.map(category => (
-            <button
-              key={category.code}
-              className={railButtonClass(filters.category === category.code)}
-              onClick={() => updateFilter("category", category.code)}
-              data-testid={`button-sidebar-category-${category.code}`}
-            >
-              <span className="truncate">{getArticleCategoryLabel(category.code, embassyProfile)}</span>
-            </button>
-          ))}
-        </section>
-
-        <section className="space-y-1" data-testid="feed-source-sidebar">
-          <div className={railSectionTitleClass}>Sources</div>
-          <button
-            className={railButtonClass(!filters.sourceName)}
-            onClick={() => updateFilter("sourceName", undefined)}
-            data-testid="button-sidebar-source-all"
-          >
-            <span className="truncate">All sources</span>
-            <Rss className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          </button>
-          {uniqueSourceNames.map(name => (
-            <button
-              key={name}
-              className={railButtonClass(filters.sourceName === name)}
-              onClick={() => updateFilter("sourceName", name)}
-              title={name}
-              data-testid={`button-sidebar-source-${name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`}
-            >
-              <span className="truncate">{name}</span>
-            </button>
-          ))}
-        </section>
-
-        <section className="space-y-1" data-testid="feed-city-sidebar">
-          <div className={railSectionTitleClass}>Cities</div>
-          <button
-            className={railButtonClass(!filters.province)}
-            onClick={() => updateFilter("province", undefined)}
-            data-testid="button-sidebar-city-all"
-          >
-            <span className="truncate">All cities</span>
-            <MapPin className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          </button>
-          {IRAQ_PROVINCES.map(province => (
-            <button
-              key={province.code}
-              className={railButtonClass(filters.province === province.code)}
-              onClick={() => updateFilter("province", province.code)}
-              data-testid={`button-sidebar-city-${province.code}`}
-            >
-              <span className="truncate">{province.label}</span>
-            </button>
-          ))}
-        </section>
-      </div>
-    </aside>
-  );
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
@@ -1197,6 +1262,8 @@ export default function Feed() {
         </div>
       </div>
 
+      {browseNavigation}
+
       {pendingNewCount > 0 && liveUpdateMode === "notify" && (
         <div className="flex items-center justify-between gap-3 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm" data-testid="banner-new-articles">
           <div className="flex min-w-0 items-center gap-2 text-primary">
@@ -1219,7 +1286,6 @@ export default function Feed() {
 
       {layout !== "front" && mobileFiltersOpen && (
         <div className="md:hidden space-y-2" data-testid="mobile-filters-panel">
-          {filterRail(true)}
           {savedViewsControl}
           <div className="grid grid-cols-2 gap-2">
             {filterDropdowns}
@@ -1251,11 +1317,7 @@ export default function Feed() {
           }}
         />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
-          <div className="hidden lg:block">
-            {filterRail()}
-          </div>
-          <div className="min-w-0">
+        <div className="min-w-0">
             {isLoadingArticles && page === 1 ? (
               <div className={cn(
                 layout === "grid" ? "grid gap-4 md:gap-5" : "flex flex-col gap-4",
@@ -1305,7 +1367,6 @@ export default function Feed() {
                 </div>
               </>
             )}
-          </div>
         </div>
       )}
 

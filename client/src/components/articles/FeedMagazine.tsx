@@ -363,29 +363,6 @@ export function FeedMagazine({
           </Button>
         </div>
 
-        <div className="flex flex-wrap gap-2" data-testid="magazine-category-nav">
-          <Button
-            variant={!activeCategory ? "default" : "outline"}
-            size="sm"
-            onClick={() => onSelectCategory(undefined)}
-          >
-            Home
-          </Button>
-          {CATEGORY_NAV.map((item) => {
-            const Icon = item.icon;
-            return (
-              <Button
-                key={item.code}
-                variant={activeCategory === item.code ? "default" : "outline"}
-                size="sm"
-                onClick={() => onSelectCategory(item.code)}
-              >
-                <Icon className="mr-1.5 h-3.5 w-3.5" />
-                {getArticleCategoryLabel(item.code, embassyProfile)}
-              </Button>
-            );
-          })}
-        </div>
       </section>
 
       <section data-testid="magazine-top-stories">
