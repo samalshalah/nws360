@@ -2385,7 +2385,7 @@ export class DatabaseStorage implements IStorage {
   async createAuditLog(log: InsertAdminAuditLog): Promise<AdminAuditLog> {
     const [entry] = await db.insert(adminAuditLogs).values({
       ...log,
-      clientId: (log as any).clientId ?? 9000,
+      clientId: (log as any).clientId ?? null,
     }).returning();
     return entry;
   }
@@ -2403,6 +2403,7 @@ export class DatabaseStorage implements IStorage {
       entity: adminAuditLogs.entity,
       entityId: adminAuditLogs.entityId,
       details: adminAuditLogs.details,
+      clientId: adminAuditLogs.clientId,
       createdAt: adminAuditLogs.createdAt,
       username: users.username,
     })
@@ -4308,19 +4309,6 @@ export class DatabaseStorage implements IStorage {
     }
 
     console.log("[Seed] Default permission groups and permissions seeded successfully");
-
-    const systemClients = [
-      { id: 9000, name: "SYSTEM", organizationType: "platform" },
-      { id: 9001, name: "DEMO", organizationType: "demo" },
-    ];
-    for (const sc of systemClients) {
-      const existing = await db.select().from(clients).where(eq(clients.id, sc.id)).limit(1);
-      if (existing.length === 0) {
-        await db.execute(sql`INSERT INTO clients (id, name, organization_type, active) VALUES (${sc.id}, ${sc.name}, ${sc.organizationType}, true)`);
-      }
-    }
-    await db.execute(sql`SELECT setval(pg_get_serial_sequence('clients', 'id'), GREATEST((SELECT MAX(id) FROM clients), 9001))`);
-    console.log("[Seed] SYSTEM and DEMO clients ensured");
   }
 
   // Insight Jobs (AI Cost Control)

@@ -62,6 +62,11 @@ function TenantSwitcher() {
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all" data-testid="select-tenant-all">All Tenants</SelectItem>
+          {clients?.length === 0 && (
+            <SelectItem value="no-clients" disabled data-testid="select-tenant-empty">
+              No clients have been enrolled yet.
+            </SelectItem>
+          )}
           {clients?.map((c: any) => (
             <SelectItem key={c.id} value={c.id.toString()} data-testid={`select-tenant-${c.id}`}>
               {c.name}
@@ -146,6 +151,11 @@ function ImpersonationBar() {
             <SelectValue placeholder="Select tenant..." />
           </SelectTrigger>
           <SelectContent>
+            {clients?.length === 0 && (
+              <SelectItem value="no-clients" disabled data-testid="impersonate-tenant-empty">
+                No clients have been enrolled yet.
+              </SelectItem>
+            )}
             {clients?.map((c: any) => (
               <SelectItem key={c.id} value={c.id.toString()} data-testid={`impersonate-tenant-${c.id}`}>
                 {c.name}

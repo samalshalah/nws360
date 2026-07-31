@@ -18,7 +18,7 @@ export default function Login() {
 
   useEffect(() => {
     if (user) {
-      const isPlatformUser = user.userScope === "platform" || (user.role === "admin" && user.clientId === 9000);
+      const isPlatformUser = user.userScope === "platform" || (user.role === "admin" && user.clientId == null);
       setLocation(isPlatformUser ? "/admin" : "/feed");
     }
   }, [user, setLocation]);

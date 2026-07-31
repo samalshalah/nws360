@@ -61,7 +61,7 @@ export const users = pgTable("users", {
   userScope: text("user_scope").notNull().default("tenant"),
   userType: text("user_type"),
   parentId: integer("parent_id"),
-  clientId: integer("client_id").notNull(),
+  clientId: integer("client_id"),
   disabled: boolean("disabled").default(false),
   capabilities: text("capabilities").array(),
   createdAt: timestamp("created_at").defaultNow(),
@@ -225,11 +225,28 @@ export const adminAuditLogs = pgTable("admin_audit_logs", {
   entity: text("entity").notNull(),
   entityId: integer("entity_id"),
   details: text("details"),
-  clientId: integer("client_id").notNull(),
+  clientId: integer("client_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const insertAdminAuditLogSchema = createInsertSchema(adminAuditLogs).omit({ id: true, createdAt: true });
+
+// === PLATFORM RESET AUDIT ===
+export const platformResetAudit = pgTable("platform_reset_audit", {
+  id: serial("id").primaryKey(),
+  preservedAdminId: integer("preserved_admin_id").notNull(),
+  preservedAdminUsername: text("preserved_admin_username").notNull(),
+  gitCommitSha: text("git_commit_sha"),
+  databaseIdentifier: text("database_identifier"),
+  beforeCounts: jsonb("before_counts").$type<Record<string, number>>().notNull(),
+  deletedCounts: jsonb("deleted_counts").$type<Record<string, number>>().notNull(),
+  finalCounts: jsonb("final_counts").$type<Record<string, number>>().notNull(),
+  durationMs: integer("duration_ms").notNull(),
+  result: text("result").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPlatformResetAuditSchema = createInsertSchema(platformResetAudit).omit({ id: true, createdAt: true });
 
 // === PROCESSING JOBS (Background Queue) ===
 export const processingJobs = pgTable("processing_jobs", {
@@ -277,7 +294,7 @@ export const apiKeys = pgTable("api_keys", {
   name: text("name").notNull(),
   keyHash: text("key_hash").notNull().unique(),
   keyPrefix: text("key_prefix").notNull(),
-  clientId: integer("client_id").notNull(),
+  clientId: integer("client_id"),
   scopes: text("scopes").array().default([]),
   rateLimit: integer("rate_limit").default(100),
   active: boolean("active").default(true),
@@ -952,6 +969,9 @@ export type InsertSystemSetting = z.infer<typeof insertSystemSettingSchema>;
 
 export type AdminAuditLog = typeof adminAuditLogs.$inferSelect;
 export type InsertAdminAuditLog = z.infer<typeof insertAdminAuditLogSchema>;
+
+export type PlatformResetAudit = typeof platformResetAudit.$inferSelect;
+export type InsertPlatformResetAudit = z.infer<typeof insertPlatformResetAuditSchema>;
 
 export type ProcessingJob = typeof processingJobs.$inferSelect;
 export type InsertProcessingJob = z.infer<typeof insertProcessingJobSchema>;

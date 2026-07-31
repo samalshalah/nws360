@@ -474,6 +474,23 @@ function ClientsTab() {
         </Button>
       </div>
 
+      {clients?.length === 0 && (
+        <Card className="border-dashed border-border/70 bg-muted/20" data-testid="empty-clients-state">
+          <CardContent className="py-12 text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <Users className="h-6 w-6" />
+            </div>
+            <h3 className="text-lg font-semibold text-foreground">{t("No clients have been enrolled yet.")}</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {t("Create the first client workspace to begin source setup, user invitations, and monitoring configuration.")}
+            </p>
+            <Button className="mt-5" onClick={() => setShowAddDialog(true)} data-testid="button-create-first-client">
+              <Plus className="w-4 h-4 mr-1" />{t("Create First Client")}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {clients?.map(client => (
           <Card key={client.id} data-testid={`card-client-${client.id}`}>

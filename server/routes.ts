@@ -42,7 +42,6 @@ import { startLearningWorker } from "./learning-worker";
 import { buildBriefingDeliveryPreview, deliverDueBriefings, getEmailProviderStatus } from "./briefing-delivery";
 
 const scryptAsync = promisify(scrypt);
-const SYSTEM_CLIENT_ID = 9000;
 const CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram", "youtube"]);
 const DEFAULT_SOURCE_RETENTION_DAYS = 7;
 const BULK_SOURCE_FETCH_CONCURRENCY = 3;
@@ -682,7 +681,7 @@ function getRoleLevel(role: string): number {
 function getUserScope(user: any): "platform" | "tenant" {
   if (user?.userScope === "platform" || user?.user_scope === "platform") return "platform";
   if (user?.userScope === "tenant" || user?.user_scope === "tenant") return "tenant";
-  return user?.role === SYSTEM_ROLES.SYSTEM_ADMIN && user?.clientId === SYSTEM_CLIENT_ID ? "platform" : "tenant";
+  return user?.role === SYSTEM_ROLES.SYSTEM_ADMIN && (user?.clientId === null || user?.client_id === null) ? "platform" : "tenant";
 }
 
 function escapeXml(value: unknown): string {
@@ -3480,14 +3479,14 @@ export async function registerRoutes(
     const { username, password, role, clientId } = req.body;
     if (!username || !password) return res.status(400).json({ message: "Username and password required" });
     const selectedClientId = resolveClientId(adminUser, req);
-    if (!selectedClientId && clientId) {
-      return res.status(400).json({ message: "Select a tenant before creating tenant staff. Platform mode can only create admin staff." });
-    }
-    const requestedClientId = clientId !== undefined && clientId !== null ? Number(clientId) : null;
+    const requestedClientId = clientId !== undefined && clientId !== null && clientId !== "" ? Number(clientId) : null;
     if (requestedClientId !== null && Number.isNaN(requestedClientId)) {
       return res.status(400).json({ message: "Invalid client ID" });
     }
-    const resolvedClientId = requestedClientId || selectedClientId || SYSTEM_CLIENT_ID;
+    if (!selectedClientId && requestedClientId !== null) {
+      return res.status(400).json({ message: "Select a tenant before creating tenant staff. Platform mode can only create admin staff." });
+    }
+    const resolvedClientId = selectedClientId || null;
     if (selectedClientId && resolvedClientId !== selectedClientId) {
       return res.status(403).json({ message: "Cannot create user outside selected tenant" });
     }
@@ -3541,6 +3540,9 @@ export async function registerRoutes(
       const requestedClientId = req.body.clientId !== null ? Number(req.body.clientId) : null;
       if (requestedClientId !== null && Number.isNaN(requestedClientId)) {
         return res.status(400).json({ message: "Invalid client ID" });
+      }
+      if (!selectedClientId && requestedClientId !== null) {
+        return res.status(400).json({ message: "Platform users cannot be assigned to a tenant from platform mode" });
       }
       if (selectedClientId && requestedClientId !== selectedClientId) {
         return res.status(403).json({ message: "Cannot move user outside selected tenant" });
@@ -3637,7 +3639,7 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     console.log(`[Analytics] Manual computation triggered by user ${user.id}`);
     try {
-      await storage.createAuditLog({ userId: user.id, action: "compute_analytics", entity: "analytics_cache", details: "Triggered analytics computation (background)", clientId: clientId || user.clientId || 0 });
+      await storage.createAuditLog({ userId: user.id, action: "compute_analytics", entity: "analytics_cache", details: "Triggered analytics computation (background)", clientId: clientId || user.clientId || null });
     } catch (e) {}
     runAnalyticsComputation()
       .then(result => {
