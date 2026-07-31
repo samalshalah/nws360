@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe, LayoutGrid, List, ArrowDownUp, BookmarkPlus } from "lucide-react";
+import { Search, Loader2, RefreshCw, Newspaper, Download, Trash2, CheckSquare, SlidersHorizontal, X, TrendingUp, Rss, Globe, LayoutGrid, List, ArrowDownUp, BookmarkPlus, PanelLeft, MapPin, FolderOpen } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 20;
 type FeedSort = "newest" | "oldest" | "recently_added" | "source_az" | "title_az" | "engagement";
+type GridColumnCount = 2 | 3 | 4 | 5;
 type FeedLiveUpdateMode = "notify" | "auto_load";
 type PublicSystemSettings = {
   feedLiveUpdateEnabled: boolean;
@@ -60,6 +61,22 @@ function parseFeedSort(value: string | null | undefined): FeedSort {
   return SORT_OPTIONS.some((option) => option.value === value) ? value as FeedSort : DEFAULT_SORT;
 }
 
+const GRID_COLUMN_OPTIONS: GridColumnCount[] = [2, 3, 4, 5];
+
+function parseGridColumnCount(value: string | null | undefined): GridColumnCount {
+  const parsed = Number(value);
+  return GRID_COLUMN_OPTIONS.includes(parsed as GridColumnCount) ? parsed as GridColumnCount : 3;
+}
+
+function gridColumnClass(columns: GridColumnCount) {
+  return {
+    2: "grid-cols-1 xl:grid-cols-2",
+    3: "grid-cols-1 md:grid-cols-2 2xl:grid-cols-3",
+    4: "grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4",
+    5: "grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5",
+  }[columns];
+}
+
 export default function Feed() {
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
@@ -91,6 +108,7 @@ export default function Feed() {
     const storedLayout = localStorage.getItem("feed-layout-v2");
     return storedLayout === "grid" || storedLayout === "list" || storedLayout === "front" ? storedLayout : "front";
   });
+  const [gridColumns, setGridColumns] = useState<GridColumnCount>(() => parseGridColumnCount(localStorage.getItem("feed-grid-columns-v1")));
 
   const [filters, setFilters] = useState(() => {
     const params = new URLSearchParams(searchString);
@@ -625,8 +643,6 @@ export default function Feed() {
     { key: "negative", label: t("feed.negative"), dot: "bg-red-500" },
   ];
 
-  const activeSourceType = filters.sourceType || "all";
-  const activeSentiment = filters.sentiment || "all";
   const activeSavedView = savedViews.find((view) => String(view.id) === activeSavedViewId);
   const canManageSavedViews = hasCap(CAPS.FEED_FILTER);
   const canEditArticles = hasCap(CAPS.ARTICLE_EDIT);
@@ -817,23 +833,6 @@ export default function Feed() {
       </Select>
 
       <Select
-        value={filters.sourceName || "all"}
-        onValueChange={(val) => updateFilter("sourceName", val === "all" ? undefined : val)}
-      >
-        <SelectTrigger className="h-9 w-full min-w-0 flex-1 basis-0 bg-background" data-testid="select-filter-source">
-          <SelectValue placeholder={t("feed.allSources")} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">{t("feed.allSources")}</SelectItem>
-          {uniqueSourceNames.map(name => (
-            <SelectItem key={name} value={name}>
-              {name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
-      <Select
         value={filters.sourceType || "all"}
         onValueChange={(val) => updateFilter("sourceType", val === "all" ? undefined : val)}
       >
@@ -889,23 +888,6 @@ export default function Feed() {
       </Select>
 
       <Select
-        value={filters.category || "all"}
-        onValueChange={(val) => updateFilter("category", val === "all" ? undefined : val)}
-      >
-        <SelectTrigger className="h-9 w-full min-w-0 flex-1 basis-0 bg-background" data-testid="select-filter-category">
-          <SelectValue placeholder={t("feed.allCategories")} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">{t("feed.allCategories")}</SelectItem>
-          {ARTICLE_CATEGORIES.map(category => (
-            <SelectItem key={category.code} value={category.code}>
-              {getArticleCategoryLabel(category.code, embassyProfile)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
-      <Select
         value={filters.priority || "all"}
         onValueChange={(val) => updateFilter("priority", val === "all" ? undefined : val)}
       >
@@ -939,23 +921,6 @@ export default function Feed() {
         </SelectContent>
       </Select>
 
-      <Select
-        value={filters.province || "all"}
-        onValueChange={(val) => updateFilter("province", val === "all" ? undefined : val)}
-      >
-        <SelectTrigger className="h-9 w-full min-w-0 flex-1 basis-0 bg-background" data-testid="select-filter-province">
-          <SelectValue placeholder="All Provinces" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All Provinces</SelectItem>
-          {IRAQ_PROVINCES.map(province => (
-            <SelectItem key={province.code} value={province.code}>
-              {province.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
       {hasActiveFilters && (
         <Button variant="ghost" size="sm" className="h-9 shrink-0 px-2" onClick={clearFilters} data-testid="button-clear-filters">
           <X className="w-3.5 h-3.5 mr-1" />
@@ -963,6 +928,109 @@ export default function Feed() {
         </Button>
       )}
     </>
+  );
+
+  const railButtonClass = (active: boolean) => cn(
+    "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
+    active
+      ? "bg-primary text-primary-foreground shadow-sm"
+      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+  );
+
+  const railSectionTitleClass = "px-2.5 text-[11px] font-semibold uppercase text-muted-foreground";
+
+  const filterRail = (mobile = false) => (
+    <aside
+      className={cn(
+        "rounded-md border border-border/60 bg-card p-3 shadow-sm",
+        !mobile && "sticky top-4 max-h-[calc(100vh-7rem)] overflow-hidden"
+      )}
+      data-testid={mobile ? "mobile-feed-filter-rail" : "feed-filter-rail"}
+    >
+      <div className="mb-3 flex items-center justify-between gap-2 border-b border-border/60 pb-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <PanelLeft className="h-4 w-4 text-primary" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-foreground">Browse feed</p>
+            <p className="text-xs text-muted-foreground">Categories, sources, cities</p>
+          </div>
+        </div>
+        {hasActiveFilters && (
+          <Button variant="ghost" size="sm" className="h-8 shrink-0 px-2" onClick={clearFilters} data-testid="button-clear-filter-rail">
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
+
+      <div className={cn("space-y-4", !mobile && "max-h-[calc(100vh-12rem)] overflow-y-auto pr-1")}>
+        <section className="space-y-1" data-testid="feed-category-sidebar">
+          <div className={railSectionTitleClass}>Categories</div>
+          <button
+            className={railButtonClass(!filters.category)}
+            onClick={() => updateFilter("category", undefined)}
+            data-testid="button-sidebar-category-all"
+          >
+            <span className="truncate">All categories</span>
+            <FolderOpen className="h-3.5 w-3.5 shrink-0 opacity-70" />
+          </button>
+          {ARTICLE_CATEGORIES.map(category => (
+            <button
+              key={category.code}
+              className={railButtonClass(filters.category === category.code)}
+              onClick={() => updateFilter("category", category.code)}
+              data-testid={`button-sidebar-category-${category.code}`}
+            >
+              <span className="truncate">{getArticleCategoryLabel(category.code, embassyProfile)}</span>
+            </button>
+          ))}
+        </section>
+
+        <section className="space-y-1" data-testid="feed-source-sidebar">
+          <div className={railSectionTitleClass}>Sources</div>
+          <button
+            className={railButtonClass(!filters.sourceName)}
+            onClick={() => updateFilter("sourceName", undefined)}
+            data-testid="button-sidebar-source-all"
+          >
+            <span className="truncate">All sources</span>
+            <Rss className="h-3.5 w-3.5 shrink-0 opacity-70" />
+          </button>
+          {uniqueSourceNames.map(name => (
+            <button
+              key={name}
+              className={railButtonClass(filters.sourceName === name)}
+              onClick={() => updateFilter("sourceName", name)}
+              title={name}
+              data-testid={`button-sidebar-source-${name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`}
+            >
+              <span className="truncate">{name}</span>
+            </button>
+          ))}
+        </section>
+
+        <section className="space-y-1" data-testid="feed-city-sidebar">
+          <div className={railSectionTitleClass}>Cities</div>
+          <button
+            className={railButtonClass(!filters.province)}
+            onClick={() => updateFilter("province", undefined)}
+            data-testid="button-sidebar-city-all"
+          >
+            <span className="truncate">All cities</span>
+            <MapPin className="h-3.5 w-3.5 shrink-0 opacity-70" />
+          </button>
+          {IRAQ_PROVINCES.map(province => (
+            <button
+              key={province.code}
+              className={railButtonClass(filters.province === province.code)}
+              onClick={() => updateFilter("province", province.code)}
+              data-testid={`button-sidebar-city-${province.code}`}
+            >
+              <span className="truncate">{province.label}</span>
+            </button>
+          ))}
+        </section>
+      </div>
+    </aside>
   );
 
   return (
@@ -1012,6 +1080,26 @@ export default function Feed() {
               <List className="w-4 h-4" />
             </Button>
           </div>
+          {layout === "grid" && (
+            <div className="hidden shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5 md:flex" data-testid="grid-density-control">
+              {GRID_COLUMN_OPTIONS.map((columns) => (
+                <Button
+                  key={columns}
+                  size="sm"
+                  variant={gridColumns === columns ? "default" : "ghost"}
+                  className="h-8 w-8 px-0 text-xs tabular-nums"
+                  onClick={() => {
+                    setGridColumns(columns);
+                    localStorage.setItem("feed-grid-columns-v1", String(columns));
+                  }}
+                  data-testid={`button-grid-columns-${columns}`}
+                  title={`${columns} cards per row`}
+                >
+                  {columns}
+                </Button>
+              ))}
+            </div>
+          )}
           <div className="flex shrink-0 items-center gap-1.5">
             <div className="md:hidden flex items-center gap-1">
               <Button
@@ -1131,6 +1219,7 @@ export default function Feed() {
 
       {layout !== "front" && mobileFiltersOpen && (
         <div className="md:hidden space-y-2" data-testid="mobile-filters-panel">
+          {filterRail(true)}
           {savedViewsControl}
           <div className="grid grid-cols-2 gap-2">
             {filterDropdowns}
@@ -1161,52 +1250,63 @@ export default function Feed() {
             localStorage.setItem("feed-layout-v2", "list");
           }}
         />
-      ) : isLoadingArticles && page === 1 ? (
-        <div className={cn(
-          layout === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "flex flex-col gap-4"
-        )}>
-          {[1, 2, 3, 4, 5, 6].map((i) => (
-            <Skeleton key={i} className={layout === "grid" ? "h-80 w-full rounded-md" : "h-32 w-full rounded-md"} />
-          ))}
-        </div>
-      ) : allArticles.length === 0 && !isFetching ? (
-        <div className="text-center py-20 bg-muted/30 rounded-md border border-dashed border-border">
-          <SlidersHorizontal className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-          <h3 className="text-xl font-bold font-display text-foreground">{t("feed.noArticles")}</h3>
-          <p className="text-muted-foreground mt-2">{t("feed.noArticlesHint")}</p>
-        </div>
       ) : (
-        <>
-          <div className={cn(
-            layout === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "flex flex-col gap-4"
-          )}>
-            {allArticles.map((article: any) => (
-              <ArticleCard
-                key={article.id}
-                article={article}
-                selected={selectedArticles.has(article.id)}
-                onToggleSelect={canSelectArticles ? toggleSelectArticle : undefined}
-                layout={layout}
-              />
-            ))}
+        <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+          <div className="hidden lg:block">
+            {filterRail()}
           </div>
-
-          <div
-            ref={observerRef}
-            className="flex items-center justify-center py-8"
-            data-testid="infinite-scroll-trigger"
-          >
-            {isFetching && (
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Loader2 className="w-5 h-5 animate-spin" />
-                <span className="text-sm">{t("feed.loadingMore")}</span>
+          <div className="min-w-0">
+            {isLoadingArticles && page === 1 ? (
+              <div className={cn(
+                layout === "grid" ? "grid gap-4 md:gap-5" : "flex flex-col gap-4",
+                layout === "grid" && gridColumnClass(gridColumns)
+              )}>
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <Skeleton key={i} className={layout === "grid" ? "h-80 w-full rounded-md" : "h-32 w-full rounded-md"} />
+                ))}
               </div>
-            )}
-            {!hasMore && allArticles.length > 0 && !isFetching && (
-              <span className="text-sm text-muted-foreground">{t("feed.noMoreArticles")}</span>
+            ) : allArticles.length === 0 && !isFetching ? (
+              <div className="text-center py-20 bg-muted/30 rounded-md border border-dashed border-border">
+                <SlidersHorizontal className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
+                <h3 className="text-xl font-bold font-display text-foreground">{t("feed.noArticles")}</h3>
+                <p className="text-muted-foreground mt-2">{t("feed.noArticlesHint")}</p>
+              </div>
+            ) : (
+              <>
+                <div className={cn(
+                  layout === "grid" ? "grid gap-4 md:gap-5" : "flex flex-col gap-4",
+                  layout === "grid" && gridColumnClass(gridColumns)
+                )}>
+                  {allArticles.map((article: any) => (
+                    <ArticleCard
+                      key={article.id}
+                      article={article}
+                      selected={selectedArticles.has(article.id)}
+                      onToggleSelect={canSelectArticles ? toggleSelectArticle : undefined}
+                      layout={layout}
+                    />
+                  ))}
+                </div>
+
+                <div
+                  ref={observerRef}
+                  className="flex items-center justify-center py-8"
+                  data-testid="infinite-scroll-trigger"
+                >
+                  {isFetching && (
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span className="text-sm">{t("feed.loadingMore")}</span>
+                    </div>
+                  )}
+                  {!hasMore && allArticles.length > 0 && !isFetching && (
+                    <span className="text-sm text-muted-foreground">{t("feed.noMoreArticles")}</span>
+                  )}
+                </div>
+              </>
             )}
           </div>
-        </>
+        </div>
       )}
 
       {canSelectArticles && selectedArticles.size > 0 && (

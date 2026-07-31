@@ -340,7 +340,6 @@ export function FeedMagazine({
   const defaultStartDate = useMemo(() => new Date(Date.now() - 7 * DAY_MS).toISOString(), []);
   const effectiveStartDate = startDate || defaultStartDate;
   const leadArticle = latestArticles.find((article) => article.imageUrl && article.imageUrl !== "none") || latestArticles[0];
-  const secondaryArticles = latestArticles.filter((article) => article.id !== leadArticle?.id).slice(0, 5);
   const latestStream = latestArticles.slice(0, 8);
 
   return (
@@ -389,7 +388,7 @@ export function FeedMagazine({
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]" data-testid="magazine-top-stories">
+      <section data-testid="magazine-top-stories">
         {isLoading ? (
           <Skeleton className="min-h-[360px] rounded-md" />
         ) : leadArticle ? (
@@ -399,24 +398,6 @@ export function FeedMagazine({
             No articles available for this view.
           </div>
         )}
-
-        <section className="rounded-md border border-border/60 bg-card">
-          <div className="border-b border-border/60 p-4">
-            <h2 className="text-base font-semibold text-foreground">Latest Across Sources</h2>
-            <p className="mt-1 text-xs text-muted-foreground">A fast scan of what just changed.</p>
-          </div>
-          <div className="space-y-3 p-4">
-            {isLoading ? (
-              Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-20 rounded-md" />)
-            ) : secondaryArticles.length > 0 ? (
-              secondaryArticles.map((article: any) => <ArticleCard key={article.id} article={article} layout="compact" />)
-            ) : (
-              <p className="rounded-md border border-dashed border-border/70 bg-muted/20 px-3 py-6 text-center text-sm text-muted-foreground">
-                No additional latest stories in this period.
-              </p>
-            )}
-          </div>
-        </section>
       </section>
 
       <GovernmentDesk startDate={effectiveStartDate} endDate={endDate} onSelectCategory={onSelectCategory} />
