@@ -3,6 +3,7 @@ import {
   countryCodesInNaturalText,
   getRegionAliases,
   normalizeCountryCodes,
+  normalizeRegionCodes,
 } from "./country-registry";
 
 export const RELEVANCE_ENGINE_VERSION = "workspace-relevance-v2";
@@ -246,6 +247,10 @@ function normalizeCodes(values: string[] | null | undefined): string[] {
   return unique(normalizeCountryCodes(values), 100);
 }
 
+function normalizeRegions(values: string[] | null | undefined): string[] {
+  return unique(normalizeRegionCodes(values), 100);
+}
+
 function termsFrom(profile: WorkspaceProfile, key: keyof WorkspaceRelevanceProfileData, legacyKey?: keyof WorkspaceRelevanceProfileData): string[] {
   return unique([...arr(profile[key] as string[] | null | undefined), ...arr(legacyKey ? profile[legacyKey] as string[] | null | undefined : undefined)], 200);
 }
@@ -253,7 +258,7 @@ function termsFrom(profile: WorkspaceProfile, key: keyof WorkspaceRelevanceProfi
 export function normalizeWorkspaceProfile(profile: WorkspaceProfile): WorkspaceProfile {
   const primaryCountryCodes = normalizeCodes([...(profile.primaryCountryCodes || []), ...(profile.primaryCountries || [])]);
   const secondaryCountryCodes = normalizeCodes([...(profile.secondaryCountryCodes || []), ...(profile.secondaryCountries || [])]);
-  const regionCodes = normalizeCodes([...(profile.regionCodes || []), ...(profile.regions || [])]);
+  const regionCodes = normalizeRegions([...(profile.regionCodes || []), ...(profile.regions || [])]);
   return {
     ...profile,
     purpose: normalizePurpose(profile.purpose),

@@ -67,6 +67,30 @@ const REGION_COUNTRIES: Record<string, string[]> = {
   asean: ["BN", "KH", "ID", "LA", "MY", "MM", "PH", "SG", "TH", "VN"],
 };
 
+const REGION_ALIASES: Record<string, string> = {
+  africa: "africa",
+  americas: "americas",
+  america: "americas",
+  asia: "asia",
+  europe: "europe",
+  european: "europe",
+  oceania: "oceania",
+  global: "global",
+  worldwide: "global",
+  mena: "mena",
+  "middle east and north africa": "mena",
+  "m e n a": "mena",
+  "middle east": "middle east",
+  mideast: "middle east",
+  gulf: "gulf",
+  gcc: "gulf",
+  "gulf cooperation council": "gulf",
+  "arabian gulf": "gulf",
+  "north africa": "north africa",
+  asean: "asean",
+  "association of southeast asian nations": "asean",
+};
+
 const COMMON_ALIASES: Record<string, string[]> = {
   AE: ["uae", "united arab emirates", "emirates"],
   BO: ["bolivia"],
@@ -179,6 +203,18 @@ export function normalizeCountryCodes(values: string[] | null | undefined): stri
   return unique(values.map(normalizeCountryCode).filter((code): code is string => Boolean(code)));
 }
 
+export function normalizeRegionCode(value: string | null | undefined): string | null {
+  const normalized = normalize(String(value || ""));
+  if (!normalized) return null;
+  const alias = REGION_ALIASES[normalized];
+  return alias && REGION_COUNTRIES[alias] ? alias : null;
+}
+
+export function normalizeRegionCodes(values: string[] | null | undefined): string[] {
+  if (!Array.isArray(values)) return [];
+  return unique(values.map(normalizeRegionCode).filter((code): code is string => Boolean(code)));
+}
+
 export function getCountry(code: string | null | undefined): CountryRegistryEntry | undefined {
   const normalized = normalizeCountryCode(code);
   return normalized ? COUNTRIES_BY_CODE.get(normalized) : undefined;
@@ -200,15 +236,15 @@ export function expandRegionCountryCodes(regionCodes: string[] | null | undefine
   if (!Array.isArray(regionCodes)) return [];
   const codes: string[] = [];
   for (const region of regionCodes) {
-    const normalized = normalize(region);
-    codes.push(...(REGION_COUNTRIES[normalized] || []));
+    const normalized = normalizeRegionCode(region);
+    if (normalized) codes.push(...(REGION_COUNTRIES[normalized] || []));
   }
   return unique(codes);
 }
 
 export function getRegionAliases(regionCodes: string[] | null | undefined): string[] {
   if (!Array.isArray(regionCodes)) return [];
-  const regions = regionCodes.map(normalize).filter(Boolean);
+  const regions = normalizeRegionCodes(regionCodes);
   return unique(regions.flatMap((region) => [
     region,
     ...(REGION_COUNTRIES[region] || []).flatMap(getCountryNaturalAliases),

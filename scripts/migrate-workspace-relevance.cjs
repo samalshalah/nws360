@@ -283,6 +283,74 @@ async function countIfColumnsExist(client, table, columnNames, whereSql) {
   return countIfTableExists(client, table, whereSql);
 }
 
+async function countRowsIfTableExists(client, table) {
+  if (!(await tableExists(client, table))) return 0;
+  const result = await client.query(`SELECT COUNT(*)::int AS count FROM ${table}`);
+  return Number(result.rows[0]?.count || 0);
+}
+
+async function duplicateCountIfColumnsExist(client, table, columnNames) {
+  if (!(await hasColumns(client, table, columnNames))) return 0;
+  const result = await client.query(`
+    SELECT COALESCE(SUM(duplicate_count - 1), 0)::int AS count
+      FROM (
+        SELECT COUNT(*)::int AS duplicate_count
+          FROM ${table}
+         GROUP BY ${columnNames.join(", ")}
+        HAVING COUNT(*) > 1
+      ) duplicates
+  `);
+  return Number(result.rows[0]?.count || 0);
+}
+
+function isUnsafeMissingNotNullColumn(name, definition) {
+  if (name === "id") return false;
+  return /\bNOT\s+NULL\b/i.test(definition) && !/\bDEFAULT\b/i.test(definition);
+}
+
+function idRepairStatement(table) {
+  return `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS id serial PRIMARY KEY`;
+}
+
+async function partialSchemaSafety(client, missingColumns) {
+  const risks = [];
+  const repairs = [];
+  const rowCounts = {};
+  for (const [tableName, columns] of Object.entries(missingColumns)) {
+    const exists = await tableExists(client, tableName);
+    rowCounts[tableName] = exists ? await countRowsIfTableExists(client, tableName) : 0;
+    if (!exists) continue;
+    for (const column of columns) {
+      const rowCount = rowCounts[tableName];
+      if (column.name === "id") {
+        if (rowCount === 0) {
+          repairs.push({
+            table: tableName,
+            column: column.name,
+            reason: "Empty relevance table is missing id primary key; apply will add it safely.",
+            statement: idRepairStatement(tableName),
+          });
+        } else {
+          risks.push({
+            table: tableName,
+            column: column.name,
+            rowCount,
+            reason: "Populated relevance table is missing id primary key; automatic repair is unsafe.",
+          });
+        }
+      } else if (rowCount > 0 && isUnsafeMissingNotNullColumn(column.name, column.definition)) {
+        risks.push({
+          table: tableName,
+          column: column.name,
+          rowCount,
+          reason: "Populated table is missing a required NOT NULL column without a safe default.",
+        });
+      }
+    }
+  }
+  return { risks, repairs, rowCounts };
+}
+
 async function incompatibleRows(client) {
   return {
     invalidWorkspaceScopeModes: await countIfColumnsExist(client, "workspaces", ["scope_mode"], `scope_mode IS NOT NULL AND scope_mode NOT IN (${WORKSPACE_SCOPE_MODES.map((item) => `'${item}'`).join(", ")})`),
@@ -296,6 +364,8 @@ async function incompatibleRows(client) {
     invalidHistoryConfidence: await countIfColumnsExist(client, "workspace_relevance_history", ["previous_confidence", "new_confidence"], "(previous_confidence IS NOT NULL AND (previous_confidence < 0 OR previous_confidence > 100)) OR new_confidence < 0 OR new_confidence > 100"),
     articleWorkspaceTenantMismatch: await countIfColumnsExist(client, "article_workspace_relevance", ["workspace_id", "article_id", "client_id"], `NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.id = article_workspace_relevance.workspace_id AND w.client_id = article_workspace_relevance.client_id) OR NOT EXISTS (SELECT 1 FROM articles a WHERE a.id = article_workspace_relevance.article_id AND a.client_id = article_workspace_relevance.client_id)`),
     historyTenantMismatch: await countIfColumnsExist(client, "workspace_relevance_history", ["workspace_id", "article_id", "client_id"], `NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.id = workspace_relevance_history.workspace_id AND w.client_id = workspace_relevance_history.client_id) OR NOT EXISTS (SELECT 1 FROM articles a WHERE a.id = workspace_relevance_history.article_id AND a.client_id = workspace_relevance_history.client_id)`),
+    duplicateArticleWorkspaceRelevanceRows: await duplicateCountIfColumnsExist(client, "article_workspace_relevance", ["workspace_id", "article_id"]),
+    duplicateWorkspaceRelevanceProfiles: await duplicateCountIfColumnsExist(client, "workspace_relevance_profiles", ["workspace_id"]),
   };
 }
 
@@ -312,6 +382,7 @@ async function inspect(client) {
   const indexSet = await existingIndexes(client);
   const constraintSet = await existingConstraints(client);
   const incompatible = await incompatibleRows(client);
+  const partialSchema = await partialSchemaSafety(client, missingColumns);
 
   return {
     missingWorkspaceColumns: missingColumns.workspaces,
@@ -325,14 +396,20 @@ async function inspect(client) {
     missingForeignKeys: Object.keys(FOREIGN_KEYS).filter((name) => !constraintSet.has(name)),
     missingCheckConstraints: Object.keys(CHECKS).filter((name) => !constraintSet.has(name)),
     incompatibleRows: incompatible,
-    applySafe: Object.values(incompatible).every((count) => Number(count) === 0),
+    partialSchemaRisks: partialSchema.risks,
+    partialSchemaRepairs: partialSchema.repairs,
+    tableRowCounts: partialSchema.rowCounts,
+    applySafe: Object.values(incompatible).every((count) => Number(count) === 0) && partialSchema.risks.length === 0,
   };
 }
 
-function plannedStatements() {
+function plannedStatements(plan) {
   const alterWorkspace = TABLE_COLUMNS.workspaces.map(([name, definition]) =>
     `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS ${name} ${definition}`,
   );
+  const idRepairs = Array.isArray(plan?.partialSchemaRepairs)
+    ? plan.partialSchemaRepairs.map((repair) => repair.statement)
+    : [];
   const alterRelevanceTables = Object.entries(TABLE_COLUMNS)
     .filter(([table]) => table !== "workspaces")
     .flatMap(([table, columns]) => columns
@@ -341,6 +418,7 @@ function plannedStatements() {
   return [
     ...CREATE_TABLES,
     ...alterWorkspace,
+    ...idRepairs,
     ...alterRelevanceTables,
     ...Object.values(INDEXES),
     ...Object.entries(CHECKS).map(([name, spec]) => constraintStatement(name, spec)),
@@ -348,76 +426,111 @@ function plannedStatements() {
   ];
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+async function runWorkspaceRelevanceMigration(client, args) {
+  const before = await inspect(client);
+  const statements = plannedStatements(before);
+
+  if (!args.apply) {
+    return {
+      migration: "workspace-relevance",
+      mode: "dry-run",
+      writes: false,
+      before,
+      plannedStatements: statements,
+      applySafe: before.applySafe,
+      applyCommand: "npm run db:migrate:workspace-relevance -- --apply",
+    };
+  }
+
+  if (!before.applySafe) {
+    const error = new Error("Workspace relevance migration aborted before writes because incompatible rows exist.");
+    error.report = {
+      migration: "workspace-relevance",
+      mode: "apply",
+      writes: false,
+      applySafe: false,
+      incompatibleRows: before.incompatibleRows,
+      partialSchemaRisks: before.partialSchemaRisks,
+      message: error.message,
+    };
+    throw error;
+  }
+
+  await client.query("BEGIN");
+  try {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('nws360.workspace_relevance_migration'))");
+    for (const statement of statements) {
+      await client.query(statement);
+    }
+    const afterChecks = await incompatibleRows(client);
+    const safeAfter = Object.values(afterChecks).every((count) => Number(count) === 0);
+    if (!safeAfter) {
+      throw new Error(`Post-migration integrity check failed: ${JSON.stringify(afterChecks)}`);
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+
+  const after = await inspect(client);
+  return {
+    migration: "workspace-relevance",
+    mode: "apply",
+    writes: true,
+    appliedStatements: statements.length,
+    before,
+    after,
+  };
+}
+
+async function main(argv = process.argv.slice(2), ClientImpl = Client) {
+  const args = parseArgs(argv);
   if (args.help) {
     printHelp();
     return;
   }
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  const client = new ClientImpl({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    const before = await inspect(client);
-    const statements = plannedStatements();
-
-    if (!args.apply) {
-      console.log(JSON.stringify({
-        migration: "workspace-relevance",
-        mode: "dry-run",
-        writes: false,
-        before,
-        plannedStatements: statements,
-        applySafe: before.applySafe,
-        applyCommand: "npm run db:migrate:workspace-relevance -- --apply",
-      }, null, 2));
-      return;
-    }
-
-    if (!before.applySafe) {
-      throw new Error(JSON.stringify({
-        migration: "workspace-relevance",
-        mode: "apply",
-        writes: false,
-        applySafe: false,
-        incompatibleRows: before.incompatibleRows,
-        message: "Workspace relevance migration aborted before writes because incompatible rows exist.",
-      }, null, 2));
-    }
-
-    await client.query("BEGIN");
-    try {
-      await client.query("SELECT pg_advisory_xact_lock(hashtext('nws360.workspace_relevance_migration'))");
-      for (const statement of statements) {
-        await client.query(statement);
-      }
-      const afterChecks = await incompatibleRows(client);
-      const safeAfter = Object.values(afterChecks).every((count) => Number(count) === 0);
-      if (!safeAfter) {
-        throw new Error(`Post-migration integrity check failed: ${JSON.stringify(afterChecks)}`);
-      }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    }
-
-    const after = await inspect(client);
-    console.log(JSON.stringify({
-      migration: "workspace-relevance",
-      mode: "apply",
-      writes: true,
-      appliedStatements: statements.length,
-      before,
-      after,
-    }, null, 2));
+    const report = await runWorkspaceRelevanceMigration(client, args);
+    if (report) console.log(JSON.stringify(report, null, 2));
   } finally {
     await client.end();
   }
 }
 
-main().catch((error) => {
-  console.error(error.message || error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.report ? JSON.stringify(error.report, null, 2) : error.message || error);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  CHECKS,
+  CREATE_TABLES,
+  FOREIGN_KEYS,
+  INDEXES,
+  RELEVANCE_METHODS,
+  RELEVANCE_STATUSES,
+  TABLE_COLUMNS,
+  WORKSPACE_PURPOSES,
+  WORKSPACE_SCOPE_MODES,
+  countRowsIfTableExists,
+  duplicateCountIfColumnsExist,
+  existingColumns,
+  existingConstraints,
+  existingIndexes,
+  hasColumns,
+  incompatibleRows,
+  inspect,
+  main,
+  parseArgs,
+  partialSchemaSafety,
+  plannedStatements,
+  runWorkspaceRelevanceMigration,
+  tableExists,
+};

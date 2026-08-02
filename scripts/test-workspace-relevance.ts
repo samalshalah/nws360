@@ -7,6 +7,7 @@ import {
   evaluateWorkspaceRelevance,
   getDefaultRelevanceStatuses,
   normalizeAiWorkspaceRelevanceResult,
+  normalizeWorkspaceProfile,
   aiFailureWorkspaceRelevanceResult,
   normalizeWorkspaceRelevanceText,
   shouldIncludeInWorkspaceOutputs,
@@ -15,6 +16,11 @@ import {
   type WorkspaceProfile,
 } from "../shared/workspace-relevance";
 import { countryCodesInNaturalText, normalizeCountryCode } from "../shared/country-registry";
+import {
+  parseWorkspaceIdInput,
+  resolveRelevanceStatusAccess,
+  validateWorkspaceTenantAccess,
+} from "../shared/workspace-query-scope";
 import { evaluatePeriodicJobEligibility } from "../server/periodic-job-rules";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -270,6 +276,55 @@ for (const testCase of cases) {
   assert.ok(Array.isArray(result.supportingSignals));
 }
 
+assert.deepEqual(
+  normalizeWorkspaceProfile({ scopeMode: "regional", regionCodes: ["MENA", "Middle East", "GCC", "ASEAN", "Europe"] }).regionCodes,
+  ["mena", "middle east", "gulf", "asean", "europe"],
+  "region codes must be preserved as normalized region identifiers",
+);
+
+const normalizedCountryWorkspace = normalizeWorkspaceProfile({
+  scopeMode: "single_country",
+  primaryCountryCodes: ["iq", "Iraq"],
+  secondaryCountryCodes: ["usa", "United States"],
+});
+assert.deepEqual(normalizedCountryWorkspace.primaryCountryCodes, ["IQ"], "primary countries must normalize to ISO codes");
+assert.deepEqual(normalizedCountryWorkspace.secondaryCountryCodes, ["US"], "secondary countries must normalize to ISO codes");
+
+const regionalCases: Case[] = [
+  {
+    name: "MENA workspace recognizes Morocco",
+    profile: { scopeMode: "regional", regionCodes: ["MENA"], topics: ["energy"] },
+    article: {
+      title: "Morocco energy ministry launches new solar project",
+      summary: "Officials said the electricity plan will expand national power capacity.",
+    },
+    status: "direct_scope_match",
+  },
+  {
+    name: "ASEAN workspace recognizes Philippines",
+    profile: { scopeMode: "regional", regionCodes: ["ASEAN"], topics: ["government"] },
+    article: {
+      title: "Philippines government approves new infrastructure policy",
+      summary: "The cabinet said the project will support regional transport links.",
+    },
+    status: "direct_scope_match",
+  },
+  {
+    name: "Europe workspace recognizes France",
+    profile: { scopeMode: "regional", regionCodes: ["Europe"], topics: ["government"] },
+    article: {
+      title: "France government announces new budget package",
+      summary: "Officials said parliament will review the proposal next month.",
+    },
+    status: "direct_scope_match",
+  },
+];
+
+for (const testCase of regionalCases) {
+  const result = evaluateWorkspaceRelevance(testCase.article, testCase.profile);
+  assert.equal(result.relevanceStatus, testCase.status, `${testCase.name}: ${result.shortReason}`);
+}
+
 const sameArticle = {
   title: "Morocco announces new tourism campaign",
   summary: "The tourism ministry expects visitor arrivals to rise.",
@@ -347,6 +402,55 @@ assert.equal(shouldIncludeInWorkspaceOutputs("not_relevant"), false);
 assert.equal(shouldIncludeInWorkspaceOutputs("needs_review"), false);
 assert.equal(normalizeWorkspaceRelevanceText("U.S.-Iraq Relations"), "u.s. iraq relations");
 
+assert.deepEqual(parseWorkspaceIdInput(undefined), { supplied: false });
+assert.deepEqual(parseWorkspaceIdInput("25"), { supplied: true, workspaceId: 25 });
+for (const invalidWorkspaceId of ["abc", "0", "-1", "1.5"]) {
+  const parsed = parseWorkspaceIdInput(invalidWorkspaceId);
+  assert.equal(parsed.supplied, true, `${invalidWorkspaceId} must be treated as supplied`);
+  assert.equal(Boolean(parsed.error), true, `${invalidWorkspaceId} must be rejected`);
+}
+assert.deepEqual(
+  validateWorkspaceTenantAccess({ workspaceExists: true, workspaceClientId: 10, clientId: 10, isSystemAdmin: false }),
+  { allowed: true },
+  "owned workspace should pass tenant validation",
+);
+assert.deepEqual(
+  validateWorkspaceTenantAccess({ workspaceExists: true, workspaceClientId: 20, clientId: 10, isSystemAdmin: false }),
+  { allowed: false, status: 404, reason: "Workspace not found" },
+  "foreign-tenant workspace should use safe 404",
+);
+
+assert.equal(resolveRelevanceStatusAccess({
+  requestedStatuses: ["direct_scope_match"],
+  isReviewer: false,
+}).allowed, true, "normal reader may request direct relevance");
+assert.equal(resolveRelevanceStatusAccess({
+  requestedStatuses: ["material_scope_impact"],
+  isReviewer: false,
+}).allowed, true, "normal reader may request material relevance");
+assert.equal(resolveRelevanceStatusAccess({
+  requestedStatuses: ["contextual"],
+  includeContextual: true,
+  isReviewer: false,
+}).allowed, true, "normal reader may request contextual when enabled");
+assert.equal(resolveRelevanceStatusAccess({
+  requestedStatuses: ["needs_review"],
+  isReviewer: false,
+}).allowed, false, "normal reader cannot request needs_review");
+assert.equal(resolveRelevanceStatusAccess({
+  requestedStatuses: ["not_relevant"],
+  isReviewer: false,
+}).allowed, false, "normal reader cannot request not_relevant");
+assert.deepEqual(resolveRelevanceStatusAccess({
+  requestedStatuses: [...ARTICLE_RELEVANCE_STATUSES],
+  isReviewer: true,
+}), {
+  allowed: true,
+  statuses: [...ARTICLE_RELEVANCE_STATUSES],
+  reviewOnlyRequested: true,
+  contextualRequested: true,
+}, "reviewer may request all relevance statuses");
+
 const simulatedManual = { relevanceStatus: "material_scope_impact", manualOverride: true };
 const reevaluated = evaluateWorkspaceRelevance(sameArticle, iraqWorkspace);
 assert.equal(simulatedManual.relevanceStatus, "material_scope_impact", "manual override wins until reopened");
@@ -375,9 +479,9 @@ const routes = read("server/routes.ts");
 assert(routes.includes("app.post(\"/api/workspaces/:workspaceId/relevance/preview\""), "workspace preview endpoint missing");
 assert(routes.includes("writes: false"), "preview endpoint must declare no writes");
 assert(!routes.includes("storage.updateArticleRelevance"), "routes still write global article relevance");
-assert(routes.includes("workspace.clientId !== clientId") || routes.includes("workspace.clientId !== clientId"), "tenant isolation check missing");
+assert(routes.includes("validateWorkspaceTenantAccess"), "tenant isolation check missing");
 assert(routes.includes("resolveWorkspaceArticleQueryScope"), "central workspace article-query scope helper missing");
-assert(routes.includes("getDefaultRelevanceStatuses({ includeContextual"), "workspace output default relevance statuses missing");
+assert(routes.includes("resolveRelevanceStatusAccess"), "workspace output relevance status authorization missing");
 assert(routes.includes("validateSavedFeedViewWorkspace"), "saved feed workspace validation missing");
 
 const storage = read("server/storage.ts");

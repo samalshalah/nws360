@@ -35,12 +35,17 @@ import {
   WORKSPACE_PURPOSES,
   WORKSPACE_SCOPE_MODES,
   evaluateWorkspaceRelevance,
-  getDefaultRelevanceStatuses,
   normalizeWorkspaceProfile,
   isArticleRelevanceStatus,
   type ArticleRelevanceStatus,
   type WorkspaceProfile,
 } from "@shared/workspace-relevance";
+import {
+  normalizeRelevanceStatusFilter,
+  parseWorkspaceIdInput,
+  resolveRelevanceStatusAccess,
+  validateWorkspaceTenantAccess,
+} from "@shared/workspace-query-scope";
 import { discoverPublisherCategories, type DiscoveredPublisherCategory } from "./publisher-discovery";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
@@ -218,13 +223,8 @@ function booleanQuery(value: unknown): boolean | undefined {
   return undefined;
 }
 
-function relevanceQueryStatuses(value: unknown): string[] | undefined {
-  if (value === undefined || value === null || value === "") return undefined;
-  const rawValues = Array.isArray(value) ? value : String(value).split(",");
-  const statuses = rawValues
-    .map((item) => String(item).trim())
-    .filter(isArticleRelevanceStatus);
-  return statuses.length > 0 ? Array.from(new Set(statuses)) : undefined;
+function relevanceQueryStatuses(value: unknown): ArticleRelevanceStatus[] | undefined {
+  return normalizeRelevanceStatusFilter(value);
 }
 
 const alertRuleBaseInputSchema = z.object({
@@ -1082,18 +1082,19 @@ async function getWorkspaceForAuthenticatedScope(workspaceId: number, user: any,
     return null;
   }
   const workspace = await storage.getWorkspace(workspaceId);
-  if (!workspace) {
-    safeNotFound(res);
-    return null;
-  }
-
   const clientId = resolveClientId(user, req);
-  if (!isSystemAdmin(user) && !clientId) {
-    res.status(403).json({ message: "No organization assigned" });
-    return null;
-  }
-  if (clientId && workspace.clientId !== clientId) {
-    safeNotFound(res);
+  const access = validateWorkspaceTenantAccess({
+    workspaceExists: Boolean(workspace),
+    workspaceClientId: workspace?.clientId,
+    clientId,
+    isSystemAdmin: isSystemAdmin(user),
+  });
+  if (!access.allowed) {
+    if (access.status === 403) {
+      res.status(403).json({ message: access.reason });
+    } else {
+      safeNotFound(res);
+    }
     return null;
   }
   return workspace;
@@ -1118,22 +1119,14 @@ async function resolveWorkspaceArticleQueryScope(
   user: any,
   req: any,
   res: any,
-  options: { allowReviewStatuses?: boolean; requireWorkspace?: boolean } = {},
+  options: { requireWorkspace?: boolean } = {},
 ): Promise<WorkspaceArticleQueryScope | null> {
   const rawWorkspaceId = req.query?.workspaceId ?? req.body?.workspaceId;
-  const workspaceId = rawWorkspaceId === undefined || rawWorkspaceId === null || rawWorkspaceId === ""
-    ? undefined
-    : Number(rawWorkspaceId);
-  if (!workspaceId) {
-    if (options.requireWorkspace) {
-      res.status(400).json({ message: "Valid workspaceId required" });
-      return null;
-    }
-    return {};
+  const parsedWorkspaceId = parseWorkspaceIdInput(rawWorkspaceId);
+  if (parsedWorkspaceId.error) {
+    res.status(400).json({ message: parsedWorkspaceId.error });
+    return null;
   }
-
-  const workspace = await getWorkspaceForAuthenticatedScope(workspaceId, user, req, res);
-  if (!workspace) return null;
 
   const includeContextual = booleanQuery(req.query?.includeContextual ?? req.body?.includeContextual) === true;
   const includeNeedsReview = booleanQuery(req.query?.includeNeedsReview ?? req.body?.includeNeedsReview) === true;
@@ -1143,23 +1136,51 @@ async function resolveWorkspaceArticleQueryScope(
     ? req.query?.relevanceStatus ?? req.body?.relevanceStatus
     : undefined;
   const requestedStatuses = explicitStatuses || (singleStatus ? [singleStatus] : undefined);
-  const statuses = (requestedStatuses?.length
-    ? requestedStatuses
-    : getDefaultRelevanceStatuses({ includeContextual })) as ArticleRelevanceStatus[];
+  const statusFilterRequested = Boolean(
+    requestedStatuses?.length ||
+    includeContextual ||
+    includeNeedsReview ||
+    includeNotRelevant
+  );
 
-  const reviewOnlyRequested = includeNeedsReview ||
-    includeNotRelevant ||
-    statuses.some((status) => status === "needs_review" || status === "not_relevant");
-  if (reviewOnlyRequested && !options.allowReviewStatuses && !(await canAccessRelevanceReview(user, req))) {
-    res.status(403).json({ message: "Insufficient permissions for relevance review scope" });
+  if (!parsedWorkspaceId.supplied) {
+    if (options.requireWorkspace) {
+      res.status(400).json({ message: "Valid workspaceId required" });
+      return null;
+    }
+    if (!statusFilterRequested) return {};
+  }
+
+  const statusAccess = resolveRelevanceStatusAccess({
+    requestedStatuses,
+    includeContextual,
+    includeNeedsReview,
+    includeNotRelevant,
+    isReviewer: await canAccessRelevanceReview(user, req),
+  });
+  if (!statusAccess.allowed) {
+    res.status(statusAccess.status).json({ message: statusAccess.reason });
     return null;
   }
 
+  if (!parsedWorkspaceId.supplied) {
+    return {
+      relevanceStatuses: statusAccess.statuses,
+      includeContextual,
+    };
+  }
+
+  const workspaceId = parsedWorkspaceId.workspaceId;
+  if (!workspaceId) {
+    res.status(400).json({ message: "workspaceId must be a positive integer" });
+    return null;
+  }
+  const workspace = await getWorkspaceForAuthenticatedScope(workspaceId, user, req, res);
+  if (!workspace) return null;
+
   return {
     workspaceId: workspace.id,
-    relevanceStatuses: requestedStatuses?.length
-      ? statuses
-      : getDefaultRelevanceStatuses({ includeContextual, includeNeedsReview, includeNotRelevant }),
+    relevanceStatuses: statusAccess.statuses,
     includeContextual,
   };
 }
@@ -2600,17 +2621,7 @@ export async function registerRoutes(
       const clientId = resolveClientId(user, req);
       const scopedSourceIds = await getUserSourceIds(user, req);
       const sourceNameFilter = typeof req.query.sourceName === "string" ? req.query.sourceName : undefined;
-      const requestedRelevanceExpansion = Boolean(
-        req.query.relevanceStatus ||
-        req.query.relevanceStatuses ||
-        booleanQuery(req.query.includeContextual) ||
-        booleanQuery(req.query.includeNeedsReview) ||
-        booleanQuery(req.query.includeNotRelevant)
-      );
-      if (requestedRelevanceExpansion && !(await canAccessRelevanceReview(user, req))) {
-        return res.status(403).json({ message: "Insufficient permissions for relevance review scope" });
-      }
-      const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res, { allowReviewStatuses: true });
+      const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
       if (!workspaceScope) return;
       const sortParam = req.query.sort as string | undefined;
       const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
