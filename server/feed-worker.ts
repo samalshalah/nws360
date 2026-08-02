@@ -8,8 +8,8 @@ import { getGoogleNewsEdition } from "@shared/google-news-regions";
 import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, CLIENT_BILATERAL_CATEGORY_CODE, getArticleCategoryLabel, type EmbassyProfile } from "@shared/article-taxonomy";
 import { classifyArticleCategory, classifyArticlePriority, classifyIraqProvince } from "@shared/article-classifier";
 import {
-  buildDefaultWorkspaceProfile,
   evaluateWorkspaceRelevance,
+  aiFailureWorkspaceRelevanceResult,
   normalizeAiWorkspaceRelevanceResult,
   shouldUseAiFallbackForRelevance,
   type WorkspaceProfile,
@@ -687,32 +687,43 @@ function buildRelevanceInput(source: FeedSource, item: FeedItem) {
   };
 }
 
-function workspaceRecordToProfile(workspace: any): WorkspaceProfile {
+function workspaceRecordToProfile(workspace: any, profile?: any): WorkspaceProfile {
   return {
     id: workspace.id,
+    workspaceId: workspace.id,
     clientId: workspace.clientId,
     name: workspace.name,
+    description: workspace.description,
+    purpose: workspace.purpose,
     scopeMode: workspace.scopeMode,
     globalScope: workspace.globalScope,
-    primaryCountries: workspace.primaryCountries,
-    secondaryCountries: workspace.secondaryCountries,
-    regions: workspace.regions,
+    primaryCountryCodes: workspace.primaryCountryCodes,
+    secondaryCountryCodes: workspace.secondaryCountryCodes,
+    regionCodes: workspace.regionCodes,
     subnationalAreas: workspace.subnationalAreas,
-    topics: workspace.topics,
-    subtopics: workspace.subtopics,
-    industries: workspace.industries,
-    entities: workspace.entities,
-    organizations: workspace.organizations,
-    people: workspace.people,
-    projects: workspace.projects,
-    events: workspace.events,
-    multilingualAliases: workspace.multilingualAliases,
-    inclusionPhrases: workspace.inclusionPhrases,
-    exclusionPhrases: workspace.exclusionPhrases,
-    impactPhrases: workspace.impactPhrases,
-    contextualPhrases: workspace.contextualPhrases,
     preferredLanguages: workspace.preferredLanguages,
-    includeContextualByDefault: workspace.includeContextualByDefault,
+    timezone: workspace.timezone,
+    taxonomyTemplateCode: workspace.taxonomyTemplateCode,
+    relevanceProfileCode: workspace.relevanceProfileCode,
+    reportingTemplateCode: workspace.reportingTemplateCode,
+    active: workspace.active,
+    topics: profile?.topics,
+    subtopics: profile?.subtopics,
+    industries: profile?.industries,
+    entities: profile?.entities,
+    organizations: profile?.organizations,
+    people: profile?.people,
+    projects: profile?.projects,
+    events: profile?.events,
+    multilingualAliases: profile?.multilingualAliases,
+    inclusionTerms: profile?.inclusionTerms,
+    exclusionTerms: profile?.exclusionTerms,
+    impactTerms: profile?.impactTerms,
+    contextualTerms: profile?.contextualTerms,
+    minimumConfidence: profile?.minimumConfidence,
+    includeContextualByDefault: profile?.includeContextualByDefault,
+    contextualLabel: profile?.contextualLabel,
+    profileVersion: profile?.profileVersion,
   };
 }
 
@@ -720,21 +731,18 @@ async function getWorkspaceProfilesForSource(source: FeedSource): Promise<Worksp
   const clientId = source.clientId || null;
   if (!clientId) return [];
   try {
-    const workspaces = await storage.getWorkspaces(clientId);
-    if (workspaces.length > 0) return workspaces.map(workspaceRecordToProfile);
+    const workspaces = (await storage.getWorkspaces(clientId)).filter((workspace: any) => workspace.active !== false);
+    if (workspaces.length > 0) {
+      const profiles = await Promise.all(workspaces.map(async (workspace: any) => ({
+        workspace,
+        profile: await storage.getWorkspaceRelevanceProfile(workspace.id, clientId),
+      })));
+      return profiles.map(({ workspace, profile }) => workspaceRecordToProfile(workspace, profile));
+    }
   } catch (error: any) {
     console.warn(`[Worker] Workspace profile lookup failed for client=${clientId}: ${error?.message || error}`);
   }
-
-  return [{
-    ...buildDefaultWorkspaceProfile({
-      clientId,
-      name: "Client Default Monitoring Workspace",
-      sourceCountry: source.country,
-      sourceCategory: source.category,
-    }),
-    globalScope: !source.country && !source.category,
-  }];
+  return [];
 }
 
 function relevanceRank(status: string): number {
@@ -758,15 +766,19 @@ function pickPrimaryRelevance(results: WorkspaceRelevanceResult[]): WorkspaceRel
       relevanceStatus: "needs_review",
       confidence: 40,
       shortReason: "No workspace profile was available for relevance evaluation.",
-      matchedScope: [],
-      principalCountries: [],
-      materiallyAffectedCountries: [],
+      matchedScope: {},
+      principalCountryCodes: [],
+      materiallyAffectedCountryCodes: [],
       supportingSignals: [],
-      relevanceMethod: "deterministic",
+      evaluationMethod: "deterministic",
+      evaluatorVersion: "workspace-relevance-v1",
       aiRequired: true,
       relevanceConfidence: 40,
       relevanceReason: "No workspace profile was available for relevance evaluation.",
       relevanceMatchedSignals: [],
+      relevanceMethod: "deterministic",
+      principalCountries: [],
+      materiallyAffectedCountries: [],
     };
 }
 
@@ -785,7 +797,7 @@ async function evaluateWorkspaceRelevanceWithAiFallback(
 
   try {
     const job = await enqueueAIJob(clientId, "classification", {
-      systemPrompt: `You evaluate article relevance for a monitoring workspace. Return only JSON with these keys: relevanceStatus, confidence, shortReason, matchedScope, principalCountries, materiallyAffectedCountries, supportingSignals. Allowed relevanceStatus values: direct_scope_match, material_scope_impact, contextual, not_relevant, needs_review. Do not include chain-of-thought. Use direct_scope_match when the principal subject matches the workspace. Use material_scope_impact when the main event is outside scope but materially affects it. Use contextual only for useful background. Use needs_review when evidence is insufficient or conflicting.`,
+      systemPrompt: `You evaluate article relevance for a monitoring workspace. Return only JSON with these keys: relevanceStatus, confidence, shortReason, matchedScope, principalCountryCodes, materiallyAffectedCountryCodes, supportingSignals. Allowed relevanceStatus values: direct_scope_match, material_scope_impact, contextual, not_relevant, needs_review. Do not include chain-of-thought. Use direct_scope_match when the principal subject matches the workspace. Use material_scope_impact when the main event is outside scope but materially affects it. Use contextual only for useful background. Use needs_review when evidence is insufficient or conflicting.`,
       userContent: JSON.stringify({ article: input, workspaceProfile: profile }).slice(0, 8000),
       responseFormat: { type: "json_object" },
     }, 450);
@@ -793,16 +805,7 @@ async function evaluateWorkspaceRelevanceWithAiFallback(
     return normalizeAiWorkspaceRelevanceResult(JSON.parse(aiResult.content || "{}")) || deterministic;
   } catch (error: any) {
     console.warn(`[Worker] AI relevance fallback failed for client=${clientId}: ${error?.message || error}`);
-    return {
-      ...deterministic,
-      relevanceStatus: "needs_review",
-      confidence: Math.min(deterministic.confidence, 45),
-      shortReason: "AI fallback failed; analyst review required.",
-      relevanceConfidence: Math.min(deterministic.relevanceConfidence, 45),
-      relevanceReason: "AI fallback failed; analyst review required.",
-      relevanceMethod: "ai",
-      aiRequired: true,
-    };
+    return aiFailureWorkspaceRelevanceResult("AI fallback failed; analyst review required.");
   }
 }
 
@@ -838,10 +841,11 @@ async function persistWorkspaceRelevance(
       confidence: relevance.relevanceConfidence,
       shortReason: relevance.relevanceReason,
       matchedScope: relevance.matchedScope,
-      principalCountries: relevance.principalCountries,
-      materiallyAffectedCountries: relevance.materiallyAffectedCountries,
+      principalCountryCodes: relevance.principalCountryCodes,
+      materiallyAffectedCountryCodes: relevance.materiallyAffectedCountryCodes,
       supportingSignals: relevance.supportingSignals,
-      relevanceMethod: relevance.relevanceMethod,
+      evaluationMethod: relevance.evaluationMethod,
+      evaluatorVersion: relevance.evaluatorVersion,
       manualOverride: false,
       evaluatedAt: new Date(),
     } as any);
@@ -951,6 +955,10 @@ async function processItems(
         relevance = relevanceEvaluation.primary;
       }
     }
+    if (relevanceEvaluation.byWorkspace.length === 0) {
+      await recordRejectedIngestionItem(source, item, relevance, clientId);
+      continue;
+    }
     const shouldClassify = isAcceptedForReporting(relevance);
 
     const classifyItem = (inputTitle: string, inputContent: string) => {
@@ -972,14 +980,6 @@ async function processItems(
         ? classifyItem(item.title || existing.title || "", item.content || existing.contentClean || existing.content || "")
         : { category: "other", priority: "routine", province: null };
       const updates: Record<string, any> = {};
-      if ((existing as any).relevanceMethod !== "manual") {
-        updates.relevanceStatus = relevance.relevanceStatus;
-        updates.relevanceConfidence = relevance.relevanceConfidence;
-        updates.relevanceReason = relevance.relevanceReason;
-        updates.relevanceMethod = relevance.relevanceMethod;
-        updates.relevanceMatchedSignals = relevance.relevanceMatchedSignals;
-        updates.relevanceEvaluatedAt = new Date();
-      }
       if (classification.category !== "other" && (!existing.category || existing.category === "general" || existing.category === "other")) {
         updates.category = classification.category;
         updates.sourceId = source.id;
@@ -1021,14 +1021,6 @@ async function processItems(
         if (!alreadyTracked) {
           updates.crossPosts = [...existingCrossPosts, { platform, url: item.url, sourceId: source.id }];
           console.log(`[Worker] Cross-post added: "${title.substring(0, 50)}..." on ${platform}`);
-        }
-        if ((titleDup as any).relevanceMethod !== "manual" && shouldClassify && (titleDup as any).relevanceStatus !== "direct_scope_match") {
-          updates.relevanceStatus = relevance.relevanceStatus;
-          updates.relevanceConfidence = relevance.relevanceConfidence;
-          updates.relevanceReason = relevance.relevanceReason;
-          updates.relevanceMethod = relevance.relevanceMethod;
-          updates.relevanceMatchedSignals = relevance.relevanceMatchedSignals;
-          updates.relevanceEvaluatedAt = new Date();
         }
         if (classification.category !== "other" && (!titleDup.category || titleDup.category === "general" || titleDup.category === "other")) {
           updates.category = classification.category;
@@ -1081,12 +1073,6 @@ async function processItems(
       engagementComments: item.engagementComments ?? null,
       engagementShares: item.engagementShares ?? null,
       clientId,
-      relevanceStatus: relevance.relevanceStatus,
-      relevanceConfidence: relevance.relevanceConfidence,
-      relevanceReason: relevance.relevanceReason,
-      relevanceMethod: relevance.relevanceMethod,
-      relevanceMatchedSignals: relevance.relevanceMatchedSignals,
-      relevanceEvaluatedAt: new Date(),
       aiAnalysisStatus: "skipped" as const,
       aiRetryCount: 0,
     };
@@ -1159,43 +1145,35 @@ async function handleExtractArticleContent(payload: {
     updates.contentClean = truncate(extractedContent, MAX_STORED_CONTENT_CHARS);
     updates.summary = truncate(extracted.excerpt || extractedContent, 200);
   }
-  if ((article as any).relevanceMethod !== "manual") {
-    const sourceId = Number(payload.sourceId || article.sourceId || 0);
-    const source = sourceId ? await storage.getSource(sourceId, clientId) : null;
-    const relevanceSource: FeedSource = source ? {
-      id: source.id,
-      name: source.name,
-      url: source.url,
-      type: source.type,
-      clientId: source.clientId,
-      country: source.country,
-      category: source.category,
-    } : {
-      id: sourceId,
-      name: "Unknown",
-      url: article.url,
-      clientId,
-    };
-    const relevanceItem: FeedItem = {
-      title: extracted.title || article.title,
-      content: extracted.excerpt || article.summary || extractedContent || currentContent,
-      url: extracted.finalUrl || article.url,
-      publishedAt: extracted.publishedAt || article.publishedAt || new Date(),
-      imageTitle: extracted.imageTitle,
-      subSource: article.subSource || undefined,
-    };
-    const workspaceProfiles = await getWorkspaceProfilesForSource(relevanceSource);
-    const relevanceEvaluation = await evaluateSourceItemRelevance(relevanceSource, relevanceItem, workspaceProfiles);
-    const relevance = relevanceEvaluation.primary;
-    updates.relevanceStatus = relevance.relevanceStatus;
-    updates.relevanceConfidence = relevance.relevanceConfidence;
-    updates.relevanceReason = relevance.relevanceReason;
-    updates.relevanceMethod = relevance.relevanceMethod;
-    updates.relevanceMatchedSignals = relevance.relevanceMatchedSignals;
-    updates.relevanceEvaluatedAt = new Date();
-    await persistWorkspaceRelevance(articleId, clientId, relevanceEvaluation.byWorkspace);
-  }
-  const effectiveRelevanceStatus = String(updates.relevanceStatus || (article as any).relevanceStatus || "");
+  const sourceId = Number(payload.sourceId || article.sourceId || 0);
+  const source = sourceId ? await storage.getSource(sourceId, clientId) : null;
+  const relevanceSource: FeedSource = source ? {
+    id: source.id,
+    name: source.name,
+    url: source.url,
+    type: source.type,
+    clientId: source.clientId,
+    country: source.country,
+    category: source.category,
+  } : {
+    id: sourceId,
+    name: "Unknown",
+    url: article.url,
+    clientId,
+  };
+  const relevanceItem: FeedItem = {
+    title: extracted.title || article.title,
+    content: extracted.excerpt || article.summary || extractedContent || currentContent,
+    url: extracted.finalUrl || article.url,
+    publishedAt: extracted.publishedAt || article.publishedAt || new Date(),
+    imageTitle: extracted.imageTitle,
+    subSource: article.subSource || undefined,
+  };
+  const workspaceProfiles = await getWorkspaceProfilesForSource(relevanceSource);
+  const relevanceEvaluation = await evaluateSourceItemRelevance(relevanceSource, relevanceItem, workspaceProfiles);
+  const relevance = relevanceEvaluation.primary;
+  await persistWorkspaceRelevance(articleId, clientId, relevanceEvaluation.byWorkspace);
+  const effectiveRelevanceStatus = String(relevance.relevanceStatus || "");
   if (effectiveRelevanceStatus === "direct_scope_match" || effectiveRelevanceStatus === "material_scope_impact") {
     const classification = classifyArticleCategory({
       title: extracted.title || article.title,

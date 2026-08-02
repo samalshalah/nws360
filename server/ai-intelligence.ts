@@ -575,7 +575,9 @@ export async function runIntelligencePipeline(): Promise<IntelligencePipelineRes
   }
 
   const activeClientIds = new Set(activeClients.map((client) => client.id));
-  const workspaces = (await storage.getWorkspaces()).filter((workspace) => activeClientIds.has(workspace.clientId));
+  const workspaces = (await storage.getWorkspaces()).filter((workspace) =>
+    activeClientIds.has(workspace.clientId) && workspace.active !== false
+  );
   if (workspaces.length === 0) {
     console.log("[AI Intelligence] Skipped: no eligible monitoring workspaces");
     return {

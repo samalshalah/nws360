@@ -115,6 +115,7 @@ const OPERATIONAL_TABLE_NAMES = new Set([
   "notifications",
   "onboarding_state",
   "processing_jobs",
+  "rejected_ingestion_items",
   "publisher_channels",
   "publisher_profiles",
   "recurring_patterns",
@@ -152,6 +153,8 @@ const OPERATIONAL_TABLE_NAMES = new Set([
   "workspace_members",
   "workspace_source_assignments",
   "workspaces",
+  "workspace_relevance_history",
+  "workspace_relevance_profiles",
 ]);
 
 function parseResetArgs(argv) {

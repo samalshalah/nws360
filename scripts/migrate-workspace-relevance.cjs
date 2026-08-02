@@ -1,94 +1,107 @@
-require("dotenv").config();
+require("dotenv/config");
 const { Client } = require("pg");
 
-const STATEMENTS = [
-  `ALTER TABLE articles ADD COLUMN IF NOT EXISTS relevance_status text NOT NULL DEFAULT 'direct_scope_match'`,
-  `ALTER TABLE articles ADD COLUMN IF NOT EXISTS relevance_confidence integer`,
-  `ALTER TABLE articles ADD COLUMN IF NOT EXISTS relevance_reason text`,
-  `ALTER TABLE articles ADD COLUMN IF NOT EXISTS relevance_method text NOT NULL DEFAULT 'migration'`,
-  `ALTER TABLE articles ADD COLUMN IF NOT EXISTS relevance_matched_signals text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE articles ADD COLUMN IF NOT EXISTS relevance_evaluated_at timestamp`,
-  `ALTER TABLE articles ADD COLUMN IF NOT EXISTS relevance_reviewed_by integer REFERENCES users(id)`,
-  `ALTER TABLE articles ADD COLUMN IF NOT EXISTS relevance_reviewed_at timestamp`,
-  `UPDATE articles
-      SET relevance_status = CASE relevance_status
-        WHEN 'direct_iraq' THEN 'direct_scope_match'
-        WHEN 'iraq_impact' THEN 'material_scope_impact'
-        WHEN 'regional_context' THEN 'contextual'
-        ELSE relevance_status
-      END
-    WHERE relevance_status IN ('direct_iraq', 'iraq_impact', 'regional_context')`,
-  `CREATE INDEX IF NOT EXISTS idx_articles_client_relevance ON articles (client_id, relevance_status)`,
-  `CREATE INDEX IF NOT EXISTS idx_articles_relevance_review ON articles (client_id, relevance_status, relevance_evaluated_at)`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS scope_mode text NOT NULL DEFAULT 'mixed'`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS global_scope boolean NOT NULL DEFAULT false`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS primary_countries text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS secondary_countries text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS regions text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS subnational_areas text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS topics text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS subtopics text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS industries text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS entities text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS organizations text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS people text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS projects text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS events text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS multilingual_aliases jsonb`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS inclusion_phrases text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS exclusion_phrases text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS impact_phrases text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS contextual_phrases text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS preferred_languages text[] NOT NULL DEFAULT '{}'::text[]`,
-  `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS include_contextual_by_default boolean NOT NULL DEFAULT false`,
-  `CREATE TABLE IF NOT EXISTS article_workspace_relevance (
+const WORKSPACE_COLUMNS = [
+  ["purpose", "text NOT NULL DEFAULT 'custom'"],
+  ["scope_mode", "text NOT NULL DEFAULT 'hybrid'"],
+  ["global_scope", "boolean NOT NULL DEFAULT false"],
+  ["primary_country_codes", "text[] NOT NULL DEFAULT '{}'::text[]"],
+  ["secondary_country_codes", "text[] NOT NULL DEFAULT '{}'::text[]"],
+  ["region_codes", "text[] NOT NULL DEFAULT '{}'::text[]"],
+  ["subnational_areas", "text[] NOT NULL DEFAULT '{}'::text[]"],
+  ["preferred_languages", "text[] NOT NULL DEFAULT '{}'::text[]"],
+  ["timezone", "text NOT NULL DEFAULT 'UTC'"],
+  ["taxonomy_template_code", "text"],
+  ["relevance_profile_code", "text"],
+  ["reporting_template_code", "text"],
+  ["active", "boolean NOT NULL DEFAULT true"],
+  ["updated_at", "timestamp DEFAULT now()"],
+];
+
+const CREATE_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS workspace_relevance_profiles (
     id serial PRIMARY KEY,
-    article_id integer NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
     workspace_id integer NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    client_id integer NOT NULL,
-    relevance_status text NOT NULL DEFAULT 'needs_review',
-    confidence integer NOT NULL DEFAULT 0,
-    short_reason text,
-    matched_scope text[] NOT NULL DEFAULT '{}'::text[],
-    principal_countries text[] NOT NULL DEFAULT '{}'::text[],
-    materially_affected_countries text[] NOT NULL DEFAULT '{}'::text[],
-    supporting_signals text[] NOT NULL DEFAULT '{}'::text[],
-    relevance_method text NOT NULL DEFAULT 'deterministic',
-    manual_override boolean NOT NULL DEFAULT false,
-    reviewed_by integer REFERENCES users(id),
-    reviewed_at timestamp,
-    reopened_at timestamp,
-    evaluated_at timestamp DEFAULT now(),
+    topics text[] NOT NULL DEFAULT '{}'::text[],
+    subtopics text[] NOT NULL DEFAULT '{}'::text[],
+    industries text[] NOT NULL DEFAULT '{}'::text[],
+    entities text[] NOT NULL DEFAULT '{}'::text[],
+    organizations text[] NOT NULL DEFAULT '{}'::text[],
+    people text[] NOT NULL DEFAULT '{}'::text[],
+    projects text[] NOT NULL DEFAULT '{}'::text[],
+    events text[] NOT NULL DEFAULT '{}'::text[],
+    multilingual_aliases jsonb,
+    inclusion_terms text[] NOT NULL DEFAULT '{}'::text[],
+    exclusion_terms text[] NOT NULL DEFAULT '{}'::text[],
+    impact_terms text[] NOT NULL DEFAULT '{}'::text[],
+    contextual_terms text[] NOT NULL DEFAULT '{}'::text[],
+    minimum_confidence integer NOT NULL DEFAULT 60,
+    include_contextual_by_default boolean NOT NULL DEFAULT false,
+    contextual_label text NOT NULL DEFAULT 'Strategic Context',
+    profile_version integer NOT NULL DEFAULT 1,
+    active boolean NOT NULL DEFAULT true,
     created_at timestamp DEFAULT now(),
     updated_at timestamp DEFAULT now()
   )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS article_workspace_relevance_unique ON article_workspace_relevance (article_id, workspace_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_article_workspace_relevance_client ON article_workspace_relevance (client_id, relevance_status)`,
-  `CREATE INDEX IF NOT EXISTS idx_article_workspace_relevance_workspace ON article_workspace_relevance (workspace_id, relevance_status)`,
-  `CREATE TABLE IF NOT EXISTS rejected_ingestion_items (
+  `CREATE UNIQUE INDEX IF NOT EXISTS workspace_relevance_profiles_workspace_unique
+     ON workspace_relevance_profiles (workspace_id)`,
+  `CREATE INDEX IF NOT EXISTS workspace_relevance_profiles_active_idx
+     ON workspace_relevance_profiles (workspace_id, active)`,
+  `CREATE TABLE IF NOT EXISTS article_workspace_relevance (
     id serial PRIMARY KEY,
-    client_id integer NOT NULL,
-    source_id integer REFERENCES sources(id) ON DELETE CASCADE,
-    url text,
-    title text,
-    published_at timestamp,
-    rejection_status text NOT NULL,
-    rejection_reason text,
-    matched_signals text[] NOT NULL DEFAULT '{}'::text[],
-    dedupe_key text NOT NULL,
+    client_id integer NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    workspace_id integer NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    article_id integer NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+    relevance_status text NOT NULL DEFAULT 'needs_review',
+    confidence integer NOT NULL DEFAULT 0,
+    short_reason text,
+    matched_scope jsonb NOT NULL DEFAULT '{}'::jsonb,
+    principal_country_codes text[] NOT NULL DEFAULT '{}'::text[],
+    materially_affected_country_codes text[] NOT NULL DEFAULT '{}'::text[],
+    supporting_signals jsonb NOT NULL DEFAULT '[]'::jsonb,
+    evaluation_method text NOT NULL DEFAULT 'deterministic',
+    evaluator_version text NOT NULL DEFAULT 'workspace-relevance-v1',
     evaluated_at timestamp DEFAULT now(),
-    expires_at timestamp,
+    manual_override boolean NOT NULL DEFAULT false,
+    reviewed_by integer REFERENCES users(id),
+    reviewed_at timestamp,
+    review_note text,
+    reopened_at timestamp,
+    created_at timestamp DEFAULT now(),
+    updated_at timestamp DEFAULT now()
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS article_workspace_relevance_workspace_article_unique
+     ON article_workspace_relevance (workspace_id, article_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_article_workspace_relevance_client
+     ON article_workspace_relevance (client_id, relevance_status)`,
+  `CREATE INDEX IF NOT EXISTS idx_article_workspace_relevance_workspace
+     ON article_workspace_relevance (workspace_id, relevance_status)`,
+  `CREATE INDEX IF NOT EXISTS idx_article_workspace_relevance_review
+     ON article_workspace_relevance (workspace_id, relevance_status, confidence)`,
+  `CREATE TABLE IF NOT EXISTS workspace_relevance_history (
+    id serial PRIMARY KEY,
+    client_id integer NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    workspace_id integer NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    article_id integer NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+    previous_status text,
+    new_status text NOT NULL,
+    previous_confidence integer,
+    new_confidence integer NOT NULL,
+    evaluation_method text NOT NULL,
+    changed_by integer REFERENCES users(id),
+    reason text,
     created_at timestamp DEFAULT now()
   )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS rejected_items_client_source_key ON rejected_ingestion_items (client_id, source_id, dedupe_key)`,
-  `CREATE INDEX IF NOT EXISTS idx_rejected_items_client_status ON rejected_ingestion_items (client_id, rejection_status)`,
-  `CREATE INDEX IF NOT EXISTS idx_rejected_items_source ON rejected_ingestion_items (source_id)`,
+  `CREATE INDEX IF NOT EXISTS workspace_relevance_history_workspace_article_idx
+     ON workspace_relevance_history (workspace_id, article_id)`,
+  `CREATE INDEX IF NOT EXISTS workspace_relevance_history_client_idx
+     ON workspace_relevance_history (client_id, created_at)`,
 ];
 
 function parseArgs(argv) {
   return {
     apply: argv.includes("--apply"),
-    confirmBackup: argv.includes("--confirm-backup"),
+    dryRun: argv.includes("--dry-run") || !argv.includes("--apply"),
     help: argv.includes("--help") || argv.includes("-h"),
   };
 }
@@ -98,11 +111,35 @@ function printHelp() {
 Workspace relevance schema migration
 
 Dry run:
-  npm run db:migrate:workspace-relevance
+  npm run db:migrate:workspace-relevance -- --dry-run
 
-Apply, only after a verified Neon backup:
-  npm run db:migrate:workspace-relevance -- --apply --confirm-backup
+Apply:
+  npm run db:migrate:workspace-relevance -- --apply
 `);
+}
+
+async function inspect(client) {
+  const columnRows = await client.query(`
+    SELECT column_name
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'workspaces'
+  `);
+  const existingWorkspaceColumns = new Set(columnRows.rows.map((row) => row.column_name));
+  const tableRows = await client.query(`
+    SELECT table_name
+      FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_name IN ('workspace_relevance_profiles', 'article_workspace_relevance', 'workspace_relevance_history')
+  `);
+  const existingTables = new Set(tableRows.rows.map((row) => row.table_name));
+  return {
+    existingWorkspaceColumns: Array.from(existingWorkspaceColumns).sort(),
+    missingWorkspaceColumns: WORKSPACE_COLUMNS
+      .filter(([name]) => !existingWorkspaceColumns.has(name))
+      .map(([name, definition]) => ({ name, definition })),
+    existingTables: Array.from(existingTables).sort(),
+  };
 }
 
 async function main() {
@@ -111,35 +148,53 @@ async function main() {
     printHelp();
     return;
   }
-
-  if (!args.apply) {
-    console.log(JSON.stringify({
-      migration: "workspace-relevance",
-      mode: "dry-run",
-      changes: STATEMENTS,
-      writes: false,
-      applyCommand: "npm run db:migrate:workspace-relevance -- --apply --confirm-backup",
-    }, null, 2));
-    return;
-  }
-
-  if (!args.confirmBackup) {
-    throw new Error("--apply requires --confirm-backup. Create and verify a Neon backup before applying.");
-  }
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query("BEGIN");
-    for (const statement of STATEMENTS) {
-      await client.query(statement);
+    const before = await inspect(client);
+    const alterStatements = WORKSPACE_COLUMNS.map(([name, definition]) =>
+      `ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS ${name} ${definition}`,
+    );
+    const statements = [
+      ...alterStatements,
+      `CREATE INDEX IF NOT EXISTS workspaces_client_idx ON workspaces (client_id)`,
+      `CREATE INDEX IF NOT EXISTS workspaces_client_active_idx ON workspaces (client_id, active)`,
+      ...CREATE_STATEMENTS,
+    ];
+
+    if (!args.apply) {
+      console.log(JSON.stringify({
+        migration: "workspace-relevance",
+        mode: "dry-run",
+        writes: false,
+        before,
+        plannedStatements: statements,
+        applyCommand: "npm run db:migrate:workspace-relevance -- --apply",
+      }, null, 2));
+      return;
     }
-    await client.query("COMMIT");
-    console.log(JSON.stringify({ migration: "workspace-relevance", mode: "apply", appliedStatements: STATEMENTS.length }, null, 2));
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
+
+    await client.query("BEGIN");
+    try {
+      for (const statement of statements) {
+        await client.query(statement);
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+
+    const after = await inspect(client);
+    console.log(JSON.stringify({
+      migration: "workspace-relevance",
+      mode: "apply",
+      appliedStatements: statements.length,
+      before,
+      after,
+    }, null, 2));
   } finally {
     await client.end();
   }
@@ -149,4 +204,3 @@ main().catch((error) => {
   console.error(error.message || error);
   process.exit(1);
 });
-

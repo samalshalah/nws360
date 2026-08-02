@@ -4,7 +4,7 @@ import {
   FileText, List, Hash, Bookmark, Users,
   Activity, GitCompare, Zap, Brain, CreditCard,
   HelpCircle, Lightbulb, Plug, Monitor, UsersRound,
-  Home, Bell, Settings, ClipboardList, CheckSquare, BookOpen
+  Home, Bell, Settings, ClipboardList, CheckSquare, BookOpen, SlidersHorizontal
 } from "lucide-react";
 import { CAPS } from "@shared/schema";
 
@@ -104,6 +104,7 @@ export function buildTenantNavTree(t: any): NavGroup[] {
         { key: "users", label: t("nav.userManagement", "Team"), href: "/users", icon: Users, caps: [CAPS.USERS_VIEW] },
         { key: "workQueue", label: t("nav.workQueue", "Tasks"), href: "/work-queue", icon: CheckSquare, caps: [CAPS.COLLAB_TASKS] },
         { key: "collaboration", label: t("nav.collaboration", "Collaboration"), href: "/collaboration", icon: UsersRound, caps: [CAPS.COLLAB_VIEW] },
+        { key: "workspaceRelevance", label: t("nav.workspaceRelevance", "Relevance Rules"), href: "/workspace/relevance", icon: SlidersHorizontal, caps: [CAPS.SETTINGS_VIEW] },
         { key: "knowledge", label: t("nav.knowledge", "Knowledge"), href: "/knowledge", icon: Brain, caps: [CAPS.KNOWLEDGE_VIEW] },
         { key: "integrations", label: t("nav.integrations", "Integrations"), href: "/integrations", icon: Plug, caps: [CAPS.INTEGRATIONS_VIEW] },
         { key: "usageBilling", label: t("nav.usageBilling", "Billing"), href: "/usage-billing", icon: CreditCard, caps: [CAPS.BILLING_VIEW] },
@@ -190,6 +191,7 @@ export const ROUTE_CAPS: RouteCapConfig[] = [
   { path: "/integrations", caps: [CAPS.INTEGRATIONS_VIEW] },
   { path: "/collaboration", caps: [CAPS.COLLAB_VIEW] },
   { path: "/work-queue", caps: [CAPS.COLLAB_TASKS] },
+  { path: "/workspace/relevance", caps: [CAPS.SETTINGS_VIEW] },
   { path: "/knowledge", caps: [CAPS.KNOWLEDGE_VIEW] },
   { path: "/settings", caps: [CAPS.SETTINGS_VIEW] },
   { path: "/admin", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },

@@ -54,6 +54,7 @@ import SharedReport from "@/pages/SharedReport";
 import ClientSettings from "@/pages/ClientSettings";
 import ClientAlerts from "@/pages/ClientAlerts";
 import WorkQueue from "@/pages/WorkQueue";
+import WorkspaceRelevance from "@/pages/WorkspaceRelevance";
 import { AIStagePage } from "@/components/analytics/AIStagePage";
 
 const sentimentPage = () => (
@@ -246,6 +247,9 @@ function Router() {
       </Route>
       <Route path="/settings">
         <ProtectedPage component={ClientSettings} />
+      </Route>
+      <Route path="/workspace/relevance">
+        <ProtectedPage component={WorkspaceRelevance} />
       </Route>
 
       <Route component={NotFound} />

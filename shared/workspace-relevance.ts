@@ -1,3 +1,5 @@
+export const RELEVANCE_ENGINE_VERSION = "workspace-relevance-v1";
+
 export const ARTICLE_RELEVANCE_STATUSES = [
   "direct_scope_match",
   "material_scope_impact",
@@ -8,7 +10,7 @@ export const ARTICLE_RELEVANCE_STATUSES = [
 
 export type ArticleRelevanceStatus = typeof ARTICLE_RELEVANCE_STATUSES[number];
 
-export const ARTICLE_RELEVANCE_METHODS = ["deterministic", "ai", "manual", "migration"] as const;
+export const ARTICLE_RELEVANCE_METHODS = ["deterministic", "ai", "manual", "imported"] as const;
 export type ArticleRelevanceMethod = typeof ARTICLE_RELEVANCE_METHODS[number];
 
 export const DEFAULT_REPORTING_RELEVANCE_STATUSES: ArticleRelevanceStatus[] = [
@@ -28,25 +30,45 @@ export const REVIEW_QUEUE_RELEVANCE_STATUSES: ArticleRelevanceStatus[] = [
 
 export const WORKSPACE_SCOPE_MODES = [
   "global",
-  "geographic",
   "regional",
-  "topic",
-  "entity",
-  "mixed",
+  "single_country",
+  "multi_country",
+  "subnational",
+  "topic_only",
+  "hybrid",
 ] as const;
 
 export type WorkspaceScopeMode = typeof WORKSPACE_SCOPE_MODES[number];
 
-export type WorkspaceProfile = {
+export const WORKSPACE_PURPOSES = [
+  "diplomatic_monitoring",
+  "newsroom_monitoring",
+  "country_desk",
+  "regional_desk",
+  "global_news",
+  "topic_research",
+  "humanitarian_monitoring",
+  "competitor_monitoring",
+  "reputation_monitoring",
+  "crisis_monitoring",
+  "industry_intelligence",
+  "custom",
+] as const;
+
+export type WorkspacePurpose = typeof WORKSPACE_PURPOSES[number];
+
+export type WorkspaceSupportingSignal = {
+  type: string;
+  field: string;
+  term: string;
+  weight?: number;
+};
+
+export type WorkspaceMatchedScope = Record<string, string[]>;
+
+export type WorkspaceRelevanceProfileData = {
   id?: number | null;
-  clientId?: number | null;
-  name?: string | null;
-  scopeMode?: WorkspaceScopeMode | string | null;
-  globalScope?: boolean | null;
-  primaryCountries?: string[] | null;
-  secondaryCountries?: string[] | null;
-  regions?: string[] | null;
-  subnationalAreas?: string[] | null;
+  workspaceId?: number | null;
   topics?: string[] | null;
   subtopics?: string[] | null;
   industries?: string[] | null;
@@ -56,12 +78,46 @@ export type WorkspaceProfile = {
   projects?: string[] | null;
   events?: string[] | null;
   multilingualAliases?: Record<string, string[]> | string[] | null;
+  inclusionTerms?: string[] | null;
+  exclusionTerms?: string[] | null;
+  impactTerms?: string[] | null;
+  contextualTerms?: string[] | null;
+  minimumConfidence?: number | null;
+  includeContextualByDefault?: boolean | null;
+  contextualLabel?: string | null;
+  profileVersion?: number | null;
+  active?: boolean | null;
+
+  // Legacy aliases kept so older call sites can be migrated incrementally.
   inclusionPhrases?: string[] | null;
   exclusionPhrases?: string[] | null;
   impactPhrases?: string[] | null;
   contextualPhrases?: string[] | null;
+};
+
+export type WorkspaceProfile = WorkspaceRelevanceProfileData & {
+  id?: number | null;
+  clientId?: number | null;
+  name?: string | null;
+  description?: string | null;
+  purpose?: WorkspacePurpose | string | null;
+  scopeMode?: WorkspaceScopeMode | string | null;
+  globalScope?: boolean | null;
+  primaryCountryCodes?: string[] | null;
+  secondaryCountryCodes?: string[] | null;
+  regionCodes?: string[] | null;
+  subnationalAreas?: string[] | null;
   preferredLanguages?: string[] | null;
-  includeContextualByDefault?: boolean | null;
+  timezone?: string | null;
+  taxonomyTemplateCode?: string | null;
+  relevanceProfileCode?: string | null;
+  reportingTemplateCode?: string | null;
+  active?: boolean | null;
+
+  // Legacy aliases kept so older call sites can be migrated incrementally.
+  primaryCountries?: string[] | null;
+  secondaryCountries?: string[] | null;
+  regions?: string[] | null;
 };
 
 export type WorkspaceRelevanceInput = {
@@ -83,25 +139,24 @@ export type WorkspaceRelevanceResult = {
   relevanceStatus: ArticleRelevanceStatus;
   confidence: number;
   shortReason: string;
-  matchedScope: string[];
-  principalCountries: string[];
-  materiallyAffectedCountries: string[];
-  supportingSignals: string[];
-  relevanceMethod: ArticleRelevanceMethod;
+  matchedScope: WorkspaceMatchedScope;
+  principalCountryCodes: string[];
+  materiallyAffectedCountryCodes: string[];
+  supportingSignals: WorkspaceSupportingSignal[];
+  evaluationMethod: ArticleRelevanceMethod;
+  evaluatorVersion: string;
   aiRequired?: boolean;
 
-  // Compatibility names used by the existing article schema and storage layer.
+  // Compatibility aliases for older ingestion/reporting code while it is migrated.
   relevanceConfidence: number;
   relevanceReason: string;
   relevanceMatchedSignals: string[];
+  relevanceMethod: ArticleRelevanceMethod;
+  principalCountries: string[];
+  materiallyAffectedCountries: string[];
 };
 
-type ScoredSignal = {
-  scope: string;
-  term: string;
-  field: string;
-  score: number;
-};
+type ScoredSignal = WorkspaceSupportingSignal & { score: number };
 
 type CountryLexicon = {
   code: string;
@@ -131,7 +186,7 @@ const COUNTRY_LEXICON: CountryLexicon[] = [
   { code: "DZ", aliases: ["algeria", "algerian", "algiers"], regions: ["mena", "north africa"] },
   { code: "LY", aliases: ["libya", "libyan", "tripoli"], regions: ["mena", "north africa"] },
   { code: "SD", aliases: ["sudan", "sudanese", "khartoum"], regions: ["mena", "north africa"] },
-  { code: "US", aliases: ["united states", "u.s.", "us", "american", "washington"], regions: ["north america", "global"] },
+  { code: "US", aliases: ["united states", "u.s.", "u.s", "usa", "us", "american", "washington"], regions: ["north america", "global"] },
   { code: "FR", aliases: ["france", "french", "paris"], regions: ["europe", "global"] },
   { code: "GB", aliases: ["united kingdom", "uk", "britain", "british", "london"], regions: ["europe", "global"] },
   { code: "DE", aliases: ["germany", "german", "berlin"], regions: ["europe", "global"] },
@@ -139,7 +194,7 @@ const COUNTRY_LEXICON: CountryLexicon[] = [
   { code: "RU", aliases: ["russia", "russian", "moscow"], regions: ["europe", "asia", "global"] },
 ];
 
-const DEFAULT_IMPACT_PHRASES = [
+const DEFAULT_IMPACT_TERMS = [
   "affect",
   "affected",
   "impact",
@@ -166,7 +221,7 @@ const DEFAULT_IMPACT_PHRASES = [
   "humanitarian",
 ];
 
-const DEFAULT_CONTEXTUAL_PHRASES = [
+const DEFAULT_CONTEXTUAL_TERMS = [
   "regional",
   "background",
   "context",
@@ -193,11 +248,21 @@ const AMBIGUOUS_TERMS = [
 ];
 
 function arr(value: string[] | null | undefined): string[] {
-  return Array.isArray(value) ? value.filter((item) => String(item || "").trim()) : [];
+  return Array.isArray(value)
+    ? value.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+}
+
+function unique(values: string[], limit = 16): string[] {
+  return Array.from(new Set(values.filter(Boolean))).slice(0, limit);
 }
 
 function normalizeScopeMode(value: WorkspaceProfile["scopeMode"]): WorkspaceScopeMode {
-  return WORKSPACE_SCOPE_MODES.includes(value as WorkspaceScopeMode) ? value as WorkspaceScopeMode : "mixed";
+  return WORKSPACE_SCOPE_MODES.includes(value as WorkspaceScopeMode) ? value as WorkspaceScopeMode : "hybrid";
+}
+
+function normalizePurpose(value: WorkspaceProfile["purpose"]): WorkspacePurpose {
+  return WORKSPACE_PURPOSES.includes(value as WorkspacePurpose) ? value as WorkspacePurpose : "custom";
 }
 
 function flattenAliases(value: WorkspaceProfile["multilingualAliases"]): string[] {
@@ -206,15 +271,28 @@ function flattenAliases(value: WorkspaceProfile["multilingualAliases"]): string[
   return Object.values(value).flatMap((items) => arr(items));
 }
 
+function normalizeCodes(values: string[] | null | undefined): string[] {
+  return unique(arr(values).map((value) => value.trim().toUpperCase()), 100);
+}
+
+function termsFrom(profile: WorkspaceProfile, key: keyof WorkspaceRelevanceProfileData, legacyKey?: keyof WorkspaceRelevanceProfileData): string[] {
+  return unique([...arr(profile[key] as string[] | null | undefined), ...arr(legacyKey ? profile[legacyKey] as string[] | null | undefined : undefined)], 200);
+}
+
 export function normalizeWorkspaceProfile(profile: WorkspaceProfile): WorkspaceProfile {
+  const primaryCountryCodes = normalizeCodes([...(profile.primaryCountryCodes || []), ...(profile.primaryCountries || [])]);
+  const secondaryCountryCodes = normalizeCodes([...(profile.secondaryCountryCodes || []), ...(profile.secondaryCountries || [])]);
+  const regionCodes = normalizeCodes([...(profile.regionCodes || []), ...(profile.regions || [])]);
   return {
     ...profile,
+    purpose: normalizePurpose(profile.purpose),
     scopeMode: normalizeScopeMode(profile.scopeMode),
     globalScope: Boolean(profile.globalScope || profile.scopeMode === "global"),
-    primaryCountries: arr(profile.primaryCountries),
-    secondaryCountries: arr(profile.secondaryCountries),
-    regions: arr(profile.regions),
+    primaryCountryCodes,
+    secondaryCountryCodes,
+    regionCodes,
     subnationalAreas: arr(profile.subnationalAreas),
+    preferredLanguages: arr(profile.preferredLanguages),
     topics: arr(profile.topics),
     subtopics: arr(profile.subtopics),
     industries: arr(profile.industries),
@@ -223,12 +301,14 @@ export function normalizeWorkspaceProfile(profile: WorkspaceProfile): WorkspaceP
     people: arr(profile.people),
     projects: arr(profile.projects),
     events: arr(profile.events),
-    inclusionPhrases: arr(profile.inclusionPhrases),
-    exclusionPhrases: arr(profile.exclusionPhrases),
-    impactPhrases: unique([...DEFAULT_IMPACT_PHRASES, ...arr(profile.impactPhrases)], 200),
-    contextualPhrases: unique([...DEFAULT_CONTEXTUAL_PHRASES, ...arr(profile.contextualPhrases)], 200),
-    preferredLanguages: arr(profile.preferredLanguages),
     multilingualAliases: flattenAliases(profile.multilingualAliases),
+    inclusionTerms: termsFrom(profile, "inclusionTerms", "inclusionPhrases"),
+    exclusionTerms: termsFrom(profile, "exclusionTerms", "exclusionPhrases"),
+    impactTerms: unique([...DEFAULT_IMPACT_TERMS, ...termsFrom(profile, "impactTerms", "impactPhrases")], 250),
+    contextualTerms: unique([...DEFAULT_CONTEXTUAL_TERMS, ...termsFrom(profile, "contextualTerms", "contextualPhrases")], 250),
+    minimumConfidence: profile.minimumConfidence ?? 60,
+    includeContextualByDefault: Boolean(profile.includeContextualByDefault),
+    active: profile.active !== false,
   };
 }
 
@@ -259,27 +339,35 @@ function containsTerm(text: string, term: string): boolean {
   return ` ${text} `.includes(` ${normalized} `);
 }
 
-function scoreTerms(field: string, text: string, terms: string[], scope: string, weight: number): ScoredSignal[] {
+function scoreTerms(field: string, text: string, terms: string[], type: string, weight: number): ScoredSignal[] {
   return terms
     .filter((term) => containsTerm(text, term))
-    .map((term) => ({ field, term: normalizeWorkspaceRelevanceText(term), scope, score: weight }));
+    .map((term) => ({ field, term: normalizeWorkspaceRelevanceText(term), type, score: weight, weight }));
 }
 
-function unique(values: string[], limit = 16): string[] {
-  return Array.from(new Set(values.filter(Boolean))).slice(0, limit);
+function countryFor(value: string): CountryLexicon | undefined {
+  const normalized = normalizeWorkspaceRelevanceText(value);
+  return COUNTRY_LEXICON.find((item) =>
+    item.code.toLowerCase() === normalized ||
+    item.aliases.some((alias) => normalizeWorkspaceRelevanceText(alias) === normalized),
+  );
+}
+
+function countryCodesFor(values: string[] | null | undefined): string[] {
+  return unique(arr(values).flatMap((value) => {
+    const country = countryFor(value);
+    return country ? [country.code] : [value.toUpperCase()];
+  }), 100);
 }
 
 function countryAliasesFor(values: string[] | null | undefined): string[] {
-  const requested = arr(values).map((value) => normalizeWorkspaceRelevanceText(value));
   const aliases: string[] = [];
-  for (const value of requested) {
+  for (const value of arr(values)) {
     aliases.push(value);
-    const country = COUNTRY_LEXICON.find((item) =>
-      item.code.toLowerCase() === value || item.aliases.some((alias) => normalizeWorkspaceRelevanceText(alias) === value),
-    );
-    if (country) aliases.push(...country.aliases, country.code);
+    const country = countryFor(value);
+    if (country) aliases.push(country.code, ...country.aliases);
   }
-  return unique(aliases, 200);
+  return unique(aliases, 300);
 }
 
 function countriesInText(text: string): string[] {
@@ -289,32 +377,22 @@ function countriesInText(text: string): string[] {
       codes.push(country.code);
     }
   }
-  return unique(codes, 20);
-}
-
-function countryCodesFor(values: string[] | null | undefined): string[] {
-  return unique(arr(values).flatMap((value) => {
-    const normalized = normalizeWorkspaceRelevanceText(value);
-    const country = COUNTRY_LEXICON.find((item) =>
-      item.code.toLowerCase() === normalized || item.aliases.some((alias) => normalizeWorkspaceRelevanceText(alias) === normalized),
-    );
-    return country ? [country.code] : [value.toUpperCase()];
-  }), 50);
+  return unique(codes, 30);
 }
 
 function regionAliases(profile: WorkspaceProfile): string[] {
-  const regions = arr(profile.regions).map((item) => normalizeWorkspaceRelevanceText(item));
+  const regions = arr(profile.regionCodes).map((item) => normalizeWorkspaceRelevanceText(item));
   const countryAliases = COUNTRY_LEXICON
     .filter((country) => country.regions?.some((region) => regions.includes(normalizeWorkspaceRelevanceText(region))))
     .flatMap((country) => country.aliases);
-  return unique([...regions, ...countryAliases], 250);
+  return unique([...regions, ...countryAliases], 300);
 }
 
 function workspaceTerms(profile: WorkspaceProfile) {
   const normalized = normalizeWorkspaceProfile(profile);
   return {
-    primaryCountry: countryAliasesFor(normalized.primaryCountries),
-    secondaryCountry: countryAliasesFor(normalized.secondaryCountries),
+    primaryCountry: countryAliasesFor(normalized.primaryCountryCodes),
+    secondaryCountry: countryAliasesFor(normalized.secondaryCountryCodes),
     region: regionAliases(normalized),
     subnational: arr(normalized.subnationalAreas),
     topic: [...arr(normalized.topics), ...arr(normalized.subtopics)],
@@ -322,103 +400,128 @@ function workspaceTerms(profile: WorkspaceProfile) {
     entity: [...arr(normalized.entities), ...arr(normalized.organizations), ...arr(normalized.people)],
     project: [...arr(normalized.projects), ...arr(normalized.events)],
     alias: flattenAliases(normalized.multilingualAliases),
-    inclusion: arr(normalized.inclusionPhrases),
-    exclusion: arr(normalized.exclusionPhrases),
-    impact: arr(normalized.impactPhrases),
-    contextual: arr(normalized.contextualPhrases),
+    inclusion: arr(normalized.inclusionTerms),
+    exclusion: arr(normalized.exclusionTerms),
+    impact: arr(normalized.impactTerms),
+    contextual: arr(normalized.contextualTerms),
   };
 }
 
 function inputTexts(input: WorkspaceRelevanceInput) {
   const title = normalizeWorkspaceRelevanceText(input.title);
   const summary = normalizeWorkspaceRelevanceText(input.summary);
-  const content = normalizeWorkspaceRelevanceText(input.content).slice(0, 10_000);
+  const content = normalizeWorkspaceRelevanceText(input.content).slice(0, 12_000);
   const imageTitle = normalizeWorkspaceRelevanceText(input.imageTitle);
   const url = normalizeUrl(input.url);
-  const metadata = normalizeWorkspaceRelevanceText([
-    input.sourceName,
-    input.sourceCategory,
-    input.subSource,
-    input.country,
+  const articleMetadata = normalizeWorkspaceRelevanceText([
     ...(input.topics || []),
     ...(input.keywords || []),
   ].filter(Boolean).join(" "));
-  const visible = [title, summary, imageTitle, metadata].filter(Boolean).join(" ");
+  const sourceMetadata = normalizeWorkspaceRelevanceText([
+    input.sourceName,
+    input.sourceCategory,
+    input.subSource,
+  ].filter(Boolean).join(" "));
+  const visible = [title, summary, imageTitle, articleMetadata].filter(Boolean).join(" ");
   const all = [visible, content, url].filter(Boolean).join(" ");
-  return { title, summary, content, imageTitle, url, metadata, visible, all };
+  return { title, summary, content, imageTitle, url, articleMetadata, sourceMetadata, visible, all };
 }
 
 function scoreProfile(input: WorkspaceRelevanceInput, profile: WorkspaceProfile): ScoredSignal[] {
   const texts = inputTexts(input);
   const terms = workspaceTerms(profile);
   const directTerms = [
-    ...terms.primaryCountry.map((term) => ({ term, scope: "primary_country" })),
-    ...terms.subnational.map((term) => ({ term, scope: "subnational_area" })),
-    ...terms.topic.map((term) => ({ term, scope: "topic" })),
-    ...terms.industry.map((term) => ({ term, scope: "industry" })),
-    ...terms.entity.map((term) => ({ term, scope: "entity" })),
-    ...terms.project.map((term) => ({ term, scope: "project_event" })),
-    ...terms.alias.map((term) => ({ term, scope: "alias" })),
-    ...terms.inclusion.map((term) => ({ term, scope: "inclusion_phrase" })),
+    ...terms.primaryCountry.map((term) => ({ term, type: "primary_country" })),
+    ...terms.subnational.map((term) => ({ term, type: "subnational_area" })),
+    ...terms.topic.map((term) => ({ term, type: "topic" })),
+    ...terms.industry.map((term) => ({ term, type: "industry" })),
+    ...terms.entity.map((term) => ({ term, type: "entity" })),
+    ...terms.project.map((term) => ({ term, type: "project_event" })),
+    ...terms.alias.map((term) => ({ term, type: "alias" })),
+    ...terms.inclusion.map((term) => ({ term, type: "inclusion_term" })),
   ];
 
   const signals: ScoredSignal[] = [];
-  for (const { term, scope } of directTerms) {
-    signals.push(...scoreTerms("title", texts.title, [term], scope, 8));
-    signals.push(...scoreTerms("summary", texts.summary, [term], scope, 5));
-    signals.push(...scoreTerms("image", texts.imageTitle, [term], scope, 4));
-    signals.push(...scoreTerms("metadata", texts.metadata, [term], scope, 4));
-    signals.push(...scoreTerms("content", texts.content, [term], scope, 2));
-    signals.push(...scoreTerms("url", texts.url, [term], scope, 1));
+  for (const { term, type } of directTerms) {
+    signals.push(...scoreTerms("title", texts.title, [term], type, 8));
+    signals.push(...scoreTerms("summary", texts.summary, [term], type, 5));
+    signals.push(...scoreTerms("image", texts.imageTitle, [term], type, 4));
+    signals.push(...scoreTerms("article_metadata", texts.articleMetadata, [term], type, 4));
+    signals.push(...scoreTerms("content", texts.content, [term], type, 2));
+    signals.push(...scoreTerms("url", texts.url, [term], type, 1));
   }
   return signals;
+}
+
+function makeMatchedScope(signals: WorkspaceSupportingSignal[] | string[]): WorkspaceMatchedScope {
+  const scope: WorkspaceMatchedScope = {};
+  for (const signal of signals) {
+    if (typeof signal === "string") {
+      const [type = "signal", field = "unknown", term = signal] = signal.split(":");
+      scope[type] = unique([...(scope[type] || []), `${field}:${term}`], 20);
+    } else {
+      scope[signal.type] = unique([...(scope[signal.type] || []), signal.term], 20);
+    }
+  }
+  return scope;
+}
+
+function signalLabels(signals: WorkspaceSupportingSignal[] | string[]): string[] {
+  return signals.map((signal) =>
+    typeof signal === "string" ? signal : `${signal.type}:${signal.field}:${signal.term}`,
+  );
 }
 
 function makeResult(
   relevanceStatus: ArticleRelevanceStatus,
   confidence: number,
   shortReason: string,
-  relevanceMethod: ArticleRelevanceMethod,
-  signals: ScoredSignal[] | string[],
+  evaluationMethod: ArticleRelevanceMethod,
+  signals: WorkspaceSupportingSignal[] | string[],
   input: WorkspaceRelevanceInput,
   profile: WorkspaceProfile,
-  materiallyAffectedCountries: string[] = [],
+  materiallyAffectedCountryCodes: string[] = [],
 ): WorkspaceRelevanceResult {
-  const signalLabels = Array.isArray(signals) && typeof signals[0] === "object"
-    ? (signals as ScoredSignal[]).map((signal) => `${signal.scope}:${signal.field}:${signal.term}`)
-    : signals as string[];
   const texts = inputTexts(input);
-  const principalCountries = unique([
-    ...countryCodesFor(profile.primaryCountries).filter((code) => countriesInText(texts.visible).includes(code)),
+  const labels = unique(signalLabels(signals), 30);
+  const principalCountryCodes = unique([
+    ...countryCodesFor(profile.primaryCountryCodes).filter((code) => countriesInText(texts.visible).includes(code)),
     ...countriesInText(texts.title || texts.summary || texts.visible),
-  ], 8);
-  const matchedScope = unique(signalLabels.map((signal) => signal.split(":")[0]), 12);
-  const supportingSignals = unique(signalLabels, 20);
+  ], 12);
+  const supportingSignals = signals.map((signal) => typeof signal === "string"
+    ? { type: signal.split(":")[0] || "signal", field: signal.split(":")[1] || "unknown", term: signal.split(":").slice(2).join(":") || signal }
+    : signal,
+  ).slice(0, 30);
+  const roundedConfidence = Math.max(0, Math.min(100, Math.round(confidence)));
   return {
     relevanceStatus,
-    confidence,
+    confidence: roundedConfidence,
     shortReason,
-    matchedScope,
-    principalCountries,
-    materiallyAffectedCountries: unique(materiallyAffectedCountries, 8),
+    matchedScope: makeMatchedScope(supportingSignals),
+    principalCountryCodes,
+    materiallyAffectedCountryCodes: unique(materiallyAffectedCountryCodes, 12),
     supportingSignals,
-    relevanceMethod,
-    aiRequired: relevanceStatus === "needs_review" || confidence < 60,
-    relevanceConfidence: confidence,
+    evaluationMethod,
+    evaluatorVersion: RELEVANCE_ENGINE_VERSION,
+    aiRequired: relevanceStatus === "needs_review" || roundedConfidence < Number(profile.minimumConfidence ?? 60),
+    relevanceConfidence: roundedConfidence,
     relevanceReason: shortReason,
-    relevanceMatchedSignals: supportingSignals,
+    relevanceMatchedSignals: labels,
+    relevanceMethod: evaluationMethod,
+    principalCountries: principalCountryCodes,
+    materiallyAffectedCountries: unique(materiallyAffectedCountryCodes, 12),
   };
 }
 
 function hasEnoughEvidence(input: WorkspaceRelevanceInput): boolean {
   const texts = inputTexts(input);
-  return [texts.title, texts.summary, texts.content, texts.metadata].join(" ").length >= 30;
+  return [texts.title, texts.summary, texts.content, texts.articleMetadata].join(" ").length >= 30;
 }
 
-function isOutsideCountryLead(input: WorkspaceRelevanceInput, profile: WorkspaceProfile): boolean {
+function hasOutsideCountryLead(input: WorkspaceRelevanceInput, profile: WorkspaceProfile): boolean {
   const texts = inputTexts(input);
   const titleCountries = countriesInText(texts.title);
-  const primaryCodes = countryCodesFor(profile.primaryCountries);
+  const primaryCodes = countryCodesFor(profile.primaryCountryCodes);
   return titleCountries.some((code) => !primaryCodes.includes(code));
 }
 
@@ -443,6 +546,15 @@ export function getDefaultRelevanceStatuses(options?: {
   return statuses;
 }
 
+export function shouldIncludeInWorkspaceOutputs(
+  status: ArticleRelevanceStatus,
+  options?: { includeContextual?: boolean },
+): boolean {
+  return status === "direct_scope_match" ||
+    status === "material_scope_impact" ||
+    Boolean(options?.includeContextual && status === "contextual");
+}
+
 export function evaluateWorkspaceRelevance(
   input: WorkspaceRelevanceInput,
   workspaceProfile: WorkspaceProfile,
@@ -452,33 +564,27 @@ export function evaluateWorkspaceRelevance(
   const terms = workspaceTerms(profile);
 
   const exclusionSignals = [
-    ...scoreTerms("title", texts.title, terms.exclusion, "exclusion_phrase", 10),
-    ...scoreTerms("summary", texts.summary, terms.exclusion, "exclusion_phrase", 8),
-    ...scoreTerms("content", texts.content, terms.exclusion, "exclusion_phrase", 4),
+    ...scoreTerms("title", texts.title, terms.exclusion, "exclusion_term", 10),
+    ...scoreTerms("summary", texts.summary, terms.exclusion, "exclusion_term", 8),
+    ...scoreTerms("content", texts.content, terms.exclusion, "exclusion_term", 4),
   ];
   if (exclusionSignals.length > 0) {
-    return makeResult(
-      "not_relevant",
-      90,
-      "The item matches a configured workspace exclusion phrase.",
-      "deterministic",
-      exclusionSignals,
-      input,
-      profile,
-    );
+    return makeResult("not_relevant", 92, "The item matches a configured workspace exclusion term.", "deterministic", exclusionSignals, input, profile);
   }
 
-  if (profile.globalScope) {
+  if (profile.globalScope || profile.scopeMode === "global") {
     const contextualSignals = [
-      ...scoreTerms("title", texts.title, terms.contextual, "contextual_phrase", 4),
-      ...scoreTerms("summary", texts.summary, terms.contextual, "contextual_phrase", 3),
-      ...scoreTerms("content", texts.content, terms.contextual, "contextual_phrase", 1),
+      ...scoreTerms("title", texts.title, terms.contextual, "contextual_term", 4),
+      ...scoreTerms("summary", texts.summary, terms.contextual, "contextual_term", 3),
+      ...scoreTerms("content", texts.content, terms.contextual, "contextual_term", 1),
     ];
     return makeResult(
-      contextualSignals.length > 0 ? "contextual" : "direct_scope_match",
+      contextualSignals.length > 0 && profile.includeContextualByDefault
+        ? "contextual"
+        : "direct_scope_match",
       contextualSignals.length > 0 ? 76 : 84,
-      contextualSignals.length > 0
-        ? "The global workspace is configured to retain broad context for review."
+      contextualSignals.length > 0 && profile.includeContextualByDefault
+        ? "The global workspace is configured to retain broad contextual coverage."
         : "The workspace is configured for global monitoring.",
       "deterministic",
       contextualSignals.length > 0 ? contextualSignals : ["global_scope:workspace:global"],
@@ -490,24 +596,35 @@ export function evaluateWorkspaceRelevance(
   const directSignals = scoreProfile(input, profile);
   const directScore = directSignals.reduce((total, signal) => total + signal.score, 0);
   const impactSignals = [
-    ...scoreTerms("title", texts.title, terms.impact, "impact_phrase", 8),
-    ...scoreTerms("summary", texts.summary, terms.impact, "impact_phrase", 5),
-    ...scoreTerms("content", texts.content, terms.impact, "impact_phrase", 2),
+    ...scoreTerms("title", texts.title, terms.impact, "impact_term", 8),
+    ...scoreTerms("summary", texts.summary, terms.impact, "impact_term", 5),
+    ...scoreTerms("content", texts.content, terms.impact, "impact_term", 2),
   ];
   const contextualSignals = [
     ...scoreTerms("title", texts.title, [...terms.secondaryCountry, ...terms.region, ...terms.contextual], "contextual_scope", 5),
     ...scoreTerms("summary", texts.summary, [...terms.secondaryCountry, ...terms.region, ...terms.contextual], "contextual_scope", 3),
     ...scoreTerms("content", texts.content, [...terms.secondaryCountry, ...terms.region, ...terms.contextual], "contextual_scope", 1),
   ];
-  const primaryCountrySignals = directSignals.filter((signal) => signal.scope === "primary_country");
-  const titleOrSummaryDirect = directSignals.filter((signal) => ["title", "summary", "image", "metadata"].includes(signal.field));
-  const affectedCountries = countryCodesFor(profile.primaryCountries).filter((code) => primaryCountrySignals.length > 0);
 
-  if (primaryCountrySignals.length > 0 && impactSignals.length > 0 && isOutsideCountryLead(input, profile)) {
+  const primaryCountrySignals = directSignals.filter((signal) => signal.type === "primary_country");
+  const affectedCountries = countryCodesFor(profile.primaryCountryCodes).filter(() => primaryCountrySignals.length > 0);
+  const visibleDirectSignals = directSignals.filter((signal) => ["title", "summary", "image", "article_metadata"].includes(signal.field));
+  const nonCountryVisibleSignals = visibleDirectSignals.filter((signal) => !["primary_country", "entity"].includes(signal.type));
+  const strongDirectCountrySignals = visibleDirectSignals.filter((signal) => ["primary_country", "subnational_area"].includes(signal.type));
+  const explicitConfiguredSubjectSignals = visibleDirectSignals.filter((signal) =>
+    ["alias", "entity", "project_event", "inclusion_term"].includes(signal.type),
+  );
+
+  if (
+    primaryCountrySignals.length > 0 &&
+    impactSignals.length > 0 &&
+    hasOutsideCountryLead(input, profile) &&
+    explicitConfiguredSubjectSignals.length === 0
+  ) {
     return makeResult(
       "material_scope_impact",
-      Math.min(88, 68 + impactSignals.length * 4 + primaryCountrySignals.length * 3),
-      "The event appears outside the primary scope but materially affects configured workspace scope.",
+      Math.min(90, 68 + impactSignals.length * 4 + primaryCountrySignals.length * 3),
+      "The principal event appears outside the primary scope but materially affects the configured workspace scope.",
       "deterministic",
       [...primaryCountrySignals, ...impactSignals],
       input,
@@ -516,10 +633,10 @@ export function evaluateWorkspaceRelevance(
     );
   }
 
-  if (titleOrSummaryDirect.length > 0 || directScore >= 12) {
+  if (nonCountryVisibleSignals.length > 0 || strongDirectCountrySignals.length > 0 || directScore >= 14) {
     return makeResult(
       "direct_scope_match",
-      Math.min(97, 72 + Math.min(25, directScore)),
+      Math.min(97, 70 + Math.min(27, directScore)),
       "The principal article subject matches configured workspace scope.",
       "deterministic",
       directSignals,
@@ -562,7 +679,7 @@ export function evaluateWorkspaceRelevance(
     return makeResult(
       "needs_review",
       42,
-      "The item has limited or ambiguous metadata and needs analyst review.",
+      "The item has limited or ambiguous evidence and needs analyst review.",
       "deterministic",
       ambiguousSignals,
       input,
@@ -588,31 +705,60 @@ export function shouldUseAiFallbackForRelevance(result: WorkspaceRelevanceResult
 export function normalizeAiWorkspaceRelevanceResult(value: unknown): WorkspaceRelevanceResult | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Record<string, unknown>;
-  const relevanceStatus = normalizeArticleRelevanceStatus(raw.relevanceStatus);
+  if (!isArticleRelevanceStatus(raw.relevanceStatus)) {
+    return makeResult(
+      "needs_review",
+      35,
+      "AI relevance review returned an unsupported status.",
+      "ai",
+      ["ai_validation:error:unsupported_status"],
+      {},
+      {},
+    );
+  }
   const confidence = typeof raw.confidence === "number" && Number.isFinite(raw.confidence)
     ? Math.max(0, Math.min(100, Math.round(raw.confidence)))
     : 50;
   const shortReason = typeof raw.shortReason === "string" && raw.shortReason.trim()
     ? raw.shortReason.trim().slice(0, 500)
     : "AI relevance review returned limited explanation.";
-  const matchedScope = Array.isArray(raw.matchedScope) ? raw.matchedScope.map(String).slice(0, 20) : [];
-  const principalCountries = Array.isArray(raw.principalCountries) ? raw.principalCountries.map(String).slice(0, 12) : [];
-  const materiallyAffectedCountries = Array.isArray(raw.materiallyAffectedCountries) ? raw.materiallyAffectedCountries.map(String).slice(0, 12) : [];
-  const supportingSignals = Array.isArray(raw.supportingSignals) ? raw.supportingSignals.map(String).slice(0, 20) : [];
+  const matchedScope = raw.matchedScope && typeof raw.matchedScope === "object" && !Array.isArray(raw.matchedScope)
+    ? raw.matchedScope as WorkspaceMatchedScope
+    : {};
+  const principalCountryCodes = Array.isArray(raw.principalCountryCodes) ? raw.principalCountryCodes.map(String).slice(0, 12) : [];
+  const materiallyAffectedCountryCodes = Array.isArray(raw.materiallyAffectedCountryCodes) ? raw.materiallyAffectedCountryCodes.map(String).slice(0, 12) : [];
+  const supportingSignals = Array.isArray(raw.supportingSignals)
+    ? raw.supportingSignals.map((signal) => typeof signal === "string"
+      ? { type: "ai", field: "response", term: signal.slice(0, 120) }
+      : {
+        type: String((signal as any)?.type || "ai"),
+        field: String((signal as any)?.field || "response"),
+        term: String((signal as any)?.term || "").slice(0, 120),
+      }).slice(0, 20)
+    : [];
+  const labels = signalLabels(supportingSignals);
   return {
-    relevanceStatus,
+    relevanceStatus: raw.relevanceStatus,
     confidence,
     shortReason,
     matchedScope,
-    principalCountries,
-    materiallyAffectedCountries,
+    principalCountryCodes,
+    materiallyAffectedCountryCodes,
     supportingSignals,
-    relevanceMethod: "ai",
+    evaluationMethod: "ai",
+    evaluatorVersion: RELEVANCE_ENGINE_VERSION,
     aiRequired: true,
     relevanceConfidence: confidence,
     relevanceReason: shortReason,
-    relevanceMatchedSignals: supportingSignals,
+    relevanceMatchedSignals: labels,
+    relevanceMethod: "ai",
+    principalCountries: principalCountryCodes,
+    materiallyAffectedCountries: materiallyAffectedCountryCodes,
   };
+}
+
+export function aiFailureWorkspaceRelevanceResult(reason = "AI relevance review failed; analyst review required."): WorkspaceRelevanceResult {
+  return makeResult("needs_review", 35, reason, "ai", ["ai_failure:error:needs_review"], {}, {});
 }
 
 export function buildDefaultWorkspaceProfile(input: {
@@ -626,13 +772,13 @@ export function buildDefaultWorkspaceProfile(input: {
   return {
     clientId: input.clientId,
     name: input.name || "Default Monitoring Workspace",
-    scopeMode: "mixed",
-    primaryCountries: input.sourceCountry ? [input.sourceCountry] : [],
+    scopeMode: "topic_only",
+    primaryCountryCodes: [],
     topics: input.topics || [],
     industries: input.sourceCategory ? [input.sourceCategory] : [],
-    inclusionPhrases: input.keywords || [],
-    impactPhrases: [],
-    contextualPhrases: [],
+    inclusionTerms: input.keywords || [],
+    impactTerms: [],
+    contextualTerms: [],
     preferredLanguages: [],
   };
 }

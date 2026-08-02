@@ -1,9 +1,10 @@
 import { db } from "./db";
 import { isGenericAnalyticsTerm, normalizeAnalyticsValue } from "./analytics-noise";
 import { getArticleCategoryFilterCodes, getArticleCategoryLabel, mergeArticleCategoryRows, normalizeArticleCategoryCode } from "@shared/article-taxonomy";
-import { DEFAULT_REPORTING_RELEVANCE_STATUSES, getDefaultRelevanceStatuses, isArticleRelevanceStatus, type ArticleRelevanceStatus } from "@shared/workspace-relevance";
+import { getDefaultRelevanceStatuses, isArticleRelevanceStatus, type ArticleRelevanceStatus } from "@shared/workspace-relevance";
 import {
-  users, sources, articles, savedFeedViews, keywords, bookmarks, sourceFetchLogs, rejectedIngestionItems, articleWorkspaceRelevance,
+  users, sources, articles, savedFeedViews, keywords, bookmarks, sourceFetchLogs, rejectedIngestionItems,
+  workspaceRelevanceProfiles, articleWorkspaceRelevance, workspaceRelevanceHistory,
   clients, clientSettings, clientKeywords, systemSettings, adminAuditLogs,
   processingJobs, systemErrors, apiKeys, featureFlags, usageMetrics,
   storyClusters, articleAiAnalysis, dailyBriefs, detectedEvents, entityMentions, trendPredictions,
@@ -20,7 +21,9 @@ import {
   type Bookmark, type InsertBookmark,
   type SourceFetchLog, type InsertSourceFetchLog,
   type RejectedIngestionItem, type InsertRejectedIngestionItem,
+  type WorkspaceRelevanceProfile, type InsertWorkspaceRelevanceProfile,
   type ArticleWorkspaceRelevance, type InsertArticleWorkspaceRelevance,
+  type WorkspaceRelevanceHistory, type InsertWorkspaceRelevanceHistory,
   type Client, type InsertClient,
   type ClientSettings, type InsertClientSettings,
   type ClientKeyword, type InsertClientKeyword,
@@ -112,8 +115,8 @@ import { normalizeUserScopeClientAssignment } from "@shared/user-scope";
 import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
 const AUTO_PAUSE_THRESHOLD_DB = 5;
-const DEFAULT_ANALYTICS_RELEVANCE_SQL = sql`AND COALESCE(relevance_status, 'direct_scope_match') IN ('direct_scope_match', 'material_scope_impact')`;
-const DEFAULT_ANALYTICS_RELEVANCE_SQL_A = sql`AND COALESCE(a.relevance_status, 'direct_scope_match') IN ('direct_scope_match', 'material_scope_impact')`;
+const DEFAULT_ANALYTICS_RELEVANCE_SQL = sql``;
+const DEFAULT_ANALYTICS_RELEVANCE_SQL_A = sql``;
 
 function sqlNumberList(values: number[]) {
   return sql.join(values.map(value => sql`${value}`), sql`, `);
@@ -369,9 +372,13 @@ export interface IStorage {
   getArticle(id: number, clientId?: number): Promise<Article | undefined>;
   getArticlesByIds(ids: number[], clientId?: number): Promise<(Article & { source: Source | null })[]>;
   createArticle(article: InsertArticle): Promise<Article>;
-  updateArticleRelevance(id: number, updates: Partial<InsertArticle>, clientId?: number): Promise<Article | undefined>;
+  getWorkspaceRelevanceProfile(workspaceId: number, clientId?: number): Promise<WorkspaceRelevanceProfile | undefined>;
+  upsertWorkspaceRelevanceProfile(data: InsertWorkspaceRelevanceProfile, clientId?: number): Promise<WorkspaceRelevanceProfile>;
   upsertArticleWorkspaceRelevance(data: InsertArticleWorkspaceRelevance): Promise<ArticleWorkspaceRelevance>;
   getArticleWorkspaceRelevance(articleId: number, workspaceId: number, clientId?: number): Promise<ArticleWorkspaceRelevance | undefined>;
+  getWorkspaceRelevanceReviewQueue(workspaceId: number, clientId: number, options?: { includeContextual?: boolean; limit?: number }): Promise<Array<ArticleWorkspaceRelevance & { article: Article }>>;
+  createWorkspaceRelevanceHistory(data: InsertWorkspaceRelevanceHistory): Promise<WorkspaceRelevanceHistory>;
+  getWorkspaceRelevanceHistory(workspaceId: number, articleId: number, clientId?: number): Promise<WorkspaceRelevanceHistory[]>;
   getArticleByUrl(url: string, clientId: number): Promise<Article | undefined>; // For tenant-scoped deduplication
   getArticleByTitle(title: string, clientId?: number | null): Promise<Article | undefined>; // For cross-channel deduplication
 
@@ -1082,20 +1089,27 @@ export class DatabaseStorage implements IStorage {
     if (params?.manualTag) {
       conditions.push(sql`${params.manualTag} = ANY(${articles.manualTags})`);
     }
-    const relevanceStatuses = resolveArticleRelevanceStatuses(params);
-    if (relevanceStatuses.length === 0) {
-      return { items: [], total: 0 };
-    }
-    if (params?.workspaceId) {
+    const relevanceFilterRequested = Boolean(
+      params?.workspaceId ||
+      params?.relevanceStatus ||
+      params?.relevanceStatuses?.length ||
+      params?.includeContextual ||
+      params?.includeNeedsReview ||
+      params?.includeNotRelevant
+    );
+    if (relevanceFilterRequested) {
+      const relevanceStatuses = resolveArticleRelevanceStatuses(params);
+      if (relevanceStatuses.length === 0) {
+        return { items: [], total: 0 };
+      }
       conditions.push(sql`EXISTS (
         SELECT 1
           FROM article_workspace_relevance awr
          WHERE awr.article_id = ${articles.id}
-           AND awr.workspace_id = ${params.workspaceId}
+           ${params?.workspaceId ? sql`AND awr.workspace_id = ${params.workspaceId}` : sql``}
+           ${params?.clientId ? sql`AND awr.client_id = ${params.clientId}` : sql``}
            AND awr.relevance_status IN (${sql.join(relevanceStatuses.map((status) => sql`${status}`), sql`, `)})
       )`);
-    } else {
-      conditions.push(inArray(articles.relevanceStatus, relevanceStatuses));
     }
     if (params?.country) {
       conditions.push(eq(articles.country, params.country));
@@ -1176,14 +1190,6 @@ export class DatabaseStorage implements IStorage {
       engagementShares: articles.engagementShares,
       clientId: articles.clientId,
       crossPosts: articles.crossPosts,
-      relevanceStatus: articles.relevanceStatus,
-      relevanceConfidence: articles.relevanceConfidence,
-      relevanceReason: articles.relevanceReason,
-      relevanceMethod: articles.relevanceMethod,
-      relevanceMatchedSignals: articles.relevanceMatchedSignals,
-      relevanceEvaluatedAt: articles.relevanceEvaluatedAt,
-      relevanceReviewedBy: articles.relevanceReviewedBy,
-      relevanceReviewedAt: articles.relevanceReviewedAt,
       aiAnalysisStatus: articles.aiAnalysisStatus,
       aiRetryCount: articles.aiRetryCount,
       aiLastRetryAt: articles.aiLastRetryAt,
@@ -1209,10 +1215,7 @@ export class DatabaseStorage implements IStorage {
 
   async getArticlesByIds(ids: number[], clientId?: number): Promise<(Article & { source: Source | null })[]> {
     if (ids.length === 0) return [];
-    const conditions = [
-      inArray(articles.id, ids),
-      inArray(articles.relevanceStatus, DEFAULT_REPORTING_RELEVANCE_STATUSES as any),
-    ];
+    const conditions = [inArray(articles.id, ids)];
     if (clientId) conditions.push(eq(articles.clientId, clientId));
     const items = await db.select({
       id: articles.id,
@@ -1242,14 +1245,6 @@ export class DatabaseStorage implements IStorage {
       engagementShares: articles.engagementShares,
       clientId: articles.clientId,
       crossPosts: articles.crossPosts,
-      relevanceStatus: articles.relevanceStatus,
-      relevanceConfidence: articles.relevanceConfidence,
-      relevanceReason: articles.relevanceReason,
-      relevanceMethod: articles.relevanceMethod,
-      relevanceMatchedSignals: articles.relevanceMatchedSignals,
-      relevanceEvaluatedAt: articles.relevanceEvaluatedAt,
-      relevanceReviewedBy: articles.relevanceReviewedBy,
-      relevanceReviewedAt: articles.relevanceReviewedAt,
       aiAnalysisStatus: articles.aiAnalysisStatus,
       aiRetryCount: articles.aiRetryCount,
       aiLastRetryAt: articles.aiLastRetryAt,
@@ -1273,42 +1268,105 @@ export class DatabaseStorage implements IStorage {
     return article;
   }
 
-  async updateArticleRelevance(id: number, data: Partial<InsertArticle>, clientId?: number): Promise<Article | undefined> {
-    const conditions = [eq(articles.id, id)];
-    if (clientId) conditions.push(eq(articles.clientId, clientId));
-    const [article] = await db.update(articles).set(data).where(and(...conditions)).returning();
-    return article;
+  async getWorkspaceRelevanceProfile(workspaceId: number, clientId?: number): Promise<WorkspaceRelevanceProfile | undefined> {
+    const conditions = [eq(workspaceRelevanceProfiles.workspaceId, workspaceId)];
+    if (clientId) {
+      conditions.push(sql`EXISTS (
+        SELECT 1 FROM workspaces
+        WHERE workspaces.id = ${workspaceRelevanceProfiles.workspaceId}
+          AND workspaces.client_id = ${clientId}
+      )`);
+    }
+    const [profile] = await db.select().from(workspaceRelevanceProfiles).where(and(...conditions));
+    return profile;
+  }
+
+  async upsertWorkspaceRelevanceProfile(data: InsertWorkspaceRelevanceProfile, clientId?: number): Promise<WorkspaceRelevanceProfile> {
+    if (clientId) {
+      const workspace = await this.getWorkspace(data.workspaceId);
+      if (!workspace || workspace.clientId !== clientId) {
+        throw new TenantNotFoundError();
+      }
+    }
+    const [profile] = await db.insert(workspaceRelevanceProfiles)
+      .values(data)
+      .onConflictDoUpdate({
+        target: [workspaceRelevanceProfiles.workspaceId],
+        set: {
+          topics: data.topics,
+          subtopics: data.subtopics,
+          industries: data.industries,
+          entities: data.entities,
+          organizations: data.organizations,
+          people: data.people,
+          projects: data.projects,
+          events: data.events,
+          multilingualAliases: data.multilingualAliases,
+          inclusionTerms: data.inclusionTerms,
+          exclusionTerms: data.exclusionTerms,
+          impactTerms: data.impactTerms,
+          contextualTerms: data.contextualTerms,
+          minimumConfidence: data.minimumConfidence,
+          includeContextualByDefault: data.includeContextualByDefault,
+          contextualLabel: data.contextualLabel,
+          profileVersion: sql`${workspaceRelevanceProfiles.profileVersion} + 1`,
+          active: data.active,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return profile;
   }
 
   async upsertArticleWorkspaceRelevance(data: InsertArticleWorkspaceRelevance): Promise<ArticleWorkspaceRelevance> {
+    const existing = await this.getArticleWorkspaceRelevance(data.articleId, data.workspaceId, data.clientId);
     const [entry] = await db.insert(articleWorkspaceRelevance)
       .values(data)
       .onConflictDoUpdate({
-        target: [articleWorkspaceRelevance.articleId, articleWorkspaceRelevance.workspaceId],
+        target: [articleWorkspaceRelevance.workspaceId, articleWorkspaceRelevance.articleId],
         set: {
           clientId: data.clientId,
           relevanceStatus: data.relevanceStatus,
           confidence: data.confidence,
           shortReason: data.shortReason,
           matchedScope: data.matchedScope,
-          principalCountries: data.principalCountries,
-          materiallyAffectedCountries: data.materiallyAffectedCountries,
+          principalCountryCodes: data.principalCountryCodes,
+          materiallyAffectedCountryCodes: data.materiallyAffectedCountryCodes,
           supportingSignals: data.supportingSignals,
-          relevanceMethod: data.relevanceMethod,
+          evaluationMethod: data.evaluationMethod,
+          evaluatorVersion: data.evaluatorVersion,
           manualOverride: data.manualOverride ?? false,
           reviewedBy: data.reviewedBy,
           reviewedAt: data.reviewedAt,
+          reviewNote: data.reviewNote,
           reopenedAt: data.reopenedAt,
           evaluatedAt: data.evaluatedAt ?? new Date(),
           updatedAt: new Date(),
         },
-        setWhere: sql`${articleWorkspaceRelevance.manualOverride} = false OR ${data.manualOverride ?? false} = true`,
+        setWhere: sql`
+          ${articleWorkspaceRelevance.manualOverride} = false
+          OR ${data.manualOverride ?? false} = true
+          OR ${Boolean(data.reopenedAt)} = true
+        `,
       })
       .returning();
     if (!entry) {
-      const existing = await this.getArticleWorkspaceRelevance(data.articleId, data.workspaceId, data.clientId);
       if (existing) return existing;
       throw new Error("Article workspace relevance upsert failed");
+    }
+    if (!existing || existing.relevanceStatus !== entry.relevanceStatus || existing.confidence !== entry.confidence || data.manualOverride || data.reopenedAt) {
+      await this.createWorkspaceRelevanceHistory({
+        clientId: entry.clientId,
+        workspaceId: entry.workspaceId,
+        articleId: entry.articleId,
+        previousStatus: existing?.relevanceStatus ?? null,
+        newStatus: entry.relevanceStatus,
+        previousConfidence: existing?.confidence ?? null,
+        newConfidence: entry.confidence,
+        evaluationMethod: entry.evaluationMethod,
+        changedBy: entry.reviewedBy ?? null,
+        reason: entry.shortReason ?? null,
+      } as InsertWorkspaceRelevanceHistory);
     }
     return entry;
   }
@@ -1321,6 +1379,40 @@ export class DatabaseStorage implements IStorage {
     if (clientId) conditions.push(eq(articleWorkspaceRelevance.clientId, clientId));
     const [entry] = await db.select().from(articleWorkspaceRelevance).where(and(...conditions));
     return entry;
+  }
+
+  async getWorkspaceRelevanceReviewQueue(workspaceId: number, clientId: number, options?: { includeContextual?: boolean; limit?: number }): Promise<Array<ArticleWorkspaceRelevance & { article: Article }>> {
+    const statuses = options?.includeContextual
+      ? ["needs_review", "contextual"]
+      : ["needs_review"];
+    const rows = await db.select({
+      relevance: articleWorkspaceRelevance,
+      article: articles,
+    })
+      .from(articleWorkspaceRelevance)
+      .innerJoin(articles, eq(articleWorkspaceRelevance.articleId, articles.id))
+      .where(and(
+        eq(articleWorkspaceRelevance.workspaceId, workspaceId),
+        eq(articleWorkspaceRelevance.clientId, clientId),
+        inArray(articleWorkspaceRelevance.relevanceStatus, statuses),
+      ))
+      .orderBy(asc(articleWorkspaceRelevance.confidence), desc(articleWorkspaceRelevance.evaluatedAt))
+      .limit(options?.limit ?? 100);
+    return rows.map((row) => ({ ...row.relevance, article: row.article }));
+  }
+
+  async createWorkspaceRelevanceHistory(data: InsertWorkspaceRelevanceHistory): Promise<WorkspaceRelevanceHistory> {
+    const [entry] = await db.insert(workspaceRelevanceHistory).values(data).returning();
+    return entry;
+  }
+
+  async getWorkspaceRelevanceHistory(workspaceId: number, articleId: number, clientId?: number): Promise<WorkspaceRelevanceHistory[]> {
+    const conditions = [
+      eq(workspaceRelevanceHistory.workspaceId, workspaceId),
+      eq(workspaceRelevanceHistory.articleId, articleId),
+    ];
+    if (clientId) conditions.push(eq(workspaceRelevanceHistory.clientId, clientId));
+    return db.select().from(workspaceRelevanceHistory).where(and(...conditions)).orderBy(desc(workspaceRelevanceHistory.createdAt));
   }
 
   async getArticleByUrl(url: string, clientId: number): Promise<Article | undefined> {
@@ -2960,14 +3052,6 @@ export class DatabaseStorage implements IStorage {
       engagementShares: articles.engagementShares,
       clientId: articles.clientId,
       crossPosts: articles.crossPosts,
-      relevanceStatus: articles.relevanceStatus,
-      relevanceConfidence: articles.relevanceConfidence,
-      relevanceReason: articles.relevanceReason,
-      relevanceMethod: articles.relevanceMethod,
-      relevanceMatchedSignals: articles.relevanceMatchedSignals,
-      relevanceEvaluatedAt: articles.relevanceEvaluatedAt,
-      relevanceReviewedBy: articles.relevanceReviewedBy,
-      relevanceReviewedAt: articles.relevanceReviewedAt,
       aiAnalysisStatus: articles.aiAnalysisStatus,
       aiRetryCount: articles.aiRetryCount,
       aiLastRetryAt: articles.aiLastRetryAt,

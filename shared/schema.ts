@@ -5,7 +5,6 @@ import { relations, sql } from "drizzle-orm";
 import type { WebsiteCollectorConfig } from "./source-collector";
 import type { SourceFilterConfig } from "./source-filter";
 import { normalizeUserScopeClientAssignment } from "./user-scope";
-import type { WorkspaceProfile } from "./workspace-relevance";
 
 // === CLIENTS ===
 export const clients = pgTable("clients", {
@@ -164,14 +163,6 @@ export const articles = pgTable("articles", {
   engagementShares: integer("engagement_shares"),
   clientId: integer("client_id").notNull(),
   crossPosts: jsonb("cross_posts").$type<{ platform: string; url: string; sourceId: number }[]>().default([]),
-  relevanceStatus: text("relevance_status").notNull().default("direct_scope_match"),
-  relevanceConfidence: integer("relevance_confidence"),
-  relevanceReason: text("relevance_reason"),
-  relevanceMethod: text("relevance_method").notNull().default("migration"),
-  relevanceMatchedSignals: text("relevance_matched_signals").array().notNull().default([]),
-  relevanceEvaluatedAt: timestamp("relevance_evaluated_at"),
-  relevanceReviewedBy: integer("relevance_reviewed_by").references(() => users.id),
-  relevanceReviewedAt: timestamp("relevance_reviewed_at"),
   aiAnalysisStatus: text("ai_analysis_status").default("skipped"),
   aiRetryCount: integer("ai_retry_count").default(0),
   aiLastRetryAt: timestamp("ai_last_retry_at"),
@@ -180,8 +171,6 @@ export const articles = pgTable("articles", {
   index("idx_articles_client_id").on(table.clientId),
   index("idx_articles_client_category").on(table.clientId, table.category),
   index("idx_articles_client_priority").on(table.clientId, table.priority),
-  index("idx_articles_client_relevance").on(table.clientId, table.relevanceStatus),
-  index("idx_articles_relevance_review").on(table.clientId, table.relevanceStatus, table.relevanceEvaluatedAt),
   uniqueIndex("articles_client_url_idx").on(table.clientId, table.url),
 ]);
 
@@ -209,35 +198,6 @@ export const rejectedIngestionItems = pgTable("rejected_ingestion_items", {
 ]);
 
 export const insertRejectedIngestionItemSchema = createInsertSchema(rejectedIngestionItems).omit({ id: true, evaluatedAt: true, createdAt: true });
-
-// === ARTICLE RELEVANCE BY MONITORING WORKSPACE ===
-export const articleWorkspaceRelevance = pgTable("article_workspace_relevance", {
-  id: serial("id").primaryKey(),
-  articleId: integer("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
-  workspaceId: integer("workspace_id").notNull(),
-  clientId: integer("client_id").notNull(),
-  relevanceStatus: text("relevance_status").notNull().default("needs_review"),
-  confidence: integer("confidence").notNull().default(0),
-  shortReason: text("short_reason"),
-  matchedScope: text("matched_scope").array().notNull().default([]),
-  principalCountries: text("principal_countries").array().notNull().default([]),
-  materiallyAffectedCountries: text("materially_affected_countries").array().notNull().default([]),
-  supportingSignals: text("supporting_signals").array().notNull().default([]),
-  relevanceMethod: text("relevance_method").notNull().default("deterministic"),
-  manualOverride: boolean("manual_override").notNull().default(false),
-  reviewedBy: integer("reviewed_by").references(() => users.id),
-  reviewedAt: timestamp("reviewed_at"),
-  reopenedAt: timestamp("reopened_at"),
-  evaluatedAt: timestamp("evaluated_at").defaultNow(),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-}, (table) => [
-  uniqueIndex("article_workspace_relevance_unique").on(table.articleId, table.workspaceId),
-  index("idx_article_workspace_relevance_client").on(table.clientId, table.relevanceStatus),
-  index("idx_article_workspace_relevance_workspace").on(table.workspaceId, table.relevanceStatus),
-]);
-
-export const insertArticleWorkspaceRelevanceSchema = createInsertSchema(articleWorkspaceRelevance).omit({ id: true, createdAt: true, updatedAt: true });
 
 // === SAVED FEED VIEWS ===
 export const savedFeedViews = pgTable("saved_feed_views", {
@@ -1049,9 +1009,6 @@ export type InsertSourceFetchLog = z.infer<typeof insertSourceFetchLogSchema>;
 export type RejectedIngestionItem = typeof rejectedIngestionItems.$inferSelect;
 export type InsertRejectedIngestionItem = z.infer<typeof insertRejectedIngestionItemSchema>;
 
-export type ArticleWorkspaceRelevance = typeof articleWorkspaceRelevance.$inferSelect;
-export type InsertArticleWorkspaceRelevance = z.infer<typeof insertArticleWorkspaceRelevanceSchema>;
-
 export type Client = typeof clients.$inferSelect;
 export type InsertClient = z.infer<typeof insertClientSchema>;
 
@@ -1165,12 +1122,33 @@ export const workspaces = pgTable("workspaces", {
   clientId: integer("client_id").notNull(),
   name: text("name").notNull(),
   description: text("description"),
-  scopeMode: text("scope_mode").notNull().default("mixed"),
+  purpose: text("purpose").notNull().default("custom"),
+  scopeMode: text("scope_mode").notNull().default("hybrid"),
   globalScope: boolean("global_scope").notNull().default(false),
-  primaryCountries: text("primary_countries").array().notNull().default([]),
-  secondaryCountries: text("secondary_countries").array().notNull().default([]),
-  regions: text("regions").array().notNull().default([]),
+  primaryCountryCodes: text("primary_country_codes").array().notNull().default([]),
+  secondaryCountryCodes: text("secondary_country_codes").array().notNull().default([]),
+  regionCodes: text("region_codes").array().notNull().default([]),
   subnationalAreas: text("subnational_areas").array().notNull().default([]),
+  preferredLanguages: text("preferred_languages").array().notNull().default([]),
+  timezone: text("timezone").notNull().default("UTC"),
+  taxonomyTemplateCode: text("taxonomy_template_code"),
+  relevanceProfileCode: text("relevance_profile_code"),
+  reportingTemplateCode: text("reporting_template_code"),
+  active: boolean("active").notNull().default(true),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("workspaces_client_idx").on(table.clientId),
+  index("workspaces_client_active_idx").on(table.clientId, table.active),
+]);
+
+export const insertWorkspaceSchema = createInsertSchema(workspaces).omit({ id: true, createdAt: true, updatedAt: true });
+
+// === WORKSPACE RELEVANCE PROFILE ===
+export const workspaceRelevanceProfiles = pgTable("workspace_relevance_profiles", {
+  id: serial("id").primaryKey(),
+  workspaceId: integer("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   topics: text("topics").array().notNull().default([]),
   subtopics: text("subtopics").array().notNull().default([]),
   industries: text("industries").array().notNull().default([]),
@@ -1179,18 +1157,85 @@ export const workspaces = pgTable("workspaces", {
   people: text("people").array().notNull().default([]),
   projects: text("projects").array().notNull().default([]),
   events: text("events").array().notNull().default([]),
-  multilingualAliases: jsonb("multilingual_aliases").$type<WorkspaceProfile["multilingualAliases"]>(),
-  inclusionPhrases: text("inclusion_phrases").array().notNull().default([]),
-  exclusionPhrases: text("exclusion_phrases").array().notNull().default([]),
-  impactPhrases: text("impact_phrases").array().notNull().default([]),
-  contextualPhrases: text("contextual_phrases").array().notNull().default([]),
-  preferredLanguages: text("preferred_languages").array().notNull().default([]),
+  multilingualAliases: jsonb("multilingual_aliases").$type<Record<string, string[]> | string[]>(),
+  inclusionTerms: text("inclusion_terms").array().notNull().default([]),
+  exclusionTerms: text("exclusion_terms").array().notNull().default([]),
+  impactTerms: text("impact_terms").array().notNull().default([]),
+  contextualTerms: text("contextual_terms").array().notNull().default([]),
+  minimumConfidence: integer("minimum_confidence").notNull().default(60),
   includeContextualByDefault: boolean("include_contextual_by_default").notNull().default(false),
-  createdBy: integer("created_by"),
+  contextualLabel: text("contextual_label").notNull().default("Strategic Context"),
+  profileVersion: integer("profile_version").notNull().default(1),
+  active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),
-});
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("workspace_relevance_profiles_workspace_unique").on(table.workspaceId),
+  index("workspace_relevance_profiles_active_idx").on(table.workspaceId, table.active),
+]);
 
-export const insertWorkspaceSchema = createInsertSchema(workspaces).omit({ id: true, createdAt: true });
+export const insertWorkspaceRelevanceProfileSchema = createInsertSchema(workspaceRelevanceProfiles).omit({ id: true, createdAt: true, updatedAt: true });
+
+// === ARTICLE RELEVANCE BY MONITORING WORKSPACE ===
+export const articleWorkspaceRelevance = pgTable("article_workspace_relevance", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  workspaceId: integer("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  articleId: integer("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
+  relevanceStatus: text("relevance_status").notNull().default("needs_review"),
+  confidence: integer("confidence").notNull().default(0),
+  shortReason: text("short_reason"),
+  matchedScope: jsonb("matched_scope").$type<Record<string, unknown>>().notNull().default({}),
+  principalCountryCodes: text("principal_country_codes").array().notNull().default([]),
+  materiallyAffectedCountryCodes: text("materially_affected_country_codes").array().notNull().default([]),
+  supportingSignals: jsonb("supporting_signals").$type<Array<Record<string, unknown> | string>>().notNull().default([]),
+  evaluationMethod: text("evaluation_method").notNull().default("deterministic"),
+  evaluatorVersion: text("evaluator_version").notNull().default("workspace-relevance-v1"),
+  evaluatedAt: timestamp("evaluated_at").defaultNow(),
+  manualOverride: boolean("manual_override").notNull().default(false),
+  reviewedBy: integer("reviewed_by").references(() => users.id),
+  reviewedAt: timestamp("reviewed_at"),
+  reviewNote: text("review_note"),
+  reopenedAt: timestamp("reopened_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("article_workspace_relevance_workspace_article_unique").on(table.workspaceId, table.articleId),
+  index("idx_article_workspace_relevance_client").on(table.clientId, table.relevanceStatus),
+  index("idx_article_workspace_relevance_workspace").on(table.workspaceId, table.relevanceStatus),
+  index("idx_article_workspace_relevance_review").on(table.workspaceId, table.relevanceStatus, table.confidence),
+]);
+
+export const insertArticleWorkspaceRelevanceSchema = createInsertSchema(articleWorkspaceRelevance).omit({ id: true, createdAt: true, updatedAt: true });
+
+export const workspaceRelevanceHistory = pgTable("workspace_relevance_history", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  workspaceId: integer("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  articleId: integer("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
+  previousStatus: text("previous_status"),
+  newStatus: text("new_status").notNull(),
+  previousConfidence: integer("previous_confidence"),
+  newConfidence: integer("new_confidence").notNull(),
+  evaluationMethod: text("evaluation_method").notNull(),
+  changedBy: integer("changed_by").references(() => users.id),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("workspace_relevance_history_workspace_article_idx").on(table.workspaceId, table.articleId),
+  index("workspace_relevance_history_client_idx").on(table.clientId, table.createdAt),
+]);
+
+export const insertWorkspaceRelevanceHistorySchema = createInsertSchema(workspaceRelevanceHistory).omit({ id: true, createdAt: true });
+
+export type WorkspaceRelevanceProfile = typeof workspaceRelevanceProfiles.$inferSelect;
+export type InsertWorkspaceRelevanceProfile = z.infer<typeof insertWorkspaceRelevanceProfileSchema>;
+
+export type ArticleWorkspaceRelevance = typeof articleWorkspaceRelevance.$inferSelect;
+export type InsertArticleWorkspaceRelevance = z.infer<typeof insertArticleWorkspaceRelevanceSchema>;
+
+export type WorkspaceRelevanceHistory = typeof workspaceRelevanceHistory.$inferSelect;
+export type InsertWorkspaceRelevanceHistory = z.infer<typeof insertWorkspaceRelevanceHistorySchema>;
 
 export const workspaceMembers = pgTable("workspace_members", {
   id: serial("id").primaryKey(),

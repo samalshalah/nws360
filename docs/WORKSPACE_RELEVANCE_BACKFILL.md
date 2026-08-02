@@ -1,76 +1,67 @@
 # Workspace Relevance Backfill
 
-Use this runbook when existing articles need relevance decisions recalculated for the generic workspace engine.
+The backfill evaluates existing articles for one workspace or all workspaces and writes only to `article_workspace_relevance` when apply mode is explicitly used.
 
-Do not run this against production automatically.
+It never updates global article relevance fields. Relevance is workspace-specific.
 
-## Schema Migration
+## Commands
 
-Dry run:
-
-```bash
-npm run db:migrate:workspace-relevance
-```
-
-Apply only after a verified backup:
+Dry run for one workspace:
 
 ```bash
-npm run db:migrate:workspace-relevance -- --apply --confirm-backup
+npm run backfill:workspace-relevance -- --dry-run --workspace-id 1
 ```
 
-The migration adds:
-
-- generic article relevance defaults
-- workspace profile columns on `workspaces`
-- `article_workspace_relevance`
-- `rejected_ingestion_items`
-- indexes for relevance filtering and analyst review
-
-It also maps legacy status values, if present:
-
-- legacy direct country status to `direct_scope_match`
-- legacy impact status to `material_scope_impact`
-- legacy regional context status to `contextual`
-
-## Backfill
-
-Dry run:
+Dry run for all workspaces:
 
 ```bash
-npm run backfill:workspace-relevance
+npm run backfill:workspace-relevance -- --dry-run --all-workspaces
 ```
 
-Optional dry-run filters:
+Apply for one workspace:
 
 ```bash
-npm run backfill:workspace-relevance -- --client-id 1
-npm run backfill:workspace-relevance -- --source-id 25 --limit 500
-npm run backfill:workspace-relevance -- --article-id 123
+npm run backfill:workspace-relevance -- --apply --workspace-id 1
 ```
 
-Apply only after review:
+Apply for all workspaces:
 
 ```bash
-npm run backfill:workspace-relevance -- --apply --confirm-backup
+npm run backfill:workspace-relevance -- --apply --all-workspaces
 ```
 
-The backfill:
+Options:
 
-- does not delete articles
-- does not change article IDs
-- does not change tenant ownership
-- does not overwrite manual relevance decisions
-- reports current and proposed status counts
-- verifies article count and ID checksum before commit
+- `--batch-size 500`
+- `--limit 1000`
+- `--enable-ai`
 
-## Review
+AI is not called by default. The current command performs deterministic evaluation only and reports if `--enable-ai` is supplied.
 
-Before applying, review:
+## Safety Rules
 
-- articles moving to `not_relevant`
-- articles moving to `needs_review`
-- articles with weak content-only signals
-- articles from sources without workspace profile configuration
+The command defaults to dry-run and requires either `--workspace-id` or `--all-workspaces`.
 
-Manual analyst decisions remain authoritative until explicitly reopened.
+It respects tenant boundaries by selecting articles from the workspace's `client_id`.
 
+Existing manual overrides are skipped. Reopened manual decisions can be reevaluated by clearing the manual override through the review workflow.
+
+The command is resumable and idempotent because `article_workspace_relevance` is unique by `workspace_id + article_id`.
+
+## Reports
+
+The output includes:
+
+- Workspace count
+- Evaluated article-workspace pairs
+- Article ID checksum
+- Existing counts
+- Proposed counts
+- Required updates
+- Skipped manual overrides
+- Already-current decisions
+- Sample updates
+
+## Current Production State
+
+After the clean reset, production has zero articles and zero workspaces. A dry run should report zero candidates until a real client workspace and articles exist.

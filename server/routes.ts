@@ -29,7 +29,15 @@ import {
 import { normalizeWebsiteCollectorConfig, websiteCollectorConfigSchema } from "@shared/source-collector";
 import { normalizeSourceFilterConfig, sourceFilterConfigSchema } from "@shared/source-filter";
 import { classifyFeedImportRow, normalizeSourceImportKey, type ClassifiedFeedImportRow, type FeedImportInputRow } from "@shared/source-import";
-import { ARTICLE_RELEVANCE_STATUSES, isArticleRelevanceStatus } from "@shared/workspace-relevance";
+import {
+  ARTICLE_RELEVANCE_STATUSES,
+  WORKSPACE_PURPOSES,
+  WORKSPACE_SCOPE_MODES,
+  evaluateWorkspaceRelevance,
+  normalizeWorkspaceProfile,
+  isArticleRelevanceStatus,
+  type WorkspaceProfile,
+} from "@shared/workspace-relevance";
 import { discoverPublisherCategories, type DiscoveredPublisherCategory } from "./publisher-discovery";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import rateLimit from "express-rate-limit";
@@ -113,7 +121,44 @@ const articleWorkflowUpdateSchema = z.object({
 const articleRelevanceUpdateSchema = z.object({
   relevanceStatus: z.enum(ARTICLE_RELEVANCE_STATUSES),
   relevanceReason: z.string().trim().max(500).optional(),
-  workspaceId: z.coerce.number().int().positive().optional(),
+  reviewNote: z.string().trim().max(500).optional(),
+  reopen: z.boolean().optional(),
+  workspaceId: z.coerce.number().int().positive(),
+}).strict();
+
+const workspaceRelevanceProfileInputSchema = z.object({
+  topics: z.array(z.string().trim().min(1).max(160)).max(200).optional(),
+  subtopics: z.array(z.string().trim().min(1).max(160)).max(200).optional(),
+  industries: z.array(z.string().trim().min(1).max(160)).max(200).optional(),
+  entities: z.array(z.string().trim().min(1).max(160)).max(300).optional(),
+  organizations: z.array(z.string().trim().min(1).max(160)).max(300).optional(),
+  people: z.array(z.string().trim().min(1).max(160)).max(300).optional(),
+  projects: z.array(z.string().trim().min(1).max(160)).max(300).optional(),
+  events: z.array(z.string().trim().min(1).max(160)).max(300).optional(),
+  multilingualAliases: z.union([z.record(z.array(z.string().trim().min(1).max(160))), z.array(z.string().trim().min(1).max(160))]).nullable().optional(),
+  inclusionTerms: z.array(z.string().trim().min(1).max(160)).max(300).optional(),
+  exclusionTerms: z.array(z.string().trim().min(1).max(160)).max(300).optional(),
+  impactTerms: z.array(z.string().trim().min(1).max(160)).max(300).optional(),
+  contextualTerms: z.array(z.string().trim().min(1).max(160)).max(300).optional(),
+  minimumConfidence: z.coerce.number().int().min(0).max(100).optional(),
+  includeContextualByDefault: z.boolean().optional(),
+  contextualLabel: z.string().trim().min(1).max(120).optional(),
+  active: z.boolean().optional(),
+}).strict();
+
+const workspaceRelevancePreviewSchema = z.object({
+  title: z.string().trim().max(500).optional(),
+  summary: z.string().trim().max(3000).optional(),
+  content: z.string().trim().max(50000).optional(),
+  url: z.string().trim().max(2000).optional(),
+  imageTitle: z.string().trim().max(500).optional(),
+  sourceName: z.string().trim().max(300).optional(),
+  sourceCategory: z.string().trim().max(120).optional(),
+  subSource: z.string().trim().max(300).optional(),
+  language: z.string().trim().max(24).optional(),
+  country: z.string().trim().max(80).optional(),
+  topics: z.array(z.string().trim().min(1).max(160)).max(100).optional(),
+  keywords: z.array(z.string().trim().min(1).max(160)).max(100).optional(),
 }).strict();
 
 const bulkArticleWorkflowUpdateSchema = articleWorkflowUpdateSchema.extend({
@@ -1012,6 +1057,80 @@ async function getWorkspaceForTenantOrNotFound(workspaceId: number | undefined, 
     return undefined;
   }
   return workspace;
+}
+
+async function getWorkspaceForAuthenticatedScope(workspaceId: number, user: any, req: any, res: any) {
+  if (!Number.isInteger(workspaceId) || workspaceId <= 0) {
+    res.status(400).json({ message: "Invalid workspace ID" });
+    return null;
+  }
+  const workspace = await storage.getWorkspace(workspaceId);
+  if (!workspace) {
+    safeNotFound(res);
+    return null;
+  }
+
+  const clientId = resolveClientId(user, req);
+  if (!isSystemAdmin(user) && !clientId) {
+    res.status(403).json({ message: "No organization assigned" });
+    return null;
+  }
+  if (clientId && workspace.clientId !== clientId) {
+    safeNotFound(res);
+    return null;
+  }
+  return workspace;
+}
+
+async function canReadWorkspaceRelevance(user: any, req: any): Promise<boolean> {
+  if (isSystemAdmin(user)) return true;
+  const userCaps = await resolveUserCaps(user);
+  return userCaps.includes(CAPS.COLLAB_VIEW) || userCaps.includes(CAPS.ARTICLE_VIEW) || userCaps.includes(CAPS.SETTINGS_VIEW);
+}
+
+async function canManageWorkspaceRelevance(user: any, req: any): Promise<boolean> {
+  if (isSystemAdmin(user)) return true;
+  const userCaps = await resolveUserCaps(user);
+  return userCaps.includes(CAPS.SETTINGS_MANAGE) || userCaps.includes(CAPS.ARTICLE_EDIT);
+}
+
+function workspaceRelevanceProfileFromRecords(workspace: any, profile?: any): WorkspaceProfile {
+  return normalizeWorkspaceProfile({
+    id: workspace.id,
+    clientId: workspace.clientId,
+    name: workspace.name,
+    description: workspace.description,
+    purpose: workspace.purpose,
+    scopeMode: workspace.scopeMode,
+    globalScope: workspace.globalScope,
+    primaryCountryCodes: workspace.primaryCountryCodes || [],
+    secondaryCountryCodes: workspace.secondaryCountryCodes || [],
+    regionCodes: workspace.regionCodes || [],
+    subnationalAreas: workspace.subnationalAreas || [],
+    preferredLanguages: workspace.preferredLanguages || [],
+    timezone: workspace.timezone,
+    taxonomyTemplateCode: workspace.taxonomyTemplateCode,
+    relevanceProfileCode: workspace.relevanceProfileCode,
+    reportingTemplateCode: workspace.reportingTemplateCode,
+    active: workspace.active,
+    topics: profile?.topics || [],
+    subtopics: profile?.subtopics || [],
+    industries: profile?.industries || [],
+    entities: profile?.entities || [],
+    organizations: profile?.organizations || [],
+    people: profile?.people || [],
+    projects: profile?.projects || [],
+    events: profile?.events || [],
+    multilingualAliases: profile?.multilingualAliases || [],
+    inclusionTerms: profile?.inclusionTerms || [],
+    exclusionTerms: profile?.exclusionTerms || [],
+    impactTerms: profile?.impactTerms || [],
+    contextualTerms: profile?.contextualTerms || [],
+    minimumConfidence: profile?.minimumConfidence ?? 60,
+    includeContextualByDefault: profile?.includeContextualByDefault ?? false,
+    contextualLabel: profile?.contextualLabel || "Strategic Context",
+    profileVersion: profile?.profileVersion ?? 1,
+  });
 }
 
 async function ensureUserInTenant(userId: number | undefined, clientId: number, res: any): Promise<boolean> {
@@ -2178,6 +2297,215 @@ export async function registerRoutes(
     }
   });
 
+  // === MONITORING WORKSPACE RELEVANCE ===
+  app.get("/api/workspaces", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    try {
+      if (!(await canReadWorkspaceRelevance(user, req))) {
+        return res.status(403).json({ message: "Insufficient permissions" });
+      }
+      const clientId = resolveClientId(user, req);
+      if (!clientId && !isSystemAdmin(user)) {
+        return res.status(403).json({ message: "No organization assigned" });
+      }
+      const workspaces = await storage.getWorkspaces(clientId || undefined);
+      res.json({ items: workspaces, total: workspaces.length });
+    } catch (err) {
+      console.error("Workspace list failed:", err);
+      res.status(500).json({ message: "Error fetching workspaces" });
+    }
+  });
+
+  app.get("/api/workspaces/:workspaceId", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    try {
+      if (!(await canReadWorkspaceRelevance(user, req))) {
+        return res.status(403).json({ message: "Insufficient permissions" });
+      }
+      const workspace = await getWorkspaceForAuthenticatedScope(Number(req.params.workspaceId), user, req, res);
+      if (!workspace) return;
+      const profile = await storage.getWorkspaceRelevanceProfile(workspace.id, workspace.clientId);
+      res.json({
+        workspace,
+        relevanceProfile: profile || null,
+        effectiveProfile: workspaceRelevanceProfileFromRecords(workspace, profile),
+      });
+    } catch (err) {
+      console.error("Workspace fetch failed:", err);
+      res.status(500).json({ message: "Error fetching workspace" });
+    }
+  });
+
+  app.get("/api/workspaces/:workspaceId/relevance-profile", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    try {
+      if (!(await canReadWorkspaceRelevance(user, req))) {
+        return res.status(403).json({ message: "Insufficient permissions" });
+      }
+      const workspace = await getWorkspaceForAuthenticatedScope(Number(req.params.workspaceId), user, req, res);
+      if (!workspace) return;
+      const profile = await storage.getWorkspaceRelevanceProfile(workspace.id, workspace.clientId);
+      res.json({
+        profile: profile || null,
+        effectiveProfile: workspaceRelevanceProfileFromRecords(workspace, profile),
+      });
+    } catch (err) {
+      console.error("Workspace relevance profile fetch failed:", err);
+      res.status(500).json({ message: "Error fetching relevance profile" });
+    }
+  });
+
+  app.put("/api/workspaces/:workspaceId/relevance-profile", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    try {
+      if (!(await canManageWorkspaceRelevance(user, req))) {
+        return res.status(403).json({ message: "Insufficient permissions" });
+      }
+      const workspace = await getWorkspaceForAuthenticatedScope(Number(req.params.workspaceId), user, req, res);
+      if (!workspace) return;
+      const parsed = workspaceRelevanceProfileInputSchema.parse(req.body);
+      const existing = await storage.getWorkspaceRelevanceProfile(workspace.id, workspace.clientId);
+      const profile = await storage.upsertWorkspaceRelevanceProfile({
+        workspaceId: workspace.id,
+        topics: parsed.topics ?? existing?.topics ?? [],
+        subtopics: parsed.subtopics ?? existing?.subtopics ?? [],
+        industries: parsed.industries ?? existing?.industries ?? [],
+        entities: parsed.entities ?? existing?.entities ?? [],
+        organizations: parsed.organizations ?? existing?.organizations ?? [],
+        people: parsed.people ?? existing?.people ?? [],
+        projects: parsed.projects ?? existing?.projects ?? [],
+        events: parsed.events ?? existing?.events ?? [],
+        multilingualAliases: parsed.multilingualAliases ?? existing?.multilingualAliases ?? [],
+        inclusionTerms: parsed.inclusionTerms ?? existing?.inclusionTerms ?? [],
+        exclusionTerms: parsed.exclusionTerms ?? existing?.exclusionTerms ?? [],
+        impactTerms: parsed.impactTerms ?? existing?.impactTerms ?? [],
+        contextualTerms: parsed.contextualTerms ?? existing?.contextualTerms ?? [],
+        minimumConfidence: parsed.minimumConfidence ?? existing?.minimumConfidence ?? 60,
+        includeContextualByDefault: parsed.includeContextualByDefault ?? existing?.includeContextualByDefault ?? false,
+        contextualLabel: parsed.contextualLabel ?? existing?.contextualLabel ?? "Strategic Context",
+        active: parsed.active ?? existing?.active ?? true,
+      } as any, workspace.clientId);
+      res.json({
+        profile,
+        effectiveProfile: workspaceRelevanceProfileFromRecords(workspace, profile),
+      });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid relevance profile" });
+      }
+      if (err instanceof TenantNotFoundError) return safeNotFound(res);
+      console.error("Workspace relevance profile update failed:", err);
+      res.status(500).json({ message: "Error updating relevance profile" });
+    }
+  });
+
+  app.post("/api/workspaces/:workspaceId/relevance/preview", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    try {
+      if (!(await canReadWorkspaceRelevance(user, req))) {
+        return res.status(403).json({ message: "Insufficient permissions" });
+      }
+      const workspace = await getWorkspaceForAuthenticatedScope(Number(req.params.workspaceId), user, req, res);
+      if (!workspace) return;
+      const input = workspaceRelevancePreviewSchema.parse(req.body);
+      if (!input.title && !input.summary && !input.content && !input.url) {
+        return res.status(400).json({ message: "Preview requires at least a title, summary, content, or URL" });
+      }
+      const profile = await storage.getWorkspaceRelevanceProfile(workspace.id, workspace.clientId);
+      const relevance = evaluateWorkspaceRelevance(input, workspaceRelevanceProfileFromRecords(workspace, profile));
+      res.json({
+        writes: false,
+        workspaceId: workspace.id,
+        relevance,
+      });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid preview article" });
+      }
+      console.error("Workspace relevance preview failed:", err);
+      res.status(500).json({ message: "Error previewing relevance" });
+    }
+  });
+
+  app.get("/api/workspaces/:workspaceId/relevance/review", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    try {
+      if (!(await canAccessRelevanceReview(user, req))) {
+        return res.status(403).json({ message: "Insufficient permissions for relevance review scope" });
+      }
+      const workspace = await getWorkspaceForAuthenticatedScope(Number(req.params.workspaceId), user, req, res);
+      if (!workspace) return;
+      const limit = req.query.limit ? Math.min(200, Math.max(1, parseInt(req.query.limit as string))) : 100;
+      const includeContextual = booleanQuery(req.query.includeContextual);
+      const items = await storage.getWorkspaceRelevanceReviewQueue(workspace.id, workspace.clientId, {
+        includeContextual,
+        limit,
+      });
+      res.json({ items, total: items.length });
+    } catch (err) {
+      console.error("Workspace relevance review queue failed:", err);
+      res.status(500).json({ message: "Error fetching review queue" });
+    }
+  });
+
+  app.patch("/api/workspaces/:workspaceId/articles/:articleId/relevance", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const user = req.user as any;
+    try {
+      if (!(await canAccessRelevanceReview(user, req))) {
+        return res.status(403).json({ message: "Insufficient permissions for relevance review scope" });
+      }
+      const workspace = await getWorkspaceForAuthenticatedScope(Number(req.params.workspaceId), user, req, res);
+      if (!workspace) return;
+      const articleId = Number(req.params.articleId);
+      if (!Number.isInteger(articleId) || articleId <= 0) {
+        return res.status(400).json({ message: "Invalid article ID" });
+      }
+      const input = articleRelevanceUpdateSchema
+        .omit({ workspaceId: true })
+        .parse(req.body);
+      const article = await storage.getArticle(articleId, workspace.clientId);
+      if (!article) return safeNotFound(res);
+
+      const updated = await storage.upsertArticleWorkspaceRelevance({
+        articleId,
+        workspaceId: workspace.id,
+        clientId: workspace.clientId,
+        relevanceStatus: input.relevanceStatus,
+        confidence: 100,
+        shortReason: input.relevanceReason || input.reviewNote || "Manually reviewed by analyst.",
+        matchedScope: { manual_review: ["analyst_decision"] },
+        principalCountryCodes: [],
+        materiallyAffectedCountryCodes: [],
+        supportingSignals: [{ type: "manual_review", field: "analyst", term: "decision" }],
+        evaluationMethod: "manual",
+        evaluatorVersion: "workspace-relevance-v1",
+        manualOverride: !input.reopen,
+        reviewedBy: user.id,
+        reviewedAt: new Date(),
+        reviewNote: input.reviewNote || input.relevanceReason || null,
+        reopenedAt: input.reopen ? new Date() : null,
+        evaluatedAt: new Date(),
+      } as any);
+      const history = await storage.getWorkspaceRelevanceHistory(workspace.id, articleId, workspace.clientId);
+      await db.delete(analyticsCache).where(eq(analyticsCache.clientId, workspace.clientId));
+      runAnalyticsComputation().catch(e => console.error("[Analytics] Post-workspace-relevance-review recomputation error:", e));
+      res.json({ relevance: updated, history });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0]?.message || "Invalid relevance update" });
+      }
+      console.error("Workspace article relevance update failed:", err);
+      res.status(500).json({ message: "Article relevance update failed" });
+    }
+  });
+
   // === ARTICLES ===
   app.get(api.articles.list.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
@@ -2640,36 +2968,29 @@ export async function registerRoutes(
         return safeNotFound(res);
       }
 
-      const updated = await storage.updateArticleRelevance(id, {
-        relevanceStatus: input.relevanceStatus,
-        relevanceConfidence: 100,
-        relevanceReason: input.relevanceReason || "Manually reviewed by analyst.",
-        relevanceMethod: "manual",
-        relevanceReviewedBy: user.id,
-        relevanceReviewedAt: new Date(),
-      } as any, clientId);
+      const workspace = await storage.getWorkspace(input.workspaceId);
+      if (!workspace || workspace.clientId !== clientId) return safeNotFound(res);
 
-      if (input.workspaceId) {
-        const workspace = await storage.getWorkspace(input.workspaceId);
-        if (!workspace || workspace.clientId !== clientId) return safeNotFound(res);
-        await storage.upsertArticleWorkspaceRelevance({
-          articleId: id,
-          workspaceId: input.workspaceId,
-          clientId,
-          relevanceStatus: input.relevanceStatus,
-          confidence: 100,
-          shortReason: input.relevanceReason || "Manually reviewed by analyst.",
-          matchedScope: ["manual_review"],
-          principalCountries: [],
-          materiallyAffectedCountries: [],
-          supportingSignals: [],
-          relevanceMethod: "manual",
-          manualOverride: true,
-          reviewedBy: user.id,
-          reviewedAt: new Date(),
-          evaluatedAt: new Date(),
-        } as any);
-      }
+      const updated = await storage.upsertArticleWorkspaceRelevance({
+        articleId: id,
+        workspaceId: input.workspaceId,
+        clientId,
+        relevanceStatus: input.relevanceStatus,
+        confidence: 100,
+        shortReason: input.relevanceReason || input.reviewNote || "Manually reviewed by analyst.",
+        matchedScope: { manual_review: ["analyst_decision"] },
+        principalCountryCodes: [],
+        materiallyAffectedCountryCodes: [],
+        supportingSignals: [{ type: "manual_review", field: "analyst", term: "decision" }],
+        evaluationMethod: "manual",
+        evaluatorVersion: "workspace-relevance-v1",
+        manualOverride: !input.reopen,
+        reviewedBy: user.id,
+        reviewedAt: new Date(),
+        reviewNote: input.reviewNote || input.relevanceReason || null,
+        reopenedAt: input.reopen ? new Date() : null,
+        evaluatedAt: new Date(),
+      } as any);
 
       await db.delete(analyticsCache).where(eq(analyticsCache.clientId, clientId));
       runAnalyticsComputation().catch(e => console.error("[Analytics] Post-relevance-review recomputation error:", e));

@@ -28,7 +28,7 @@ export async function getPeriodicJobEligibilitySnapshot(): Promise<PeriodicJobEl
       .select({ count: sql<number>`count(*)::int` })
       .from(workspaces)
       .innerJoin(clients, eq(workspaces.clientId, clients.id))
-      .where(eq(clients.active, true)),
+      .where(and(eq(clients.active, true), eq(workspaces.active, true))),
   );
   const activeArticleCount = await scalarCount(
     db
