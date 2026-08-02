@@ -778,9 +778,24 @@ async function executeDeletionPlan(client, deletionOrder, adminId) {
   return deletedCounts;
 }
 
+async function tableHasColumn(client, table, columnName) {
+  const result = await client.query(
+    `SELECT 1
+       FROM information_schema.columns
+      WHERE table_schema = $1
+        AND table_name = $2
+        AND column_name = $3
+      LIMIT 1`,
+    [table.table_schema, table.table_name, columnName],
+  );
+  return (result.rowCount || 0) > 0;
+}
+
 async function resetSequences(client, deletionOrder, adminId) {
   const reset = [];
   for (const table of deletionOrder) {
+    if (!(await tableHasColumn(client, table, "id"))) continue;
+
     const sequenceResult = await client.query("SELECT pg_get_serial_sequence($1, 'id') AS sequence_name", [tableSql(table)]);
     const sequenceName = sequenceResult.rows[0]?.sequence_name;
     if (!sequenceName) continue;

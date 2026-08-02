@@ -349,6 +349,11 @@ class MockPgClient {
       }
       return { rows, rowCount: rows.length };
     }
+    if (sql.startsWith("SELECT 1 FROM information_schema.columns")) {
+      const table = this.getTable(params[0], params[1]);
+      const rows = table.columns.some((column) => column.name === params[2]) ? [{ "?column?": 1 }] : [];
+      return { rows, rowCount: rows.length };
+    }
     if (sql.startsWith("SELECT tc.table_schema")) {
       return { rows: deepClone(this.foreignKeys), rowCount: this.foreignKeys.length };
     }
