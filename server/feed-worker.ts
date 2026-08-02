@@ -8,6 +8,7 @@ import { getGoogleNewsEdition } from "@shared/google-news-regions";
 import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, CLIENT_BILATERAL_CATEGORY_CODE, getArticleCategoryLabel, type EmbassyProfile } from "@shared/article-taxonomy";
 import { classifyArticleCategory, classifyArticlePriority, classifyIraqProvince } from "@shared/article-classifier";
 import {
+  RELEVANCE_ENGINE_VERSION,
   evaluateWorkspaceRelevance,
   aiFailureWorkspaceRelevanceResult,
   normalizeAiWorkspaceRelevanceResult,
@@ -771,7 +772,7 @@ function pickPrimaryRelevance(results: WorkspaceRelevanceResult[]): WorkspaceRel
       materiallyAffectedCountryCodes: [],
       supportingSignals: [],
       evaluationMethod: "deterministic",
-      evaluatorVersion: "workspace-relevance-v1",
+      evaluatorVersion: RELEVANCE_ENGINE_VERSION,
       aiRequired: true,
       relevanceConfidence: 40,
       relevanceReason: "No workspace profile was available for relevance evaluation.",
@@ -793,7 +794,12 @@ async function evaluateWorkspaceRelevanceWithAiFallback(
   clientId: number,
 ): Promise<WorkspaceRelevanceResult> {
   const deterministic = evaluateWorkspaceRelevance(input, profile);
-  if (!shouldUseAiFallbackForRelevance(deterministic)) return deterministic;
+  if (!shouldUseAiFallbackForRelevance(deterministic, profile)) return deterministic;
+
+  const client = await storage.getClient(clientId);
+  if (!client?.aiEnabled) {
+    return deterministic;
+  }
 
   try {
     const job = await enqueueAIJob(clientId, "classification", {
@@ -802,7 +808,11 @@ async function evaluateWorkspaceRelevanceWithAiFallback(
       responseFormat: { type: "json_object" },
     }, 450);
     const aiResult = await awaitJobResult(job.id, 60_000);
-    return normalizeAiWorkspaceRelevanceResult(JSON.parse(aiResult.content || "{}")) || deterministic;
+    try {
+      return normalizeAiWorkspaceRelevanceResult(JSON.parse(aiResult.content || "{}"));
+    } catch {
+      return aiFailureWorkspaceRelevanceResult("AI relevance review returned invalid JSON; analyst review required.");
+    }
   } catch (error: any) {
     console.warn(`[Worker] AI relevance fallback failed for client=${clientId}: ${error?.message || error}`);
     return aiFailureWorkspaceRelevanceResult("AI fallback failed; analyst review required.");

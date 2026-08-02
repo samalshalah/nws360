@@ -8,6 +8,21 @@ import { mergeArticleCategoryRows } from "@shared/article-taxonomy";
 
 const AI_SUCCESS_FILTER = sql`(${articles.aiAnalysisStatus} = 'success' OR ${articles.aiAnalysisStatus} IS NULL)`;
 
+export function buildAnalyticsCacheKey(input: {
+  clientId?: number | null;
+  workspaceId?: number | null;
+  relevanceStatuses?: string[] | null;
+  includeContextual?: boolean | null;
+  period?: string | null;
+}) {
+  const clientPart = input.clientId ? `client_${input.clientId}` : "global";
+  const workspacePart = input.workspaceId ? `workspace_${input.workspaceId}` : "client_scope";
+  const statusPart = (input.relevanceStatuses?.length ? [...input.relevanceStatuses].sort() : ["direct_scope_match", "material_scope_impact"]).join("+");
+  const contextualPart = input.includeContextual ? "contextual_on" : "contextual_off";
+  const periodPart = input.period || "period_unspecified";
+  return [clientPart, workspacePart, statusPart, contextualPart, periodPart].join("|");
+}
+
 async function upsertCache(metricType: string, metricKey: string, data: any, periodStart: Date, periodEnd: Date, clientId?: number | null) {
   const conditions = [
     eq(analyticsCache.metricType, metricType),
@@ -96,7 +111,7 @@ async function computeVolumeMetrics(periodStart: Date, periodEnd: Date, clientId
 
   const confidence = await computeConfidenceCounts(periodStart, periodEnd, clientId);
 
-  const key = clientId ? `client_${clientId}` : "global";
+  const key = buildAnalyticsCacheKey({ clientId });
   await upsertCache("volume", key, { timeline, bySource, confidence }, periodStart, periodEnd, clientId);
 }
 
@@ -128,7 +143,7 @@ async function computeTrendingTopics(periodStart: Date, periodEnd: Date, clientI
     .where(and(...conditions))
     .groupBy(sql`COALESCE(${articles.category}, 'other')`);
 
-  const key = clientId ? `client_${clientId}` : "global";
+  const key = buildAnalyticsCacheKey({ clientId });
   await upsertCache("trending_topics", key, { topics: filteredTopics, byCategory: mergeArticleCategoryRows(byCategory) }, periodStart, periodEnd, clientId);
 }
 
@@ -158,7 +173,7 @@ async function computeSentimentMetrics(periodStart: Date, periodEnd: Date, clien
     .groupBy(sql`to_char(${articles.publishedAt}, 'YYYY-MM-DD')`)
     .orderBy(sql`to_char(${articles.publishedAt}, 'YYYY-MM-DD')`);
 
-  const key = clientId ? `client_${clientId}` : "global";
+  const key = buildAnalyticsCacheKey({ clientId });
   await upsertCache("sentiment", key, { overall, timeline }, periodStart, periodEnd, clientId);
 }
 
@@ -182,7 +197,7 @@ async function computeKeywordMetrics(periodStart: Date, periodEnd: Date, clientI
     .filter((row) => !isGenericAnalyticsTerm(row.keyword))
     .slice(0, 50);
 
-  const key = clientId ? `client_${clientId}` : "global";
+  const key = buildAnalyticsCacheKey({ clientId });
   await upsertCache("keywords", key, { topKeywords: filteredTopKeywords }, periodStart, periodEnd, clientId);
 }
 
@@ -238,7 +253,7 @@ export async function runAnalyticsComputation() {
 }
 
 export async function getCachedAnalytics(metricType: string, clientId: number) {
-  const metricKey = `client_${clientId}`;
+  const metricKey = buildAnalyticsCacheKey({ clientId });
   const results = await db
     .select()
     .from(analyticsCache)

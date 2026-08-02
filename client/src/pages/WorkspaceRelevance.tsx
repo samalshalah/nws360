@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Eye, Loader2, RefreshCw, Save, SlidersHorizontal } from "lucide-react";
+import { CheckCircle2, Eye, History, Loader2, RefreshCw, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -53,6 +53,12 @@ type ReviewItem = {
   relevanceStatus: string;
   confidence: number;
   shortReason?: string | null;
+  evaluationMethod?: string | null;
+  manualOverride?: boolean | null;
+  reviewedBy?: number | null;
+  reviewedAt?: string | null;
+  reviewNote?: string | null;
+  reopenedAt?: string | null;
   articleId: number;
   article: {
     id: number;
@@ -61,6 +67,17 @@ type ReviewItem = {
     url?: string | null;
     publishedAt?: string | null;
   };
+  history?: Array<{
+    id: number;
+    previousStatus?: string | null;
+    newStatus: string;
+    previousConfidence?: number | null;
+    newConfidence: number;
+    evaluationMethod: string;
+    changedBy?: number | null;
+    reason?: string | null;
+    createdAt?: string | null;
+  }>;
 };
 
 const STATUS_OPTIONS = [
@@ -112,9 +129,36 @@ function listValue(values?: string[] | null): string {
 function aliasValue(value: RelevanceProfile["multilingualAliases"]): string {
   if (Array.isArray(value)) return listValue(value);
   if (value && typeof value === "object") {
-    return Object.values(value).flat().join("\n");
+    return Object.entries(value)
+      .map(([language, aliases]) => [`[${language}]`, ...aliases].join("\n"))
+      .join("\n\n");
   }
   return "";
+}
+
+function parseAliases(value: string, current: RelevanceProfile["multilingualAliases"]): RelevanceProfile["multilingualAliases"] {
+  const lines = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const grouped: Record<string, string[]> = {};
+  let currentLanguage = "";
+  let sawGroup = false;
+  for (const line of lines) {
+    const match = line.match(/^\[([A-Za-z0-9_-]{1,24})\]$/);
+    if (match) {
+      currentLanguage = match[1];
+      grouped[currentLanguage] = grouped[currentLanguage] || [];
+      sawGroup = true;
+      continue;
+    }
+    if (sawGroup) {
+      const language = currentLanguage || "default";
+      grouped[language] = grouped[language] || [];
+      grouped[language].push(line);
+    }
+  }
+  if (sawGroup || (current && !Array.isArray(current) && typeof current === "object")) {
+    return grouped;
+  }
+  return parseList(value);
 }
 
 function statusLabel(value: string) {
@@ -141,6 +185,8 @@ export default function WorkspaceRelevance() {
     sourceName: "",
   });
   const [previewResult, setPreviewResult] = useState<any>(null);
+  const [includeContextualReview, setIncludeContextualReview] = useState(false);
+  const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
 
   const { data: workspaceData, isLoading: loadingWorkspaces } = useQuery<{ items: Workspace[]; total: number }>({
     queryKey: ["/api/workspaces"],
@@ -173,8 +219,13 @@ export default function WorkspaceRelevance() {
   }, [profileData]);
 
   const { data: reviewData, isFetching: loadingReview } = useQuery<{ items: ReviewItem[]; total: number }>({
-    queryKey: ["/api/workspaces", selectedWorkspaceId, "relevance", "review"],
+    queryKey: ["/api/workspaces", selectedWorkspaceId, "relevance", "review", includeContextualReview],
     enabled: Boolean(selectedWorkspaceId),
+    queryFn: async () => {
+      const suffix = includeContextualReview ? "?includeContextual=true" : "";
+      const res = await apiRequest("GET", `/api/workspaces/${selectedWorkspaceId}/relevance/review${suffix}`);
+      return res.json();
+    },
   });
 
   const saveMutation = useMutation({
@@ -203,10 +254,11 @@ export default function WorkspaceRelevance() {
   });
 
   const reviewMutation = useMutation({
-    mutationFn: async ({ articleId, relevanceStatus }: { articleId: number; relevanceStatus: string }) => {
+    mutationFn: async ({ articleId, relevanceStatus, reopen }: { articleId: number; relevanceStatus: string; reopen?: boolean }) => {
       const res = await apiRequest("PATCH", `/api/workspaces/${selectedWorkspaceId}/articles/${articleId}/relevance`, {
         relevanceStatus,
-        reviewNote: "Manual decision from workspace relevance review.",
+        reviewNote: reviewNotes[articleId] || (reopen ? "Reopened for automated review." : "Manual decision from workspace relevance review."),
+        reopen,
       });
       return res.json();
     },
@@ -334,7 +386,7 @@ export default function WorkspaceRelevance() {
                   <Field
                     label="Aliases"
                     value={aliasValue(form.multilingualAliases)}
-                    onChange={(value) => setForm((current) => ({ ...current, multilingualAliases: parseList(value) }))}
+                    onChange={(value) => setForm((current) => ({ ...current, multilingualAliases: parseAliases(value, current.multilingualAliases) }))}
                   />
                   <Field label="Organizations" value={listValue(form.organizations)} onChange={(value) => updateList("organizations", value)} />
                   <Field label="People" value={listValue(form.people)} onChange={(value) => updateList("people", value)} />
@@ -428,13 +480,17 @@ export default function WorkspaceRelevance() {
                 <CardTitle>Needs review</CardTitle>
                 <CardDescription>Manual decisions override automation until reopened.</CardDescription>
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/workspaces", selectedWorkspaceId, "relevance", "review"] })}
-              >
-                <RefreshCw className="h-4 w-4" />
-              </Button>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="include-contextual-review" className="text-xs text-muted-foreground">Contextual</Label>
+                <Switch id="include-contextual-review" checked={includeContextualReview} onCheckedChange={setIncludeContextualReview} />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/workspaces", selectedWorkspaceId, "relevance", "review"] })}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="space-y-3">
               {loadingReview ? (
@@ -453,6 +509,20 @@ export default function WorkspaceRelevance() {
                       </div>
                       <Badge variant={statusVariant(item.relevanceStatus)}>{statusLabel(item.relevanceStatus)}</Badge>
                     </div>
+                    <div className="mt-2 flex flex-wrap gap-1 text-xs text-muted-foreground">
+                      <Badge variant="outline">{item.evaluationMethod || "automated"}</Badge>
+                      {item.manualOverride && <Badge variant="secondary">manual override</Badge>}
+                      {item.reopenedAt && <Badge variant="outline">reopened</Badge>}
+                      <span>{item.confidence}% confidence</span>
+                      {item.reviewedAt && <span>reviewed {new Date(item.reviewedAt).toLocaleString()}</span>}
+                      {item.reviewedBy && <span>by user #{item.reviewedBy}</span>}
+                    </div>
+                    <Textarea
+                      className="mt-3 min-h-20"
+                      placeholder="Analyst review note"
+                      value={reviewNotes[item.article.id] ?? item.reviewNote ?? ""}
+                      onChange={(event) => setReviewNotes((current) => ({ ...current, [item.article.id]: event.target.value }))}
+                    />
                     <div className="mt-3 flex flex-wrap gap-2">
                       {STATUS_OPTIONS.map((status) => (
                         <Button
@@ -465,7 +535,34 @@ export default function WorkspaceRelevance() {
                           {statusLabel(status)}
                         </Button>
                       ))}
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => reviewMutation.mutate({ articleId: item.article.id, relevanceStatus: item.relevanceStatus, reopen: true })}
+                      >
+                        <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                        Reopen
+                      </Button>
                     </div>
+                    {(item.history || []).length > 0 && (
+                      <div className="mt-3 rounded-md bg-muted/40 p-2">
+                        <div className="mb-2 flex items-center gap-1.5 text-xs font-medium">
+                          <History className="h-3.5 w-3.5" />
+                          History
+                        </div>
+                        <div className="space-y-1">
+                          {(item.history || []).slice(0, 3).map((entry) => (
+                            <div key={entry.id} className="text-xs text-muted-foreground">
+                              {statusLabel(entry.previousStatus || "new")}{" -> "}{statusLabel(entry.newStatus)}
+                              {" "}({entry.previousConfidence ?? "-"}%{" -> "}{entry.newConfidence}%)
+                              {entry.changedBy ? ` by user #${entry.changedBy}` : ""}
+                              {entry.createdAt ? ` on ${new Date(entry.createdAt).toLocaleString()}` : ""}
+                              {entry.reason ? `: ${entry.reason}` : ""}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))
               )}

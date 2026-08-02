@@ -14,6 +14,7 @@ import {
   type ArticleRelevanceStatus,
   type WorkspaceProfile,
 } from "../shared/workspace-relevance";
+import { countryCodesInNaturalText, normalizeCountryCode } from "../shared/country-registry";
 import { evaluatePeriodicJobEligibility } from "../server/periodic-job-rules";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -198,7 +199,7 @@ const cases: Case[] = [
       title: "Oil prices rise after OPEC meeting",
       summary: "The report mentions the United States once while discussing global markets.",
     },
-    status: "contextual",
+    status: "not_relevant",
   },
   {
     name: "Meaningful U.S.-Iraq diplomacy is direct",
@@ -210,13 +211,31 @@ const cases: Case[] = [
     status: "direct_scope_match",
   },
   {
-    name: "Contextual classification",
+    name: "Workspace plus contextual evidence becomes contextual",
     profile: iraqWorkspace,
     article: {
-      title: "Regional summit discusses diplomatic background",
-      summary: "Middle East diplomats discussed neighboring political context and future talks.",
+      title: "Iraq political background analysis",
+      summary: "The overview reviews parliamentary negotiations without a new decision.",
     },
     status: "contextual",
+  },
+  {
+    name: "Generic contextual term alone is not contextual",
+    profile: iraqWorkspace,
+    article: {
+      title: "Football analysis after the championship",
+      summary: "The match review focused on team form and tactics.",
+    },
+    status: "not_relevant",
+  },
+  {
+    name: "Single geography mention alone is not direct",
+    profile: iraqWorkspace,
+    article: {
+      title: "Iraq mentioned in global market update",
+      summary: "The article lists several countries without a configured topic or entity.",
+    },
+    status: "not_relevant",
   },
   {
     name: "Exclusion overrides weak inclusion",
@@ -259,17 +278,56 @@ assert.equal(evaluateWorkspaceRelevance(sameArticle, iraqWorkspace).relevanceSta
 assert.equal(evaluateWorkspaceRelevance(sameArticle, tourismNgoWorkspace).relevanceStatus, "direct_scope_match");
 assert.equal(evaluateWorkspaceRelevance(sameArticle, globalNewsroom).relevanceStatus, "direct_scope_match");
 
+for (const [code, name] of [
+  ["PH", "Philippines"],
+  ["VN", "Vietnam"],
+  ["KE", "Kenya"],
+  ["BR", "Brazil"],
+  ["ZA", "South Africa"],
+  ["JP", "Japan"],
+  ["MX", "Mexico"],
+] as const) {
+  assert.equal(normalizeCountryCode(code), code);
+  const profile: WorkspaceProfile = {
+    id: 100,
+    clientId: 100,
+    name: `${name} Desk`,
+    scopeMode: "single_country",
+    primaryCountryCodes: [code],
+    topics: ["government"],
+  };
+  const result = evaluateWorkspaceRelevance({
+    title: `${name} government announces new policy`,
+    summary: "Officials said the cabinet decision will be implemented this year.",
+  }, profile);
+  assert.equal(result.relevanceStatus, "direct_scope_match", `${code} should resolve ${name} without manual alias`);
+}
+
+assert.deepEqual(countryCodesInNaturalText("Officials told us the results"), [], "ordinary us must not match United States");
+assert.equal(evaluateWorkspaceRelevance({
+  title: "Oil prices rise as United States officials comment",
+  summary: "The story discusses global oil prices without Iraq or bilateral evidence.",
+}, bilateralWorkspace).relevanceStatus === "direct_scope_match", false);
+
 const clear = evaluateWorkspaceRelevance({
   title: "Iraq announces new oil export figures",
   summary: "The oil ministry said revenue increased.",
 }, iraqWorkspace);
-assert.equal(shouldUseAiFallbackForRelevance(clear), false, "clear deterministic cases should not call AI");
+assert.equal(shouldUseAiFallbackForRelevance(clear, iraqWorkspace), false, "clear deterministic cases should not call AI");
 
 const ambiguous = evaluateWorkspaceRelevance({ title: "Official statement" }, iraqWorkspace);
 assert.equal(ambiguous.relevanceStatus, "needs_review");
-assert.equal(shouldUseAiFallbackForRelevance(ambiguous), true, "ambiguous cases may call AI");
+assert.equal(shouldUseAiFallbackForRelevance(ambiguous, iraqWorkspace), true, "ambiguous cases may call AI");
 
-assert.equal(normalizeAiWorkspaceRelevanceResult({ relevanceStatus: "direct_iraq", confidence: 90 })?.relevanceStatus, "needs_review");
+const confidenceSeventy = { ...clear, confidence: 70, aiRequired: undefined };
+assert.equal(shouldUseAiFallbackForRelevance(confidenceSeventy, { ...iraqWorkspace, minimumConfidence: 80 }), true);
+assert.equal(shouldUseAiFallbackForRelevance(confidenceSeventy, { ...iraqWorkspace, minimumConfidence: 60 }), false);
+
+assert.equal(normalizeAiWorkspaceRelevanceResult(null).relevanceStatus, "needs_review");
+assert.equal(normalizeAiWorkspaceRelevanceResult([]).relevanceStatus, "needs_review");
+assert.equal(normalizeAiWorkspaceRelevanceResult({ confidence: 90 }).relevanceStatus, "needs_review");
+assert.equal(normalizeAiWorkspaceRelevanceResult({ relevanceStatus: "direct_iraq", confidence: 90 }).relevanceStatus, "needs_review");
+assert.equal(normalizeAiWorkspaceRelevanceResult({ relevanceStatus: "direct_scope_match", confidence: "high" }).evaluationMethod, "ai");
 assert.equal(aiFailureWorkspaceRelevanceResult().relevanceStatus, "needs_review");
 
 assert.deepEqual(ARTICLE_RELEVANCE_STATUSES, [
@@ -318,22 +376,40 @@ assert(routes.includes("app.post(\"/api/workspaces/:workspaceId/relevance/previe
 assert(routes.includes("writes: false"), "preview endpoint must declare no writes");
 assert(!routes.includes("storage.updateArticleRelevance"), "routes still write global article relevance");
 assert(routes.includes("workspace.clientId !== clientId") || routes.includes("workspace.clientId !== clientId"), "tenant isolation check missing");
+assert(routes.includes("resolveWorkspaceArticleQueryScope"), "central workspace article-query scope helper missing");
+assert(routes.includes("getDefaultRelevanceStatuses({ includeContextual"), "workspace output default relevance statuses missing");
+assert(routes.includes("validateSavedFeedViewWorkspace"), "saved feed workspace validation missing");
 
 const storage = read("server/storage.ts");
 assert(storage.includes("FROM article_workspace_relevance awr"), "article filtering must use article_workspace_relevance");
 assert(!storage.includes("articles.relevanceStatus"), "storage still reads global article relevance");
+assert(storage.includes("assertWorkspaceArticleTenant"), "storage tenant-integrity guard missing");
+assert(storage.includes("workspace.clientId !== article.clientId"), "cross-tenant workspace/article mismatch check missing");
+assert(storage.includes("analyticsRelevanceSql"), "workspace analytics relevance SQL helper missing");
 
 const feedWorker = read("server/feed-worker.ts");
 assert(feedWorker.includes("relevanceEvaluation.byWorkspace.length === 0"), "ingestion must not store articles without workspace relevance");
+assert(feedWorker.includes("!client?.aiEnabled"), "AI-disabled tenant guard missing");
+
+const analyticsWorker = read("server/analytics-worker.ts");
+assert(analyticsWorker.includes("buildAnalyticsCacheKey"), "analytics cache-key helper missing");
+assert(analyticsWorker.includes("workspace_${input.workspaceId}"), "analytics cache key must include workspace");
+assert(analyticsWorker.includes("statusPart"), "analytics cache key must include relevance status set");
+assert(analyticsWorker.includes("contextualPart"), "analytics cache key must include contextual setting");
 
 const migration = read("scripts/migrate-workspace-relevance.cjs");
 assert(migration.includes("ADD COLUMN IF NOT EXISTS"), "migration is not idempotent for workspace columns");
 assert(migration.includes("CREATE TABLE IF NOT EXISTS workspace_relevance_profiles"), "migration does not create profile table idempotently");
 assert(migration.includes("CREATE TABLE IF NOT EXISTS article_workspace_relevance"), "migration does not create article-workspace relevance table idempotently");
+assert(migration.includes("pg_advisory_xact_lock"), "migration apply must use advisory lock");
+assert(migration.includes("missingCheckConstraints"), "migration dry-run must report missing check constraints");
+assert(migration.includes("article_workspace_relevance_workspace_client_fk"), "migration must add tenant-consistency workspace FK");
 
 const backfill = read("scripts/backfill-workspace-relevance.ts");
 assert(backfill.includes("dryRun: true"), "backfill must default to dry-run");
 assert(backfill.includes("Backfill requires --workspace-id <id> or --all-workspaces"), "backfill must require workspace scope");
+assert(backfill.includes("workspace_relevance_history"), "backfill apply must write relevance history");
+assert(backfill.includes("evaluator_version"), "backfill must compare evaluator version");
 assert(!backfill.includes(".insert(clients)") && !backfill.includes(".insert(sources)") && !backfill.includes(".insert(articles)") && !backfill.includes(".insert(workspaces)"), "backfill creates production records");
 
 console.log("Workspace relevance engine tests passed");

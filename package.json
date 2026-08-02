@@ -27,6 +27,7 @@
     "test:article-classifier": "tsx scripts/test-article-classifier.ts",
     "test:workspace-relevance": "tsx scripts/test-workspace-relevance.ts",
     "test:workspace-relevance-backfill": "tsx scripts/test-workspace-relevance-backfill.ts",
+    "test:workspace-relevance-migration": "node scripts/test-workspace-relevance-migration.cjs",
     "test:iraq-taxonomy-migration": "node scripts/test-iraq-taxonomy-migration.cjs",
     "test:reset-platform": "node scripts/test-reset-platform.cjs && tsx scripts/test-user-scope-validation.ts",
     "test:zero-state-periodic-jobs": "tsx scripts/test-zero-state-periodic-jobs.ts",

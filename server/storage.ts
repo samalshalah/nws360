@@ -112,11 +112,32 @@ import {
   type AiUsageLog, type InsertAiUsageLog,
 } from "@shared/schema";
 import { normalizeUserScopeClientAssignment } from "@shared/user-scope";
-import { eq, like, and, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
+import { eq, like, and, or, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
 const AUTO_PAUSE_THRESHOLD_DB = 5;
-const DEFAULT_ANALYTICS_RELEVANCE_SQL = sql``;
-const DEFAULT_ANALYTICS_RELEVANCE_SQL_A = sql``;
+
+export type WorkspaceAnalyticsScope = {
+  workspaceId?: number;
+  clientId?: number;
+  relevanceStatuses?: ArticleRelevanceStatus[];
+};
+
+function analyticsRelevanceSql(scope?: WorkspaceAnalyticsScope, articleAlias: "articles" | "a" = "articles") {
+  if (!scope?.workspaceId) return sql``;
+  const statuses = scope.relevanceStatuses?.length
+    ? scope.relevanceStatuses
+    : getDefaultRelevanceStatuses();
+  const articleId = articleAlias === "a" ? sql`a.id` : sql`articles.id`;
+  const clientFilter = scope.clientId ? sql`AND awr.client_id = ${scope.clientId}` : sql``;
+  return sql`AND EXISTS (
+    SELECT 1
+      FROM article_workspace_relevance awr
+     WHERE awr.article_id = ${articleId}
+       AND awr.workspace_id = ${scope.workspaceId}
+       ${clientFilter}
+       AND awr.relevance_status IN (${sql.join(statuses.map((status) => sql`${status}`), sql`, `)})
+  )`;
+}
 
 function sqlNumberList(values: number[]) {
   return sql.join(values.map(value => sql`${value}`), sql`, `);
@@ -441,7 +462,7 @@ export interface IStorage {
   deleteExpiredArticles(): Promise<number>;
 
   // Analytics
-  getStats(sourceIds?: number[]): Promise<{
+  getStats(sourceIds?: number[], analyticsScope?: WorkspaceAnalyticsScope): Promise<{
     totalArticles: number;
     sourcesCount: number;
     articlesLast24h?: number;
@@ -453,10 +474,10 @@ export interface IStorage {
     topSources24h?: { name: string; count: number }[];
     latestPublishedAt?: Date | null;
   }>;
-  getSentimentTrend(sourceIds?: number[]): Promise<{ date: string; positive: number; negative: number; neutral: number }[]>;
+  getSentimentTrend(sourceIds?: number[], analyticsScope?: WorkspaceAnalyticsScope): Promise<{ date: string; positive: number; negative: number; neutral: number }[]>;
 
   // Analytics - Content Volume
-  getContentVolume(startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
+  getContentVolume(startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope): Promise<{
     timeline: { date: string; count: number }[];
     bySource: { sourceId: number; sourceName: string; count: number }[];
     byHour: { hour: number; count: number }[];
@@ -465,7 +486,7 @@ export interface IStorage {
   }>;
 
   // Analytics - Trending Topics
-  getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
+  getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope): Promise<{
     topics: { topic: string; count: number; sentiment: string; previousCount?: number; trendScore?: number }[];
     topicTimeline: { date: string; topic: string; count: number }[];
     byCategory: { category: string; count: number }[];
@@ -473,14 +494,14 @@ export interface IStorage {
   }>;
 
   // Analytics - Keyword Analysis
-  getKeywordAnalysis(startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
+  getKeywordAnalysis(startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope): Promise<{
     topKeywords: { keyword: string; count: number; avgSentiment: number; previousCount?: number; trendScore?: number }[];
     keywordTimeline: { date: string; keyword: string; count: number }[];
     method?: string;
   }>;
 
   // Analytics - Sentiment Reports
-  getSentimentReports(startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
+  getSentimentReports(startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope): Promise<{
     overall: { positive: number; negative: number; neutral: number };
     bySource: { sourceId: number; sourceName: string; positive: number; negative: number; neutral: number }[];
     timeline: { date: string; positive: number; negative: number; neutral: number }[];
@@ -489,7 +510,7 @@ export interface IStorage {
   }>;
 
   // Analytics - Source Behavior
-  getSourceBehavior(startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
+  getSourceBehavior(startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope): Promise<{
     sources: {
       sourceId: number;
       sourceName: string;
@@ -509,13 +530,13 @@ export interface IStorage {
     diversity: { sourceType: string; count: number }[];
   }>;
 
-  getNarrativeComparison(topic: string, startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
+  getNarrativeComparison(topic: string, startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope): Promise<{
     topic: string;
     sources: { sourceId: number; sourceName: string; positive: number; negative: number; neutral: number; total: number }[];
     hasContrast: boolean;
   }>;
 
-  getAnalyticsDailyBrief(date: string, sourceIds?: number[], clientId?: number): Promise<{
+  getAnalyticsDailyBrief(date: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope): Promise<{
     date: string;
     topStories: { title: string; url: string; sourceName: string; sentiment: string }[];
     biggestTopic: string;
@@ -523,7 +544,7 @@ export interface IStorage {
     sourceSpike: { sourceName: string; count: number; avgCount: number } | null;
   }>;
 
-  getKeywordDetail(keyword: string, startDate: string, endDate: string, sourceIds?: number[], clientId?: number): Promise<{
+  getKeywordDetail(keyword: string, startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope): Promise<{
     keyword: string;
     frequency: { date: string; count: number }[];
     topSources: { sourceName: string; count: number }[];
@@ -939,6 +960,29 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  private async assertWorkspaceArticleTenant(
+    data: { workspaceId: number; articleId: number; clientId: number },
+    options?: { requireActiveWorkspace?: boolean },
+  ): Promise<void> {
+    const [workspace] = await db.select({
+      id: workspaces.id,
+      clientId: workspaces.clientId,
+      active: workspaces.active,
+    }).from(workspaces).where(eq(workspaces.id, data.workspaceId)).limit(1);
+    const [article] = await db.select({
+      id: articles.id,
+      clientId: articles.clientId,
+    }).from(articles).where(eq(articles.id, data.articleId)).limit(1);
+
+    if (!workspace || !article) throw new TenantNotFoundError();
+    if (workspace.clientId !== article.clientId || workspace.clientId !== data.clientId) {
+      throw new TenantNotFoundError();
+    }
+    if (options?.requireActiveWorkspace && workspace.active === false) {
+      throw new TenantNotFoundError();
+    }
+  }
+
   // Users
   async getUser(id: number): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
@@ -1319,6 +1363,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertArticleWorkspaceRelevance(data: InsertArticleWorkspaceRelevance): Promise<ArticleWorkspaceRelevance> {
+    await this.assertWorkspaceArticleTenant(
+      { workspaceId: data.workspaceId, articleId: data.articleId, clientId: data.clientId },
+      { requireActiveWorkspace: data.evaluationMethod !== "manual" && !data.manualOverride && !data.reopenedAt },
+    );
     const existing = await this.getArticleWorkspaceRelevance(data.articleId, data.workspaceId, data.clientId);
     const [entry] = await db.insert(articleWorkspaceRelevance)
       .values(data)
@@ -1354,7 +1402,19 @@ export class DatabaseStorage implements IStorage {
       if (existing) return existing;
       throw new Error("Article workspace relevance upsert failed");
     }
-    if (!existing || existing.relevanceStatus !== entry.relevanceStatus || existing.confidence !== entry.confidence || data.manualOverride || data.reopenedAt) {
+    const changed = !existing ||
+      existing.relevanceStatus !== entry.relevanceStatus ||
+      existing.confidence !== entry.confidence ||
+      existing.shortReason !== entry.shortReason ||
+      existing.evaluationMethod !== entry.evaluationMethod ||
+      existing.evaluatorVersion !== entry.evaluatorVersion ||
+      JSON.stringify(existing.matchedScope ?? {}) !== JSON.stringify(entry.matchedScope ?? {}) ||
+      JSON.stringify(existing.principalCountryCodes ?? []) !== JSON.stringify(entry.principalCountryCodes ?? []) ||
+      JSON.stringify(existing.materiallyAffectedCountryCodes ?? []) !== JSON.stringify(entry.materiallyAffectedCountryCodes ?? []) ||
+      JSON.stringify(existing.supportingSignals ?? []) !== JSON.stringify(entry.supportingSignals ?? []) ||
+      Boolean(data.manualOverride) ||
+      Boolean(data.reopenedAt);
+    if (changed) {
       await this.createWorkspaceRelevanceHistory({
         clientId: entry.clientId,
         workspaceId: entry.workspaceId,
@@ -1385,6 +1445,13 @@ export class DatabaseStorage implements IStorage {
     const statuses = options?.includeContextual
       ? ["needs_review", "contextual"]
       : ["needs_review"];
+    const reviewStatusCondition = or(
+      inArray(articleWorkspaceRelevance.relevanceStatus, statuses),
+      and(
+        eq(articleWorkspaceRelevance.relevanceStatus, "material_scope_impact"),
+        lte(articleWorkspaceRelevance.confidence, 65),
+      ),
+    );
     const rows = await db.select({
       relevance: articleWorkspaceRelevance,
       article: articles,
@@ -1394,7 +1461,8 @@ export class DatabaseStorage implements IStorage {
       .where(and(
         eq(articleWorkspaceRelevance.workspaceId, workspaceId),
         eq(articleWorkspaceRelevance.clientId, clientId),
-        inArray(articleWorkspaceRelevance.relevanceStatus, statuses),
+        eq(articles.clientId, clientId),
+        reviewStatusCondition,
       ))
       .orderBy(asc(articleWorkspaceRelevance.confidence), desc(articleWorkspaceRelevance.evaluatedAt))
       .limit(options?.limit ?? 100);
@@ -1402,6 +1470,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createWorkspaceRelevanceHistory(data: InsertWorkspaceRelevanceHistory): Promise<WorkspaceRelevanceHistory> {
+    await this.assertWorkspaceArticleTenant({
+      workspaceId: data.workspaceId,
+      articleId: data.articleId,
+      clientId: data.clientId,
+    });
     const [entry] = await db.insert(workspaceRelevanceHistory).values(data).returning();
     return entry;
   }
@@ -1765,7 +1838,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Analytics
-  async getStats(sourceIds?: number[]) {
+  async getStats(sourceIds?: number[], analyticsScope?: WorkspaceAnalyticsScope) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return {
         totalArticles: 0,
@@ -1781,8 +1854,10 @@ export class DatabaseStorage implements IStorage {
     const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const sourceIdFilter = sourceIds ? sql`AND sources.id IN (${sqlNumberList(sourceIds)})` : sql``;
     const joinedSourceIdFilter = sourceIds ? sql`AND s.id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const relevanceFilter = analyticsRelevanceSql(analyticsScope);
+    const relevanceFilterA = analyticsRelevanceSql(analyticsScope, "a");
 
-    const totalArticlesRows = await db.execute(sql`SELECT COUNT(*)::int as count FROM articles WHERE 1=1 ${sourceFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}`);
+    const totalArticlesRows = await db.execute(sql`SELECT COUNT(*)::int as count FROM articles WHERE 1=1 ${sourceFilter} ${relevanceFilter}`);
     const totalArticles = Number((totalArticlesRows.rows[0] as any)?.count || 0);
 
     const sourcesCountRows = await db.execute(sql`SELECT COUNT(*)::int as count FROM sources WHERE 1=1 ${sourceIdFilter}`);
@@ -1794,7 +1869,7 @@ export class DatabaseStorage implements IStorage {
         COALESCE(sentiment_label, 'neutral') as label,
         COUNT(*)::int as count
       FROM articles
-      WHERE 1=1 ${sourceFilter} ${aiFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE 1=1 ${sourceFilter} ${aiFilter} ${relevanceFilter}
       GROUP BY sentiment_label
     `);
     const sentimentDistribution = (sentimentRows.rows as any[]).map((r: any) => ({
@@ -1819,7 +1894,7 @@ export class DatabaseStorage implements IStorage {
         category,
         sentiment_score as "sentimentScore"
       FROM articles
-      WHERE published_at >= NOW() - INTERVAL '7 days' ${sourceFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= NOW() - INTERVAL '7 days' ${sourceFilter} ${relevanceFilter}
     `);
     const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 10, 5, 2, {
       mode: "keyword",
@@ -1834,7 +1909,7 @@ export class DatabaseStorage implements IStorage {
       SELECT COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as name, COUNT(a.id)::int as count
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE 1=1 ${joinedSourceIdFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL_A}
+      WHERE 1=1 ${joinedSourceIdFilter} ${relevanceFilterA}
       GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       ORDER BY count DESC
       LIMIT 5
@@ -1847,7 +1922,7 @@ export class DatabaseStorage implements IStorage {
     const last24Rows = await db.execute(sql`
       SELECT COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= NOW() - INTERVAL '24 hours' ${sourceFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= NOW() - INTERVAL '24 hours' ${sourceFilter} ${relevanceFilter}
     `);
     const articlesLast24h = Number((last24Rows.rows[0] as any)?.count || 0);
 
@@ -1856,21 +1931,21 @@ export class DatabaseStorage implements IStorage {
       FROM articles
       WHERE published_at >= NOW() - INTERVAL '48 hours'
         AND published_at < NOW() - INTERVAL '24 hours'
-        ${sourceFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+        ${sourceFilter} ${relevanceFilter}
     `);
     const articlesPrevious24h = Number((previous24Rows.rows[0] as any)?.count || 0);
 
     const activeSourcesRows = await db.execute(sql`
       SELECT COUNT(DISTINCT source_id)::int as count
       FROM articles
-      WHERE published_at >= NOW() - INTERVAL '24 hours' ${sourceFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= NOW() - INTERVAL '24 hours' ${sourceFilter} ${relevanceFilter}
     `);
     const activeSources24h = Number((activeSourcesRows.rows[0] as any)?.count || 0);
 
     const categoryRows = await db.execute(sql`
       SELECT COALESCE(category, 'other') as category, COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= NOW() - INTERVAL '7 days' ${sourceFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= NOW() - INTERVAL '7 days' ${sourceFilter} ${relevanceFilter}
       GROUP BY COALESCE(category, 'other')
     `);
     const categoryBreakdown = mergeArticleCategoryRows((categoryRows.rows as any[]).map((r: any) => ({
@@ -1882,7 +1957,7 @@ export class DatabaseStorage implements IStorage {
       SELECT COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown') as name, COUNT(a.id)::int as count
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= NOW() - INTERVAL '24 hours' ${joinedSourceIdFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL_A}
+      WHERE a.published_at >= NOW() - INTERVAL '24 hours' ${joinedSourceIdFilter} ${relevanceFilterA}
       GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       ORDER BY count DESC
       LIMIT 5
@@ -1895,7 +1970,7 @@ export class DatabaseStorage implements IStorage {
     const latestRows = await db.execute(sql`
       SELECT MAX(COALESCE(published_at, ingested_at, created_at)) as latest
       FROM articles
-      WHERE 1=1 ${sourceFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE 1=1 ${sourceFilter} ${relevanceFilter}
     `);
     const latestValue = (latestRows.rows[0] as any)?.latest;
     const latestPublishedAt = latestValue ? new Date(latestValue) : null;
@@ -1915,12 +1990,13 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getSentimentTrend(sourceIds?: number[]): Promise<{ date: string; positive: number; negative: number; neutral: number }[]> {
+  async getSentimentTrend(sourceIds?: number[], analyticsScope?: WorkspaceAnalyticsScope): Promise<{ date: string; positive: number; negative: number; neutral: number }[]> {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return [];
     }
     const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const aiFilter = sql`AND (ai_analysis_status = 'success' OR ai_analysis_status IS NULL)`;
+    const relevanceFilter = analyticsRelevanceSql(analyticsScope);
     const rows = await db.execute(sql`
       SELECT
         TO_CHAR(published_at, 'YYYY-MM-DD') as date,
@@ -1928,7 +2004,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= NOW() - INTERVAL '30 days' ${sourceFilter} ${aiFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= NOW() - INTERVAL '30 days' ${sourceFilter} ${aiFilter} ${relevanceFilter}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
     `);
@@ -1940,7 +2016,8 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  private async getAnalyticsConfidence(start: Date, end: Date, sourceFilter: any, clientFilter: any) {
+  private async getAnalyticsConfidence(start: Date, end: Date, sourceFilter: any, clientFilter: any, analyticsScope?: WorkspaceAnalyticsScope) {
+    const relevanceFilter = analyticsRelevanceSql(analyticsScope);
     const rows = await db.execute(sql`
       SELECT
         COUNT(*)::int as "totalCount",
@@ -1948,7 +2025,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE ai_analysis_status = 'failed')::int as "failedCount",
         COUNT(*) FILTER (WHERE ai_analysis_status = 'pending_retry')::int as "pendingRetryCount"
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${relevanceFilter}
     `);
     const r = rows.rows[0] as any;
     return {
@@ -1959,7 +2036,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getContentVolume(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
+  async getContentVolume(startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return { timeline: [], bySource: [], byHour: [], peaks: [], confidence: { totalCount: 0, analyzedCount: 0, failedCount: 0, pendingRetryCount: 0 } };
     }
@@ -1969,11 +2046,13 @@ export class DatabaseStorage implements IStorage {
     const sourceFilterA = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
+    const relevanceFilter = analyticsRelevanceSql(analyticsScope);
+    const relevanceFilterA = analyticsRelevanceSql(analyticsScope, "a");
 
     const timelineRows = await db.execute(sql`
       SELECT TO_CHAR(published_at, 'YYYY-MM-DD') as date, COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${relevanceFilter}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
     `);
@@ -1985,7 +2064,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*)::int as count
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${DEFAULT_ANALYTICS_RELEVANCE_SQL_A}
+      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${relevanceFilterA}
       GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       ORDER BY count DESC
       LIMIT 20
@@ -1994,7 +2073,7 @@ export class DatabaseStorage implements IStorage {
     const byHourRows = await db.execute(sql`
       SELECT EXTRACT(HOUR FROM published_at)::int as hour, COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${relevanceFilter}
       GROUP BY EXTRACT(HOUR FROM published_at)
       ORDER BY hour ASC
     `);
@@ -2004,7 +2083,7 @@ export class DatabaseStorage implements IStorage {
     const avgCount = timeline.length > 0 ? timeline.reduce((s, t) => s + t.count, 0) / timeline.length : 0;
     const peaks = timeline.filter(t => t.count > avgCount * 1.5).sort((a, b) => b.count - a.count).slice(0, 5);
 
-    const confidence = await this.getAnalyticsConfidence(start, end, sourceFilter, clientFilter);
+    const confidence = await this.getAnalyticsConfidence(start, end, sourceFilter, clientFilter, analyticsScope);
 
     return {
       timeline,
@@ -2019,7 +2098,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
+  async getTrendingTopics(startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return { topics: [], topicTimeline: [], byCategory: [], method: "non-ai-phrases" };
     }
@@ -2028,6 +2107,7 @@ export class DatabaseStorage implements IStorage {
     const previousWindow = getPreviousAnalyticsWindow(start, end);
     const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
+    const relevanceFilter = analyticsRelevanceSql(analyticsScope);
 
     const termRows = await db.execute(sql`
       SELECT
@@ -2039,7 +2119,7 @@ export class DatabaseStorage implements IStorage {
         category,
         sentiment_score as "sentimentScore"
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${relevanceFilter}
     `);
     const previousTermRows = await db.execute(sql`
       SELECT
@@ -2051,7 +2131,7 @@ export class DatabaseStorage implements IStorage {
         category,
         sentiment_score as "sentimentScore"
       FROM articles
-      WHERE published_at >= ${previousWindow.start} AND published_at < ${previousWindow.end} ${sourceFilter} ${clientFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${previousWindow.start} AND published_at < ${previousWindow.end} ${sourceFilter} ${clientFilter} ${relevanceFilter}
     `);
     const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 20, 8, 2, {
       mode: "topic",
@@ -2062,7 +2142,7 @@ export class DatabaseStorage implements IStorage {
     const categoryRows = await db.execute(sql`
       SELECT COALESCE(category, 'other') as category, COUNT(*)::int as count
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${relevanceFilter}
       GROUP BY COALESCE(category, 'other')
     `);
 
@@ -2083,7 +2163,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getKeywordAnalysis(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
+  async getKeywordAnalysis(startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return { topKeywords: [], keywordTimeline: [] };
     }
@@ -2092,6 +2172,7 @@ export class DatabaseStorage implements IStorage {
     const previousWindow = getPreviousAnalyticsWindow(start, end);
     const sourceFilter = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND client_id = ${clientId}` : sql``;
+    const relevanceFilter = analyticsRelevanceSql(analyticsScope);
 
     const termRows = await db.execute(sql`
       SELECT
@@ -2103,7 +2184,7 @@ export class DatabaseStorage implements IStorage {
         category,
         sentiment_score as "sentimentScore"
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${relevanceFilter}
     `);
     const previousTermRows = await db.execute(sql`
       SELECT
@@ -2115,7 +2196,7 @@ export class DatabaseStorage implements IStorage {
         category,
         sentiment_score as "sentimentScore"
       FROM articles
-      WHERE published_at >= ${previousWindow.start} AND published_at < ${previousWindow.end} ${sourceFilter} ${clientFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${previousWindow.start} AND published_at < ${previousWindow.end} ${sourceFilter} ${clientFilter} ${relevanceFilter}
     `);
     const termStats = buildAnalyticsTermSnapshot(termRows.rows as unknown as AnalyticsTextRow[], 25, 10, 2, {
       mode: "keyword",
@@ -2136,7 +2217,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getSentimentReports(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
+  async getSentimentReports(startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return {
         overall: { positive: 0, negative: 0, neutral: 0 },
@@ -2154,6 +2235,8 @@ export class DatabaseStorage implements IStorage {
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
     const aiFilter = sql`AND (ai_analysis_status = 'success' OR ai_analysis_status IS NULL)`;
     const aiFilterA = sql`AND (a.ai_analysis_status = 'success' OR a.ai_analysis_status IS NULL)`;
+    const relevanceFilter = analyticsRelevanceSql(analyticsScope);
+    const relevanceFilterA = analyticsRelevanceSql(analyticsScope, "a");
 
     const overallRows = await db.execute(sql`
       SELECT
@@ -2161,7 +2244,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter} ${relevanceFilter}
     `);
     const overall = overallRows.rows[0] as any;
 
@@ -2174,7 +2257,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE a.sentiment_label = 'neutral' OR a.sentiment_label IS NULL)::int as neutral
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${aiFilterA} ${DEFAULT_ANALYTICS_RELEVANCE_SQL_A}
+      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${aiFilterA} ${relevanceFilterA}
       GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       ORDER BY (COUNT(*) FILTER (WHERE a.sentiment_label = 'positive') + COUNT(*) FILTER (WHERE a.sentiment_label = 'negative') + COUNT(*) FILTER (WHERE a.sentiment_label = 'neutral' OR a.sentiment_label IS NULL)) DESC
       LIMIT 15
@@ -2186,7 +2269,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter} ${relevanceFilter}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
     `);
@@ -2197,7 +2280,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${start} AND published_at <= ${end} ${sourceFilter} ${clientFilter} ${aiFilter} ${relevanceFilter}
       GROUP BY COALESCE(category, 'other')
     `);
 
@@ -2226,11 +2309,11 @@ export class DatabaseStorage implements IStorage {
         negative: Number(r.negative),
         neutral: Number(r.neutral),
       }))),
-      confidence: await this.getAnalyticsConfidence(start, end, sourceFilter, clientFilter),
+      confidence: await this.getAnalyticsConfidence(start, end, sourceFilter, clientFilter, analyticsScope),
     };
   }
 
-  async getSourceBehavior(startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
+  async getSourceBehavior(startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return { sources: [], publishers: [], diversity: [] };
     }
@@ -2241,6 +2324,7 @@ export class DatabaseStorage implements IStorage {
     const sourceFilterA = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
     const clientFilterS = clientId ? sql`AND s.client_id = ${clientId}` : sql``;
+    const relevanceFilterA = analyticsRelevanceSql(analyticsScope, "a");
 
     const sourceRows = await db.execute(sql`
       SELECT
@@ -2249,7 +2333,7 @@ export class DatabaseStorage implements IStorage {
         MODE() WITHIN GROUP (ORDER BY a.sentiment_label) as "dominantSentiment",
         COUNT(DISTINCT unnest_kw)::int as "uniqueKeywords"
       FROM sources s
-      LEFT JOIN articles a ON a.source_id = s.id AND a.published_at >= ${start} AND a.published_at <= ${end} AND COALESCE(a.relevance_status, 'direct_scope_match') IN ('direct_scope_match', 'material_scope_impact')
+      LEFT JOIN articles a ON a.source_id = s.id AND a.published_at >= ${start} AND a.published_at <= ${end} ${relevanceFilterA}
       LEFT JOIN LATERAL unnest(a.keywords) as unnest_kw ON true
       WHERE 1=1 ${sourceIdFilter} ${clientFilterS}
       GROUP BY s.id, s.name, s.type
@@ -2267,7 +2351,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(DISTINCT a.id)::int as "articleCount"
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${DEFAULT_ANALYTICS_RELEVANCE_SQL_A}
+      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${relevanceFilterA}
       GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       ORDER BY "articleCount" DESC, "publisherName" ASC
       LIMIT 20
@@ -2277,7 +2361,7 @@ export class DatabaseStorage implements IStorage {
       SELECT s.type as "sourceType", COUNT(DISTINCT a.id)::int as count
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${DEFAULT_ANALYTICS_RELEVANCE_SQL_A}
+      WHERE a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilterA} ${clientFilterA} ${relevanceFilterA}
       GROUP BY s.type
       ORDER BY count DESC
     `);
@@ -2306,7 +2390,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getNarrativeComparison(topic: string, startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
+  async getNarrativeComparison(topic: string, startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return { topic, sources: [], hasContrast: false };
     }
@@ -2314,6 +2398,7 @@ export class DatabaseStorage implements IStorage {
     const end = new Date(endDate);
     const sourceFilter = sourceIds ? sql`AND a.source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilterA = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
+    const relevanceFilterA = analyticsRelevanceSql(analyticsScope, "a");
 
     const rows = await db.execute(sql`
       SELECT
@@ -2327,7 +2412,7 @@ export class DatabaseStorage implements IStorage {
       LEFT JOIN sources s ON a.source_id = s.id
       WHERE (a.keywords IS NOT NULL AND ${topic} = ANY(a.keywords))
         AND a.published_at >= ${start} AND a.published_at <= ${end}
-        ${sourceFilter} ${clientFilterA} ${DEFAULT_ANALYTICS_RELEVANCE_SQL_A}
+        ${sourceFilter} ${clientFilterA} ${relevanceFilterA}
       GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       HAVING COUNT(*) >= 1
       ORDER BY total DESC
@@ -2364,7 +2449,7 @@ export class DatabaseStorage implements IStorage {
     return { topic, sources: sourcesData, hasContrast };
   }
 
-  async getAnalyticsDailyBrief(date: string, sourceIds?: number[], clientId?: number) {
+  async getAnalyticsDailyBrief(date: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return {
         date,
@@ -2383,6 +2468,8 @@ export class DatabaseStorage implements IStorage {
     const sourceFilterPlain = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
     const clientFilterPlain = clientId ? sql`AND client_id = ${clientId}` : sql``;
+    const relevanceFilter = analyticsRelevanceSql(analyticsScope);
+    const relevanceFilterA = analyticsRelevanceSql(analyticsScope, "a");
 
     const topStoriesRows = await db.execute(sql`
       SELECT
@@ -2392,7 +2479,7 @@ export class DatabaseStorage implements IStorage {
         a.sentiment_label as sentiment
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${dayStart} AND a.published_at <= ${dayEnd} ${sourceFilter} ${clientFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL_A}
+      WHERE a.published_at >= ${dayStart} AND a.published_at <= ${dayEnd} ${sourceFilter} ${clientFilter} ${relevanceFilterA}
       ORDER BY a.published_at DESC
       LIMIT 5
     `);
@@ -2407,7 +2494,7 @@ export class DatabaseStorage implements IStorage {
         category,
         sentiment_score as "sentimentScore"
       FROM articles
-      WHERE published_at >= ${dayStart} AND published_at <= ${dayEnd} ${sourceFilterPlain} ${clientFilterPlain} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${dayStart} AND published_at <= ${dayEnd} ${sourceFilterPlain} ${clientFilterPlain} ${relevanceFilter}
     `);
     const dailyTopicStats = buildAnalyticsTermSnapshot(topicTermRows.rows as unknown as AnalyticsTextRow[], 1, 1, 1, {
       mode: "topic",
@@ -2420,7 +2507,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${dayStart} AND published_at <= ${dayEnd} ${sourceFilterPlain} ${clientFilterPlain} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${dayStart} AND published_at <= ${dayEnd} ${sourceFilterPlain} ${clientFilterPlain} ${relevanceFilter}
     `);
 
     const prevSentimentRows = await db.execute(sql`
@@ -2429,7 +2516,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE sentiment_label = 'negative')::int as negative,
         COUNT(*) FILTER (WHERE sentiment_label = 'neutral' OR sentiment_label IS NULL)::int as neutral
       FROM articles
-      WHERE published_at >= ${prevDayStart} AND published_at < ${dayStart} ${sourceFilterPlain} ${clientFilterPlain} ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+      WHERE published_at >= ${prevDayStart} AND published_at < ${dayStart} ${sourceFilterPlain} ${clientFilterPlain} ${relevanceFilter}
     `);
 
     const spikeRows = await db.execute(sql`
@@ -2438,7 +2525,7 @@ export class DatabaseStorage implements IStorage {
         COUNT(*) FILTER (WHERE a.published_at >= ${prevDayStart} AND a.published_at < ${dayStart})::int as "yesterdayCount"
       FROM articles a
       LEFT JOIN sources s ON a.source_id = s.id
-      WHERE a.published_at >= ${prevDayStart} AND a.published_at <= ${dayEnd} ${sourceFilter} ${clientFilter} ${DEFAULT_ANALYTICS_RELEVANCE_SQL_A}
+      WHERE a.published_at >= ${prevDayStart} AND a.published_at <= ${dayEnd} ${sourceFilter} ${clientFilter} ${relevanceFilterA}
       GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       HAVING COUNT(*) FILTER (WHERE a.published_at >= ${dayStart} AND a.published_at <= ${dayEnd}) > 0
       ORDER BY "todayCount" DESC
@@ -2470,7 +2557,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getKeywordDetail(keyword: string, startDate: string, endDate: string, sourceIds?: number[], clientId?: number) {
+  async getKeywordDetail(keyword: string, startDate: string, endDate: string, sourceIds?: number[], clientId?: number, analyticsScope?: WorkspaceAnalyticsScope) {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return { keyword, frequency: [], topSources: [], sentiment: { positive: 0, negative: 0, neutral: 0 }, headlines: [] };
     }
@@ -2480,13 +2567,15 @@ export class DatabaseStorage implements IStorage {
     const sourceFilterPlain = sourceIds ? sql`AND source_id IN (${sqlNumberList(sourceIds)})` : sql``;
     const clientFilter = clientId ? sql`AND a.client_id = ${clientId}` : sql``;
     const clientFilterPlain = clientId ? sql`AND client_id = ${clientId}` : sql``;
+    const relevanceFilter = analyticsRelevanceSql(analyticsScope);
+    const relevanceFilterA = analyticsRelevanceSql(analyticsScope, "a");
 
     const freqRows = await db.execute(sql`
       SELECT TO_CHAR(published_at, 'YYYY-MM-DD') as date, COUNT(*)::int as count
       FROM articles
       WHERE POSITION(${keyword.toLowerCase()} IN LOWER(CONCAT_WS(' ', title, summary, content))) > 0
         AND published_at >= ${start} AND published_at <= ${end} ${sourceFilterPlain} ${clientFilterPlain}
-        ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+        ${relevanceFilter}
       GROUP BY TO_CHAR(published_at, 'YYYY-MM-DD')
       ORDER BY date ASC
     `);
@@ -2497,7 +2586,7 @@ export class DatabaseStorage implements IStorage {
       JOIN sources s ON a.source_id = s.id
       WHERE POSITION(${keyword.toLowerCase()} IN LOWER(CONCAT_WS(' ', a.title, a.summary, a.content))) > 0
         AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilter} ${clientFilter}
-        ${DEFAULT_ANALYTICS_RELEVANCE_SQL_A}
+        ${relevanceFilterA}
       GROUP BY COALESCE(NULLIF(a.sub_source, ''), s.name, 'Unknown')
       ORDER BY count DESC
       LIMIT 10
@@ -2511,7 +2600,7 @@ export class DatabaseStorage implements IStorage {
       FROM articles
       WHERE POSITION(${keyword.toLowerCase()} IN LOWER(CONCAT_WS(' ', title, summary, content))) > 0
         AND published_at >= ${start} AND published_at <= ${end} ${sourceFilterPlain} ${clientFilterPlain}
-        ${DEFAULT_ANALYTICS_RELEVANCE_SQL}
+        ${relevanceFilter}
     `);
 
     const headlineRows = await db.execute(sql`
@@ -2525,7 +2614,7 @@ export class DatabaseStorage implements IStorage {
       JOIN sources s ON a.source_id = s.id
       WHERE POSITION(${keyword.toLowerCase()} IN LOWER(CONCAT_WS(' ', a.title, a.summary, a.content))) > 0
         AND a.published_at >= ${start} AND a.published_at <= ${end} ${sourceFilter} ${clientFilter}
-        ${DEFAULT_ANALYTICS_RELEVANCE_SQL_A}
+        ${relevanceFilterA}
       ORDER BY a.published_at DESC
       LIMIT 20
     `);

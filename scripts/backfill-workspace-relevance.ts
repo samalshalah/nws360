@@ -82,7 +82,14 @@ type ArticleRow = {
 type ExistingRelevanceRow = {
   article_id: number;
   relevance_status: string;
+  confidence: number;
+  short_reason: string | null;
+  matched_scope: unknown;
+  principal_country_codes: string[] | null;
+  materially_affected_country_codes: string[] | null;
+  supporting_signals: unknown;
   evaluation_method: string;
+  evaluator_version: string;
   manual_override: boolean;
 };
 
@@ -336,15 +343,47 @@ async function loadArticleBatch(client: pg.Client, workspace: WorkspaceRow, afte
   return result.rows;
 }
 
-async function loadExistingRelevance(client: pg.Client, workspaceId: number, articleIds: number[]) {
+async function loadExistingRelevance(
+  client: pg.Client,
+  workspaceId: number,
+  articleIds: number[],
+): Promise<Map<number, ExistingRelevanceRow>> {
   if (articleIds.length === 0) return new Map<number, ExistingRelevanceRow>();
   const result = await client.query<ExistingRelevanceRow>(`
-    SELECT article_id, relevance_status, evaluation_method, manual_override
+    SELECT
+      article_id,
+      relevance_status,
+      confidence,
+      short_reason,
+      matched_scope,
+      principal_country_codes,
+      materially_affected_country_codes,
+      supporting_signals,
+      evaluation_method,
+      evaluator_version,
+      manual_override
       FROM article_workspace_relevance
      WHERE workspace_id = $1
        AND article_id = ANY($2::int[])
   `, [workspaceId, articleIds]);
-  return new Map(result.rows.map((row) => [Number(row.article_id), row]));
+  return new Map<number, ExistingRelevanceRow>(result.rows.map((row) => [Number(row.article_id), row]));
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(value ?? null);
+}
+
+function relevanceNeedsUpdate(current: ExistingRelevanceRow | null | undefined, relevance: WorkspaceRelevanceResult): boolean {
+  if (!current) return true;
+  return current.relevance_status !== relevance.relevanceStatus ||
+    Number(current.confidence) !== relevance.confidence ||
+    (current.short_reason || "") !== (relevance.shortReason || "") ||
+    current.evaluation_method !== relevance.evaluationMethod ||
+    current.evaluator_version !== relevance.evaluatorVersion ||
+    stableJson(current.matched_scope || {}) !== stableJson(relevance.matchedScope || {}) ||
+    stableJson(current.principal_country_codes || []) !== stableJson(relevance.principalCountryCodes || []) ||
+    stableJson(current.materially_affected_country_codes || []) !== stableJson(relevance.materiallyAffectedCountryCodes || []) ||
+    stableJson(current.supporting_signals || []) !== stableJson(relevance.supportingSignals || []);
 }
 
 async function upsertRelevance(
@@ -352,6 +391,7 @@ async function upsertRelevance(
   workspace: WorkspaceRow,
   article: ArticleRow,
   relevance: WorkspaceRelevanceResult,
+  current: ExistingRelevanceRow | null | undefined,
 ) {
   await client.query(`
     INSERT INTO article_workspace_relevance (
@@ -401,6 +441,30 @@ async function upsertRelevance(
     JSON.stringify(relevance.supportingSignals || []),
     RELEVANCE_ENGINE_VERSION,
   ]);
+
+  await client.query(`
+    INSERT INTO workspace_relevance_history (
+      client_id,
+      workspace_id,
+      article_id,
+      previous_status,
+      new_status,
+      previous_confidence,
+      new_confidence,
+      evaluation_method,
+      reason,
+      created_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'deterministic', $8, NOW())
+  `, [
+    workspace.client_id,
+    workspace.id,
+    article.id,
+    current?.relevance_status || null,
+    relevance.relevanceStatus,
+    current?.confidence ?? null,
+    relevance.confidence,
+    relevance.shortReason,
+  ]);
 }
 
 async function main() {
@@ -443,6 +507,10 @@ async function main() {
       articleId: number;
       from: string | null;
       to: ArticleRelevanceStatus;
+      previousConfidence: number | null;
+      newConfidence: number;
+      previousEvaluatorVersion: string | null;
+      newEvaluatorVersion: string;
       title: string;
       reason: string;
     }> = [];
@@ -489,7 +557,7 @@ async function main() {
             increment(counts, relevance.relevanceStatus);
             increment(existingCounts, current?.relevance_status || null);
 
-            if (current?.relevance_status === relevance.relevanceStatus && current?.evaluation_method === "deterministic") {
+            if (!relevanceNeedsUpdate(current, relevance)) {
               alreadyCurrent += 1;
               continue;
             }
@@ -499,12 +567,16 @@ async function main() {
               articleId: article.id,
               from: current?.relevance_status || null,
               to: relevance.relevanceStatus,
+              previousConfidence: current?.confidence ?? null,
+              newConfidence: relevance.confidence,
+              previousEvaluatorVersion: current?.evaluator_version || null,
+              newEvaluatorVersion: relevance.evaluatorVersion,
               title: article.title || "",
               reason: relevance.shortReason,
             });
 
             if (args.apply) {
-              await upsertRelevance(client, workspace, article, relevance);
+              await upsertRelevance(client, workspace, article, relevance, current);
             }
           }
           reachedLimit = Boolean(args.limit && evaluated >= args.limit);

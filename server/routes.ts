@@ -31,11 +31,14 @@ import { normalizeSourceFilterConfig, sourceFilterConfigSchema } from "@shared/s
 import { classifyFeedImportRow, normalizeSourceImportKey, type ClassifiedFeedImportRow, type FeedImportInputRow } from "@shared/source-import";
 import {
   ARTICLE_RELEVANCE_STATUSES,
+  RELEVANCE_ENGINE_VERSION,
   WORKSPACE_PURPOSES,
   WORKSPACE_SCOPE_MODES,
   evaluateWorkspaceRelevance,
+  getDefaultRelevanceStatuses,
   normalizeWorkspaceProfile,
   isArticleRelevanceStatus,
+  type ArticleRelevanceStatus,
   type WorkspaceProfile,
 } from "@shared/workspace-relevance";
 import { discoverPublisherCategories, type DiscoveredPublisherCategory } from "./publisher-discovery";
@@ -614,29 +617,43 @@ function buildArticleWorkflowUpdates(input: z.infer<typeof articleWorkflowUpdate
   return updates;
 }
 
-function normalizeSavedFeedViewFilters(input: z.infer<typeof savedFeedViewFiltersSchema>): Record<string, string> {
-  const filters: Record<string, string> = {};
+function normalizeSavedFeedViewFilters(input: z.infer<typeof savedFeedViewFiltersSchema>): Record<string, unknown> {
+  const filters: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input)) {
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (!trimmed) continue;
-    filters[key] = trimmed;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) filters[key] = trimmed;
+    } else if (typeof value === "number" && Number.isFinite(value)) {
+      filters[key] = value;
+    } else if (typeof value === "boolean") {
+      filters[key] = value;
+    }
   }
 
-  if (filters.category && !isArticleCategoryCode(filters.category)) {
+  if (typeof filters.category === "string" && !isArticleCategoryCode(filters.category)) {
     throw new Error(`Invalid category. Use one of: ${ARTICLE_CATEGORIES.map(item => item.code).join(", ")}`);
   }
-  if (filters.priority && !isArticlePriorityCode(filters.priority)) {
+  if (typeof filters.priority === "string" && !isArticlePriorityCode(filters.priority)) {
     throw new Error(`Invalid priority. Use one of: ${ARTICLE_PRIORITIES.map(item => item.code).join(", ")}`);
   }
-  if (filters.province && !isIraqProvinceCode(filters.province)) {
+  if (typeof filters.province === "string" && !isIraqProvinceCode(filters.province)) {
     throw new Error(`Invalid province. Use one of: ${IRAQ_PROVINCES.map(item => item.code).join(", ")}`);
   }
-  if (filters.workflowStatus && !isArticleWorkflowStatusCode(filters.workflowStatus)) {
+  if (typeof filters.workflowStatus === "string" && !isArticleWorkflowStatusCode(filters.workflowStatus)) {
     throw new Error(`Invalid workflow status. Use one of: ${ARTICLE_WORKFLOW_STATUSES.map(item => item.code).join(", ")}`);
   }
 
   return filters;
+}
+
+async function validateSavedFeedViewWorkspace(filters: Record<string, unknown>, clientId: number, res: any): Promise<boolean> {
+  const workspaceId = typeof filters.workspaceId === "number"
+    ? filters.workspaceId
+    : typeof filters.workspaceId === "string"
+      ? Number(filters.workspaceId)
+      : null;
+  if (!workspaceId) return true;
+  return Boolean(await getWorkspaceForTenantOrNotFound(workspaceId, clientId, res));
 }
 const ALLOWED_SYSTEM_SETTING_KEYS = new Set(Object.keys(SYSTEM_SETTING_DEFAULTS));
 
@@ -1080,6 +1097,71 @@ async function getWorkspaceForAuthenticatedScope(workspaceId: number, user: any,
     return null;
   }
   return workspace;
+}
+
+type WorkspaceArticleQueryScope = {
+  workspaceId?: number;
+  relevanceStatuses?: ArticleRelevanceStatus[];
+  includeContextual?: boolean;
+};
+
+function toWorkspaceAnalyticsScope(clientId: number | null, scope: WorkspaceArticleQueryScope | null | undefined) {
+  if (!scope?.workspaceId) return undefined;
+  return {
+    clientId: clientId || undefined,
+    workspaceId: scope.workspaceId,
+    relevanceStatuses: scope.relevanceStatuses,
+  };
+}
+
+async function resolveWorkspaceArticleQueryScope(
+  user: any,
+  req: any,
+  res: any,
+  options: { allowReviewStatuses?: boolean; requireWorkspace?: boolean } = {},
+): Promise<WorkspaceArticleQueryScope | null> {
+  const rawWorkspaceId = req.query?.workspaceId ?? req.body?.workspaceId;
+  const workspaceId = rawWorkspaceId === undefined || rawWorkspaceId === null || rawWorkspaceId === ""
+    ? undefined
+    : Number(rawWorkspaceId);
+  if (!workspaceId) {
+    if (options.requireWorkspace) {
+      res.status(400).json({ message: "Valid workspaceId required" });
+      return null;
+    }
+    return {};
+  }
+
+  const workspace = await getWorkspaceForAuthenticatedScope(workspaceId, user, req, res);
+  if (!workspace) return null;
+
+  const includeContextual = booleanQuery(req.query?.includeContextual ?? req.body?.includeContextual) === true;
+  const includeNeedsReview = booleanQuery(req.query?.includeNeedsReview ?? req.body?.includeNeedsReview) === true;
+  const includeNotRelevant = booleanQuery(req.query?.includeNotRelevant ?? req.body?.includeNotRelevant) === true;
+  const explicitStatuses = relevanceQueryStatuses(req.query?.relevanceStatuses ?? req.body?.relevanceStatuses);
+  const singleStatus = isArticleRelevanceStatus(req.query?.relevanceStatus ?? req.body?.relevanceStatus)
+    ? req.query?.relevanceStatus ?? req.body?.relevanceStatus
+    : undefined;
+  const requestedStatuses = explicitStatuses || (singleStatus ? [singleStatus] : undefined);
+  const statuses = (requestedStatuses?.length
+    ? requestedStatuses
+    : getDefaultRelevanceStatuses({ includeContextual })) as ArticleRelevanceStatus[];
+
+  const reviewOnlyRequested = includeNeedsReview ||
+    includeNotRelevant ||
+    statuses.some((status) => status === "needs_review" || status === "not_relevant");
+  if (reviewOnlyRequested && !options.allowReviewStatuses && !(await canAccessRelevanceReview(user, req))) {
+    res.status(403).json({ message: "Insufficient permissions for relevance review scope" });
+    return null;
+  }
+
+  return {
+    workspaceId: workspace.id,
+    relevanceStatuses: requestedStatuses?.length
+      ? statuses
+      : getDefaultRelevanceStatuses({ includeContextual, includeNeedsReview, includeNotRelevant }),
+    includeContextual,
+  };
 }
 
 async function canReadWorkspaceRelevance(user: any, req: any): Promise<boolean> {
@@ -2447,7 +2529,11 @@ export async function registerRoutes(
         includeContextual,
         limit,
       });
-      res.json({ items, total: items.length });
+      const itemsWithHistory = await Promise.all(items.map(async (item: any) => ({
+        ...item,
+        history: await storage.getWorkspaceRelevanceHistory(workspace.id, item.articleId, workspace.clientId),
+      })));
+      res.json({ items: itemsWithHistory, total: itemsWithHistory.length });
     } catch (err) {
       console.error("Workspace relevance review queue failed:", err);
       res.status(500).json({ message: "Error fetching review queue" });
@@ -2485,7 +2571,7 @@ export async function registerRoutes(
         materiallyAffectedCountryCodes: [],
         supportingSignals: [{ type: "manual_review", field: "analyst", term: "decision" }],
         evaluationMethod: "manual",
-        evaluatorVersion: "workspace-relevance-v1",
+        evaluatorVersion: RELEVANCE_ENGINE_VERSION,
         manualOverride: !input.reopen,
         reviewedBy: user.id,
         reviewedAt: new Date(),
@@ -2524,6 +2610,8 @@ export async function registerRoutes(
       if (requestedRelevanceExpansion && !(await canAccessRelevanceReview(user, req))) {
         return res.status(403).json({ message: "Insufficient permissions for relevance review scope" });
       }
+      const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res, { allowReviewStatuses: true });
+      if (!workspaceScope) return;
       const sortParam = req.query.sort as string | undefined;
       const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
         ? sortParam as any
@@ -2541,7 +2629,7 @@ export async function registerRoutes(
         province: req.query.province as string,
         relevanceStatus: isArticleRelevanceStatus(req.query.relevanceStatus) ? req.query.relevanceStatus : undefined,
         relevanceStatuses: relevanceQueryStatuses(req.query.relevanceStatuses),
-        workspaceId: req.query.workspaceId && !isNaN(parseInt(req.query.workspaceId as string)) ? parseInt(req.query.workspaceId as string) : undefined,
+        ...workspaceScope,
         includeContextual: booleanQuery(req.query.includeContextual),
         includeNeedsReview: booleanQuery(req.query.includeNeedsReview),
         includeNotRelevant: booleanQuery(req.query.includeNotRelevant),
@@ -2615,10 +2703,13 @@ export async function registerRoutes(
         return res.json([]);
       }
       const since = req.query.since as string;
+      const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+      if (!workspaceScope) return;
       const result = await storage.getArticles({
         priorities: ["urgent", "critical"],
         sourceIds: scopedSourceIds,
         clientId: clientId || undefined,
+        ...workspaceScope,
         startDate: since || new Date(Date.now() - 3600000).toISOString(),
         sort: "newest",
         limit: 10,
@@ -2642,6 +2733,8 @@ export async function registerRoutes(
       const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
         ? sortParam as any
         : "newest";
+      const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+      if (!workspaceScope) return;
       const result = await storage.getArticles({
         search: req.query.search as string,
         sourceId: req.query.sourceId && !isNaN(parseInt(req.query.sourceId as string)) ? parseInt(req.query.sourceId as string) : undefined,
@@ -2658,6 +2751,7 @@ export async function registerRoutes(
         sourceType: req.query.sourceType as string,
         country: req.query.country as string,
         topic: req.query.topic as string,
+        ...workspaceScope,
         startDate: req.query.startDate as string,
         endDate: req.query.endDate as string,
         page: 1,
@@ -2684,6 +2778,8 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const scopedSourceIds = await getUserSourceIds(user, req);
     const sourceNameFilter = typeof req.query.sourceName === "string" ? req.query.sourceName : undefined;
+    const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+    if (!workspaceScope) return;
     const sortParam = req.query.sort as string | undefined;
     const sort = sortParam && ["newest", "oldest", "recently_added", "source_az", "title_az", "engagement"].includes(sortParam)
       ? sortParam as any
@@ -2702,6 +2798,7 @@ export async function registerRoutes(
       workflowStatus: req.query.workflowStatus as string,
       manualTag: req.query.manualTag as string,
       sourceType: req.query.sourceType as string,
+      ...workspaceScope,
       startDate: req.query.startDate as string,
       endDate: req.query.endDate as string,
       page: 1,
@@ -2728,9 +2825,13 @@ export async function registerRoutes(
     res.send(csvHeader + csvRows);
   });
 
-  async function buildReportBasketParams(req: any, user: any, limit: number) {
+  async function buildReportBasketParams(req: any, res: any, user: any, limit: number) {
     const clientId = resolveClientId(user, req);
     const scopedSourceIds = await getUserSourceIds(user, req);
+    const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+    if (!workspaceScope) {
+      return null;
+    }
     const sourceNameFilter = typeof req.query.sourceName === "string" ? req.query.sourceName : undefined;
 
     const category = req.query.category as string | undefined;
@@ -2763,6 +2864,7 @@ export async function registerRoutes(
       priority,
       province,
       sourceType: req.query.sourceType as string,
+      ...workspaceScope,
       startDate: req.query.startDate as string,
       endDate: req.query.endDate as string,
       workflowStatus: "for_report",
@@ -2788,7 +2890,8 @@ export async function registerRoutes(
     try {
       const requestedLimit = parseInt(req.query.limit as string);
       const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, requestedLimit)) : 50;
-      const params = await buildReportBasketParams(req, user, limit);
+      const params = await buildReportBasketParams(req, res, user, limit);
+      if (!params) return;
       const result = await storage.getArticles(params);
       res.json({
         items: result.items,
@@ -2815,7 +2918,8 @@ export async function registerRoutes(
         clientId ? storage.getClient(clientId) : Promise.resolve(undefined),
       ]);
       const embassyProfile = buildClientEmbassyProfile(tenant, tenantSettings);
-      const params = await buildReportBasketParams(req, user, 1000);
+      const params = await buildReportBasketParams(req, res, user, 1000);
+      if (!params) return;
       const result = await storage.getArticles({ ...params, page: 1, limit: 1000 });
       const format = String(req.query.format || tenantSettings?.reportExportFormat || "txt").toLowerCase();
       const includeSummaries = req.query.includeSummaries === undefined
@@ -2983,7 +3087,7 @@ export async function registerRoutes(
         materiallyAffectedCountryCodes: [],
         supportingSignals: [{ type: "manual_review", field: "analyst", term: "decision" }],
         evaluationMethod: "manual",
-        evaluatorVersion: "workspace-relevance-v1",
+        evaluatorVersion: RELEVANCE_ENGINE_VERSION,
         manualOverride: !input.reopen,
         reviewedBy: user.id,
         reviewedAt: new Date(),
@@ -3066,6 +3170,7 @@ export async function registerRoutes(
     try {
       const input = savedFeedViewInputSchema.parse(req.body);
       const filters = normalizeSavedFeedViewFilters(input.filters);
+      if (!(await validateSavedFeedViewWorkspace(filters, clientId, res))) return;
       const existing = (await storage.getSavedFeedViews(clientId))
         .find((view) => view.name.trim().toLowerCase() === input.name.toLowerCase());
 
@@ -3106,7 +3211,10 @@ export async function registerRoutes(
       const input = savedFeedViewInputSchema.partial().parse(req.body);
       const updates: Record<string, any> = {};
       if (input.name) updates.name = input.name;
-      if (input.filters) updates.filters = normalizeSavedFeedViewFilters(input.filters);
+      if (input.filters) {
+        updates.filters = normalizeSavedFeedViewFilters(input.filters);
+        if (!(await validateSavedFeedViewWorkspace(updates.filters, clientId, res))) return;
+      }
       if (typeof input.isShared === "boolean") updates.isShared = input.isShared;
       if (Object.keys(updates).length === 0) return res.status(400).json({ message: "No saved view fields provided" });
 
@@ -3304,14 +3412,20 @@ export async function registerRoutes(
   app.get(api.analytics.stats.path, requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user, req);
-    const stats = await storage.getStats(scopedSourceIds);
+    const clientId = resolveClientId(user, req);
+    const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+    if (!workspaceScope) return;
+    const stats = await storage.getStats(scopedSourceIds, toWorkspaceAnalyticsScope(clientId, workspaceScope));
     res.json(stats);
   });
 
   app.get(api.analytics.sentimentTrend.path, requireCapability(CAPS.ANALYTICS_VIEW), async (req, res) => {
     const user = req.user as any;
     const scopedSourceIds = await getUserSourceIds(user, req);
-    const trend = await storage.getSentimentTrend(scopedSourceIds);
+    const clientId = resolveClientId(user, req);
+    const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+    if (!workspaceScope) return;
+    const trend = await storage.getSentimentTrend(scopedSourceIds, toWorkspaceAnalyticsScope(clientId, workspaceScope));
     res.json(trend);
   });
 
@@ -3322,7 +3436,9 @@ export async function registerRoutes(
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getContentVolume(startDate, endDate, scopedSourceIds, clientId || undefined);
+    const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+    if (!workspaceScope) return;
+    const data = await storage.getContentVolume(startDate, endDate, scopedSourceIds, clientId || undefined, toWorkspaceAnalyticsScope(clientId, workspaceScope));
     res.json(data);
   });
 
@@ -3333,7 +3449,9 @@ export async function registerRoutes(
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getTrendingTopics(startDate, endDate, scopedSourceIds, clientId || undefined);
+    const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+    if (!workspaceScope) return;
+    const data = await storage.getTrendingTopics(startDate, endDate, scopedSourceIds, clientId || undefined, toWorkspaceAnalyticsScope(clientId, workspaceScope));
     res.json(data);
   });
 
@@ -3344,7 +3462,9 @@ export async function registerRoutes(
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getKeywordAnalysis(startDate, endDate, scopedSourceIds, clientId || undefined);
+    const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+    if (!workspaceScope) return;
+    const data = await storage.getKeywordAnalysis(startDate, endDate, scopedSourceIds, clientId || undefined, toWorkspaceAnalyticsScope(clientId, workspaceScope));
     res.json(data);
   });
 
@@ -3355,7 +3475,9 @@ export async function registerRoutes(
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getSentimentReports(startDate, endDate, scopedSourceIds, clientId || undefined);
+    const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+    if (!workspaceScope) return;
+    const data = await storage.getSentimentReports(startDate, endDate, scopedSourceIds, clientId || undefined, toWorkspaceAnalyticsScope(clientId, workspaceScope));
     res.json(data);
   });
 
@@ -3366,7 +3488,9 @@ export async function registerRoutes(
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate required" });
-    const data = await storage.getSourceBehavior(startDate, endDate, scopedSourceIds, clientId || undefined);
+    const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+    if (!workspaceScope) return;
+    const data = await storage.getSourceBehavior(startDate, endDate, scopedSourceIds, clientId || undefined, toWorkspaceAnalyticsScope(clientId, workspaceScope));
     res.json(data);
   });
 
@@ -3380,7 +3504,9 @@ export async function registerRoutes(
     if (!topic || typeof topic !== "string" || topic.trim().length === 0) return res.status(400).json({ message: "topic is required" });
     if (!startDate || !endDate || isNaN(Date.parse(startDate)) || isNaN(Date.parse(endDate))) return res.status(400).json({ message: "valid startDate and endDate required" });
     try {
-      const data = await storage.getNarrativeComparison(topic.trim(), startDate, endDate, scopedSourceIds, clientId || undefined);
+      const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+      if (!workspaceScope) return;
+      const data = await storage.getNarrativeComparison(topic.trim(), startDate, endDate, scopedSourceIds, clientId || undefined, toWorkspaceAnalyticsScope(clientId, workspaceScope));
       res.json(data);
     } catch (e: any) {
       console.error("Narrative comparison error:", e.message);
@@ -3395,7 +3521,9 @@ export async function registerRoutes(
     const dateStr = (req.query.date as string) || new Date().toISOString().split("T")[0];
     if (isNaN(Date.parse(dateStr))) return res.status(400).json({ message: "valid date required" });
     try {
-      const data = await storage.getAnalyticsDailyBrief(dateStr, scopedSourceIds, clientId || undefined);
+      const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+      if (!workspaceScope) return;
+      const data = await storage.getAnalyticsDailyBrief(dateStr, scopedSourceIds, clientId || undefined, toWorkspaceAnalyticsScope(clientId, workspaceScope));
       res.json(data);
     } catch (e: any) {
       console.error("Daily brief error:", e.message);
@@ -3413,7 +3541,9 @@ export async function registerRoutes(
     if (!keyword || typeof keyword !== "string" || keyword.trim().length === 0) return res.status(400).json({ message: "keyword is required" });
     if (!startDate || !endDate || isNaN(Date.parse(startDate)) || isNaN(Date.parse(endDate))) return res.status(400).json({ message: "valid startDate and endDate required" });
     try {
-      const data = await storage.getKeywordDetail(keyword.trim(), startDate, endDate, scopedSourceIds, clientId || undefined);
+      const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+      if (!workspaceScope) return;
+      const data = await storage.getKeywordDetail(keyword.trim(), startDate, endDate, scopedSourceIds, clientId || undefined, toWorkspaceAnalyticsScope(clientId, workspaceScope));
       res.json(data);
     } catch (e: any) {
       console.error("Keyword detail error:", e.message);
@@ -3686,7 +3816,9 @@ export async function registerRoutes(
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     const scopedSourceIds = await getUserSourceIds(user, req);
-    const sentimentData = await storage.getSentimentReports(startDate, endDate, scopedSourceIds, clientId || undefined);
+    const workspaceScope = await resolveWorkspaceArticleQueryScope(user, req, res);
+    if (!workspaceScope) return;
+    const sentimentData = await storage.getSentimentReports(startDate, endDate, scopedSourceIds, clientId || undefined, toWorkspaceAnalyticsScope(clientId, workspaceScope));
     const csvHeader = "Source,Positive,Negative,Neutral,Total\n";
     const csvRows = sentimentData.bySource.map(s => {
       const total = s.positive + s.negative + s.neutral;

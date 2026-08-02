@@ -21,6 +21,7 @@ type MockRelevance = {
   relevanceStatus: ArticleRelevanceStatus;
   confidence: number;
   evaluationMethod: "deterministic" | "manual";
+  evaluatorVersion: string;
   manualOverride: boolean;
   shortReason: string;
 };
@@ -31,6 +32,8 @@ type MockHistory = {
   previousStatus: ArticleRelevanceStatus | null;
   newStatus: ArticleRelevanceStatus;
   evaluationMethod: string;
+  previousConfidence: number | null;
+  newConfidence: number;
 };
 
 const iraqWorkspace: WorkspaceProfile = {
@@ -108,7 +111,23 @@ const articles: MockArticle[] = [
   },
 ];
 
+const article10Current = evaluateWorkspaceRelevance({
+  title: articles[0].title,
+  content: articles[0].content,
+}, iraqWorkspace);
+
 const existing: MockRelevance[] = [
+  {
+    workspaceId: 1,
+    articleId: 10,
+    clientId: 1,
+    relevanceStatus: article10Current.relevanceStatus,
+    confidence: article10Current.confidence,
+    evaluationMethod: "deterministic",
+    evaluatorVersion: "workspace-relevance-v1",
+    manualOverride: false,
+    shortReason: article10Current.shortReason,
+  },
   {
     workspaceId: 1,
     articleId: 12,
@@ -116,6 +135,7 @@ const existing: MockRelevance[] = [
     relevanceStatus: "material_scope_impact",
     confidence: 100,
     evaluationMethod: "manual",
+    evaluatorVersion: "workspace-relevance-v1",
     manualOverride: true,
     shortReason: "Analyst confirmed material impact.",
   },
@@ -142,6 +162,7 @@ function simulateBackfill(workspace: WorkspaceProfile, rows: MockArticle[], rele
       relevanceStatus: relevance.relevanceStatus,
       confidence: relevance.confidence,
       evaluationMethod: "deterministic",
+      evaluatorVersion: relevance.evaluatorVersion,
       manualOverride: false,
       shortReason: relevance.shortReason,
     };
@@ -149,7 +170,9 @@ function simulateBackfill(workspace: WorkspaceProfile, rows: MockArticle[], rele
     if (
       current?.relevanceStatus === proposed.relevanceStatus &&
       current?.confidence === proposed.confidence &&
-      current?.evaluationMethod === proposed.evaluationMethod
+      current?.evaluationMethod === proposed.evaluationMethod &&
+      current?.evaluatorVersion === proposed.evaluatorVersion &&
+      current?.shortReason === proposed.shortReason
     ) {
       continue;
     }
@@ -160,6 +183,8 @@ function simulateBackfill(workspace: WorkspaceProfile, rows: MockArticle[], rele
       previousStatus: current?.relevanceStatus ?? null,
       newStatus: proposed.relevanceStatus,
       evaluationMethod: proposed.evaluationMethod,
+      previousConfidence: current?.confidence ?? null,
+      newConfidence: proposed.confidence,
     });
     if (existingIndex >= 0) next[existingIndex] = proposed;
     else next.push(proposed);
@@ -175,6 +200,7 @@ const otherTenantRun = simulateBackfill(otherTenantWorkspace, articles, tourismR
 
 assert.equal(checksumIds(articles), beforeArticleChecksum, "backfill must not rewrite article rows");
 assert.equal(iraqRun.relevanceRows.find((row) => row.articleId === 10 && row.workspaceId === 1)?.relevanceStatus, "direct_scope_match");
+assert.equal(iraqRun.relevanceRows.find((row) => row.articleId === 10 && row.workspaceId === 1)?.evaluatorVersion, article10Current.evaluatorVersion);
 assert.equal(iraqRun.relevanceRows.find((row) => row.articleId === 11 && row.workspaceId === 1)?.relevanceStatus, "not_relevant");
 assert.equal(iraqRun.relevanceRows.find((row) => row.articleId === 12 && row.workspaceId === 1)?.relevanceStatus, "material_scope_impact");
 assert.equal(iraqRun.relevanceRows.find((row) => row.articleId === 12 && row.workspaceId === 1)?.evaluationMethod, "manual");
@@ -183,6 +209,7 @@ assert.equal(secondIraqRun.history.length, 0, "idempotent run must not create hi
 assert.equal(tourismRun.relevanceRows.find((row) => row.articleId === 11 && row.workspaceId === 2)?.relevanceStatus, "direct_scope_match");
 assert.equal(otherTenantRun.relevanceRows.some((row) => row.workspaceId === 3 && row.clientId !== 2), false, "workspace backfill must stay inside tenant boundary");
 assert.equal(iraqRun.history.length, 2, "history tracks automatic relevance changes");
+assert.equal(iraqRun.history.some((row) => row.articleId === 10 && row.previousConfidence === article10Current.confidence && row.newConfidence === article10Current.confidence), true, "evaluator-version change creates history");
 
 for (let index = 0; index < articles.length; index += 1) {
   assert.equal(articles[index].id, [10, 11, 12, 13][index]);

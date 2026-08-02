@@ -171,6 +171,7 @@ export const articles = pgTable("articles", {
   index("idx_articles_client_id").on(table.clientId),
   index("idx_articles_client_category").on(table.clientId, table.category),
   index("idx_articles_client_priority").on(table.clientId, table.priority),
+  uniqueIndex("articles_id_client_unique").on(table.id, table.clientId),
   uniqueIndex("articles_client_url_idx").on(table.clientId, table.url),
 ]);
 
@@ -1139,8 +1140,28 @@ export const workspaces = pgTable("workspaces", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
+  uniqueIndex("workspaces_id_client_unique").on(table.id, table.clientId),
   index("workspaces_client_idx").on(table.clientId),
   index("workspaces_client_active_idx").on(table.clientId, table.active),
+  check("workspaces_scope_mode_ck", sql`
+    ${table.scopeMode} IN ('global', 'regional', 'single_country', 'multi_country', 'subnational', 'topic_only', 'hybrid')
+  `),
+  check("workspaces_purpose_ck", sql`
+    ${table.purpose} IN (
+      'diplomatic_monitoring',
+      'newsroom_monitoring',
+      'country_desk',
+      'regional_desk',
+      'global_news',
+      'topic_research',
+      'humanitarian_monitoring',
+      'competitor_monitoring',
+      'reputation_monitoring',
+      'crisis_monitoring',
+      'industry_intelligence',
+      'custom'
+    )
+  `),
 ]);
 
 export const insertWorkspaceSchema = createInsertSchema(workspaces).omit({ id: true, createdAt: true, updatedAt: true });
@@ -1172,6 +1193,7 @@ export const workspaceRelevanceProfiles = pgTable("workspace_relevance_profiles"
 }, (table) => [
   uniqueIndex("workspace_relevance_profiles_workspace_unique").on(table.workspaceId),
   index("workspace_relevance_profiles_active_idx").on(table.workspaceId, table.active),
+  check("workspace_relevance_profiles_min_confidence_ck", sql`${table.minimumConfidence} BETWEEN 0 AND 100`),
 ]);
 
 export const insertWorkspaceRelevanceProfileSchema = createInsertSchema(workspaceRelevanceProfiles).omit({ id: true, createdAt: true, updatedAt: true });
@@ -1190,7 +1212,7 @@ export const articleWorkspaceRelevance = pgTable("article_workspace_relevance", 
   materiallyAffectedCountryCodes: text("materially_affected_country_codes").array().notNull().default([]),
   supportingSignals: jsonb("supporting_signals").$type<Array<Record<string, unknown> | string>>().notNull().default([]),
   evaluationMethod: text("evaluation_method").notNull().default("deterministic"),
-  evaluatorVersion: text("evaluator_version").notNull().default("workspace-relevance-v1"),
+  evaluatorVersion: text("evaluator_version").notNull().default("workspace-relevance-v2"),
   evaluatedAt: timestamp("evaluated_at").defaultNow(),
   manualOverride: boolean("manual_override").notNull().default(false),
   reviewedBy: integer("reviewed_by").references(() => users.id),
@@ -1204,6 +1226,13 @@ export const articleWorkspaceRelevance = pgTable("article_workspace_relevance", 
   index("idx_article_workspace_relevance_client").on(table.clientId, table.relevanceStatus),
   index("idx_article_workspace_relevance_workspace").on(table.workspaceId, table.relevanceStatus),
   index("idx_article_workspace_relevance_review").on(table.workspaceId, table.relevanceStatus, table.confidence),
+  check("article_workspace_relevance_status_ck", sql`
+    ${table.relevanceStatus} IN ('direct_scope_match', 'material_scope_impact', 'contextual', 'not_relevant', 'needs_review')
+  `),
+  check("article_workspace_relevance_method_ck", sql`
+    ${table.evaluationMethod} IN ('deterministic', 'ai', 'manual', 'imported')
+  `),
+  check("article_workspace_relevance_confidence_ck", sql`${table.confidence} BETWEEN 0 AND 100`),
 ]);
 
 export const insertArticleWorkspaceRelevanceSchema = createInsertSchema(articleWorkspaceRelevance).omit({ id: true, createdAt: true, updatedAt: true });
@@ -1224,6 +1253,19 @@ export const workspaceRelevanceHistory = pgTable("workspace_relevance_history", 
 }, (table) => [
   index("workspace_relevance_history_workspace_article_idx").on(table.workspaceId, table.articleId),
   index("workspace_relevance_history_client_idx").on(table.clientId, table.createdAt),
+  check("workspace_relevance_history_previous_status_ck", sql`
+    ${table.previousStatus} IS NULL OR ${table.previousStatus} IN ('direct_scope_match', 'material_scope_impact', 'contextual', 'not_relevant', 'needs_review')
+  `),
+  check("workspace_relevance_history_new_status_ck", sql`
+    ${table.newStatus} IN ('direct_scope_match', 'material_scope_impact', 'contextual', 'not_relevant', 'needs_review')
+  `),
+  check("workspace_relevance_history_method_ck", sql`
+    ${table.evaluationMethod} IN ('deterministic', 'ai', 'manual', 'imported')
+  `),
+  check("workspace_relevance_history_confidence_ck", sql`
+    (${table.previousConfidence} IS NULL OR ${table.previousConfidence} BETWEEN 0 AND 100)
+    AND ${table.newConfidence} BETWEEN 0 AND 100
+  `),
 ]);
 
 export const insertWorkspaceRelevanceHistorySchema = createInsertSchema(workspaceRelevanceHistory).omit({ id: true, createdAt: true });

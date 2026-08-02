@@ -1,4 +1,11 @@
-export const RELEVANCE_ENGINE_VERSION = "workspace-relevance-v1";
+import {
+  countryAliasesForCodes,
+  countryCodesInNaturalText,
+  getRegionAliases,
+  normalizeCountryCodes,
+} from "./country-registry";
+
+export const RELEVANCE_ENGINE_VERSION = "workspace-relevance-v2";
 
 export const ARTICLE_RELEVANCE_STATUSES = [
   "direct_scope_match",
@@ -158,42 +165,6 @@ export type WorkspaceRelevanceResult = {
 
 type ScoredSignal = WorkspaceSupportingSignal & { score: number };
 
-type CountryLexicon = {
-  code: string;
-  aliases: string[];
-  regions?: string[];
-};
-
-const COUNTRY_LEXICON: CountryLexicon[] = [
-  { code: "IQ", aliases: ["iraq", "iraqi", "baghdad", "basra", "mosul", "erbil", "kurdistan region"], regions: ["mena", "middle east", "gulf"] },
-  { code: "SA", aliases: ["saudi arabia", "saudi", "riyadh", "jeddah"], regions: ["mena", "middle east", "gulf"] },
-  { code: "IR", aliases: ["iran", "iranian", "tehran"], regions: ["mena", "middle east"] },
-  { code: "TR", aliases: ["turkey", "turkiye", "turkish", "ankara"], regions: ["mena", "middle east"] },
-  { code: "SY", aliases: ["syria", "syrian", "damascus"], regions: ["mena", "middle east"] },
-  { code: "JO", aliases: ["jordan", "jordanian", "amman"], regions: ["mena", "middle east"] },
-  { code: "KW", aliases: ["kuwait", "kuwaiti"], regions: ["mena", "middle east", "gulf"] },
-  { code: "AE", aliases: ["uae", "united arab emirates", "emirates", "abu dhabi", "dubai"], regions: ["mena", "middle east", "gulf"] },
-  { code: "QA", aliases: ["qatar", "qatari", "doha"], regions: ["mena", "middle east", "gulf"] },
-  { code: "BH", aliases: ["bahrain", "manama"], regions: ["mena", "middle east", "gulf"] },
-  { code: "OM", aliases: ["oman", "muscat"], regions: ["mena", "middle east", "gulf"] },
-  { code: "YE", aliases: ["yemen", "yemeni", "sanaa"], regions: ["mena", "middle east"] },
-  { code: "LB", aliases: ["lebanon", "lebanese", "beirut"], regions: ["mena", "middle east"] },
-  { code: "PS", aliases: ["palestine", "palestinian", "gaza", "west bank"], regions: ["mena", "middle east"] },
-  { code: "IL", aliases: ["israel", "israeli", "tel aviv", "jerusalem"], regions: ["mena", "middle east"] },
-  { code: "EG", aliases: ["egypt", "egyptian", "cairo"], regions: ["mena", "middle east", "north africa"] },
-  { code: "MA", aliases: ["morocco", "moroccan", "rabat", "casablanca"], regions: ["mena", "north africa"] },
-  { code: "TN", aliases: ["tunisia", "tunisian", "tunis"], regions: ["mena", "north africa"] },
-  { code: "DZ", aliases: ["algeria", "algerian", "algiers"], regions: ["mena", "north africa"] },
-  { code: "LY", aliases: ["libya", "libyan", "tripoli"], regions: ["mena", "north africa"] },
-  { code: "SD", aliases: ["sudan", "sudanese", "khartoum"], regions: ["mena", "north africa"] },
-  { code: "US", aliases: ["united states", "u.s.", "u.s", "usa", "us", "american", "washington"], regions: ["north america", "global"] },
-  { code: "FR", aliases: ["france", "french", "paris"], regions: ["europe", "global"] },
-  { code: "GB", aliases: ["united kingdom", "uk", "britain", "british", "london"], regions: ["europe", "global"] },
-  { code: "DE", aliases: ["germany", "german", "berlin"], regions: ["europe", "global"] },
-  { code: "CN", aliases: ["china", "chinese", "beijing"], regions: ["asia", "global"] },
-  { code: "RU", aliases: ["russia", "russian", "moscow"], regions: ["europe", "asia", "global"] },
-];
-
 const DEFAULT_IMPACT_TERMS = [
   "affect",
   "affected",
@@ -272,7 +243,7 @@ function flattenAliases(value: WorkspaceProfile["multilingualAliases"]): string[
 }
 
 function normalizeCodes(values: string[] | null | undefined): string[] {
-  return unique(arr(values).map((value) => value.trim().toUpperCase()), 100);
+  return unique(normalizeCountryCodes(values), 100);
 }
 
 function termsFrom(profile: WorkspaceProfile, key: keyof WorkspaceRelevanceProfileData, legacyKey?: keyof WorkspaceRelevanceProfileData): string[] {
@@ -345,47 +316,20 @@ function scoreTerms(field: string, text: string, terms: string[], type: string, 
     .map((term) => ({ field, term: normalizeWorkspaceRelevanceText(term), type, score: weight, weight }));
 }
 
-function countryFor(value: string): CountryLexicon | undefined {
-  const normalized = normalizeWorkspaceRelevanceText(value);
-  return COUNTRY_LEXICON.find((item) =>
-    item.code.toLowerCase() === normalized ||
-    item.aliases.some((alias) => normalizeWorkspaceRelevanceText(alias) === normalized),
-  );
-}
-
 function countryCodesFor(values: string[] | null | undefined): string[] {
-  return unique(arr(values).flatMap((value) => {
-    const country = countryFor(value);
-    return country ? [country.code] : [value.toUpperCase()];
-  }), 100);
+  return unique(normalizeCountryCodes(values), 100);
 }
 
 function countryAliasesFor(values: string[] | null | undefined): string[] {
-  const aliases: string[] = [];
-  for (const value of arr(values)) {
-    aliases.push(value);
-    const country = countryFor(value);
-    if (country) aliases.push(country.code, ...country.aliases);
-  }
-  return unique(aliases, 300);
+  return unique(countryAliasesForCodes(values), 300);
 }
 
 function countriesInText(text: string): string[] {
-  const codes: string[] = [];
-  for (const country of COUNTRY_LEXICON) {
-    if (country.aliases.some((alias) => containsTerm(text, alias)) || containsTerm(text, country.code)) {
-      codes.push(country.code);
-    }
-  }
-  return unique(codes, 30);
+  return unique(countryCodesInNaturalText(text), 30);
 }
 
 function regionAliases(profile: WorkspaceProfile): string[] {
-  const regions = arr(profile.regionCodes).map((item) => normalizeWorkspaceRelevanceText(item));
-  const countryAliases = COUNTRY_LEXICON
-    .filter((country) => country.regions?.some((region) => regions.includes(normalizeWorkspaceRelevanceText(region))))
-    .flatMap((country) => country.aliases);
-  return unique([...regions, ...countryAliases], 300);
+  return unique(getRegionAliases(profile.regionCodes), 300);
 }
 
 function workspaceTerms(profile: WorkspaceProfile) {
@@ -430,8 +374,14 @@ function inputTexts(input: WorkspaceRelevanceInput) {
 function scoreProfile(input: WorkspaceRelevanceInput, profile: WorkspaceProfile): ScoredSignal[] {
   const texts = inputTexts(input);
   const terms = workspaceTerms(profile);
+  const normalizedProfile = normalizeWorkspaceProfile(profile);
+  const includeRegionAsScope = ["regional", "multi_country", "hybrid"].includes(String(normalizedProfile.scopeMode || ""));
+  const structuredCountryCodes = countryCodesFor(input.country ? [input.country] : []);
+  const primaryCountryCodes = countryCodesFor(normalizedProfile.primaryCountryCodes);
+  const secondaryCountryCodes = countryCodesFor(normalizedProfile.secondaryCountryCodes);
   const directTerms = [
     ...terms.primaryCountry.map((term) => ({ term, type: "primary_country" })),
+    ...(includeRegionAsScope ? terms.region.map((term) => ({ term, type: "region_scope" })) : []),
     ...terms.subnational.map((term) => ({ term, type: "subnational_area" })),
     ...terms.topic.map((term) => ({ term, type: "topic" })),
     ...terms.industry.map((term) => ({ term, type: "industry" })),
@@ -442,6 +392,14 @@ function scoreProfile(input: WorkspaceRelevanceInput, profile: WorkspaceProfile)
   ];
 
   const signals: ScoredSignal[] = [];
+  for (const code of structuredCountryCodes) {
+    const term = countryAliasesFor([code])[0] || code;
+    if (primaryCountryCodes.includes(code)) {
+      signals.push({ field: "article_metadata", term, type: "primary_country", score: 5, weight: 5 });
+    } else if (includeRegionAsScope && secondaryCountryCodes.includes(code)) {
+      signals.push({ field: "article_metadata", term, type: "secondary_country", score: 3, weight: 3 });
+    }
+  }
   for (const { term, type } of directTerms) {
     signals.push(...scoreTerms("title", texts.title, [term], type, 8));
     signals.push(...scoreTerms("summary", texts.summary, [term], type, 5));
@@ -451,6 +409,31 @@ function scoreProfile(input: WorkspaceRelevanceInput, profile: WorkspaceProfile)
     signals.push(...scoreTerms("url", texts.url, [term], type, 1));
   }
   return signals;
+}
+
+const GEOGRAPHY_SIGNAL_TYPES = new Set(["primary_country", "region_scope", "subnational_area"]);
+const CONFIGURED_SUBJECT_SIGNAL_TYPES = new Set(["alias", "entity", "project_event", "inclusion_term"]);
+
+function isVisibleSignal(signal: WorkspaceSupportingSignal): boolean {
+  return ["title", "summary", "image", "article_metadata"].includes(signal.field);
+}
+
+function isGeographySignal(signal: WorkspaceSupportingSignal): boolean {
+  return GEOGRAPHY_SIGNAL_TYPES.has(signal.type);
+}
+
+function isConfiguredSubjectSignal(signal: WorkspaceSupportingSignal): boolean {
+  return CONFIGURED_SUBJECT_SIGNAL_TYPES.has(signal.type);
+}
+
+function hasConfiguredGeography(profile: WorkspaceProfile): boolean {
+  return Boolean(
+    profile.globalScope ||
+    arr(profile.primaryCountryCodes).length ||
+    arr(profile.secondaryCountryCodes).length ||
+    arr(profile.regionCodes).length ||
+    arr(profile.subnationalAreas).length,
+  );
 }
 
 function makeMatchedScope(signals: WorkspaceSupportingSignal[] | string[]): WorkspaceMatchedScope {
@@ -600,20 +583,46 @@ export function evaluateWorkspaceRelevance(
     ...scoreTerms("summary", texts.summary, terms.impact, "impact_term", 5),
     ...scoreTerms("content", texts.content, terms.impact, "impact_term", 2),
   ];
-  const contextualSignals = [
-    ...scoreTerms("title", texts.title, [...terms.secondaryCountry, ...terms.region, ...terms.contextual], "contextual_scope", 5),
-    ...scoreTerms("summary", texts.summary, [...terms.secondaryCountry, ...terms.region, ...terms.contextual], "contextual_scope", 3),
-    ...scoreTerms("content", texts.content, [...terms.secondaryCountry, ...terms.region, ...terms.contextual], "contextual_scope", 1),
+  const contextualWorkspaceSignals = [
+    ...scoreTerms("title", texts.title, [...terms.secondaryCountry, ...terms.region], "contextual_workspace", 5),
+    ...scoreTerms("summary", texts.summary, [...terms.secondaryCountry, ...terms.region], "contextual_workspace", 3),
+    ...scoreTerms("content", texts.content, [...terms.secondaryCountry, ...terms.region], "contextual_workspace", 1),
+  ];
+  const contextualEvidenceSignals = [
+    ...scoreTerms("title", texts.title, terms.contextual, "contextual_evidence", 5),
+    ...scoreTerms("summary", texts.summary, terms.contextual, "contextual_evidence", 3),
+    ...scoreTerms("content", texts.content, terms.contextual, "contextual_evidence", 1),
   ];
 
   const primaryCountrySignals = directSignals.filter((signal) => signal.type === "primary_country");
   const affectedCountries = countryCodesFor(profile.primaryCountryCodes).filter(() => primaryCountrySignals.length > 0);
-  const visibleDirectSignals = directSignals.filter((signal) => ["title", "summary", "image", "article_metadata"].includes(signal.field));
-  const nonCountryVisibleSignals = visibleDirectSignals.filter((signal) => !["primary_country", "entity"].includes(signal.type));
-  const strongDirectCountrySignals = visibleDirectSignals.filter((signal) => ["primary_country", "subnational_area"].includes(signal.type));
-  const explicitConfiguredSubjectSignals = visibleDirectSignals.filter((signal) =>
-    ["alias", "entity", "project_event", "inclusion_term"].includes(signal.type),
-  );
+  const visibleDirectSignals = directSignals.filter(isVisibleSignal);
+  const visibleGeographySignals = visibleDirectSignals.filter(isGeographySignal);
+  const visibleNonGeographySignals = visibleDirectSignals.filter((signal) => !isGeographySignal(signal));
+  const explicitConfiguredSubjectSignals = visibleDirectSignals.filter(isConfiguredSubjectSignal);
+  const titleGeographySignals = visibleGeographySignals.filter((signal) => signal.field === "title");
+  const leadGeographySignals = visibleGeographySignals.filter((signal) => ["summary", "image"].includes(signal.field));
+  const metadataSignals = visibleDirectSignals.filter((signal) => signal.field === "article_metadata");
+  const topicOrIndustrySignals = visibleDirectSignals.filter((signal) => ["topic", "industry"].includes(signal.type));
+  const hasGeographyConfigured = hasConfiguredGeography(profile);
+  const hasOnlySingleGeographyMention =
+    visibleGeographySignals.length === 1 &&
+    visibleNonGeographySignals.length === 0 &&
+    directSignals.filter((signal) => !isVisibleSignal(signal)).length === 0;
+  const hasCorroboratedGeography =
+    titleGeographySignals.length > 0 &&
+    (
+      leadGeographySignals.length > 0 ||
+      metadataSignals.length > 0 ||
+      topicOrIndustrySignals.length > 0 ||
+      explicitConfiguredSubjectSignals.length > 0
+    );
+  const hasPrincipalSubjectEvidence =
+    explicitConfiguredSubjectSignals.length > 0 ||
+    (!hasGeographyConfigured && visibleNonGeographySignals.length > 0) ||
+    (hasGeographyConfigured && visibleGeographySignals.length > 0 && visibleNonGeographySignals.length > 0) ||
+    hasCorroboratedGeography ||
+    directScore >= 18;
 
   if (
     primaryCountrySignals.length > 0 &&
@@ -633,7 +642,7 @@ export function evaluateWorkspaceRelevance(
     );
   }
 
-  if (nonCountryVisibleSignals.length > 0 || strongDirectCountrySignals.length > 0 || directScore >= 14) {
+  if (!hasOnlySingleGeographyMention && hasPrincipalSubjectEvidence) {
     return makeResult(
       "direct_scope_match",
       Math.min(97, 70 + Math.min(27, directScore)),
@@ -658,14 +667,21 @@ export function evaluateWorkspaceRelevance(
     );
   }
 
-  const strongContextualSignals = contextualSignals.filter((signal) => signal.field !== "content");
-  if (strongContextualSignals.length > 0 || contextualSignals.length >= 2) {
+  const weakWorkspaceConnectionSignals = [
+    ...contextualWorkspaceSignals,
+    ...visibleGeographySignals,
+    ...explicitConfiguredSubjectSignals,
+  ];
+  const strongContextualSignals = contextualEvidenceSignals.filter((signal) => signal.field !== "content");
+  const hasContextualWorkspaceConnection = weakWorkspaceConnectionSignals.length > 0;
+  const hasContextualEvidence = strongContextualSignals.length > 0 || contextualEvidenceSignals.length >= 2;
+  if (hasContextualWorkspaceConnection && hasContextualEvidence) {
     return makeResult(
       "contextual",
-      contextualSignals.some((signal) => signal.field === "title") ? 74 : 64,
+      strongContextualSignals.some((signal) => signal.field === "title") ? 74 : 64,
       "The article is useful context for the workspace but is not a direct or material match.",
       "deterministic",
-      contextualSignals,
+      [...weakWorkspaceConnectionSignals, ...contextualEvidenceSignals],
       input,
       profile,
     );
@@ -698,27 +714,45 @@ export function evaluateWorkspaceRelevance(
   );
 }
 
-export function shouldUseAiFallbackForRelevance(result: WorkspaceRelevanceResult): boolean {
-  return result.relevanceStatus === "needs_review" || result.confidence < 60;
+export function shouldUseAiFallbackForRelevance(
+  result: WorkspaceRelevanceResult,
+  workspaceProfile?: WorkspaceProfile,
+): boolean {
+  if (typeof result.aiRequired === "boolean") return result.aiRequired;
+  const minimumConfidence = Number(workspaceProfile?.minimumConfidence ?? 60);
+  return result.relevanceStatus === "needs_review" || result.confidence < minimumConfidence;
 }
 
-export function normalizeAiWorkspaceRelevanceResult(value: unknown): WorkspaceRelevanceResult | null {
-  if (!value || typeof value !== "object") return null;
+function aiValidationFailure(reason: string, term = "invalid_output"): WorkspaceRelevanceResult {
+  return makeResult(
+    "needs_review",
+    35,
+    reason,
+    "ai",
+    [`ai_validation:error:${term}`],
+    {},
+    {},
+  );
+}
+
+export function normalizeAiWorkspaceRelevanceResult(value: unknown): WorkspaceRelevanceResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return aiValidationFailure("AI relevance review returned an invalid response shape.");
+  }
   const raw = value as Record<string, unknown>;
   if (!isArticleRelevanceStatus(raw.relevanceStatus)) {
-    return makeResult(
-      "needs_review",
-      35,
-      "AI relevance review returned an unsupported status.",
-      "ai",
-      ["ai_validation:error:unsupported_status"],
-      {},
-      {},
-    );
+    return aiValidationFailure("AI relevance review returned a missing or unsupported status.", "unsupported_status");
   }
-  const confidence = typeof raw.confidence === "number" && Number.isFinite(raw.confidence)
-    ? Math.max(0, Math.min(100, Math.round(raw.confidence)))
-    : 50;
+  if (typeof raw.confidence !== "number" || !Number.isFinite(raw.confidence)) {
+    return aiValidationFailure("AI relevance review returned a missing or non-numeric confidence.", "invalid_confidence");
+  }
+  const confidence = Math.max(0, Math.min(100, Math.round(raw.confidence)));
+  if (
+    ["direct_scope_match", "material_scope_impact"].includes(raw.relevanceStatus) &&
+    confidence < 50
+  ) {
+    return aiValidationFailure("AI relevance review returned a contradictory high-relevance status with low confidence.", "contradictory_fields");
+  }
   const shortReason = typeof raw.shortReason === "string" && raw.shortReason.trim()
     ? raw.shortReason.trim().slice(0, 500)
     : "AI relevance review returned limited explanation.";
@@ -747,7 +781,7 @@ export function normalizeAiWorkspaceRelevanceResult(value: unknown): WorkspaceRe
     supportingSignals,
     evaluationMethod: "ai",
     evaluatorVersion: RELEVANCE_ENGINE_VERSION,
-    aiRequired: true,
+    aiRequired: false,
     relevanceConfidence: confidence,
     relevanceReason: shortReason,
     relevanceMatchedSignals: labels,
