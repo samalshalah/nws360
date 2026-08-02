@@ -18,6 +18,29 @@ export async function runDataRetention() {
   let totalCleaned = 0;
 
   try {
+    const [sourceCountRows, articleCountRows, sourceFetchLogCountRows, systemErrorCountRows] = await Promise.all([
+      db.select({ count: sql<number>`count(*)::int` }).from(sources),
+      db.select({ count: sql<number>`count(*)::int` }).from(articles),
+      db.select({ count: sql<number>`count(*)::int` }).from(sourceFetchLogs),
+      db.select({ count: sql<number>`count(*)::int` }).from(systemErrors),
+    ]);
+    const candidateCount =
+      Number(sourceCountRows[0]?.count ?? 0) +
+      Number(articleCountRows[0]?.count ?? 0) +
+      Number(sourceFetchLogCountRows[0]?.count ?? 0) +
+      Number(systemErrorCountRows[0]?.count ?? 0);
+    if (candidateCount === 0) {
+      console.log("[Retention] Skipped: no retention candidates");
+      return {
+        status: "skipped",
+        reason: "no_data_to_retain",
+        processed: 0,
+        success: true,
+        articlesRemoved: 0,
+        duration: Date.now() - startTime,
+      };
+    }
+
     const allSources = await db.select().from(sources);
 
     for (const source of allSources) {

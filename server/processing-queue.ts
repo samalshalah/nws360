@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { processingJobs, systemErrors } from "@shared/schema";
 import { eq, and, lte, sql, desc, asc } from "drizzle-orm";
+import { shouldSchedulePeriodicJob } from "./periodic-job-eligibility";
 
 export type JobType =
   | "FETCH_SOURCE"
@@ -432,13 +433,21 @@ export function startPeriodicJobs() {
     const scheduleOne = async () => {
       try {
         const active = await hasActiveJob(config.type);
-        if (!active) {
-          await enqueueJob(config.type, {}, {
-            priority: config.priority,
-            maxAttempts: config.maxAttempts,
-          });
-          console.log(`[Scheduler] Enqueued periodic job: ${config.type}`);
+        if (active) {
+          return;
         }
+
+        const eligibility = await shouldSchedulePeriodicJob(config.type);
+        if (!eligibility.eligible) {
+          console.log(`[Scheduler] Skipped periodic job: ${config.type} (${eligibility.reason})`);
+          return;
+        }
+
+        await enqueueJob(config.type, {}, {
+          priority: config.priority,
+          maxAttempts: config.maxAttempts,
+        });
+        console.log(`[Scheduler] Enqueued periodic job: ${config.type}`);
       } catch (e) {
         console.error(`[Scheduler] Failed to enqueue ${config.type}:`, e);
       }

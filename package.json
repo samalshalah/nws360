@@ -19,10 +19,12 @@
     "db:migrate:iraq-taxonomy": "node scripts/migrate-iraq-report-taxonomy.cjs",
     "reclassify:iraq-taxonomy": "node scripts/reclassify-iraq-taxonomy.cjs",
     "reset:platform": "node scripts/reset-platform.cjs",
+    "cleanup:zero-state-jobs": "node scripts/cleanup-zero-state-jobs.cjs",
     "test:filters": "tsx scripts/test-source-filters.ts",
     "test:article-classifier": "tsx scripts/test-article-classifier.ts",
     "test:iraq-taxonomy-migration": "node scripts/test-iraq-taxonomy-migration.cjs",
     "test:reset-platform": "node scripts/test-reset-platform.cjs && tsx scripts/test-user-scope-validation.ts",
+    "test:zero-state-periodic-jobs": "tsx scripts/test-zero-state-periodic-jobs.ts",
     "data:backfill-categories": "tsx scripts/backfill-article-categories.ts",
     "db:push": "drizzle-kit push"
   },

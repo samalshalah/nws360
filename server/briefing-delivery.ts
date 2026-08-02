@@ -331,7 +331,7 @@ function weekKey(dateKey: string) {
   return `${date.getUTCFullYear()}-${Math.ceil((day + firstDay.getUTCDay() + 1) / 7)}`;
 }
 
-function isScheduleDue(schedule: EmailSubscription, now = new Date()) {
+export function isScheduleDue(schedule: EmailSubscription, now = new Date()) {
   const config = getScheduleConfig(schedule);
   const timeZone = config.timezone || DEFAULT_TIMEZONE;
   const current = getDateParts(now, timeZone);
@@ -479,6 +479,22 @@ export async function deliverDueBriefings(options: { clientId?: number; schedule
     (!options.scheduleId || schedule.id === options.scheduleId),
   );
 
+  if (targetSchedules.length === 0) {
+    return {
+      status: "skipped",
+      reason: "no_due_briefings",
+      processed: 0,
+      provider: getEmailProviderStatus(),
+      checked: 0,
+      sent: 0,
+      dryRun: 0,
+      skipped: 0,
+      providerMissing: 0,
+      failed: 0,
+      results: [],
+    };
+  }
+
   const results: BriefingDeliveryResult[] = [];
   for (const schedule of targetSchedules) {
     results.push(await deliverBriefingSchedule(schedule, {
@@ -487,14 +503,22 @@ export async function deliverDueBriefings(options: { clientId?: number; schedule
     }));
   }
 
+  const sent = results.filter(result => result.status === "sent").length;
+  const dryRun = results.filter(result => result.status === "dry_run").length;
+  const skipped = results.filter(result => result.status === "not_due").length;
+  const providerMissing = results.filter(result => result.status === "provider_not_configured").length;
+  const failed = results.filter(result => result.status === "failed").length;
+  const noDueWork = sent === 0 && dryRun === 0 && providerMissing === 0 && failed === 0 && skipped === targetSchedules.length;
+
   return {
+    ...(noDueWork ? { status: "skipped", reason: "no_due_briefings", processed: 0 } : {}),
     provider: getEmailProviderStatus(),
     checked: targetSchedules.length,
-    sent: results.filter(result => result.status === "sent").length,
-    dryRun: results.filter(result => result.status === "dry_run").length,
-    skipped: results.filter(result => result.status === "not_due").length,
-    providerMissing: results.filter(result => result.status === "provider_not_configured").length,
-    failed: results.filter(result => result.status === "failed").length,
+    sent,
+    dryRun,
+    skipped,
+    providerMissing,
+    failed,
     results,
   };
 }

@@ -209,6 +209,17 @@ export async function runAnalyticsComputation() {
 
   try {
     const clientIds = await storage.getDistinctClientIds();
+    if (clientIds.length === 0) {
+      console.log("[Analytics] Skipped: no active clients or articles require analytics");
+      return {
+        status: "skipped",
+        reason: "no_eligible_clients_or_articles",
+        processed: 0,
+        success: true,
+        duration: Date.now() - startTime,
+      };
+    }
+
     for (const cId of clientIds) {
       await computeMetricsForClient(sevenDaysAgo, thirtyDaysAgo, today, cId);
     }

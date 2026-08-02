@@ -36,6 +36,7 @@ import sanitizeHtml from "sanitize-html";
 import { scrypt, randomBytes, createHash } from "crypto";
 import { promisify } from "util";
 import { startQueueProcessor, startPeriodicJobs, getQueueStats, logSystemError, enqueueJob, openaiLimiter, registerJobHandler, recordCompletedJob } from "./processing-queue";
+import { runPeriodicJobIfEligible } from "./periodic-job-eligibility";
 import { runAnalyticsComputation } from "./analytics-worker";
 import { runDataRetention, onSourceHardDeleted } from "./data-retention-worker";
 import { startLearningWorker } from "./learning-worker";
@@ -4678,25 +4679,22 @@ export async function registerRoutes(
     startFeedWorker();
     // await startScheduler(); // AI disabled
   }
-  registerJobHandler("COMPUTE_ANALYTICS", async () => {
-    await runAnalyticsComputation();
-    return { completed: true };
-  });
-  registerJobHandler("DATA_RETENTION", async () => {
-    await runDataRetention();
-    return { completed: true };
-  });
-  registerJobHandler("DELIVER_BRIEFINGS", async () => {
-    return deliverDueBriefings();
-  });
+  registerJobHandler("COMPUTE_ANALYTICS", async () =>
+    runPeriodicJobIfEligible("COMPUTE_ANALYTICS", runAnalyticsComputation)
+  );
+  registerJobHandler("DATA_RETENTION", async () =>
+    runPeriodicJobIfEligible("DATA_RETENTION", runDataRetention)
+  );
+  registerJobHandler("DELIVER_BRIEFINGS", async () =>
+    runPeriodicJobIfEligible("DELIVER_BRIEFINGS", () => deliverDueBriefings())
+  );
 
   // === AI INTELLIGENCE ROUTES ===
   const { answerIntelligenceQuery, runIntelligencePipeline, analyzeNarratives } = await import("./ai-intelligence");
 
-  // registerJobHandler("INTELLIGENCE_PIPELINE", async () => { // AI disabled
-  //   await runIntelligencePipeline();
-  //   return { completed: true };
-  // });
+  registerJobHandler("INTELLIGENCE_PIPELINE", async () =>
+    runPeriodicJobIfEligible("INTELLIGENCE_PIPELINE", runIntelligencePipeline)
+  );
 
   if (!isCloudflareWorker) {
     startQueueProcessor();
@@ -4846,22 +4844,6 @@ export async function registerRoutes(
     runIntelligencePipeline().catch(e => console.error("[Intelligence Pipeline] Error:", e));
     res.json({ message: "Intelligence pipeline started" });
   });
-
-  setInterval(async () => {
-    try {
-      await runIntelligencePipeline();
-    } catch (e) {
-      console.error("[Intelligence Pipeline] Scheduled run error:", e);
-    }
-  }, 30 * 60 * 1000);
-
-  setTimeout(async () => {
-    try {
-      await runIntelligencePipeline();
-    } catch (e) {
-      console.error("[Intelligence Pipeline] Initial run error:", e);
-    }
-  }, 60 * 1000);
 
   app.get("/api/subscription", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);

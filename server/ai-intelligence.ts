@@ -551,18 +551,68 @@ export async function answerIntelligenceQuery(question: string, clientId?: numbe
   }
 }
 
-export async function runIntelligencePipeline(): Promise<void> {
+export type IntelligencePipelineResult = {
+  status: "completed" | "skipped";
+  reason?: "no_eligible_monitoring_scope" | "no_articles";
+  processed: number;
+  clients?: number;
+  articlesAnalyzed?: number;
+  clustersCreated?: number;
+  eventsDetected?: number;
+};
+
+export async function runIntelligencePipeline(): Promise<IntelligencePipelineResult> {
   console.log("[AI Intelligence] Starting intelligence pipeline...");
 
-  const clientIds = await storage.getDistinctClientIds();
+  const activeClients = (await storage.getClients()).filter((client) => client.active !== false);
+  if (activeClients.length === 0) {
+    console.log("[AI Intelligence] Skipped: no active clients");
+    return {
+      status: "skipped",
+      reason: "no_eligible_monitoring_scope",
+      processed: 0,
+    };
+  }
+
+  const activeClientIds = new Set(activeClients.map((client) => client.id));
+  const workspaces = (await storage.getWorkspaces()).filter((workspace) => activeClientIds.has(workspace.clientId));
+  if (workspaces.length === 0) {
+    console.log("[AI Intelligence] Skipped: no eligible monitoring workspaces");
+    return {
+      status: "skipped",
+      reason: "no_eligible_monitoring_scope",
+      processed: 0,
+    };
+  }
+
+  const workspaceClientIds = new Set(workspaces.map((workspace) => workspace.clientId));
+  const clientIds = (await storage.getDistinctClientIds()).filter(
+    (clientId) => activeClientIds.has(clientId) && workspaceClientIds.has(clientId),
+  );
+  if (clientIds.length === 0) {
+    console.log("[AI Intelligence] Skipped: no articles for eligible monitoring scopes");
+    return {
+      status: "skipped",
+      reason: "no_articles",
+      processed: 0,
+      clients: 0,
+    };
+  }
+
+  let articlesAnalyzed = 0;
+  let clustersCreated = 0;
+  let eventsDetected = 0;
   for (const cId of clientIds) {
     const analyzed = await processUnanalyzedArticles(50, cId);
+    articlesAnalyzed += analyzed;
     console.log(`[AI Intelligence] Deep analysis (client=${cId}): ${analyzed} articles processed`);
 
     const clusters = await clusterArticles(cId);
+    clustersCreated += clusters;
     console.log(`[AI Intelligence] Clustering (client=${cId}): ${clusters} clusters created`);
 
     const eventCount = await detectEvents(cId);
+    eventsDetected += eventCount;
     console.log(`[AI Intelligence] Event detection (client=${cId}): ${eventCount} events detected`);
 
     await generateDailyBrief(cId);
@@ -570,4 +620,12 @@ export async function runIntelligencePipeline(): Promise<void> {
   }
 
   console.log("[AI Intelligence] Pipeline complete");
+  return {
+    status: "completed",
+    processed: articlesAnalyzed + clustersCreated + eventsDetected,
+    clients: clientIds.length,
+    articlesAnalyzed,
+    clustersCreated,
+    eventsDetected,
+  };
 }
