@@ -7,7 +7,7 @@ import {
   type OrganizationType,
   type WorkspaceStatus,
 } from "./schema";
-import { normalizeCountryCode, normalizeCountryCodes, normalizeRegionCodes } from "./country-registry";
+import { getCountry, normalizeCountryCode, normalizeCountryCodes, normalizeRegionCodes } from "./country-registry";
 import { WORKSPACE_PURPOSES, WORKSPACE_SCOPE_MODES, type WorkspacePurpose, type WorkspaceScopeMode } from "./workspace-relevance";
 
 export { CLIENT_LIFECYCLE_STATUSES, ORGANIZATION_TYPES, WORKSPACE_STATUSES };
@@ -22,6 +22,15 @@ const optionalText = (max = 500) =>
   });
 
 const stringList = z.array(z.string().trim().min(1).max(160)).max(300).optional().default([]);
+const optionalCountryInput = z.string().trim().max(80).nullable().optional();
+const optionalEmailInput = z
+  .union([z.string().trim().email().max(254), z.literal(""), z.null()])
+  .optional()
+  .transform((value) => String(value || "").trim() || null);
+const optionalUrlInput = z
+  .union([z.string().trim().url().max(500), z.literal(""), z.null()])
+  .optional()
+  .transform((value) => String(value || "").trim() || null);
 
 export function normalizeSlug(value: string | null | undefined): string {
   return String(value || "")
@@ -70,6 +79,218 @@ export function normalizeTermList(values: string[] | null | undefined): string[]
 
 export function isDiplomaticOrganizationType(value: string | null | undefined): boolean {
   return (DIPLOMATIC_ORGANIZATION_TYPES as readonly string[]).includes(String(value || ""));
+}
+
+export class ClientEnrollmentValidationError extends Error {
+  status: number;
+  code: string;
+  details: string[];
+
+  constructor(message: string, options: { status?: number; code?: string; details?: string[] } = {}) {
+    super(message);
+    this.name = "ClientEnrollmentValidationError";
+    this.status = options.status ?? 400;
+    this.code = options.code ?? "validation_failed";
+    this.details = options.details ?? [message];
+  }
+}
+
+export const clientLifecycleUpdateSchema = z.object({
+  lifecycleStatus: z.enum(CLIENT_LIFECYCLE_STATUSES),
+  reason: z.string().trim().max(500).optional().nullable().transform((value) => String(value || "").trim() || null),
+}).strict();
+
+export type ClientLifecycleUpdateInput = z.infer<typeof clientLifecycleUpdateSchema>;
+
+export const clientSetupUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(200).optional(),
+  slug: z.string().trim().min(2).max(100).optional(),
+  organizationType: z.enum(ORGANIZATION_TYPES).optional(),
+  defaultLanguage: z.string().trim().min(2).max(20).optional(),
+  representedCountryCode: optionalCountryInput,
+  hostCountryCode: optionalCountryInput,
+  headquartersCountryCode: optionalCountryInput,
+  defaultTimezone: z.string().trim().min(2).max(80).nullable().optional(),
+  defaultLanguages: z.array(z.string().trim().min(2).max(20)).max(20).optional(),
+  websiteUrl: optionalUrlInput,
+  contactName: z.string().trim().max(200).nullable().optional().transform((value) => String(value || "").trim() || null),
+  contactEmail: optionalEmailInput,
+}).strict();
+
+export type ClientSetupUpdateInput = z.infer<typeof clientSetupUpdateSchema>;
+
+export const workspaceSetupUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(200).optional(),
+  description: optionalText(2000),
+  purpose: z.enum(WORKSPACE_PURPOSES).optional(),
+  scopeMode: z.enum(WORKSPACE_SCOPE_MODES).optional(),
+  globalScope: z.boolean().optional(),
+  primaryCountryCodes: z.array(z.string().trim().max(80)).max(80).optional(),
+  secondaryCountryCodes: z.array(z.string().trim().max(80)).max(80).optional(),
+  regionCodes: z.array(z.string().trim().max(80)).max(80).optional(),
+  subnationalAreas: stringList.optional(),
+  preferredLanguages: z.array(z.string().trim().min(2).max(20)).max(20).optional(),
+  timezone: z.string().trim().min(2).max(80).optional(),
+  taxonomyTemplateCode: optionalText(120),
+  relevanceProfileCode: optionalText(120),
+  reportingTemplateCode: optionalText(120),
+  status: z.enum(WORKSPACE_STATUSES).optional(),
+}).strict();
+
+export type WorkspaceSetupUpdateInput = z.infer<typeof workspaceSetupUpdateSchema>;
+
+type ExistingClientSetup = {
+  client: {
+    name: string;
+    slug?: string | null;
+    organizationType: string;
+    defaultLanguage?: string | null;
+  };
+  settings?: {
+    representedCountryCode?: string | null;
+    hostCountryCode?: string | null;
+    headquartersCountryCode?: string | null;
+    defaultTimezone?: string | null;
+    defaultLanguages?: string[] | null;
+    websiteUrl?: string | null;
+    contactName?: string | null;
+    contactEmail?: string | null;
+    homeCountryCode?: string | null;
+    homeCountryName?: string | null;
+  } | null;
+};
+
+type ExistingWorkspaceSetup = {
+  workspace: {
+    name: string;
+    description?: string | null;
+    purpose?: string | null;
+    scopeMode?: string | null;
+    globalScope?: boolean | null;
+    primaryCountryCodes?: string[] | null;
+    secondaryCountryCodes?: string[] | null;
+    regionCodes?: string[] | null;
+    subnationalAreas?: string[] | null;
+    preferredLanguages?: string[] | null;
+    timezone?: string | null;
+    taxonomyTemplateCode?: string | null;
+    relevanceProfileCode?: string | null;
+    reportingTemplateCode?: string | null;
+    status?: string | null;
+    active?: boolean | null;
+  };
+  relevanceProfile?: Partial<ClientEnrollmentRequest["relevanceProfile"]> | null;
+};
+
+function explicitNullableCountry(value: string | null | undefined, field: string, errors: string[]): string | null | undefined {
+  if (value === undefined) return undefined;
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const normalized = normalizeCountryCode(raw);
+  if (!normalized) {
+    errors.push(`${field} must be a valid ISO country code`);
+    return null;
+  }
+  return normalized;
+}
+
+function countryOrNull(value: string | null | undefined): string | null {
+  return normalizeCountryCode(value) || null;
+}
+
+function diffKeys(before: Record<string, unknown>, after: Record<string, unknown>): string[] {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  return Array.from(keys).filter((key) => JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null));
+}
+
+export function normalizeClientSetupUpdate(input: unknown, current: ExistingClientSetup) {
+  const parsed = clientSetupUpdateSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ClientEnrollmentValidationError("Invalid client setup update", {
+      details: parsed.error.issues.map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`),
+    });
+  }
+
+  const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(raw, key);
+  const data = parsed.data;
+  const errors: string[] = [];
+  const organizationType = data.organizationType ?? current.client.organizationType;
+  const representedInput = has("representedCountryCode") ? explicitNullableCountry(data.representedCountryCode, "representedCountryCode", errors) : undefined;
+  const hostInput = has("hostCountryCode") ? explicitNullableCountry(data.hostCountryCode, "hostCountryCode", errors) : undefined;
+  const headquartersInput = has("headquartersCountryCode") ? explicitNullableCountry(data.headquartersCountryCode, "headquartersCountryCode", errors) : undefined;
+  const representedCountryCode = representedInput !== undefined
+    ? representedInput
+    : countryOrNull(current.settings?.representedCountryCode || current.settings?.homeCountryCode);
+  const hostCountryCode = hostInput !== undefined ? hostInput : countryOrNull(current.settings?.hostCountryCode);
+  const headquartersCountryCode = headquartersInput !== undefined ? headquartersInput : countryOrNull(current.settings?.headquartersCountryCode);
+
+  if (isDiplomaticOrganizationType(organizationType)) {
+    if (!representedCountryCode) errors.push("diplomatic organizations require representedCountryCode");
+    if (!hostCountryCode) errors.push("diplomatic organizations require hostCountryCode");
+  }
+
+  const slug = data.slug !== undefined ? normalizeSlug(data.slug) : undefined;
+  if (data.slug !== undefined && (!slug || !/^[a-z0-9][a-z0-9-]{1,78}[a-z0-9]$/.test(slug))) {
+    errors.push("organization slug must contain lowercase letters, numbers, and hyphens only");
+  }
+
+  if (errors.length > 0) {
+    throw new ClientEnrollmentValidationError("Invalid client setup update", { details: errors });
+  }
+
+  const clientUpdates: Record<string, unknown> = {};
+  if (has("name")) clientUpdates.name = data.name!.trim().replace(/\s+/g, " ");
+  if (has("slug")) clientUpdates.slug = slug;
+  if (has("organizationType")) clientUpdates.organizationType = data.organizationType;
+  if (has("defaultLanguage")) clientUpdates.defaultLanguage = data.defaultLanguage!.trim().toLowerCase();
+
+  const settingsUpdates: Record<string, unknown> = {};
+  if (representedInput !== undefined) settingsUpdates.representedCountryCode = representedInput;
+  if (hostInput !== undefined) settingsUpdates.hostCountryCode = hostInput;
+  if (headquartersInput !== undefined) settingsUpdates.headquartersCountryCode = headquartersInput;
+  if (has("defaultTimezone")) settingsUpdates.defaultTimezone = data.defaultTimezone || null;
+  if (has("defaultLanguages")) settingsUpdates.defaultLanguages = normalizeLanguageList(data.defaultLanguages);
+  if (has("websiteUrl")) settingsUpdates.websiteUrl = data.websiteUrl;
+  if (has("contactName")) settingsUpdates.contactName = data.contactName;
+  if (has("contactEmail")) settingsUpdates.contactEmail = data.contactEmail;
+
+  if (representedInput !== undefined || has("organizationType")) {
+    const legacyCountry = isDiplomaticOrganizationType(organizationType) ? representedCountryCode : null;
+    settingsUpdates.homeCountryCode = legacyCountry;
+    settingsUpdates.homeCountryName = legacyCountry ? getCountry(legacyCountry)?.name || legacyCountry : null;
+    if (!legacyCountry) settingsUpdates.bilateralCategoryLabel = null;
+  }
+
+  const before = {
+    name: current.client.name,
+    slug: current.client.slug || null,
+    organizationType: current.client.organizationType,
+    defaultLanguage: current.client.defaultLanguage || null,
+    representedCountryCode: current.settings?.representedCountryCode || null,
+    hostCountryCode: current.settings?.hostCountryCode || null,
+    headquartersCountryCode: current.settings?.headquartersCountryCode || null,
+    defaultTimezone: current.settings?.defaultTimezone || null,
+    defaultLanguages: current.settings?.defaultLanguages || null,
+    websiteUrl: current.settings?.websiteUrl || null,
+    contactName: current.settings?.contactName || null,
+    contactEmail: current.settings?.contactEmail || null,
+    homeCountryCode: current.settings?.homeCountryCode || null,
+    homeCountryName: current.settings?.homeCountryName || null,
+  };
+  const after = {
+    ...before,
+    ...clientUpdates,
+    ...settingsUpdates,
+  };
+
+  return {
+    clientUpdates,
+    settingsUpdates,
+    changedFields: diffKeys(before, after),
+    before,
+    after,
+  };
 }
 
 export const clientEnrollmentSchema = z.object({
@@ -175,6 +396,7 @@ export function validateWorkspaceScope(workspace: ClientEnrollmentRequest["works
   const errors: string[] = [];
   switch (workspace.scopeMode) {
     case "global":
+      if (!workspace.globalScope) errors.push("global requires globalScope true");
       break;
     case "single_country":
       if (workspace.primaryCountryCodes.length !== 1) errors.push("single_country requires exactly one primary monitoring country");
@@ -198,6 +420,121 @@ export function validateWorkspaceScope(workspace: ClientEnrollmentRequest["works
       break;
   }
   return errors;
+}
+
+function workspaceProfileDefaults(profile?: Partial<ClientEnrollmentRequest["relevanceProfile"]> | null): ClientEnrollmentRequest["relevanceProfile"] {
+  return {
+    topics: normalizeTermList(profile?.topics),
+    subtopics: normalizeTermList(profile?.subtopics),
+    industries: normalizeTermList(profile?.industries),
+    entities: normalizeTermList(profile?.entities),
+    organizations: normalizeTermList(profile?.organizations),
+    people: normalizeTermList(profile?.people),
+    projects: normalizeTermList(profile?.projects),
+    events: normalizeTermList(profile?.events),
+    multilingualAliases: profile?.multilingualAliases || [],
+    inclusionTerms: normalizeTermList(profile?.inclusionTerms),
+    exclusionTerms: normalizeTermList(profile?.exclusionTerms),
+    impactTerms: normalizeTermList(profile?.impactTerms),
+    contextualTerms: normalizeTermList(profile?.contextualTerms),
+    minimumConfidence: Number(profile?.minimumConfidence ?? 60),
+    includeContextualByDefault: Boolean(profile?.includeContextualByDefault),
+    contextualLabel: String(profile?.contextualLabel || "Strategic Context"),
+    active: profile?.active !== false,
+  };
+}
+
+export function normalizeWorkspaceSetupUpdate(input: unknown, current: ExistingWorkspaceSetup) {
+  const parsed = workspaceSetupUpdateSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ClientEnrollmentValidationError("Invalid workspace update", {
+      details: parsed.error.issues.map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`),
+    });
+  }
+
+  const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(raw, key);
+  const data = parsed.data;
+  const proposed: ClientEnrollmentRequest["workspace"] & { normalizedName: string; status?: WorkspaceStatus } = {
+    name: has("name") ? data.name! : current.workspace.name,
+    description: has("description") ? data.description : current.workspace.description || null,
+    purpose: (data.purpose ?? current.workspace.purpose ?? "custom") as WorkspacePurpose,
+    scopeMode: (data.scopeMode ?? current.workspace.scopeMode ?? "hybrid") as WorkspaceScopeMode,
+    globalScope: has("globalScope") ? Boolean(data.globalScope) : Boolean(current.workspace.globalScope),
+    primaryCountryCodes: normalizeCountryCodes(has("primaryCountryCodes") ? data.primaryCountryCodes : current.workspace.primaryCountryCodes ?? []),
+    secondaryCountryCodes: normalizeCountryCodes(has("secondaryCountryCodes") ? data.secondaryCountryCodes : current.workspace.secondaryCountryCodes ?? []),
+    regionCodes: normalizeRegionCodes(has("regionCodes") ? data.regionCodes : current.workspace.regionCodes ?? []),
+    subnationalAreas: normalizeTermList(has("subnationalAreas") ? data.subnationalAreas : current.workspace.subnationalAreas ?? []),
+    preferredLanguages: normalizeLanguageList(has("preferredLanguages") ? data.preferredLanguages : current.workspace.preferredLanguages ?? []),
+    timezone: has("timezone") ? data.timezone! : current.workspace.timezone ?? "UTC",
+    taxonomyTemplateCode: has("taxonomyTemplateCode") ? data.taxonomyTemplateCode : current.workspace.taxonomyTemplateCode || null,
+    relevanceProfileCode: has("relevanceProfileCode") ? data.relevanceProfileCode : current.workspace.relevanceProfileCode || null,
+    reportingTemplateCode: has("reportingTemplateCode") ? data.reportingTemplateCode : current.workspace.reportingTemplateCode || null,
+    normalizedName: normalizeWorkspaceName(has("name") ? data.name : current.workspace.name),
+    status: data.status ?? (current.workspace.status as WorkspaceStatus | undefined) ?? "draft",
+  };
+
+  if (proposed.scopeMode === "global") {
+    proposed.globalScope = true;
+    proposed.primaryCountryCodes = [];
+    proposed.secondaryCountryCodes = [];
+    proposed.regionCodes = [];
+    proposed.subnationalAreas = [];
+  } else if (has("scopeMode") && data.scopeMode !== "global") {
+    proposed.globalScope = false;
+  }
+
+  const inputPrimaryCount = has("primaryCountryCodes") && Array.isArray(data.primaryCountryCodes) ? data.primaryCountryCodes.length : 0;
+  const inputSecondaryCount = has("secondaryCountryCodes") && Array.isArray(data.secondaryCountryCodes) ? data.secondaryCountryCodes.length : 0;
+  const inputRegionCount = has("regionCodes") && Array.isArray(data.regionCodes) ? data.regionCodes.length : 0;
+  const errors: string[] = [];
+  if (inputPrimaryCount > 0 && proposed.primaryCountryCodes.length !== inputPrimaryCount) errors.push("primary monitoring countries must be valid ISO country codes");
+  if (inputSecondaryCount > 0 && proposed.secondaryCountryCodes.length !== inputSecondaryCount) errors.push("secondary monitoring countries must be valid ISO country codes");
+  if (inputRegionCount > 0 && proposed.regionCodes.length !== inputRegionCount) errors.push("regions must be valid canonical region codes");
+  if (!proposed.normalizedName) errors.push("workspace name is required");
+
+  const profile = workspaceProfileDefaults(current.relevanceProfile);
+  errors.push(...validateWorkspaceScope(proposed, profile));
+  if (errors.length > 0) {
+    throw new ClientEnrollmentValidationError("Invalid workspace update", { details: errors });
+  }
+
+  const updates: Record<string, unknown> = {};
+  for (const key of [
+    "name",
+    "description",
+    "purpose",
+    "scopeMode",
+    "globalScope",
+    "primaryCountryCodes",
+    "secondaryCountryCodes",
+    "regionCodes",
+    "subnationalAreas",
+    "preferredLanguages",
+    "timezone",
+    "taxonomyTemplateCode",
+    "relevanceProfileCode",
+    "reportingTemplateCode",
+    "status",
+  ] as const) {
+    if (has(key) || (key === "globalScope" && proposed.scopeMode === "global")) {
+      updates[key] = proposed[key];
+    }
+  }
+  if (has("name")) updates.normalizedName = proposed.normalizedName;
+  if (proposed.scopeMode === "global") {
+    updates.globalScope = true;
+    updates.primaryCountryCodes = [];
+    updates.secondaryCountryCodes = [];
+    updates.regionCodes = [];
+    updates.subnationalAreas = [];
+  }
+
+  return {
+    updates,
+    proposed,
+    profile,
+  };
 }
 
 export function normalizeClientEnrollment(input: unknown): EnrollmentPreviewResult {

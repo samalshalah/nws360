@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
+  clientLifecycleUpdateSchema,
+  normalizeClientSetupUpdate,
   normalizeClientEnrollment,
   normalizeWorkspaceName,
+  normalizeWorkspaceSetupUpdate,
   stableEnrollmentJson,
   validateWorkspaceScope,
   type NormalizedClientEnrollment,
@@ -218,6 +221,121 @@ function enroll(state: MemoryState, request: unknown, user: User, options: { fai
   }
 }
 
+const enrollmentLocks = new Map<string, Promise<void>>();
+
+async function enrollConcurrentSafe(state: MemoryState, request: any, user: User) {
+  const key = String(request?.enrollmentKey || "");
+  const previous = enrollmentLocks.get(key) || Promise.resolve();
+  let release!: () => void;
+  const current = previous.then(() => new Promise<void>((resolve) => { release = resolve; }));
+  enrollmentLocks.set(key, current);
+  await previous;
+  try {
+    await Promise.resolve();
+    return enroll(state, request, user);
+  } finally {
+    release();
+    if (enrollmentLocks.get(key) === current) enrollmentLocks.delete(key);
+  }
+}
+
+function updateClientSetup(state: MemoryState, clientId: number, input: unknown, options: { failAfter?: "client" | "settings" | "audit" } = {}) {
+  const client = state.clients.find((item) => item.id === clientId);
+  const settings = state.clientSettings.find((item) => item.clientId === clientId);
+  if (!client) throw new Error("Client not found");
+  const before = clone(state);
+  try {
+    const normalized = normalizeClientSetupUpdate(input, { client, settings });
+    Object.assign(client, normalized.clientUpdates);
+    if (options.failAfter === "client") throw new Error("simulated setup client failure");
+    if (settings) Object.assign(settings, normalized.settingsUpdates);
+    else state.clientSettings.push({ clientId, ...normalized.settingsUpdates });
+    if (options.failAfter === "settings") throw new Error("simulated setup settings failure");
+    state.auditLogs.push({ id: state.auditLogs.length + 1, userId: 2, clientId, action: "organization_change", details: normalized.changedFields });
+    if (options.failAfter === "audit") throw new Error("simulated setup audit failure");
+    return normalized;
+  } catch (error) {
+    Object.assign(state, before);
+    throw error;
+  }
+}
+
+function transitionLifecycle(state: MemoryState, clientId: number, input: unknown, readiness = { monitoringReady: false, blockers: ["publisher_profiles_missing"] }) {
+  const parsed = clientLifecycleUpdateSchema.parse(input);
+  const client = state.clients.find((item) => item.id === clientId);
+  if (!client) throw new Error("Client not found");
+  if (parsed.lifecycleStatus === "active" && !readiness.monitoringReady) {
+    const error: any = new Error("Client cannot become active before publisher and source setup is complete");
+    error.status = 409;
+    error.code = "readiness_blocked";
+    throw error;
+  }
+  const affectedWorkspaceIds: number[] = [];
+  if (parsed.lifecycleStatus === "suspended" || parsed.lifecycleStatus === "archived") {
+    for (const workspace of state.workspaces.filter((item) => item.clientId === clientId)) {
+      affectedWorkspaceIds.push(workspace.id);
+      workspace.active = false;
+      if (parsed.lifecycleStatus === "archived") workspace.status = "archived";
+      else if (workspace.status === "active") workspace.status = "paused";
+    }
+  }
+  const previousLifecycleStatus = client.lifecycleStatus;
+  client.lifecycleStatus = parsed.lifecycleStatus;
+  client.active = parsed.lifecycleStatus === "setup" || parsed.lifecycleStatus === "active";
+  state.auditLogs.push({
+    id: state.auditLogs.length + 1,
+    userId: 2,
+    clientId,
+    action: "lifecycle_status_change",
+    previousLifecycleStatus,
+    newLifecycleStatus: parsed.lifecycleStatus,
+    affectedWorkspaceIds,
+  });
+  return { client, affectedWorkspaceIds };
+}
+
+function updateWorkspacePatch(state: MemoryState, clientId: number, workspaceId: number, input: unknown, readiness = { monitoringReady: false, blockers: ["publisher_profiles_missing"] }) {
+  const workspace = state.workspaces.find((item) => item.id === workspaceId && item.clientId === clientId);
+  if (!workspace) {
+    const error: any = new Error("Workspace not found");
+    error.status = 404;
+    throw error;
+  }
+  const profile = state.relevanceProfiles.find((item) => item.workspaceId === workspaceId) || null;
+  const normalized = normalizeWorkspaceSetupUpdate(input, { workspace, relevanceProfile: profile });
+  if (normalized.updates.normalizedName) {
+    const duplicate = state.workspaces.find((item) =>
+      item.clientId === clientId &&
+      item.id !== workspaceId &&
+      item.normalizedName === normalized.updates.normalizedName
+    );
+    if (duplicate) {
+      const error: any = new Error("Workspace name already exists for this client");
+      error.status = 409;
+      throw error;
+    }
+  }
+  if (normalized.proposed.status === "active" && input && typeof input === "object" && "status" in input && !readiness.monitoringReady) {
+    const error: any = new Error("Workspace cannot activate before publisher and source setup is complete");
+    error.status = 409;
+    throw error;
+  }
+  Object.assign(workspace, normalized.updates);
+  if (normalized.proposed.status === "draft" && input && typeof input === "object" && "status" in input) {
+    Object.assign(workspace, { active: false, activatedAt: null, activatedBy: null });
+  } else if (normalized.proposed.status === "ready" && input && typeof input === "object" && "status" in input) {
+    workspace.active = false;
+  } else if ((normalized.proposed.status === "paused" || normalized.proposed.status === "archived") && input && typeof input === "object" && "status" in input) {
+    workspace.active = false;
+  }
+  state.auditLogs.push({ id: state.auditLogs.length + 1, userId: 2, clientId, action: "workspace_change", entityId: workspaceId });
+  return workspace;
+}
+
+function legacyClientUpdate(_state: MemoryState, _clientId: number, _body: unknown) {
+  return { status: 410, code: "legacy_client_update_retired" };
+}
+
 function workspaceNameAvailable(state: MemoryState, clientId: number, name: string) {
   const normalizedName = normalizeWorkspaceName(name);
   return !state.workspaces.some((workspace) => workspace.clientId === clientId && workspace.normalizedName === normalizedName);
@@ -431,6 +549,157 @@ function testPlatformResetAuditRemainsIntact() {
   assert.deepEqual(state.platformResetAudit, [{ id: 1, action: "platform_reset" }]);
 }
 
+async function testConcurrentIdenticalEnrollmentCreatesOneClient() {
+  const state = emptyState();
+  const [first, second] = await Promise.all([
+    enrollConcurrentSafe(state, baseRequest(), platformAdmin()),
+    enrollConcurrentSafe(state, baseRequest(), platformAdmin()),
+  ]);
+  assert.equal(state.clients.length, 1);
+  assert.equal(state.workspaces.length, 1);
+  assert.equal(state.relevanceProfiles.length, 1);
+  assert.equal(first.clientId, second.clientId);
+  assert.equal([first.idempotent, second.idempotent].filter(Boolean).length, 1);
+}
+
+async function testConcurrentSameKeyDifferentPayloadConflictsWithoutPartialRecords() {
+  const state = emptyState();
+  const results = await Promise.allSettled([
+    enrollConcurrentSafe(state, baseRequest(), platformAdmin()),
+    enrollConcurrentSafe(state, baseRequest({ organization: { name: "Different Embassy" } }), platformAdmin()),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+  assert.equal(state.clients.length, 1);
+  assert.equal(state.workspaces.length, 1);
+  assert.equal(state.relevanceProfiles.length, 1);
+}
+
+async function testConcurrentDuplicateSlugReturnsSafeConflict() {
+  const state = emptyState();
+  const results = await Promise.allSettled([
+    enrollConcurrentSafe(state, baseRequest(), platformAdmin()),
+    enrollConcurrentSafe(state, baseRequest({ enrollmentKey: "enroll-other-key-2", organization: { name: "Other Embassy", slug: "us-embassy-baghdad" } }), platformAdmin()),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  const rejected = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
+  assert.match(String(rejected.reason?.message || rejected.reason), /slug already exists/);
+  assert.equal(rejected.reason?.status, 409);
+  assert.equal(state.clients.length, 1);
+}
+
+function testSetupUpdateIsAtomicAndAudited() {
+  const state = emptyState();
+  const { clientId } = enroll(state, baseRequest(), platformAdmin());
+  const beforeAuditCount = state.auditLogs.length;
+  const result = updateClientSetup(state, clientId, {
+    name: "U.S. Embassy Baghdad Media Office",
+    representedCountryCode: "US",
+    hostCountryCode: "IQ",
+    contactEmail: "media-office@example.test",
+  });
+  assert(result.changedFields.includes("name"));
+  assert.equal(state.clients[0].name, "U.S. Embassy Baghdad Media Office");
+  assert.equal(state.clientSettings[0].homeCountryCode, "US");
+  assert.equal(state.auditLogs.length, beforeAuditCount + 1);
+}
+
+function testSetupFailureRollsBackClientSettingsAndAudit() {
+  const state = emptyState();
+  const { clientId } = enroll(state, baseRequest(), platformAdmin());
+  const before = clone(state);
+  assert.throws(() => updateClientSetup(state, clientId, { name: "Rollback Name", contactEmail: "rollback@example.test" }, { failAfter: "settings" }), /simulated/);
+  assert.deepEqual(state, before);
+}
+
+function testSetupValidationAndLegacyCountrySync() {
+  const state = emptyState();
+  const { clientId } = enroll(state, baseRequest(), platformAdmin());
+  assert.throws(() => updateClientSetup(state, clientId, { representedCountryCode: null }), /Invalid client setup update/);
+  assert.throws(() => updateClientSetup(state, clientId, { contactEmail: "not-an-email" }), /Invalid client setup update/);
+  assert.throws(() => updateClientSetup(state, clientId, { representedCountryCode: "ZZ" }), /Invalid client setup update/);
+  assert.throws(() => updateClientSetup(state, clientId, { organizationType: "invalid_type" }), /Invalid client setup update/);
+  updateClientSetup(state, clientId, {
+    organizationType: "newsroom",
+    representedCountryCode: null,
+    hostCountryCode: null,
+    headquartersCountryCode: "GB",
+  });
+  assert.equal(state.clients[0].organizationType, "newsroom");
+  assert.equal(state.clientSettings[0].representedCountryCode, null);
+  assert.equal(state.clientSettings[0].hostCountryCode, null);
+  assert.equal(state.clientSettings[0].homeCountryCode, null);
+  assert.equal(state.clientSettings[0].homeCountryName, null);
+}
+
+function testLegacyClientUpdateIsRetired() {
+  const state = emptyState();
+  enroll(state, baseRequest(), platformAdmin());
+  const result = legacyClientUpdate(state, 1, { enrollmentKey: "changed", enrollmentRequestFingerprint: "changed", unknown: true });
+  assert.equal(result.status, 410);
+  assert.equal(state.clients[0].enrollmentKey, "enroll-us-embassy-baghdad-1");
+}
+
+function testLifecycleTransitions() {
+  const state = emptyState();
+  const { clientId } = enroll(state, baseRequest(), platformAdmin());
+  state.workspaces[0].status = "active";
+  state.workspaces[0].active = true;
+  const beforeAuditCount = state.auditLogs.length;
+  const suspended = transitionLifecycle(state, clientId, { lifecycleStatus: "suspended", reason: "test" });
+  assert.equal(state.clients[0].lifecycleStatus, "suspended");
+  assert.equal(state.clients[0].active, false);
+  assert.equal(state.workspaces[0].active, false);
+  assert.equal(state.workspaces[0].status, "paused");
+  assert.deepEqual(suspended.affectedWorkspaceIds, [1]);
+  assert.equal(state.auditLogs.length, beforeAuditCount + 1);
+  transitionLifecycle(state, clientId, { lifecycleStatus: "setup" });
+  assert.equal(state.clients[0].lifecycleStatus, "setup");
+  assert.equal(state.clients[0].active, true);
+  assert.throws(() => transitionLifecycle(state, clientId, { lifecycleStatus: "active" }), /publisher and source setup/);
+}
+
+function testWorkspacePatchValidationAndAudit() {
+  const state = emptyState();
+  const { clientId, workspaceId } = enroll(state, baseRequest(), platformAdmin());
+  const beforeAuditCount = state.auditLogs.length;
+  assert.throws(() => updateWorkspacePatch(state, clientId, workspaceId!, { scopeMode: "single_country", primaryCountryCodes: ["IQ", "US"] }), /Invalid workspace update/);
+  assert.throws(() => updateWorkspacePatch(state, clientId, workspaceId!, { scopeMode: "regional", regionCodes: [] }), /Invalid workspace update/);
+  state.relevanceProfiles[0].topics = [];
+  state.relevanceProfiles[0].inclusionTerms = [];
+  assert.throws(() => updateWorkspacePatch(state, clientId, workspaceId!, { scopeMode: "topic_only" }), /Invalid workspace update/);
+  const updated = updateWorkspacePatch(state, clientId, workspaceId!, { name: "Iraq Morning Desk", scopeMode: "single_country", primaryCountryCodes: ["IQ"] });
+  assert.equal(updated.normalizedName, "iraq morning desk");
+  assert.equal(state.auditLogs.length, beforeAuditCount + 1);
+}
+
+function testWorkspaceDuplicateAndStatusConsistency() {
+  const state = emptyState();
+  const { clientId, workspaceId } = enroll(state, baseRequest(), platformAdmin());
+  state.workspaces.push({
+    id: 2,
+    clientId,
+    name: "Economy Desk",
+    normalizedName: "economy desk",
+    status: "draft",
+    active: false,
+    scopeMode: "single_country",
+    primaryCountryCodes: ["IQ"],
+  });
+  assert.throws(() => updateWorkspacePatch(state, clientId, workspaceId!, { name: " economy   DESK " }), /already exists/);
+  const draft = updateWorkspacePatch(state, clientId, workspaceId!, { status: "draft" });
+  assert.equal(draft.active, false);
+  assert.equal(draft.activatedAt, null);
+  assert.equal(draft.activatedBy, null);
+  assert.throws(() => updateWorkspacePatch(state, clientId, workspaceId!, { status: "active" }), /Workspace cannot activate/);
+}
+
+function testCrossClientWorkspacePatchSafe404() {
+  const state = emptyState();
+  enroll(state, baseRequest(), platformAdmin());
+  assert.throws(() => updateWorkspacePatch(state, 999, 1, { name: "No Access" }), /Workspace not found/);
+}
+
 async function main() {
   testPreviewPerformsNoWrites();
   testSuccessfulEnrollmentCreatesExpectedRecordsOnly();
@@ -451,6 +720,17 @@ async function main() {
   testCrossClientWorkspaceAccessRejected();
   testAdminExplicitRelevanceAccessWorksWithoutClientId();
   testPlatformResetAuditRemainsIntact();
+  await testConcurrentIdenticalEnrollmentCreatesOneClient();
+  await testConcurrentSameKeyDifferentPayloadConflictsWithoutPartialRecords();
+  await testConcurrentDuplicateSlugReturnsSafeConflict();
+  testSetupUpdateIsAtomicAndAudited();
+  testSetupFailureRollsBackClientSettingsAndAudit();
+  testSetupValidationAndLegacyCountrySync();
+  testLegacyClientUpdateIsRetired();
+  testLifecycleTransitions();
+  testWorkspacePatchValidationAndAudit();
+  testWorkspaceDuplicateAndStatusConsistency();
+  testCrossClientWorkspacePatchSafe404();
   console.log("client enrollment behavioral tests passed");
 }
 

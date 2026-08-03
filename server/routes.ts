@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { setupAuth, toPublicUser } from "./auth";
-import { storage, assertTenant, TenantNotFoundError, safeNotFound } from "./storage";
+import { storage, assertTenant, TenantNotFoundError, safeNotFound, StorageBoundaryError } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import { startFeedWorker, fetchSourceFeed, analyzeWithAI, registerArticleAnalysisHandler, previewSource } from "./feed-worker";
@@ -26,8 +26,6 @@ import {
 } from "@shared/schema";
 import {
   normalizeClientEnrollment,
-  normalizeSlug,
-  normalizeWorkspaceName,
   stableEnrollmentJson,
   validateWorkspaceScope,
   isDiplomaticOrganizationType,
@@ -1287,6 +1285,31 @@ function safeAuditDetails(value: unknown): string {
   });
 }
 
+function sendAdminStorageError(res: Response, err: unknown, fallback = "Admin operation failed") {
+  if (err instanceof StorageBoundaryError) {
+    return res.status(err.status).json({
+      message: err.message,
+      code: err.code,
+      details: err.details,
+    });
+  }
+  const anyErr = err as any;
+  if (anyErr?.code === "23505") {
+    const constraint = String(anyErr?.constraint || "");
+    if (constraint.includes("clients_slug")) {
+      return res.status(409).json({ message: "Client slug already exists", code: "duplicate_slug" });
+    }
+    if (constraint.includes("clients_enrollment_key")) {
+      return res.status(409).json({ message: "Enrollment key already exists", code: "duplicate_enrollment_key" });
+    }
+    if (constraint.includes("workspaces_client_normalized_name")) {
+      return res.status(409).json({ message: "Workspace name already exists for this client", code: "duplicate_workspace_name" });
+    }
+    return res.status(409).json({ message: "Duplicate record", code: "duplicate_record" });
+  }
+  return res.status(500).json({ message: fallback });
+}
+
 async function getClientOrNotFound(clientId: number, res: Response) {
   if (!Number.isInteger(clientId) || clientId <= 0) {
     res.status(400).json({ message: "Invalid client ID" });
@@ -1330,7 +1353,7 @@ async function buildClientReadiness(clientId: number) {
     "source_channels_missing",
     "source_assignments_missing",
     activeWorkspaceCount === 0 ? "workspace_inactive" : null,
-  ].filter(Boolean);
+  ].filter((blocker): blocker is string => Boolean(blocker));
   return {
     organizationConfigured,
     workspaceCount: workspaceRows.length,
@@ -1388,6 +1411,7 @@ async function buildEnrollmentResult(clientId: number, idempotent = false) {
 
 async function createEnrollmentTransaction(enrollment: NormalizedClientEnrollment, fingerprint: string, userId: number) {
   return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`nws360.enrollment.${enrollment.enrollmentKey}`}))`);
     const existingByKey = await tx.select().from(clients).where(eq(clients.enrollmentKey, enrollment.enrollmentKey)).limit(1);
     if (existingByKey[0]) {
       const existing = existingByKey[0];
@@ -4250,8 +4274,13 @@ export async function registerRoutes(
         requestFingerprint: fingerprint,
       });
     } catch (err: any) {
-      const status = Number(err?.status) || 500;
-      res.status(status).json({ message: err?.message || "Client enrollment failed" });
+      if (err?.status) {
+        const code = err.status === 409 && String(err.message || "").includes("slug") ? "duplicate_slug"
+          : err.status === 409 && String(err.message || "").includes("Enrollment key") ? "duplicate_enrollment_key"
+            : "enrollment_conflict";
+        return res.status(err.status).json({ message: err?.message || "Client enrollment failed", code });
+      }
+      return sendAdminStorageError(res, err, "Client enrollment failed");
     }
   });
 
@@ -4265,47 +4294,13 @@ export async function registerRoutes(
   app.patch("/api/admin/clients/:clientId/setup", requireSystemAdmin(), async (req, res) => {
     const user = req.user as any;
     const clientId = Number(req.params.clientId);
-    const client = await getClientOrNotFound(clientId, res);
-    if (!client) return;
-    const body = req.body || {};
-    const clientUpdates: Record<string, any> = {};
-    if (typeof body.name === "string" && body.name.trim()) clientUpdates.name = sanitizeInput(body.name);
-    if (typeof body.slug === "string" && body.slug.trim()) clientUpdates.slug = normalizeSlug(body.slug);
-    if (typeof body.organizationType === "string") clientUpdates.organizationType = body.organizationType;
-    if (typeof body.defaultLanguage === "string" && body.defaultLanguage.trim()) clientUpdates.defaultLanguage = body.defaultLanguage.trim().toLowerCase();
-    if (typeof body.lifecycleStatus === "string") clientUpdates.lifecycleStatus = body.lifecycleStatus;
-    if (typeof body.active === "boolean") clientUpdates.active = body.active;
-
-    const settingsUpdates: Record<string, any> = {};
-    const profileFields = [
-      "representedCountryCode",
-      "hostCountryCode",
-      "headquartersCountryCode",
-      "defaultTimezone",
-      "defaultLanguages",
-      "websiteUrl",
-      "contactName",
-      "contactEmail",
-    ];
-    for (const key of profileFields) {
-      if (key in body) settingsUpdates[key] = body[key] || null;
+    if (!Number.isInteger(clientId) || clientId <= 0) return res.status(400).json({ message: "Invalid client ID" });
+    try {
+      await storage.updateClientSetupAtomic(clientId, req.body || {}, user.id);
+      res.json(await buildClientSetupPayload(clientId));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Client setup update failed");
     }
-    if (settingsUpdates.representedCountryCode && isDiplomaticOrganizationType(clientUpdates.organizationType || client.organizationType)) {
-      settingsUpdates.homeCountryCode = settingsUpdates.representedCountryCode;
-      settingsUpdates.homeCountryName = getCountry(settingsUpdates.representedCountryCode)?.name || settingsUpdates.representedCountryCode;
-    }
-
-    if (Object.keys(clientUpdates).length > 0) await storage.updateClient(clientId, clientUpdates);
-    if (Object.keys(settingsUpdates).length > 0) await storage.upsertClientSettings(clientId, settingsUpdates);
-    await storage.createAuditLog({
-      userId: user.id,
-      clientId,
-      action: "organization_change",
-      entity: "client",
-      entityId: clientId,
-      details: safeAuditDetails({ clientUpdates: Object.keys(clientUpdates), settingsUpdates: Object.keys(settingsUpdates) }),
-    });
-    res.json(await buildClientSetupPayload(clientId));
   });
 
   app.get("/api/admin/clients/:clientId/readiness", requireSystemAdmin(), async (req, res) => {
@@ -4313,6 +4308,23 @@ export async function registerRoutes(
     const client = await getClientOrNotFound(clientId, res);
     if (!client) return;
     res.json(await buildClientReadiness(client.id));
+  });
+
+  app.patch("/api/admin/clients/:clientId/lifecycle", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = Number(req.params.clientId);
+    if (!Number.isInteger(clientId) || clientId <= 0) return res.status(400).json({ message: "Invalid client ID" });
+    try {
+      const readiness = await buildClientReadiness(clientId);
+      const result = await storage.transitionClientLifecycleAtomic(clientId, req.body || {}, user.id, readiness);
+      res.json({
+        client: result.client,
+        affectedWorkspaceIds: result.affectedWorkspaceIds,
+        readiness: await buildClientReadiness(clientId),
+      });
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Client lifecycle update failed");
+    }
   });
 
   app.get("/api/admin/clients/:clientId/workspaces", requireSystemAdmin(), async (req, res) => {
@@ -4400,24 +4412,16 @@ export async function registerRoutes(
   app.patch("/api/admin/clients/:clientId/workspaces/:workspaceId", requireSystemAdmin(), async (req, res) => {
     const user = req.user as any;
     const clientId = Number(req.params.clientId);
-    const client = await getClientOrNotFound(clientId, res);
-    if (!client) return;
-    const existing = await getAdminWorkspaceOrNotFound(client.id, Number(req.params.workspaceId), res);
-    if (!existing) return;
-    const updates: Record<string, any> = {};
-    const allowed = ["name", "description", "purpose", "scopeMode", "globalScope", "primaryCountryCodes", "secondaryCountryCodes", "regionCodes", "subnationalAreas", "preferredLanguages", "timezone", "taxonomyTemplateCode", "relevanceProfileCode", "reportingTemplateCode", "status"];
-    for (const key of allowed) {
-      if (key in req.body) updates[key] = req.body[key];
+    const workspaceId = Number(req.params.workspaceId);
+    if (!Number.isInteger(clientId) || clientId <= 0) return res.status(400).json({ message: "Invalid client ID" });
+    if (!Number.isInteger(workspaceId) || workspaceId <= 0) return res.status(400).json({ message: "Invalid workspace ID" });
+    try {
+      const readiness = await buildClientReadiness(clientId);
+      const result = await storage.updateWorkspaceSetupAtomic(clientId, workspaceId, req.body || {}, user.id, readiness);
+      res.json(result.workspace);
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Workspace update failed");
     }
-    if ("name" in updates) updates.normalizedName = normalizeWorkspaceName(updates.name);
-    if (updates.status && updates.status !== "active") updates.active = false;
-    if (updates.status === "active") {
-      const readiness = await buildClientReadiness(client.id);
-      if (!readiness.monitoringReady) return res.status(409).json({ message: "Workspace cannot activate before publisher and source setup is complete", readiness });
-    }
-    const updated = await storage.updateWorkspace(existing.id, updates as any);
-    await storage.createAuditLog({ userId: user.id, clientId: client.id, action: "workspace_change", entity: "workspace", entityId: existing.id, details: safeAuditDetails({ fields: Object.keys(updates) }) });
-    res.json(updated);
   });
 
   app.get("/api/admin/clients/:clientId/workspaces/:workspaceId/relevance-profile", requireSystemAdmin(), async (req, res) => {
@@ -4528,35 +4532,17 @@ export async function registerRoutes(
   });
 
   app.put("/api/admin/clients/:id", requireSystemAdmin(), async (req, res) => {
-    const user = req.user as any;
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid client ID" });
-    const allowedFields = ['name', 'slug', 'organizationType', 'defaultLanguage', 'active', 'lifecycleStatus', 'allowedRegions', 'aiEnabled', 'dailyTokenBudget', 'dailyJobLimit'] as const;
-    const cleanUpdates: Record<string, any> = {};
-    for (const key of allowedFields) {
-      if (key in req.body && req.body[key] !== undefined) cleanUpdates[key] = req.body[key];
-    }
-    if (typeof cleanUpdates.slug === "string") cleanUpdates.slug = normalizeSlug(cleanUpdates.slug);
-    const client = await storage.updateClient(id, cleanUpdates);
-    if (!client) return res.status(404).json({ message: "Client not found" });
-    await storage.createAuditLog({
-      userId: user.id,
-      action: "lifecycleStatus" in cleanUpdates ? "lifecycle_status_change" : "update",
-      entity: "client",
-      entityId: id,
-      clientId: id,
-      details: safeAuditDetails({ fields: Object.keys(cleanUpdates) }),
+    res.status(410).json({
+      message: "Legacy client update is retired. Use PATCH /api/admin/clients/:clientId/setup or PATCH /api/admin/clients/:clientId/lifecycle.",
+      code: "legacy_client_update_retired",
     });
-    res.json(client);
   });
 
   app.delete("/api/admin/clients/:id", requireSystemAdmin(), async (req, res) => {
-    const user = req.user as any;
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid client ID" });
-    await storage.updateClient(id, { active: false, lifecycleStatus: "suspended" } as any);
-    await storage.createAuditLog({ userId: user.id, action: "lifecycle_status_change", entity: "client", entityId: id, details: `Suspended client #${id}` });
-    res.sendStatus(204);
+    res.status(410).json({
+      message: "Client deletion is retired. Use PATCH /api/admin/clients/:clientId/lifecycle with suspended or archived.",
+      code: "client_delete_retired",
+    });
   });
 
   // === ADMIN: CLIENT AI CONFIG ===

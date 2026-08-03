@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { CLIENT_LIFECYCLE_STATUSES, ORGANIZATION_TYPES } from "@shared/client-enrollment";
+import { ORGANIZATION_TYPES } from "@shared/client-enrollment";
 import { WORKSPACE_PURPOSES, WORKSPACE_SCOPE_MODES } from "@shared/workspace-relevance";
 
 type ClientSetupData = {
@@ -117,7 +117,6 @@ export default function ClientSetup() {
     slug: "",
     organizationType: "media",
     defaultLanguage: "en",
-    lifecycleStatus: "setup",
     representedCountryCode: "",
     hostCountryCode: "",
     headquartersCountryCode: "",
@@ -145,7 +144,6 @@ export default function ClientSetup() {
       slug: data.client.slug || "",
       organizationType: data.client.organizationType || "media",
       defaultLanguage: data.client.defaultLanguage || "en",
-      lifecycleStatus: data.client.lifecycleStatus || "setup",
       representedCountryCode: data.organizationProfile?.representedCountryCode || "",
       hostCountryCode: data.organizationProfile?.hostCountryCode || "",
       headquartersCountryCode: data.organizationProfile?.headquartersCountryCode || "",
@@ -164,7 +162,6 @@ export default function ClientSetup() {
         slug: orgForm.slug,
         organizationType: orgForm.organizationType,
         defaultLanguage: orgForm.defaultLanguage,
-        lifecycleStatus: orgForm.lifecycleStatus,
         representedCountryCode: orgForm.representedCountryCode || null,
         hostCountryCode: orgForm.hostCountryCode || null,
         headquartersCountryCode: orgForm.headquartersCountryCode || null,
@@ -220,7 +217,7 @@ export default function ClientSetup() {
 
   const saveWorkspace = useMutation({
     mutationFn: async () => {
-      const payload = {
+      const payload: Record<string, unknown> = {
         name: workspaceForm.name,
         description: workspaceForm.description || null,
         purpose: workspaceForm.purpose,
@@ -231,8 +228,8 @@ export default function ClientSetup() {
         subnationalAreas: parseList(workspaceForm.subnationalAreas),
         preferredLanguages: parseList(workspaceForm.preferredLanguages),
         timezone: workspaceForm.timezone || "UTC",
-        relevanceProfile: workspaceForm.relevanceProfile,
       };
+      if (!editingWorkspaceId) payload.relevanceProfile = workspaceForm.relevanceProfile;
       const url = editingWorkspaceId
         ? `/api/admin/clients/${clientId}/workspaces/${editingWorkspaceId}`
         : `/api/admin/clients/${clientId}/workspaces`;
@@ -312,15 +309,6 @@ export default function ClientSetup() {
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {ORGANIZATION_TYPES.map((type) => <SelectItem key={type} value={type}>{labelize(type)}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Lifecycle status</Label>
-                    <Select value={orgForm.lifecycleStatus} onValueChange={(value) => setOrgForm((current) => ({ ...current, lifecycleStatus: value }))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {CLIENT_LIFECYCLE_STATUSES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>

@@ -383,14 +383,14 @@ function ClientsTab() {
 
   const handleLifecycleChange = async () => {
     if (!lifecycleConfirm) return;
-    const nextActive = !lifecycleConfirm.active;
+    const lifecycleStatus = lifecycleConfirm.active ? "suspended" : "setup";
     try {
-      await apiRequest("PUT", `/api/admin/clients/${lifecycleConfirm.id}`, {
-        active: nextActive,
-        lifecycleStatus: nextActive ? "setup" : "suspended",
+      await apiRequest("PATCH", `/api/admin/clients/${lifecycleConfirm.id}/lifecycle`, {
+        lifecycleStatus,
+        reason: lifecycleConfirm.active ? "Suspended from platform admin clients tab." : "Reactivated from platform admin clients tab.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/clients"] });
-      toast({ title: nextActive ? t("Client reactivated") : t("Client suspended") });
+      toast({ title: lifecycleConfirm.active ? t("Client suspended") : t("Client reactivated") });
       setLifecycleConfirm(null);
     } catch (err: any) {
       toast({ title: t("Error"), description: err.message, variant: "destructive" });

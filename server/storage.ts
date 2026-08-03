@@ -112,16 +112,89 @@ import {
   type AiUsageLog, type InsertAiUsageLog,
 } from "@shared/schema";
 import { normalizeUserScopeClientAssignment } from "@shared/user-scope";
-import { normalizeWorkspaceName } from "@shared/client-enrollment";
+import {
+  ClientEnrollmentValidationError,
+  clientLifecycleUpdateSchema,
+  normalizeClientSetupUpdate,
+  normalizeWorkspaceName,
+  normalizeWorkspaceSetupUpdate,
+} from "@shared/client-enrollment";
 import { eq, like, and, or, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
 const AUTO_PAUSE_THRESHOLD_DB = 5;
+
+export class StorageBoundaryError extends Error {
+  status: number;
+  code: string;
+  details?: unknown;
+
+  constructor(message: string, options: { status?: number; code?: string; details?: unknown } = {}) {
+    super(message);
+    this.name = "StorageBoundaryError";
+    this.status = options.status ?? 400;
+    this.code = options.code ?? "storage_boundary_error";
+    this.details = options.details;
+  }
+}
 
 export type WorkspaceAnalyticsScope = {
   workspaceId?: number;
   clientId?: number;
   relevanceStatuses?: ArticleRelevanceStatus[];
 };
+
+export type ClientReadinessSnapshot = {
+  monitoringReady: boolean;
+  blockers?: string[];
+};
+
+export type AtomicClientSetupResult = {
+  client: Client;
+  settings: ClientSettings;
+  auditLog: AdminAuditLog;
+  changedFields: string[];
+};
+
+export type AtomicLifecycleTransitionResult = {
+  client: Client;
+  affectedWorkspaceIds: number[];
+  auditLog: AdminAuditLog;
+};
+
+export type AtomicWorkspaceUpdateResult = {
+  workspace: Workspace;
+  auditLog: AdminAuditLog;
+};
+
+function safeStorageAuditDetails(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => {
+    if (typeof item === "string" && item.length > 500) return item.slice(0, 500);
+    return item;
+  });
+}
+
+function workspaceStatusUpdates(status: string, actorUserId: number, readiness: ClientReadinessSnapshot): Record<string, unknown> {
+  switch (status) {
+    case "draft":
+      return { status, active: false, activatedAt: null, activatedBy: null };
+    case "ready":
+      return { status, active: false };
+    case "active":
+      if (!readiness.monitoringReady) {
+        throw new StorageBoundaryError("Workspace cannot activate before publisher and source setup is complete", {
+          status: 409,
+          code: "readiness_blocked",
+          details: readiness.blockers || [],
+        });
+      }
+      return { status, active: true, activatedAt: new Date(), activatedBy: actorUserId };
+    case "paused":
+    case "archived":
+      return { status, active: false };
+    default:
+      throw new StorageBoundaryError("Invalid workspace status", { status: 400, code: "invalid_workspace_status" });
+  }
+}
 
 function analyticsRelevanceSql(scope?: WorkspaceAnalyticsScope, articleAlias: "articles" | "a" = "articles") {
   if (!scope?.workspaceId) return sql``;
@@ -558,6 +631,8 @@ export interface IStorage {
   getClient(id: number): Promise<Client | undefined>;
   createClient(client: InsertClient): Promise<Client>;
   updateClient(id: number, updates: Partial<InsertClient>): Promise<Client | undefined>;
+  updateClientSetupAtomic(clientId: number, input: unknown, actorUserId: number): Promise<AtomicClientSetupResult>;
+  transitionClientLifecycleAtomic(clientId: number, input: unknown, actorUserId: number, readiness: ClientReadinessSnapshot): Promise<AtomicLifecycleTransitionResult>;
   deleteClient(id: number): Promise<void>;
 
   // Client Settings
@@ -749,6 +824,7 @@ export interface IStorage {
   getWorkspace(id: number): Promise<Workspace | undefined>;
   createWorkspace(data: InsertWorkspace): Promise<Workspace>;
   updateWorkspace(id: number, data: Partial<InsertWorkspace>): Promise<Workspace | undefined>;
+  updateWorkspaceSetupAtomic(clientId: number, workspaceId: number, input: unknown, actorUserId: number, readiness: ClientReadinessSnapshot): Promise<AtomicWorkspaceUpdateResult>;
   deleteWorkspace(id: number, clientId?: number): Promise<void>;
   getWorkspaceMembers(workspaceId: number): Promise<WorkspaceMember[]>;
   addWorkspaceMember(data: InsertWorkspaceMember): Promise<WorkspaceMember>;
@@ -2687,6 +2763,141 @@ export class DatabaseStorage implements IStorage {
     return client;
   }
 
+  async updateClientSetupAtomic(clientId: number, input: unknown, actorUserId: number): Promise<AtomicClientSetupResult> {
+    return db.transaction(async (tx) => {
+      const [currentClient] = await tx.select().from(clients).where(eq(clients.id, clientId)).limit(1);
+      if (!currentClient) {
+        throw new StorageBoundaryError("Client not found", { status: 404, code: "client_not_found" });
+      }
+      const [currentSettings] = await tx.select().from(clientSettings).where(eq(clientSettings.clientId, clientId)).limit(1);
+
+      let normalized;
+      try {
+        normalized = normalizeClientSetupUpdate(input, { client: currentClient, settings: currentSettings || null });
+      } catch (error) {
+        if (error instanceof ClientEnrollmentValidationError) {
+          throw new StorageBoundaryError(error.message, { status: error.status, code: error.code, details: error.details });
+        }
+        throw error;
+      }
+
+      let updatedClient = currentClient;
+      if (Object.keys(normalized.clientUpdates).length > 0) {
+        const [row] = await tx
+          .update(clients)
+          .set({ ...normalized.clientUpdates, updatedAt: new Date() } as any)
+          .where(eq(clients.id, clientId))
+          .returning();
+        updatedClient = row;
+      }
+
+      let settings: ClientSettings;
+      const settingsValues = { ...normalized.settingsUpdates, clientId, updatedAt: new Date() };
+      if (currentSettings) {
+        const [row] = await tx
+          .update(clientSettings)
+          .set(settingsValues as any)
+          .where(eq(clientSettings.clientId, clientId))
+          .returning();
+        settings = row;
+      } else {
+        const [row] = await tx
+          .insert(clientSettings)
+          .values({ ...normalized.settingsUpdates, clientId } as any)
+          .returning();
+        settings = row;
+      }
+
+      const [auditLog] = await tx.insert(adminAuditLogs).values({
+        userId: actorUserId,
+        clientId,
+        action: "organization_change",
+        entity: "client",
+        entityId: clientId,
+        details: safeStorageAuditDetails({
+          changedFields: normalized.changedFields,
+          before: normalized.before,
+          after: normalized.after,
+        }),
+      }).returning();
+
+      return {
+        client: updatedClient,
+        settings,
+        auditLog,
+        changedFields: normalized.changedFields,
+      };
+    });
+  }
+
+  async transitionClientLifecycleAtomic(clientId: number, input: unknown, actorUserId: number, readiness: ClientReadinessSnapshot): Promise<AtomicLifecycleTransitionResult> {
+    const parsed = clientLifecycleUpdateSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new StorageBoundaryError("Invalid lifecycle update", {
+        status: 400,
+        code: "validation_failed",
+        details: parsed.error.issues.map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`),
+      });
+    }
+
+    return db.transaction(async (tx) => {
+      const [currentClient] = await tx.select().from(clients).where(eq(clients.id, clientId)).limit(1);
+      if (!currentClient) {
+        throw new StorageBoundaryError("Client not found", { status: 404, code: "client_not_found" });
+      }
+
+      const requestedStatus = parsed.data.lifecycleStatus;
+      if (requestedStatus === "active" && !readiness.monitoringReady) {
+        throw new StorageBoundaryError("Client cannot become active before publisher and source setup is complete", {
+          status: 409,
+          code: "readiness_blocked",
+          details: readiness.blockers || [],
+        });
+      }
+
+      const workspaceRows = await tx.select().from(workspaces).where(eq(workspaces.clientId, clientId));
+      const affectedWorkspaceIds: number[] = [];
+      if (requestedStatus === "suspended" || requestedStatus === "archived") {
+        for (const workspace of workspaceRows) {
+          affectedWorkspaceIds.push(workspace.id);
+          const nextWorkspaceStatus = requestedStatus === "archived"
+            ? "archived"
+            : workspace.status === "active"
+              ? "paused"
+              : workspace.status;
+          await tx
+            .update(workspaces)
+            .set({ status: nextWorkspaceStatus, active: false, updatedAt: new Date() } as any)
+            .where(eq(workspaces.id, workspace.id));
+        }
+      }
+
+      const active = requestedStatus === "setup" || requestedStatus === "active";
+      const [client] = await tx
+        .update(clients)
+        .set({ lifecycleStatus: requestedStatus, active, updatedAt: new Date() } as any)
+        .where(eq(clients.id, clientId))
+        .returning();
+
+      const [auditLog] = await tx.insert(adminAuditLogs).values({
+        userId: actorUserId,
+        clientId,
+        action: "lifecycle_status_change",
+        entity: "client",
+        entityId: clientId,
+        details: safeStorageAuditDetails({
+          previousLifecycleStatus: currentClient.lifecycleStatus,
+          newLifecycleStatus: requestedStatus,
+          reason: parsed.data.reason || null,
+          affectedWorkspaceIds,
+          readinessBlockers: readiness.blockers || [],
+        }),
+      }).returning();
+
+      return { client, affectedWorkspaceIds, auditLog };
+    });
+  }
+
   async deleteClient(id: number): Promise<void> {
     await db.update(clients).set({ active: false }).where(eq(clients.id, id));
   }
@@ -3819,6 +4030,81 @@ export class DatabaseStorage implements IStorage {
     };
     const [row] = await db.update(workspaces).set(values as any).where(eq(workspaces.id, id)).returning();
     return row;
+  }
+
+  async updateWorkspaceSetupAtomic(clientId: number, workspaceId: number, input: unknown, actorUserId: number, readiness: ClientReadinessSnapshot): Promise<AtomicWorkspaceUpdateResult> {
+    return db.transaction(async (tx) => {
+      const [client] = await tx.select().from(clients).where(eq(clients.id, clientId)).limit(1);
+      if (!client) {
+        throw new StorageBoundaryError("Client not found", { status: 404, code: "client_not_found" });
+      }
+
+      const [currentWorkspace] = await tx
+        .select()
+        .from(workspaces)
+        .where(and(eq(workspaces.id, workspaceId), eq(workspaces.clientId, clientId)))
+        .limit(1);
+      if (!currentWorkspace) {
+        throw new StorageBoundaryError("Workspace not found", { status: 404, code: "workspace_not_found" });
+      }
+      const [profile] = await tx
+        .select()
+        .from(workspaceRelevanceProfiles)
+        .where(eq(workspaceRelevanceProfiles.workspaceId, workspaceId))
+        .limit(1);
+
+      let normalized;
+      try {
+        normalized = normalizeWorkspaceSetupUpdate(input, { workspace: currentWorkspace, relevanceProfile: profile || null });
+      } catch (error) {
+        if (error instanceof ClientEnrollmentValidationError) {
+          throw new StorageBoundaryError(error.message, { status: error.status, code: error.code, details: error.details });
+        }
+        throw error;
+      }
+
+      const proposedStatus = normalized.proposed.status || currentWorkspace.status || "draft";
+      const updates = {
+        ...normalized.updates,
+        ...("status" in normalized.updates ? workspaceStatusUpdates(String(proposedStatus), actorUserId, readiness) : {}),
+        updatedAt: new Date(),
+      };
+
+      if ("normalizedName" in updates && updates.normalizedName !== currentWorkspace.normalizedName) {
+        const [duplicate] = await tx
+          .select()
+          .from(workspaces)
+          .where(and(eq(workspaces.clientId, clientId), eq(workspaces.normalizedName, String(updates.normalizedName))))
+          .limit(1);
+        if (duplicate && duplicate.id !== workspaceId) {
+          throw new StorageBoundaryError("Workspace name already exists for this client", {
+            status: 409,
+            code: "duplicate_workspace_name",
+          });
+        }
+      }
+
+      const [workspace] = await tx
+        .update(workspaces)
+        .set(updates as any)
+        .where(and(eq(workspaces.id, workspaceId), eq(workspaces.clientId, clientId)))
+        .returning();
+
+      const [auditLog] = await tx.insert(adminAuditLogs).values({
+        userId: actorUserId,
+        clientId,
+        action: "workspace_change",
+        entity: "workspace",
+        entityId: workspaceId,
+        details: safeStorageAuditDetails({
+          fields: Object.keys(updates).filter((field) => field !== "updatedAt"),
+          previousStatus: currentWorkspace.status,
+          newStatus: workspace.status,
+        }),
+      }).returning();
+
+      return { workspace, auditLog };
+    });
   }
 
   async deleteWorkspace(id: number, clientId?: number): Promise<void> {
