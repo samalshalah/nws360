@@ -37,6 +37,7 @@
     "test:publisher-catalog-migration": "node scripts/test-publisher-catalog-migration.cjs",
     "test:workspace-source-assignments": "tsx scripts/test-workspace-source-assignments.ts",
     "test:operational-source-settings": "tsx scripts/test-operational-source-settings.ts",
+    "test:operational-source-settings-ui": "tsx scripts/test-operational-source-settings-ui.ts",
     "test:workspace-source-assignment-migration": "node scripts/test-workspace-source-assignment-migration.cjs",
     "test:iraq-taxonomy-migration": "node scripts/test-iraq-taxonomy-migration.cjs",
     "test:reset-platform": "node scripts/test-reset-platform.cjs && tsx scripts/test-user-scope-validation.ts",

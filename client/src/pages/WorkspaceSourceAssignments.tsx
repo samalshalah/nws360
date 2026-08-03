@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useLocation, useRoute } from "wouter";
-import { ArrowLeft, FlaskConical, Loader2, PlayCircle, Plus, RadioTower, ShieldCheck } from "lucide-react";
+import { ArrowLeft, FlaskConical, Loader2, PlayCircle, Plus, RadioTower, Settings2, ShieldCheck } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { OperationalSourceSettingsDialog } from "@/components/sources/OperationalSourceSettingsDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { WORKSPACE_SOURCE_ASSIGNMENT_PRIORITIES, WORKSPACE_SOURCE_ROLES } from "@shared/workspace-source-assignments";
@@ -27,6 +29,7 @@ export default function WorkspaceSourceAssignments() {
   const workspaceId = Number(params?.workspaceId);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { isAdmin, isPlatformScope } = usePermissions();
   const [form, setForm] = useState({
     publisherChannelId: "",
     existingSourceId: "auto",
@@ -38,6 +41,8 @@ export default function WorkspaceSourceAssignments() {
     notes: "",
   });
   const [preview, setPreview] = useState<any>(null);
+  const [settingsAssignment, setSettingsAssignment] = useState<any>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const basePath = `/api/admin/clients/${clientId}/workspaces/${workspaceId}/source-assignments`;
   const { data: rawData, isLoading } = useQuery<WorkspaceSourceAssignmentResponseDto>({
@@ -49,6 +54,7 @@ export default function WorkspaceSourceAssignments() {
     },
   });
   const data = useMemo(() => normalizeWorkspaceSourceAssignmentResponse(rawData), [rawData]);
+  const canOpenOperationalSettings = isAdmin && isPlatformScope;
 
   const eligibleChannels = useMemo(() => {
     return data.approvedPublishers.flatMap((item) =>
@@ -258,6 +264,15 @@ export default function WorkspaceSourceAssignments() {
                 const latestTest = assignment.latestTest || null;
                 const connectivity = latestTest?.connectivityResult || {};
                 const safeSamples = Array.isArray(latestTest?.safeSampleResults) ? latestTest.safeSampleResults : [];
+                const sourceId = Number(assignment.source?.id || assignment.sourceId || 0);
+                const assignmentChannelId = Number(assignment.publisherChannelId || 0);
+                const sourceChannelId = Number(assignment.source?.publisherChannelId || 0);
+                const sourceLinkedToAssignment = Boolean(
+                  sourceId > 0 &&
+                  assignment.source &&
+                  (!assignmentChannelId || !sourceChannelId || assignmentChannelId === sourceChannelId),
+                );
+                const showOperationalSettings = canOpenOperationalSettings && sourceLinkedToAssignment;
                 return (
                 <div key={assignment.id} className="rounded-md border border-border p-4">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -271,6 +286,20 @@ export default function WorkspaceSourceAssignments() {
                       <p className="mt-1 text-sm text-muted-foreground">{assignment.publisher?.name || "Unknown publisher"} / {labelize(assignment.channel?.channelType)}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      {showOperationalSettings && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setSettingsAssignment(assignment);
+                            setSettingsOpen(true);
+                          }}
+                          data-testid={`button-operational-settings-${assignment.id}`}
+                        >
+                          <Settings2 className="mr-2 h-4 w-4" />
+                          Operational Settings
+                        </Button>
+                      )}
                       <Button size="sm" variant="outline" onClick={() => runTest.mutate({ assignmentId: assignment.id, type: "test-connectivity" })}>
                         <PlayCircle className="mr-2 h-4 w-4" />
                         Connectivity
@@ -372,6 +401,17 @@ export default function WorkspaceSourceAssignments() {
           </Card>
         </div>
       </div>
+      <OperationalSourceSettingsDialog
+        clientId={clientId}
+        workspaceId={workspaceId}
+        assignment={settingsAssignment}
+        open={settingsOpen}
+        onOpenChange={(open) => {
+          setSettingsOpen(open);
+          if (!open) setSettingsAssignment(null);
+        }}
+        sourceAssignmentsQueryKey={basePath}
+      />
     </div>
   );
 }
