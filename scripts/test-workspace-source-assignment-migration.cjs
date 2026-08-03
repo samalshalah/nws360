@@ -439,6 +439,7 @@ assertIncludes(joined, "workspace_source_assignments_workspace_channel_unique", 
 assertIncludes(joined, "client_publisher_selections_id_client_publisher_unique", "client publisher composite uniqueness exists");
 assertIncludes(joined, "sources_id_client_channel_unique", "source client/channel composite uniqueness exists");
 assertIncludes(joined, "workspace_source_assignment_tests_id_assignment_unique", "test assignment composite uniqueness exists");
+assertIncludes(joined, "workspace_source_assignment_tests_assignment_workspace_fk", "test assignment/client/workspace FK exists with a PostgreSQL-safe name");
 assertIncludes(joined, "workspace_source_assignments_id_channel_unique", "assignment/channel composite uniqueness exists");
 assertIncludes(joined, "workspace_source_assignment_tests_assignment_channel_fk", "test assignment/channel FK exists");
 assertIncludes(joined, "workspace_source_assignments_latest_test_assignment_fk", "latest test assignment FK exists");

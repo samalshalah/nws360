@@ -186,7 +186,7 @@ const CONSTRAINTS = {
   workspace_source_assignments_selection_client_fk: "ALTER TABLE workspace_source_assignments ADD CONSTRAINT workspace_source_assignments_selection_client_fk FOREIGN KEY (client_publisher_selection_id, client_id) REFERENCES client_publisher_selections(id, client_id)",
   workspace_source_assignments_selection_client_publisher_fk: "ALTER TABLE workspace_source_assignments ADD CONSTRAINT workspace_source_assignments_selection_client_publisher_fk FOREIGN KEY (client_publisher_selection_id, client_id, publisher_profile_id) REFERENCES client_publisher_selections(id, client_id, publisher_profile_id)",
   workspace_source_assignment_tests_workspace_client_fk: "ALTER TABLE workspace_source_assignment_tests ADD CONSTRAINT workspace_source_assignment_tests_workspace_client_fk FOREIGN KEY (workspace_id, client_id) REFERENCES workspaces(id, client_id) ON DELETE CASCADE",
-  workspace_source_assignment_tests_assignment_client_workspace_fk: "ALTER TABLE workspace_source_assignment_tests ADD CONSTRAINT workspace_source_assignment_tests_assignment_client_workspace_fk FOREIGN KEY (assignment_id, client_id, workspace_id) REFERENCES workspace_source_assignments(id, client_id, workspace_id) ON DELETE CASCADE",
+  workspace_source_assignment_tests_assignment_workspace_fk: "ALTER TABLE workspace_source_assignment_tests ADD CONSTRAINT workspace_source_assignment_tests_assignment_workspace_fk FOREIGN KEY (assignment_id, client_id, workspace_id) REFERENCES workspace_source_assignments(id, client_id, workspace_id) ON DELETE CASCADE",
   workspace_source_assignment_tests_source_client_fk: "ALTER TABLE workspace_source_assignment_tests ADD CONSTRAINT workspace_source_assignment_tests_source_client_fk FOREIGN KEY (source_id, client_id) REFERENCES sources(id, client_id)",
   workspace_source_assignment_tests_assignment_source_fk: "ALTER TABLE workspace_source_assignment_tests ADD CONSTRAINT workspace_source_assignment_tests_assignment_source_fk FOREIGN KEY (assignment_id, source_id) REFERENCES workspace_source_assignments(id, source_id) ON DELETE CASCADE",
   workspace_source_assignment_tests_assignment_channel_fk: "ALTER TABLE workspace_source_assignment_tests ADD CONSTRAINT workspace_source_assignment_tests_assignment_channel_fk FOREIGN KEY (assignment_id, publisher_channel_id) REFERENCES workspace_source_assignments(id, publisher_channel_id) ON DELETE CASCADE",
@@ -354,7 +354,7 @@ const CHECK_REQUIREMENTS = {
   },
   workspace_source_assignments_rate_ck: {
     table: "workspace_source_assignments",
-    tokens: ["minimum_direct_match_rate", "maximum_noise_rate", "between", "0", "100"],
+    tokens: ["minimum_direct_match_rate", "maximum_noise_rate", "0", "100"],
   },
   workspace_source_assignments_enabled_status_ck: {
     table: "workspace_source_assignments",
@@ -374,7 +374,7 @@ const CHECK_REQUIREMENTS = {
   },
   workspace_source_assignment_tests_rates_ck: {
     table: "workspace_source_assignment_tests",
-    tokens: ["direct_match_rate", "relevant_rate", "noise_rate", "between", "0", "100"],
+    tokens: ["direct_match_rate", "relevant_rate", "noise_rate", "0", "100"],
   },
 };
 
@@ -628,7 +628,7 @@ function normalizeSql(value) {
   return String(value || "")
     .replace(/"/g, "")
     .replace(/public\./gi, "")
-    .replace(/::[a-z_ ]+/gi, "")
+    .replace(/::[a-z_][a-z0-9_]*(?:\[\])?/gi, "")
     .replace(/[()]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
