@@ -142,17 +142,27 @@ const CREATE_TABLES = [
 )`,
 ];
 
-const INDEXES = {
+const PREREQUISITE_UNIQUE_INDEXES = {
+  workspaces_id_client_unique: "CREATE UNIQUE INDEX IF NOT EXISTS workspaces_id_client_unique ON workspaces (id, client_id)",
+  sources_id_client_unique: "CREATE UNIQUE INDEX IF NOT EXISTS sources_id_client_unique ON sources (id, client_id)",
+  publisher_channels_id_profile_unique: "CREATE UNIQUE INDEX IF NOT EXISTS publisher_channels_id_profile_unique ON publisher_channels (id, publisher_profile_id)",
   client_publisher_selections_id_client_unique: "CREATE UNIQUE INDEX IF NOT EXISTS client_publisher_selections_id_client_unique ON client_publisher_selections (id, client_id)",
   client_publisher_selections_id_client_publisher_unique: "CREATE UNIQUE INDEX IF NOT EXISTS client_publisher_selections_id_client_publisher_unique ON client_publisher_selections (id, client_id, publisher_profile_id)",
   sources_id_client_channel_unique: "CREATE UNIQUE INDEX IF NOT EXISTS sources_id_client_channel_unique ON sources (id, client_id, publisher_channel_id)",
   sources_client_identity_unique: "CREATE UNIQUE INDEX IF NOT EXISTS sources_client_identity_unique ON sources (client_id, source_identity_key)",
+};
+
+const ASSIGNMENT_UNIQUE_INDEXES = {
   workspace_source_assignments_key_unique: "CREATE UNIQUE INDEX IF NOT EXISTS workspace_source_assignments_key_unique ON workspace_source_assignments (assignment_key)",
   workspace_source_assignments_workspace_source_unique: "CREATE UNIQUE INDEX IF NOT EXISTS workspace_source_assignments_workspace_source_unique ON workspace_source_assignments (workspace_id, source_id)",
   workspace_source_assignments_workspace_channel_unique: "CREATE UNIQUE INDEX IF NOT EXISTS workspace_source_assignments_workspace_channel_unique ON workspace_source_assignments (workspace_id, publisher_channel_id)",
   workspace_source_assignments_id_client_workspace_unique: "CREATE UNIQUE INDEX IF NOT EXISTS workspace_source_assignments_id_client_workspace_unique ON workspace_source_assignments (id, client_id, workspace_id)",
   workspace_source_assignments_id_source_unique: "CREATE UNIQUE INDEX IF NOT EXISTS workspace_source_assignments_id_source_unique ON workspace_source_assignments (id, source_id)",
   workspace_source_assignments_id_channel_unique: "CREATE UNIQUE INDEX IF NOT EXISTS workspace_source_assignments_id_channel_unique ON workspace_source_assignments (id, publisher_channel_id)",
+  workspace_source_assignment_tests_id_assignment_unique: "CREATE UNIQUE INDEX IF NOT EXISTS workspace_source_assignment_tests_id_assignment_unique ON workspace_source_assignment_tests (id, assignment_id)",
+};
+
+const SUPPORTING_INDEXES = {
   workspace_source_assignments_client_idx: "CREATE INDEX IF NOT EXISTS workspace_source_assignments_client_idx ON workspace_source_assignments (client_id, status)",
   workspace_source_assignments_workspace_idx: "CREATE INDEX IF NOT EXISTS workspace_source_assignments_workspace_idx ON workspace_source_assignments (workspace_id, status)",
   workspace_source_assignments_source_idx: "CREATE INDEX IF NOT EXISTS workspace_source_assignments_source_idx ON workspace_source_assignments (source_id, status)",
@@ -160,7 +170,12 @@ const INDEXES = {
   workspace_source_assignment_tests_assignment_idx: "CREATE INDEX IF NOT EXISTS workspace_source_assignment_tests_assignment_idx ON workspace_source_assignment_tests (assignment_id, created_at)",
   workspace_source_assignment_tests_workspace_idx: "CREATE INDEX IF NOT EXISTS workspace_source_assignment_tests_workspace_idx ON workspace_source_assignment_tests (workspace_id, status)",
   workspace_source_assignment_tests_client_idx: "CREATE INDEX IF NOT EXISTS workspace_source_assignment_tests_client_idx ON workspace_source_assignment_tests (client_id, test_type)",
-  workspace_source_assignment_tests_id_assignment_unique: "CREATE UNIQUE INDEX IF NOT EXISTS workspace_source_assignment_tests_id_assignment_unique ON workspace_source_assignment_tests (id, assignment_id)",
+};
+
+const INDEXES = {
+  ...PREREQUISITE_UNIQUE_INDEXES,
+  ...ASSIGNMENT_UNIQUE_INDEXES,
+  ...SUPPORTING_INDEXES,
 };
 
 const CONSTRAINTS = {
@@ -262,6 +277,46 @@ const PRIMARY_KEY_REQUIREMENTS = {
   workspace_source_assignment_tests: ["id"],
 };
 
+const PREREQUISITE_UNIQUE_PROTECTIONS = {
+  workspaces_id_client_unique: {
+    table: "workspaces",
+    columns: ["id", "client_id"],
+    plannedIndexName: "workspaces_id_client_unique",
+  },
+  sources_id_client_unique: {
+    table: "sources",
+    columns: ["id", "client_id"],
+    plannedIndexName: "sources_id_client_unique",
+  },
+  sources_id_client_channel_unique: {
+    table: "sources",
+    columns: ["id", "client_id", "publisher_channel_id"],
+    plannedIndexName: "sources_id_client_channel_unique",
+  },
+  publisher_channels_id_profile_unique: {
+    table: "publisher_channels",
+    columns: ["id", "publisher_profile_id"],
+    plannedIndexName: "publisher_channels_id_profile_unique",
+  },
+  client_publisher_selections_id_client_unique: {
+    table: "client_publisher_selections",
+    columns: ["id", "client_id"],
+    plannedIndexName: "client_publisher_selections_id_client_unique",
+  },
+  client_publisher_selections_id_client_publisher_unique: {
+    table: "client_publisher_selections",
+    columns: ["id", "client_id", "publisher_profile_id"],
+    plannedIndexName: "client_publisher_selections_id_client_publisher_unique",
+  },
+};
+
+const PLANNED_TABLES = new Set(ASSIGNMENT_TABLES);
+const PLANNED_COLUMNS = new Set(
+  Object.entries(SOURCE_ASSIGNMENT_COLUMNS).flatMap(([table, columns]) =>
+    columns.map(([column]) => `${table}.${column}`),
+  ),
+);
+
 const ASSIGNMENT_ID_REPAIR_SQL = ASSIGNMENT_TABLES.map((table) => `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS id serial`);
 
 const COLUMN_DEFAULT_REPAIR_SQL = Object.entries(COLUMN_REQUIREMENTS).flatMap(([table, columns]) =>
@@ -354,9 +409,63 @@ function allPlannedSql() {
     ...COLUMN_DEFAULT_REPAIR_SQL,
     ...COLUMN_NOT_NULL_REPAIR_SQL,
     ...PRIMARY_KEY_REPAIR_SQL,
-    ...Object.values(INDEXES),
-    ...Object.entries(CONSTRAINTS).map(([name, stmt]) => addConstraintIfMissingSql(name, stmt)),
+    ...Object.values(PREREQUISITE_UNIQUE_INDEXES),
+    ...Object.values(ASSIGNMENT_UNIQUE_INDEXES),
+    ...Object.values(SUPPORTING_INDEXES),
+    ...Object.entries(CONSTRAINTS)
+      .filter(([name]) => name.endsWith("_fk"))
+      .map(([name, stmt]) => addConstraintIfMissingSql(name, stmt)),
+    ...Object.entries(CONSTRAINTS)
+      .filter(([name]) => name.endsWith("_ck"))
+      .map(([name, stmt]) => addConstraintIfMissingSql(name, stmt)),
   ];
+}
+
+function classifyPlannedStatement(statement) {
+  const sql = String(statement || "").replace(/\s+/g, " ").trim();
+  const lower = sql.toLowerCase();
+  if (lower.startsWith("alter table sources add column")) return "add existing-table columns";
+  if (lower.startsWith("create table if not exists workspace_source_")) return "create assignment tables";
+  if (lower.includes("add column if not exists id serial")) return "empty-partial-table ID repairs";
+  if (lower.startsWith("alter table workspace_source_") && lower.includes(" add column if not exists ")) return "add assignment-table columns";
+  if (lower.includes(" alter column ") && lower.includes(" set default ")) return "default repairs";
+  if (lower.includes(" alter column ") && lower.includes(" set not null")) return "NOT NULL repairs";
+  if (lower.includes(" primary key ")) return "primary-key repairs";
+  if (Object.values(PREREQUISITE_UNIQUE_INDEXES).includes(statement)) return "prerequisite unique indexes";
+  if (Object.values(ASSIGNMENT_UNIQUE_INDEXES).includes(statement)) return "assignment unique indexes";
+  if (Object.values(SUPPORTING_INDEXES).includes(statement)) return "supporting indexes";
+  if (lower.includes(" foreign key ")) return "foreign keys";
+  if (lower.includes(" check ")) return "check constraints";
+  return "unclassified";
+}
+
+function classifyPlannedSql(plannedSql = allPlannedSql()) {
+  const groups = {
+    "add existing-table columns": 0,
+    "create assignment tables": 0,
+    "empty-partial-table ID repairs": 0,
+    "add assignment-table columns": 0,
+    "default repairs": 0,
+    "NOT NULL repairs": 0,
+    "primary-key repairs": 0,
+    "prerequisite unique indexes": 0,
+    "assignment unique indexes": 0,
+    "supporting indexes": 0,
+    "foreign keys": 0,
+    "check constraints": 0,
+  };
+  const unclassified = [];
+  for (const statement of plannedSql) {
+    const group = classifyPlannedStatement(statement);
+    if (group === "unclassified") unclassified.push(statement);
+    else groups[group] += 1;
+  }
+  return {
+    groups,
+    total: plannedSql.length,
+    classifiedTotal: Object.values(groups).reduce((sum, count) => sum + count, 0),
+    unclassified,
+  };
 }
 
 async function tableExists(client, table) {
@@ -453,12 +562,54 @@ function parseIndexRequirement(name, sql) {
   return parseIndexDefinition(name, sql.replace(/\s+IF\s+NOT\s+EXISTS/i, ""));
 }
 
+function indexMatchesRequirement(actual, expected) {
+  return (
+    !actual?.parseError &&
+    actual.table === expected.table &&
+    actual.unique === expected.unique &&
+    actual.columns.join(",") === expected.columns.join(",") &&
+    (actual.predicate || "") === (expected.predicate || "")
+  );
+}
+
+function findEquivalentIndex(indexes, expected) {
+  return [...indexes.values()].find((actual) => indexMatchesRequirement(actual, expected));
+}
+
 async function existingIndexDefinitions(client) {
   const result = await client.query("SELECT indexname, indexdef FROM pg_indexes WHERE schemaname='public'");
-  return new Map(result.rows.map((row) => [
+  const indexes = new Map(result.rows.map((row) => [
     row.indexname,
     parseIndexDefinition(row.indexname, row.indexdef || row.definition || ""),
   ]));
+  const catalogResult = await client.query(`
+    SELECT
+      i.relname AS indexname,
+      t.relname AS table_name,
+      ix.indisunique AS is_unique,
+      COALESCE(array_agg(a.attname ORDER BY u.ordinality) FILTER (WHERE a.attname IS NOT NULL), ARRAY[]::text[]) AS columns,
+      COALESCE(pg_get_expr(ix.indpred, ix.indrelid), '') AS predicate
+    FROM pg_index ix
+    JOIN pg_class i ON i.oid = ix.indexrelid
+    JOIN pg_class t ON t.oid = ix.indrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    LEFT JOIN unnest(ix.indkey) WITH ORDINALITY AS u(attnum, ordinality) ON true
+    LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = u.attnum
+    WHERE n.nspname = 'public'
+    GROUP BY i.relname, t.relname, ix.indisunique, ix.indpred, ix.indrelid
+  `);
+  for (const row of catalogResult.rows) {
+    const existing = indexes.get(row.indexname) || { name: normalizeIdentifier(row.indexname), definition: "" };
+    indexes.set(row.indexname, {
+      ...existing,
+      name: normalizeIdentifier(row.indexname),
+      table: normalizeIdentifier(row.table_name),
+      unique: row.is_unique === true || row.is_unique === "t",
+      columns: splitColumns(row.columns),
+      predicate: normalizeSql(row.predicate || ""),
+    });
+  }
+  return indexes;
 }
 
 function deleteBehaviorCode(value) {
@@ -526,28 +677,98 @@ function safeErrorMessage(error) {
     .slice(0, 240);
 }
 
-async function runCountCheck(client, context, sql, tableRowCounts, inspectionErrors, notApplicableChecks) {
-  const missingRequiredTable = (context.requiredTables || [context.table]).find((table) => tableRowCounts[table] === null);
-  if (missingRequiredTable) {
+function isPlannedTable(table) {
+  return PLANNED_TABLES.has(table);
+}
+
+function isPlannedColumn(table, column) {
+  return PLANNED_COLUMNS.has(`${table}.${column}`);
+}
+
+function missingPrerequisitesForCheck(context, tableRowCounts, columnDetailsByTable) {
+  const planned = [];
+  const unplanned = [];
+  for (const table of context.requiredTables || [context.table]) {
+    if (tableRowCounts[table] !== null) continue;
+    const item = { type: "table", table, name: table };
+    if (isPlannedTable(table)) planned.push(item);
+    else unplanned.push(item);
+  }
+  if (planned.some((item) => item.type === "table") && unplanned.length === 0) {
+    return { planned, unplanned };
+  }
+  for (const requirement of context.requiredColumns || []) {
+    const [table, column] = String(requirement).split(".");
+    if (!table || !column) continue;
+    if (tableRowCounts[table] === null) continue;
+    const details = columnDetailsByTable[table] || new Map();
+    if (details.has(column)) continue;
+    const item = { type: "column", table, column, name: `${table}.${column}` };
+    if (isPlannedColumn(table, column)) planned.push(item);
+    else unplanned.push(item);
+  }
+  return { planned, unplanned };
+}
+
+function formatMissingPrerequisites(items) {
+  return items.map((item) => item.name);
+}
+
+async function runIntegrityCheck(client, context, sql, state) {
+  const { inspectionErrors, notApplicableChecks, integrityChecks, tableRowCounts, columnDetailsByTable } = state;
+  const missing = missingPrerequisitesForCheck(context, tableRowCounts, columnDetailsByTable);
+  if (missing.planned.length > 0 && missing.unplanned.length === 0) {
+    const result = {
+      status: "not_applicable",
+      value: null,
+      reason: "prerequisite_schema_missing_and_planned",
+      missingPrerequisites: formatMissingPrerequisites(missing.planned),
+    };
+    integrityChecks[context.check] = result;
     notApplicableChecks.push({
       check: context.check,
       table: context.table,
-      reason: "table_missing",
-      missingTable: missingRequiredTable,
+      ...result,
     });
-    return null;
+    return result;
+  }
+  if (missing.unplanned.length > 0) {
+    const result = {
+      status: "error",
+      value: null,
+      reason: "missing_unplanned_prerequisite_schema",
+      missingPrerequisites: formatMissingPrerequisites(missing.unplanned),
+    };
+    integrityChecks[context.check] = result;
+    inspectionErrors.push({
+      check: context.check,
+      table: context.table,
+      errorCode: "MISSING_PREREQUISITE_SCHEMA",
+      safeMessage: `Missing prerequisite schema: ${result.missingPrerequisites.join(", ")}`,
+    });
+    return result;
   }
   try {
     const result = await client.query(sql);
-    return Number(result.rows[0]?.count || 0);
+    const value = Number(result.rows[0]?.count || 0);
+    const checkResult = { status: "ok", value, reason: null, missingPrerequisites: [] };
+    integrityChecks[context.check] = checkResult;
+    return checkResult;
   } catch (error) {
+    const checkResult = {
+      status: "error",
+      value: null,
+      reason: "query_failed",
+      missingPrerequisites: [],
+    };
+    integrityChecks[context.check] = checkResult;
     inspectionErrors.push({
       check: context.check,
       table: context.table,
       errorCode: error?.code || error?.name || "QUERY_FAILED",
       safeMessage: safeErrorMessage(error),
     });
-    return null;
+    return checkResult;
   }
 }
 
@@ -618,26 +839,111 @@ function compareIndexes(indexes) {
   const missingIndexes = [];
   const malformedIndexes = [];
   const missingUniqueConstraints = [];
+  const equivalentExistingIndexes = [];
+  const genuinelyMissingIndexes = [];
   for (const [name, sql] of Object.entries(INDEXES)) {
     const expected = parseIndexRequirement(name, sql);
     const actual = indexes.get(name);
-    if (!actual) {
-      missingIndexes.push(name);
-      if (expected.unique) missingUniqueConstraints.push({ name, reason: "missing_unique_index" });
-      continue;
-    }
-    const problems = [];
-    if (actual.parseError) problems.push(actual.parseError);
-    if (actual.table !== expected.table) problems.push("wrong_table");
-    if (actual.unique !== expected.unique) problems.push(expected.unique ? "not_unique" : "unexpected_unique");
-    if (actual.columns.join(",") !== expected.columns.join(",")) problems.push("wrong_columns_or_order");
-    if ((actual.predicate || "") !== (expected.predicate || "")) problems.push("wrong_predicate");
-    if (problems.length) {
+    const equivalent = findEquivalentIndex(indexes, expected);
+    if (actual && !indexMatchesRequirement(actual, expected)) {
+      const problems = [];
+      if (actual.parseError) problems.push(actual.parseError);
+      if (actual.table !== expected.table) problems.push("wrong_table");
+      if (actual.unique !== expected.unique) problems.push(expected.unique ? "not_unique" : "unexpected_unique");
+      if (actual.columns.join(",") !== expected.columns.join(",")) problems.push("wrong_columns_or_order");
+      if ((actual.predicate || "") !== (expected.predicate || "")) problems.push("wrong_predicate");
       malformedIndexes.push({ name, expected, actual, problems });
       if (expected.unique) missingUniqueConstraints.push({ name, reason: "malformed_unique_index", problems });
+      continue;
+    }
+    if (actual && indexMatchesRequirement(actual, expected)) continue;
+    if (!actual && equivalent) {
+      equivalentExistingIndexes.push({
+        expectedName: name,
+        actualName: equivalent.name,
+        table: equivalent.table,
+        columns: equivalent.columns,
+        unique: equivalent.unique,
+        predicate: equivalent.predicate || "",
+      });
+      continue;
+    }
+    if (!actual && !equivalent) {
+      missingIndexes.push(name);
+      if (expected.unique) missingUniqueConstraints.push({ name, reason: "missing_unique_index" });
+      genuinelyMissingIndexes.push({ name, table: expected.table, columns: expected.columns, unique: expected.unique, predicate: expected.predicate || "" });
+      continue;
     }
   }
-  return { missingIndexes, malformedIndexes, missingUniqueConstraints };
+  return { missingIndexes, malformedIndexes, missingUniqueConstraints, equivalentExistingIndexes, genuinelyMissingIndexes };
+}
+
+function inspectPrerequisiteUniqueProtections(indexes) {
+  const prerequisiteUniqueProtections = {};
+  const plannedPrerequisiteIndexes = [];
+  const uniqueIndexesByTable = {};
+  for (const index of indexes.values()) {
+    if (!index.unique) continue;
+    if (!uniqueIndexesByTable[index.table]) uniqueIndexesByTable[index.table] = [];
+    uniqueIndexesByTable[index.table].push({
+      name: index.name,
+      columns: index.columns,
+      unique: index.unique,
+      predicate: index.predicate || "",
+      definition: index.definition || "",
+    });
+  }
+  for (const [logicalName, requirement] of Object.entries(PREREQUISITE_UNIQUE_PROTECTIONS)) {
+    const expected = parseIndexRequirement(requirement.plannedIndexName, PREREQUISITE_UNIQUE_INDEXES[requirement.plannedIndexName]);
+    const actualByName = indexes.get(requirement.plannedIndexName);
+    const equivalent = findEquivalentIndex(indexes, expected);
+    if (actualByName && !indexMatchesRequirement(actualByName, expected)) {
+      prerequisiteUniqueProtections[logicalName] = {
+        status: "malformed",
+        plannedName: requirement.plannedIndexName,
+        table: requirement.table,
+        columns: requirement.columns,
+        actualObjectName: actualByName.name,
+        actualColumns: actualByName.columns,
+        uniqueness: actualByName.unique,
+        predicate: actualByName.predicate || "",
+        willCreate: false,
+      };
+      continue;
+    }
+    if (equivalent) {
+      prerequisiteUniqueProtections[logicalName] = {
+        status: "existing_equivalent",
+        plannedName: requirement.plannedIndexName,
+        table: requirement.table,
+        columns: requirement.columns,
+        actualObjectName: equivalent.name,
+        actualColumns: equivalent.columns,
+        uniqueness: equivalent.unique,
+        predicate: equivalent.predicate || "",
+        willCreate: false,
+      };
+      continue;
+    }
+    prerequisiteUniqueProtections[logicalName] = {
+      status: "missing_planned",
+      plannedName: requirement.plannedIndexName,
+      table: requirement.table,
+      columns: requirement.columns,
+      actualObjectName: null,
+      actualColumns: [],
+      uniqueness: false,
+      predicate: "",
+      willCreate: true,
+    };
+    plannedPrerequisiteIndexes.push({
+      name: requirement.plannedIndexName,
+      table: requirement.table,
+      columns: requirement.columns,
+      statement: PREREQUISITE_UNIQUE_INDEXES[requirement.plannedIndexName],
+    });
+  }
+  return { prerequisiteUniqueProtections, plannedPrerequisiteIndexes, uniqueIndexesByTable };
 }
 
 function comparePrimaryKeys(constraints, tableRowCounts) {
@@ -723,6 +1029,8 @@ async function inspect(client) {
   const tableRowCounts = {};
   const tables = ["users", "clients", "workspaces", "workspace_relevance_profiles", "publisher_profiles", "publisher_channels", "client_publisher_selections", "sources", "articles", "article_appearances", "platform_reset_audit", ...ASSIGNMENT_TABLES];
   for (const table of tables) tableRowCounts[table] = await tableCount(client, table);
+  const columnDetailsByTable = {};
+  for (const table of tables) columnDetailsByTable[table] = await columnDetailsFor(client, table);
 
   const missingColumns = {};
   const incompatibleColumnDefinitions = [];
@@ -731,7 +1039,7 @@ async function inspect(client) {
   const safeColumnRepairs = [];
   const unsafeColumnRepairs = [];
   for (const [table, definitions] of Object.entries(SOURCE_ASSIGNMENT_COLUMNS)) {
-    const details = await columnDetailsFor(client, table);
+    const details = columnDetailsByTable[table] || new Map();
     const columnInspection = inspectColumnDefinitions(table, details, tableRowCounts[table]);
     missingColumns[table] = definitions.filter(([name]) => columnInspection.missing.some((item) => item.name === name)).map(([name, definition]) => ({ name, definition }));
     incompatibleColumnDefinitions.push(...columnInspection.incompatible);
@@ -743,43 +1051,63 @@ async function inspect(client) {
 
   const indexes = await existingIndexDefinitions(client);
   const constraints = await constraintCatalog(client);
-  const { missingIndexes, malformedIndexes, missingUniqueConstraints } = compareIndexes(indexes);
+  const {
+    missingIndexes,
+    malformedIndexes,
+    missingUniqueConstraints,
+    equivalentExistingIndexes,
+    genuinelyMissingIndexes,
+  } = compareIndexes(indexes);
+  const {
+    prerequisiteUniqueProtections,
+    plannedPrerequisiteIndexes,
+    uniqueIndexesByTable,
+  } = inspectPrerequisiteUniqueProtections(indexes);
   const { missingPrimaryKeys, malformedPrimaryKeys } = comparePrimaryKeys(constraints, tableRowCounts);
   const { missingForeignKeys, malformedForeignKeys } = compareForeignKeys(constraints);
   const { missingCheckConstraints, malformedCheckConstraints } = compareCheckConstraints(constraints);
 
   const inspectionErrors = [];
   const notApplicableChecks = [];
+  const integrityChecks = {};
   const checks = [
-    ["invalidAssignmentStatus", "workspace_source_assignments", ["workspace_source_assignments"], "SELECT count(*)::int AS count FROM workspace_source_assignments WHERE status NOT IN ('draft','testing','ready','active','paused','archived')"],
-    ["invalidAssignmentTestStatus", "workspace_source_assignments", ["workspace_source_assignments"], "SELECT count(*)::int AS count FROM workspace_source_assignments WHERE test_status NOT IN ('untested','passed','warning','failed','stale')"],
-    ["invalidAssignmentEnabledStatus", "workspace_source_assignments", ["workspace_source_assignments"], "SELECT count(*)::int AS count FROM workspace_source_assignments WHERE NOT ((status = 'active' AND enabled IS TRUE) OR (status <> 'active' AND enabled IS FALSE))"],
-    ["invalidRunType", "workspace_source_assignment_tests", ["workspace_source_assignment_tests"], "SELECT count(*)::int AS count FROM workspace_source_assignment_tests WHERE test_type NOT IN ('connectivity','relevance','full')"],
-    ["invalidRunStatus", "workspace_source_assignment_tests", ["workspace_source_assignment_tests"], "SELECT count(*)::int AS count FROM workspace_source_assignment_tests WHERE status NOT IN ('running','passed','warning','failed')"],
-    ["workspaceClientMismatch", "workspace_source_assignments", ["workspace_source_assignments", "workspaces"], "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN workspaces w ON w.id=a.workspace_id AND w.client_id=a.client_id WHERE w.id IS NULL"],
-    ["sourceClientMismatch", "workspace_source_assignments", ["workspace_source_assignments", "sources"], "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN sources s ON s.id=a.source_id AND s.client_id=a.client_id WHERE s.id IS NULL"],
-    ["sourceChannelMismatch", "workspace_source_assignments", ["workspace_source_assignments", "sources"], "SELECT count(*)::int AS count FROM workspace_source_assignments a JOIN sources s ON s.id=a.source_id WHERE s.publisher_channel_id IS DISTINCT FROM a.publisher_channel_id"],
-    ["selectionPublisherMismatch", "workspace_source_assignments", ["workspace_source_assignments", "client_publisher_selections"], "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN client_publisher_selections cps ON cps.id=a.client_publisher_selection_id AND cps.client_id=a.client_id AND cps.publisher_profile_id=a.publisher_profile_id WHERE cps.id IS NULL"],
-    ["assignmentSelectionClientPublisherMismatch", "workspace_source_assignments", ["workspace_source_assignments", "client_publisher_selections"], "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN client_publisher_selections cps ON cps.id=a.client_publisher_selection_id AND cps.client_id=a.client_id AND cps.publisher_profile_id=a.publisher_profile_id WHERE cps.id IS NULL"],
-    ["assignmentSourceClientChannelMismatch", "workspace_source_assignments", ["workspace_source_assignments", "sources"], "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN sources s ON s.id=a.source_id AND s.client_id=a.client_id AND s.publisher_channel_id=a.publisher_channel_id WHERE s.id IS NULL"],
-    ["assignmentChannelPublisherMismatch", "workspace_source_assignments", ["workspace_source_assignments", "publisher_channels"], "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN publisher_channels pc ON pc.id=a.publisher_channel_id AND pc.publisher_profile_id=a.publisher_profile_id WHERE pc.id IS NULL"],
-    ["testAssignmentClientWorkspaceMismatch", "workspace_source_assignment_tests", ["workspace_source_assignment_tests", "workspace_source_assignments"], "SELECT count(*)::int AS count FROM workspace_source_assignment_tests t LEFT JOIN workspace_source_assignments a ON a.id=t.assignment_id AND a.client_id=t.client_id AND a.workspace_id=t.workspace_id WHERE a.id IS NULL"],
-    ["testAssignmentSourceMismatch", "workspace_source_assignment_tests", ["workspace_source_assignment_tests", "workspace_source_assignments"], "SELECT count(*)::int AS count FROM workspace_source_assignment_tests t LEFT JOIN workspace_source_assignments a ON a.id=t.assignment_id AND a.source_id=t.source_id WHERE a.id IS NULL"],
-    ["testAssignmentChannelMismatch", "workspace_source_assignment_tests", ["workspace_source_assignment_tests", "workspace_source_assignments"], "SELECT count(*)::int AS count FROM workspace_source_assignment_tests t LEFT JOIN workspace_source_assignments a ON a.id=t.assignment_id AND a.publisher_channel_id=t.publisher_channel_id WHERE a.id IS NULL"],
-    ["testAssignmentClientWorkspaceSourceMismatch", "workspace_source_assignment_tests", ["workspace_source_assignment_tests", "workspace_source_assignments"], "SELECT count(*)::int AS count FROM workspace_source_assignment_tests t LEFT JOIN workspace_source_assignments a ON a.id=t.assignment_id AND a.client_id=t.client_id AND a.workspace_id=t.workspace_id AND a.source_id=t.source_id AND a.publisher_channel_id=t.publisher_channel_id WHERE a.id IS NULL"],
-    ["latestTestWrongAssignment", "workspace_source_assignments", ["workspace_source_assignments", "workspace_source_assignment_tests"], "SELECT count(*)::int AS count FROM workspace_source_assignments a JOIN workspace_source_assignment_tests t ON t.id=a.latest_test_run_id WHERE t.assignment_id <> a.id"],
-    ["activeAssignmentWithoutCurrentTest", "workspace_source_assignments", ["workspace_source_assignments", "workspace_source_assignment_tests", "workspace_relevance_profiles"], "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN workspace_source_assignment_tests t ON t.id=a.latest_test_run_id AND t.assignment_id=a.id LEFT JOIN workspace_relevance_profiles p ON p.workspace_id=a.workspace_id WHERE a.status='active' AND (t.id IS NULL OR t.test_type NOT IN ('relevance','full') OR t.status NOT IN ('passed','warning') OR t.relevance_profile_version <> COALESCE(p.profile_version, a.relevance_profile_version) OR t.source_validation_identity IS DISTINCT FROM a.source_validation_identity OR t.assignment_config_identity IS DISTINCT FROM a.assignment_config_identity)"],
-    ["activeAssignmentWithStaleTest", "workspace_source_assignments", ["workspace_source_assignments", "workspace_relevance_profiles"], "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN workspace_relevance_profiles p ON p.workspace_id=a.workspace_id WHERE a.status='active' AND (a.test_status='stale' OR a.relevance_profile_version <> COALESCE(p.profile_version, a.relevance_profile_version))"],
-    ["activeAssignmentDisabledMismatch", "workspace_source_assignments", ["workspace_source_assignments"], "SELECT count(*)::int AS count FROM workspace_source_assignments WHERE (status='active' AND enabled IS DISTINCT FROM TRUE) OR (status <> 'active' AND enabled IS DISTINCT FROM FALSE)"],
-    ["inactiveSourceWithActiveAssignment", "sources", ["sources", "workspace_source_assignments"], "SELECT count(*)::int AS count FROM sources s WHERE s.active IS DISTINCT FROM TRUE AND EXISTS (SELECT 1 FROM workspace_source_assignments a WHERE a.source_id=s.id AND a.status='active' AND a.enabled IS TRUE)"],
-    ["activeSourceWithoutActiveAssignment", "sources", ["sources", "workspace_source_assignments"], "SELECT count(*)::int AS count FROM sources s WHERE s.active IS TRUE AND s.publisher_channel_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workspace_source_assignments a WHERE a.source_id=s.id AND a.status='active' AND a.enabled IS TRUE)"],
-    ["duplicateOperationalSourceIdentity", "sources", ["sources"], "SELECT count(*)::int AS count FROM (SELECT client_id, source_identity_key FROM sources WHERE source_identity_key IS NOT NULL GROUP BY 1,2 HAVING count(*) > 1) d"],
-    ["duplicateWorkspaceSource", "workspace_source_assignments", ["workspace_source_assignments"], "SELECT count(*)::int AS count FROM (SELECT workspace_id, source_id FROM workspace_source_assignments GROUP BY 1,2 HAVING count(*) > 1) d"],
-    ["duplicateWorkspaceChannel", "workspace_source_assignments", ["workspace_source_assignments"], "SELECT count(*)::int AS count FROM (SELECT workspace_id, publisher_channel_id FROM workspace_source_assignments GROUP BY 1,2 HAVING count(*) > 1) d"],
+    { check: "duplicateWorkspaceIdClient", table: "workspaces", requiredTables: ["workspaces"], requiredColumns: ["workspaces.id", "workspaces.client_id"], query: "SELECT count(*)::int AS count FROM (SELECT id, client_id FROM workspaces GROUP BY 1,2 HAVING count(*) > 1) d" },
+    { check: "duplicateSourceIdClient", table: "sources", requiredTables: ["sources"], requiredColumns: ["sources.id", "sources.client_id"], query: "SELECT count(*)::int AS count FROM (SELECT id, client_id FROM sources GROUP BY 1,2 HAVING count(*) > 1) d" },
+    { check: "duplicateSourceIdClientChannel", table: "sources", requiredTables: ["sources"], requiredColumns: ["sources.id", "sources.client_id", "sources.publisher_channel_id"], query: "SELECT count(*)::int AS count FROM (SELECT id, client_id, publisher_channel_id FROM sources GROUP BY 1,2,3 HAVING count(*) > 1) d" },
+    { check: "duplicatePublisherChannelIdProfile", table: "publisher_channels", requiredTables: ["publisher_channels"], requiredColumns: ["publisher_channels.id", "publisher_channels.publisher_profile_id"], query: "SELECT count(*)::int AS count FROM (SELECT id, publisher_profile_id FROM publisher_channels GROUP BY 1,2 HAVING count(*) > 1) d" },
+    { check: "duplicateClientPublisherSelectionIdClient", table: "client_publisher_selections", requiredTables: ["client_publisher_selections"], requiredColumns: ["client_publisher_selections.id", "client_publisher_selections.client_id"], query: "SELECT count(*)::int AS count FROM (SELECT id, client_id FROM client_publisher_selections GROUP BY 1,2 HAVING count(*) > 1) d" },
+    { check: "duplicateClientPublisherSelectionIdClientPublisher", table: "client_publisher_selections", requiredTables: ["client_publisher_selections"], requiredColumns: ["client_publisher_selections.id", "client_publisher_selections.client_id", "client_publisher_selections.publisher_profile_id"], query: "SELECT count(*)::int AS count FROM (SELECT id, client_id, publisher_profile_id FROM client_publisher_selections GROUP BY 1,2,3 HAVING count(*) > 1) d" },
+    { check: "invalidAssignmentStatus", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments"], requiredColumns: ["workspace_source_assignments.status"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments WHERE status NOT IN ('draft','testing','ready','active','paused','archived')" },
+    { check: "invalidAssignmentTestStatus", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments"], requiredColumns: ["workspace_source_assignments.test_status"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments WHERE test_status NOT IN ('untested','passed','warning','failed','stale')" },
+    { check: "invalidAssignmentEnabledStatus", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments"], requiredColumns: ["workspace_source_assignments.status", "workspace_source_assignments.enabled"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments WHERE NOT ((status = 'active' AND enabled IS TRUE) OR (status <> 'active' AND enabled IS FALSE))" },
+    { check: "invalidRunType", table: "workspace_source_assignment_tests", requiredTables: ["workspace_source_assignment_tests"], requiredColumns: ["workspace_source_assignment_tests.test_type"], query: "SELECT count(*)::int AS count FROM workspace_source_assignment_tests WHERE test_type NOT IN ('connectivity','relevance','full')" },
+    { check: "invalidRunStatus", table: "workspace_source_assignment_tests", requiredTables: ["workspace_source_assignment_tests"], requiredColumns: ["workspace_source_assignment_tests.status"], query: "SELECT count(*)::int AS count FROM workspace_source_assignment_tests WHERE status NOT IN ('running','passed','warning','failed')" },
+    { check: "workspaceClientMismatch", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments", "workspaces"], requiredColumns: ["workspace_source_assignments.workspace_id", "workspace_source_assignments.client_id", "workspaces.id", "workspaces.client_id"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN workspaces w ON w.id=a.workspace_id AND w.client_id=a.client_id WHERE w.id IS NULL" },
+    { check: "sourceClientMismatch", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments", "sources"], requiredColumns: ["workspace_source_assignments.source_id", "workspace_source_assignments.client_id", "sources.id", "sources.client_id"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN sources s ON s.id=a.source_id AND s.client_id=a.client_id WHERE s.id IS NULL" },
+    { check: "sourceChannelMismatch", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments", "sources"], requiredColumns: ["workspace_source_assignments.source_id", "workspace_source_assignments.publisher_channel_id", "sources.id", "sources.publisher_channel_id"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments a JOIN sources s ON s.id=a.source_id WHERE s.publisher_channel_id IS DISTINCT FROM a.publisher_channel_id" },
+    { check: "selectionPublisherMismatch", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments", "client_publisher_selections"], requiredColumns: ["workspace_source_assignments.client_publisher_selection_id", "workspace_source_assignments.client_id", "workspace_source_assignments.publisher_profile_id", "client_publisher_selections.id", "client_publisher_selections.client_id", "client_publisher_selections.publisher_profile_id"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN client_publisher_selections cps ON cps.id=a.client_publisher_selection_id AND cps.client_id=a.client_id AND cps.publisher_profile_id=a.publisher_profile_id WHERE cps.id IS NULL" },
+    { check: "assignmentSelectionClientPublisherMismatch", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments", "client_publisher_selections"], requiredColumns: ["workspace_source_assignments.client_publisher_selection_id", "workspace_source_assignments.client_id", "workspace_source_assignments.publisher_profile_id", "client_publisher_selections.id", "client_publisher_selections.client_id", "client_publisher_selections.publisher_profile_id"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN client_publisher_selections cps ON cps.id=a.client_publisher_selection_id AND cps.client_id=a.client_id AND cps.publisher_profile_id=a.publisher_profile_id WHERE cps.id IS NULL" },
+    { check: "assignmentSourceClientChannelMismatch", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments", "sources"], requiredColumns: ["workspace_source_assignments.source_id", "workspace_source_assignments.client_id", "workspace_source_assignments.publisher_channel_id", "sources.id", "sources.client_id", "sources.publisher_channel_id"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN sources s ON s.id=a.source_id AND s.client_id=a.client_id AND s.publisher_channel_id=a.publisher_channel_id WHERE s.id IS NULL" },
+    { check: "assignmentChannelPublisherMismatch", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments", "publisher_channels"], requiredColumns: ["workspace_source_assignments.publisher_channel_id", "workspace_source_assignments.publisher_profile_id", "publisher_channels.id", "publisher_channels.publisher_profile_id"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN publisher_channels pc ON pc.id=a.publisher_channel_id AND pc.publisher_profile_id=a.publisher_profile_id WHERE pc.id IS NULL" },
+    { check: "testAssignmentClientWorkspaceMismatch", table: "workspace_source_assignment_tests", requiredTables: ["workspace_source_assignment_tests", "workspace_source_assignments"], requiredColumns: ["workspace_source_assignment_tests.assignment_id", "workspace_source_assignment_tests.client_id", "workspace_source_assignment_tests.workspace_id", "workspace_source_assignments.id", "workspace_source_assignments.client_id", "workspace_source_assignments.workspace_id"], query: "SELECT count(*)::int AS count FROM workspace_source_assignment_tests t LEFT JOIN workspace_source_assignments a ON a.id=t.assignment_id AND a.client_id=t.client_id AND a.workspace_id=t.workspace_id WHERE a.id IS NULL" },
+    { check: "testAssignmentSourceMismatch", table: "workspace_source_assignment_tests", requiredTables: ["workspace_source_assignment_tests", "workspace_source_assignments"], requiredColumns: ["workspace_source_assignment_tests.assignment_id", "workspace_source_assignment_tests.source_id", "workspace_source_assignments.id", "workspace_source_assignments.source_id"], query: "SELECT count(*)::int AS count FROM workspace_source_assignment_tests t LEFT JOIN workspace_source_assignments a ON a.id=t.assignment_id AND a.source_id=t.source_id WHERE a.id IS NULL" },
+    { check: "testAssignmentChannelMismatch", table: "workspace_source_assignment_tests", requiredTables: ["workspace_source_assignment_tests", "workspace_source_assignments"], requiredColumns: ["workspace_source_assignment_tests.assignment_id", "workspace_source_assignment_tests.publisher_channel_id", "workspace_source_assignments.id", "workspace_source_assignments.publisher_channel_id"], query: "SELECT count(*)::int AS count FROM workspace_source_assignment_tests t LEFT JOIN workspace_source_assignments a ON a.id=t.assignment_id AND a.publisher_channel_id=t.publisher_channel_id WHERE a.id IS NULL" },
+    { check: "testAssignmentClientWorkspaceSourceMismatch", table: "workspace_source_assignment_tests", requiredTables: ["workspace_source_assignment_tests", "workspace_source_assignments"], requiredColumns: ["workspace_source_assignment_tests.assignment_id", "workspace_source_assignment_tests.client_id", "workspace_source_assignment_tests.workspace_id", "workspace_source_assignment_tests.source_id", "workspace_source_assignment_tests.publisher_channel_id", "workspace_source_assignments.id", "workspace_source_assignments.client_id", "workspace_source_assignments.workspace_id", "workspace_source_assignments.source_id", "workspace_source_assignments.publisher_channel_id"], query: "SELECT count(*)::int AS count FROM workspace_source_assignment_tests t LEFT JOIN workspace_source_assignments a ON a.id=t.assignment_id AND a.client_id=t.client_id AND a.workspace_id=t.workspace_id AND a.source_id=t.source_id AND a.publisher_channel_id=t.publisher_channel_id WHERE a.id IS NULL" },
+    { check: "latestTestWrongAssignment", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments", "workspace_source_assignment_tests"], requiredColumns: ["workspace_source_assignments.latest_test_run_id", "workspace_source_assignments.id", "workspace_source_assignment_tests.id", "workspace_source_assignment_tests.assignment_id"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments a JOIN workspace_source_assignment_tests t ON t.id=a.latest_test_run_id WHERE t.assignment_id <> a.id" },
+    { check: "activeAssignmentWithoutCurrentTest", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments", "workspace_source_assignment_tests", "workspace_relevance_profiles"], requiredColumns: ["workspace_source_assignments.status", "workspace_source_assignments.latest_test_run_id", "workspace_source_assignments.id", "workspace_source_assignments.workspace_id", "workspace_source_assignments.relevance_profile_version", "workspace_source_assignments.source_validation_identity", "workspace_source_assignments.assignment_config_identity", "workspace_source_assignment_tests.id", "workspace_source_assignment_tests.assignment_id", "workspace_source_assignment_tests.test_type", "workspace_source_assignment_tests.status", "workspace_source_assignment_tests.relevance_profile_version", "workspace_source_assignment_tests.source_validation_identity", "workspace_source_assignment_tests.assignment_config_identity", "workspace_relevance_profiles.workspace_id", "workspace_relevance_profiles.profile_version"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN workspace_source_assignment_tests t ON t.id=a.latest_test_run_id AND t.assignment_id=a.id LEFT JOIN workspace_relevance_profiles p ON p.workspace_id=a.workspace_id WHERE a.status='active' AND (t.id IS NULL OR t.test_type NOT IN ('relevance','full') OR t.status NOT IN ('passed','warning') OR t.relevance_profile_version <> COALESCE(p.profile_version, a.relevance_profile_version) OR t.source_validation_identity IS DISTINCT FROM a.source_validation_identity OR t.assignment_config_identity IS DISTINCT FROM a.assignment_config_identity)" },
+    { check: "activeAssignmentWithStaleTest", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments", "workspace_relevance_profiles"], requiredColumns: ["workspace_source_assignments.status", "workspace_source_assignments.test_status", "workspace_source_assignments.workspace_id", "workspace_source_assignments.relevance_profile_version", "workspace_relevance_profiles.workspace_id", "workspace_relevance_profiles.profile_version"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments a LEFT JOIN workspace_relevance_profiles p ON p.workspace_id=a.workspace_id WHERE a.status='active' AND (a.test_status='stale' OR a.relevance_profile_version <> COALESCE(p.profile_version, a.relevance_profile_version))" },
+    { check: "activeAssignmentDisabledMismatch", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments"], requiredColumns: ["workspace_source_assignments.status", "workspace_source_assignments.enabled"], query: "SELECT count(*)::int AS count FROM workspace_source_assignments WHERE (status='active' AND enabled IS DISTINCT FROM TRUE) OR (status <> 'active' AND enabled IS DISTINCT FROM FALSE)" },
+    { check: "inactiveSourceWithActiveAssignment", table: "sources", requiredTables: ["sources", "workspace_source_assignments"], requiredColumns: ["sources.id", "sources.active", "workspace_source_assignments.source_id", "workspace_source_assignments.status", "workspace_source_assignments.enabled"], query: "SELECT count(*)::int AS count FROM sources s WHERE s.active IS DISTINCT FROM TRUE AND EXISTS (SELECT 1 FROM workspace_source_assignments a WHERE a.source_id=s.id AND a.status='active' AND a.enabled IS TRUE)" },
+    { check: "activeSourceWithoutActiveAssignment", table: "sources", requiredTables: ["sources", "workspace_source_assignments"], requiredColumns: ["sources.id", "sources.active", "sources.publisher_channel_id", "workspace_source_assignments.source_id", "workspace_source_assignments.status", "workspace_source_assignments.enabled"], query: "SELECT count(*)::int AS count FROM sources s WHERE s.active IS TRUE AND s.publisher_channel_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workspace_source_assignments a WHERE a.source_id=s.id AND a.status='active' AND a.enabled IS TRUE)" },
+    { check: "duplicateOperationalSourceIdentity", table: "sources", requiredTables: ["sources"], requiredColumns: ["sources.client_id", "sources.source_identity_key"], query: "SELECT count(*)::int AS count FROM (SELECT client_id, source_identity_key FROM sources WHERE source_identity_key IS NOT NULL GROUP BY 1,2 HAVING count(*) > 1) d" },
+    { check: "duplicateWorkspaceSource", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments"], requiredColumns: ["workspace_source_assignments.workspace_id", "workspace_source_assignments.source_id"], query: "SELECT count(*)::int AS count FROM (SELECT workspace_id, source_id FROM workspace_source_assignments GROUP BY 1,2 HAVING count(*) > 1) d" },
+    { check: "duplicateWorkspaceChannel", table: "workspace_source_assignments", requiredTables: ["workspace_source_assignments"], requiredColumns: ["workspace_source_assignments.workspace_id", "workspace_source_assignments.publisher_channel_id"], query: "SELECT count(*)::int AS count FROM (SELECT workspace_id, publisher_channel_id FROM workspace_source_assignments GROUP BY 1,2 HAVING count(*) > 1) d" },
   ];
   const incompatibleRows = {};
-  for (const [check, table, requiredTables, sql] of checks) {
-    incompatibleRows[check] = await runCountCheck(client, { check, table, requiredTables }, sql, tableRowCounts, inspectionErrors, notApplicableChecks);
+  const integrityState = { inspectionErrors, notApplicableChecks, integrityChecks, tableRowCounts, columnDetailsByTable };
+  for (const check of checks) {
+    const result = await runIntegrityCheck(client, check, check.query, integrityState);
+    incompatibleRows[check.check] = result.value;
   }
 
   const partialSchemaRisks = [];
@@ -814,10 +1142,16 @@ async function inspect(client) {
     missingIndexes,
     malformedIndexes,
     missingUniqueConstraints,
+    prerequisiteUniqueProtections,
+    equivalentExistingIndexes,
+    genuinelyMissingIndexes,
+    plannedPrerequisiteIndexes,
+    uniqueIndexesByTable,
     missingForeignKeys,
     malformedForeignKeys,
     missingCheckConstraints,
     malformedCheckConstraints,
+    integrityChecks,
     incompatibleRows,
     nonZeroIncompatibilities,
     partialSchemaRisks,
@@ -839,11 +1173,12 @@ async function run({ apply = false, ClientImpl = Client } = {}) {
     const before = await inspect(client);
     const applySafe = before.applySafe;
     const plannedSql = allPlannedSql();
+    const plannedSqlClassification = classifyPlannedSql(plannedSql);
     if (apply && !applySafe) {
-      return { migration: "workspace-source-assignments", mode: "apply", writes: false, applySafe, before, plannedSql, error: "apply_not_safe" };
+      return { migration: "workspace-source-assignments", mode: "apply", writes: false, applySafe, before, plannedSql, plannedSqlClassification, error: "apply_not_safe" };
     }
     if (!apply) {
-      return { migration: "workspace-source-assignments", mode: "dry-run", writes: false, applySafe, ...before, plannedSql, plannedStatementCount: plannedSql.length, futureApplyCommand: "npm run db:migrate:workspace-source-assignments -- --apply" };
+      return { migration: "workspace-source-assignments", mode: "dry-run", writes: false, applySafe, ...before, plannedSql, plannedSqlClassification, plannedStatementCount: plannedSql.length, futureApplyCommand: "npm run db:migrate:workspace-source-assignments -- --apply" };
     }
     await client.query("BEGIN");
     try {
@@ -854,7 +1189,7 @@ async function run({ apply = false, ClientImpl = Client } = {}) {
         throw new Error("post_migration_integrity_failed");
       }
       await client.query("COMMIT");
-      return { migration: "workspace-source-assignments", mode: "apply", writes: true, appliedStatements: plannedSql.length, before, after, applySafe: true };
+      return { migration: "workspace-source-assignments", mode: "apply", writes: true, appliedStatements: plannedSql.length, plannedSqlClassification, before, after, applySafe: true };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -880,6 +1215,7 @@ module.exports = {
   INDEXES,
   CONSTRAINTS,
   allPlannedSql,
+  classifyPlannedSql,
   inspect,
   run,
 };
