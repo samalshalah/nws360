@@ -2092,6 +2092,23 @@ export async function registerRoutes(
     return { cleanUpdates };
   }
 
+  const legacyOperationalSourceTestFields = new Set([
+    "url",
+    "intervalMinutes",
+    "maxArticlesPerFetch",
+    "retentionDays",
+    "collectorConfig",
+    "filterConfig",
+    "active",
+  ]);
+
+  async function legacyOperationalSettingsWorkflowRequired(existingSource: any, clientId: number, input: Record<string, unknown>): Promise<boolean> {
+    if (!existingSource.publisherChannelId) return false;
+    if (!Object.keys(input).some((key) => legacyOperationalSourceTestFields.has(key))) return false;
+    const assignmentSummaries = await storage.getSourceAssignmentSummaries(clientId);
+    return (assignmentSummaries[existingSource.id]?.assignments.length || 0) > 0;
+  }
+
   app.patch(api.sources.update.path, requireCapability(CAPS.SOURCES_EDIT), async (req, res) => {
     try {
       if (!req.isAuthenticated()) return res.sendStatus(401);
@@ -2104,6 +2121,12 @@ export async function registerRoutes(
         return safeNotFound(res);
       }
       const input = sourceUpdateInput.parse(req.body);
+      if (await legacyOperationalSettingsWorkflowRequired(existingSource, clientId, input)) {
+        return res.status(409).json({
+          message: "Use the guarded operational source settings workflow for assigned publisher-linked sources.",
+          code: "operational_source_settings_workflow_required",
+        });
+      }
       const { cleanUpdates, error } = normalizeSourceUpdatePayload(input, existingSource);
       if (error || !cleanUpdates) return res.status(400).json({ message: error || "Invalid source settings" });
       const source = await storage.updateSource(id, cleanUpdates, clientId);
@@ -4749,6 +4772,56 @@ export async function registerRoutes(
     const history = await storage.getWorkspaceRelevanceHistory(workspace.id, articleId, client.id);
     await storage.createAuditLog({ userId: user.id, clientId: client.id, action: "workspace_relevance_review", entity: "article", entityId: articleId, details: safeAuditDetails({ workspaceId: workspace.id, relevanceStatus: input.relevanceStatus, reopen: Boolean(input.reopen) }) });
     res.json({ relevance: updated, history });
+  });
+
+  app.get("/api/admin/clients/:clientId/workspaces/:workspaceId/sources/:sourceId/settings", requireSystemAdmin(), async (req, res) => {
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    const sourceId = parsePositiveId(req.params.sourceId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!sourceId) return res.status(400).json({ message: "Invalid source ID" });
+    try {
+      res.json(await storage.getOperationalSourceSettings(clientId, workspaceId, sourceId));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Operational source settings lookup failed");
+    }
+  });
+
+  app.post("/api/admin/clients/:clientId/workspaces/:workspaceId/sources/:sourceId/settings/preview", requireSystemAdmin(), async (req, res) => {
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    const sourceId = parsePositiveId(req.params.sourceId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!sourceId) return res.status(400).json({ message: "Invalid source ID" });
+    try {
+      res.json(await storage.previewOperationalSourceSettings(clientId, workspaceId, sourceId, req.body || {}));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Operational source settings preview failed");
+    }
+  });
+
+  app.patch("/api/admin/clients/:clientId/workspaces/:workspaceId/sources/:sourceId/settings", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    const sourceId = parsePositiveId(req.params.sourceId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!sourceId) return res.status(400).json({ message: "Invalid source ID" });
+    try {
+      res.json(await storage.updateOperationalSourceSettingsAtomic(
+        clientId,
+        workspaceId,
+        sourceId,
+        req.body?.settings,
+        req.body?.previewFingerprint,
+        user.id,
+      ));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Operational source settings update failed");
+    }
   });
 
   app.get("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments", requireSystemAdmin(), async (req, res) => {

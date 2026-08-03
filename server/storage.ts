@@ -167,6 +167,26 @@ import {
   type OperationalSourceInspectionResult,
   type OperationalSourceSampleItem,
 } from "./source-sample-inspector";
+import {
+  OPERATIONAL_SOURCE_SUPPORTED_FILTER_FIELDS,
+  OPERATIONAL_SOURCE_SUPPORTED_STRATEGIES,
+  applyOperationalSourceSettings,
+  currentOperationalSourceSettings,
+  diffOperationalSourceSettings,
+  normalizeOperationalSourceSettings,
+  operationalSelectorFieldNames,
+  operationalSourceSettingsPreviewRequestSchema,
+  operationalSourceSettingsUpdateRequestSchema,
+  operationalSourceSettingsPatch,
+  sanitizeOperationalUrlForEvidence,
+  type OperationalSourceSettingField,
+  type OperationalSourceSettings,
+} from "@shared/operational-source-settings";
+import {
+  operationalSettingsFingerprint,
+  validateOperationalSourceSelectors,
+  type OperationalSettingsFingerprintInput,
+} from "./operational-source-settings";
 import { eq, like, and, or, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
 const AUTO_PAUSE_THRESHOLD_DB = 5;
@@ -349,6 +369,81 @@ export type SourceAssignmentSummary = {
   assignmentStatuses: Record<string, number>;
   latestTestStatus: string | null;
   inactiveBecauseSetupIncomplete: boolean;
+};
+
+export type OperationalSourceSettingsRead = {
+  source: Pick<Source, "id" | "name" | "type" | "active" | "clientId" | "publisherChannelId">;
+  settings: OperationalSourceSettings;
+  publisher: Pick<PublisherProfile, "id" | "name" | "scopeType" | "status">;
+  channel: Pick<PublisherChannel, "id" | "name" | "channelType" | "url" | "normalizedUrl" | "verificationStatus" | "validationStatus" | "lifecycleStatus">;
+  assignment: Pick<WorkspaceSourceAssignment, "id" | "workspaceId" | "sourceId" | "publisherChannelId" | "status" | "enabled" | "priority" | "sourceRole" | "testStatus" | "latestTestRunId" | "updatedAt">;
+  linkedAssignments: Array<Pick<WorkspaceSourceAssignment, "id" | "workspaceId" | "status" | "enabled" | "testStatus">>;
+  relevanceProfileVersion: number;
+  currentState: {
+    sourceIdentity: string;
+    sourceActive: boolean;
+    linkedAssignmentCount: number;
+    enabledAssignmentCount: number;
+    staleAssignmentCount: number;
+    latestTestStatus: string | null;
+  };
+  updateAllowed: {
+    allowed: boolean;
+    reasons: string[];
+  };
+  supportedStrategies: typeof OPERATIONAL_SOURCE_SUPPORTED_STRATEGIES;
+  supportedFilterFields: typeof OPERATIONAL_SOURCE_SUPPORTED_FILTER_FIELDS;
+};
+
+export type OperationalSourceSettingsPreview = {
+  writes: false;
+  changedFields: OperationalSourceSettingField[];
+  normalizedSettings: OperationalSourceSettings;
+  previewFingerprint: string;
+  currentSourceIdentity: string;
+  proposedSourceIdentity: string;
+  inspection: {
+    success: boolean;
+    errorCode?: string | null;
+    errorMessage?: string | null;
+    warnings: string[];
+    collectorType: string;
+    structure: string;
+    requestedUrl?: string | null;
+    finalUrl?: string | null;
+    statusCode?: number | null;
+    bytesRead?: number | null;
+    declaredContentLength?: number | null;
+    responseTruncated?: boolean | null;
+    rawItemCount: number;
+    acceptedItemCount: number;
+    filteredOutCount: number;
+  };
+  safeSamples: AssignmentSampleResult[];
+  relevanceCounts: ReturnType<typeof countAssignmentSamples>;
+  directMatchRate: number;
+  relevantRate: number;
+  noiseRate: number;
+  productionCandidate: boolean;
+  expectedImpact: {
+    staleRequired: boolean;
+    sourceRemainsInactive: true;
+    assignmentsDisabled: true;
+    affectedAssignmentIds: number[];
+    articleInsertions: 0;
+    appearancesCreated: 0;
+    fetchLogsCreated: 0;
+    jobsCreated: 0;
+    testsCreated: 0;
+  };
+};
+
+export type OperationalSourceSettingsUpdateResult = {
+  source: Source;
+  assignments: WorkspaceSourceAssignment[];
+  auditLog: AdminAuditLog;
+  changedFields: OperationalSourceSettingField[];
+  staleRequired: boolean;
 };
 
 function safeStorageAuditDetails(value: unknown): string {
@@ -828,6 +923,292 @@ function buildConnectivityResult(inspection: OperationalSourceInspectionResult) 
   };
 }
 
+function isoDateIdentity(value: unknown): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+}
+
+function settingsUpdateAllowed(source: Source, linkedAssignments: WorkspaceSourceAssignment[]) {
+  const reasons: string[] = [];
+  if (source.active) reasons.push("source_active");
+  const enabledAssignments = linkedAssignments.filter((assignment) => assignment.enabled || assignment.status === "active");
+  if (enabledAssignments.length > 0) reasons.push("linked_assignment_enabled");
+  return { allowed: reasons.length === 0, reasons };
+}
+
+function profileVersionForOperationalContext(profile: WorkspaceRelevanceProfile | null, assignment: WorkspaceSourceAssignment): number {
+  return profile?.profileVersion || assignment.relevanceProfileVersion || 1;
+}
+
+function operationalFingerprintInput(row: OperationalSourceSettingsContext, settings: OperationalSourceSettings): OperationalSettingsFingerprintInput {
+  return {
+    clientId: row.client.id,
+    workspaceId: row.workspace.id,
+    sourceId: row.source.id,
+    sourceIdentity: sourceValidationIdentity(row.source, row.channel),
+    sourceUpdatedAt: null,
+    assignmentId: row.assignment.id,
+    assignmentUpdatedAt: isoDateIdentity(row.assignment.updatedAt),
+    channelId: row.channel.id,
+    channelUpdatedAt: isoDateIdentity(row.channel.updatedAt),
+    relevanceProfileVersion: profileVersionForOperationalContext(row.profile, row.assignment),
+    settings,
+  };
+}
+
+function operationalPreviewFingerprint(row: OperationalSourceSettingsContext, settings: OperationalSourceSettings): string {
+  return operationalSettingsFingerprint(operationalFingerprintInput(row, settings));
+}
+
+function operationalAssignmentSamples(
+  source: Source,
+  items: OperationalSourceSampleItem[],
+  row: OperationalSourceSettingsContext,
+): AssignmentSampleResult[] {
+  const effectiveProfile = effectiveWorkspaceProfileForAssignment({
+    workspace: row.workspace,
+    profile: row.profile,
+    assignment: {
+      ...row.assignment,
+      relevanceProfileVersion: profileVersionForOperationalContext(row.profile, row.assignment),
+    },
+  }, row.client.id);
+  return assignmentSampleFromInspection(source, items, effectiveProfile);
+}
+
+function buildOperationalSettingsRead(row: OperationalSourceSettingsContext): OperationalSourceSettingsRead {
+  const linkedAssignments = row.linkedAssignments.map((assignment) => ({
+    id: assignment.id,
+    workspaceId: assignment.workspaceId,
+    status: assignment.status,
+    enabled: assignment.enabled,
+    testStatus: assignment.testStatus,
+  }));
+  const allowed = settingsUpdateAllowed(row.source, row.linkedAssignments);
+  return {
+    source: {
+      id: row.source.id,
+      name: row.source.name,
+      type: row.source.type,
+      active: row.source.active,
+      clientId: row.source.clientId,
+      publisherChannelId: row.source.publisherChannelId,
+    },
+    settings: currentOperationalSourceSettings(row.source),
+    publisher: {
+      id: row.publisher.id,
+      name: row.publisher.name,
+      scopeType: row.publisher.scopeType,
+      status: row.publisher.status,
+    },
+    channel: {
+      id: row.channel.id,
+      name: row.channel.name,
+      channelType: row.channel.channelType,
+      url: row.channel.url,
+      normalizedUrl: row.channel.normalizedUrl,
+      verificationStatus: row.channel.verificationStatus,
+      validationStatus: row.channel.validationStatus,
+      lifecycleStatus: row.channel.lifecycleStatus,
+    },
+    assignment: {
+      id: row.assignment.id,
+      workspaceId: row.assignment.workspaceId,
+      sourceId: row.assignment.sourceId,
+      publisherChannelId: row.assignment.publisherChannelId,
+      status: row.assignment.status,
+      enabled: row.assignment.enabled,
+      priority: row.assignment.priority,
+      sourceRole: row.assignment.sourceRole,
+      testStatus: row.assignment.testStatus,
+      latestTestRunId: row.assignment.latestTestRunId,
+      updatedAt: row.assignment.updatedAt,
+    },
+    linkedAssignments,
+    relevanceProfileVersion: profileVersionForOperationalContext(row.profile, row.assignment),
+    currentState: {
+      sourceIdentity: sourceValidationIdentity(row.source, row.channel),
+      sourceActive: row.source.active === true,
+      linkedAssignmentCount: row.linkedAssignments.length,
+      enabledAssignmentCount: row.linkedAssignments.filter((assignment) => assignment.enabled || assignment.status === "active").length,
+      staleAssignmentCount: row.linkedAssignments.filter((assignment) => assignment.testStatus === "stale").length,
+      latestTestStatus: row.latestTest?.status || null,
+    },
+    updateAllowed: allowed,
+    supportedStrategies: OPERATIONAL_SOURCE_SUPPORTED_STRATEGIES,
+    supportedFilterFields: OPERATIONAL_SOURCE_SUPPORTED_FILTER_FIELDS,
+  };
+}
+
+type OperationalSourceSettingsContext = {
+  client: Client;
+  workspace: Workspace;
+  source: Source;
+  assignment: WorkspaceSourceAssignment;
+  linkedAssignments: WorkspaceSourceAssignment[];
+  publisher: PublisherProfile;
+  channel: PublisherChannel;
+  profile: WorkspaceRelevanceProfile | null;
+  latestTest: WorkspaceSourceAssignmentTest | null;
+};
+
+async function loadOperationalSourceSettingsContext(
+  tx: any,
+  clientId: number,
+  workspaceId: number,
+  sourceId: number,
+): Promise<OperationalSourceSettingsContext> {
+  const [client] = await tx.select().from(clients).where(eq(clients.id, clientId)).limit(1);
+  if (!client) throw new StorageBoundaryError("Client not found", { status: 404, code: "client_not_found" });
+
+  const [workspace] = await tx.select().from(workspaces).where(and(eq(workspaces.id, workspaceId), eq(workspaces.clientId, clientId))).limit(1);
+  if (!workspace) throw new StorageBoundaryError("Workspace not found", { status: 404, code: "workspace_not_found" });
+
+  const [source] = await tx.select().from(sources).where(and(eq(sources.id, sourceId), eq(sources.clientId, clientId))).limit(1);
+  if (!source) throw new StorageBoundaryError("Source not found", { status: 404, code: "source_not_found" });
+  if (!source.publisherChannelId) {
+    throw new StorageBoundaryError("Operational settings require a publisher-linked source", {
+      status: 409,
+      code: "source_not_publisher_linked",
+    });
+  }
+
+  const [assignment] = await tx.select().from(workspaceSourceAssignments)
+    .where(and(
+      eq(workspaceSourceAssignments.clientId, clientId),
+      eq(workspaceSourceAssignments.workspaceId, workspaceId),
+      eq(workspaceSourceAssignments.sourceId, sourceId),
+      sql`${workspaceSourceAssignments.status} <> 'archived'`,
+    ))
+    .limit(1);
+  if (!assignment) {
+    throw new StorageBoundaryError("Source is not assigned to this workspace", {
+      status: 404,
+      code: "source_not_assigned_to_workspace",
+    });
+  }
+  if (assignment.publisherChannelId !== source.publisherChannelId) {
+    throw new StorageBoundaryError("Source publisher channel does not match the workspace assignment", {
+      status: 409,
+      code: "publisher_channel_mismatch",
+    });
+  }
+
+  const [channelRow] = await tx.select({ channel: publisherChannels, publisher: publisherProfiles })
+    .from(publisherChannels)
+    .innerJoin(publisherProfiles, eq(publisherChannels.publisherProfileId, publisherProfiles.id))
+    .where(eq(publisherChannels.id, assignment.publisherChannelId))
+    .limit(1);
+  if (!channelRow) {
+    throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
+  }
+  if (channelRow.publisher.scopeType === "client_private" && channelRow.publisher.ownerClientId !== clientId) {
+    throw new StorageBoundaryError("Publisher is not visible to this client", {
+      status: 404,
+      code: "source_assignment_publisher_mismatch",
+    });
+  }
+
+  const [profile] = await tx.select().from(workspaceRelevanceProfiles)
+    .where(eq(workspaceRelevanceProfiles.workspaceId, workspaceId))
+    .limit(1);
+  const [latestTest] = assignment.latestTestRunId
+    ? await tx.select().from(workspaceSourceAssignmentTests)
+        .where(and(
+          eq(workspaceSourceAssignmentTests.id, assignment.latestTestRunId),
+          eq(workspaceSourceAssignmentTests.assignmentId, assignment.id),
+        ))
+        .limit(1)
+    : [null];
+  const linkedAssignments = await tx.select().from(workspaceSourceAssignments)
+    .where(and(
+      eq(workspaceSourceAssignments.clientId, clientId),
+      eq(workspaceSourceAssignments.sourceId, sourceId),
+      sql`${workspaceSourceAssignments.status} <> 'archived'`,
+    ));
+
+  return {
+    client,
+    workspace,
+    source,
+    assignment,
+    linkedAssignments,
+    publisher: channelRow.publisher,
+    channel: channelRow.channel,
+    profile: profile || null,
+    latestTest: latestTest || null,
+  };
+}
+
+function buildOperationalSettingsPreview(row: OperationalSourceSettingsContext, settingsInput: unknown): OperationalSourceSettingsPreview | Promise<OperationalSourceSettingsPreview> {
+  const currentSettings = currentOperationalSourceSettings(row.source);
+  const normalizedSettings = normalizeOperationalSourceSettings(settingsInput, row.source);
+  const selectorValidation = validateOperationalSourceSelectors(normalizedSettings);
+  if (!selectorValidation.valid) {
+    throw new StorageBoundaryError("Invalid website selector configuration", {
+      status: 400,
+      code: "invalid_selector_configuration",
+      details: selectorValidation.errors,
+    });
+  }
+  const proposedSource = applyOperationalSourceSettings(row.source, normalizedSettings) as Source;
+  return inspectOperationalSourceSample(proposedSource, row.channel, { limit: 25 }).then((inspection) => {
+    const sampleResults = inspection.success ? operationalAssignmentSamples(proposedSource, inspection.items, row) : [];
+    const counts = countAssignmentSamples(sampleResults);
+    const rates = calculateAssignmentTestRates(counts);
+    const outcome = evaluateAssignmentTestOutcome({
+      ...counts,
+      minimumDirectMatchRate: percentToRate(row.assignment.minimumDirectMatchRate, 0.5),
+      maximumNoiseRate: percentToRate(row.assignment.maximumNoiseRate, 0.4),
+      fatalError: !inspection.success,
+    });
+    const changedFields = diffOperationalSourceSettings(currentSettings, normalizedSettings);
+    return {
+      writes: false,
+      changedFields,
+      normalizedSettings,
+      previewFingerprint: operationalPreviewFingerprint(row, normalizedSettings),
+      currentSourceIdentity: sourceValidationIdentity(row.source, row.channel),
+      proposedSourceIdentity: sourceValidationIdentity(proposedSource, row.channel),
+      inspection: {
+        success: inspection.success,
+        errorCode: inspection.errorCode || null,
+        errorMessage: inspection.errorMessage || null,
+        warnings: inspection.warnings,
+        collectorType: inspection.collectorType,
+        structure: inspection.safeSourceFacts.structure,
+        requestedUrl: inspection.safeSourceFacts.requestedUrl || null,
+        finalUrl: inspection.safeSourceFacts.finalUrl || null,
+        statusCode: inspection.safeSourceFacts.statusCode || null,
+        bytesRead: inspection.safeSourceFacts.bytesRead || null,
+        declaredContentLength: inspection.safeSourceFacts.declaredContentLength || null,
+        responseTruncated: inspection.safeSourceFacts.responseTruncated || null,
+        rawItemCount: inspection.safeSourceFacts.rawItemCount,
+        acceptedItemCount: inspection.safeSourceFacts.itemCount,
+        filteredOutCount: inspection.safeSourceFacts.filteredOutCount,
+      },
+      safeSamples: sampleResults.slice(0, 10),
+      relevanceCounts: counts,
+      directMatchRate: rateToPercent(rates.directMatchRate, 0),
+      relevantRate: rateToPercent(rates.relevantRate, 0),
+      noiseRate: rateToPercent(rates.noiseRate, 0),
+      productionCandidate: outcome.status === "passed",
+      expectedImpact: {
+        staleRequired: changedFields.length > 0,
+        sourceRemainsInactive: true,
+        assignmentsDisabled: true,
+        affectedAssignmentIds: row.linkedAssignments.map((assignment) => assignment.id),
+        articleInsertions: 0,
+        appearancesCreated: 0,
+        fetchLogsCreated: 0,
+        jobsCreated: 0,
+        testsCreated: 0,
+      },
+    };
+  });
+}
+
 async function assertAssignmentHasCurrentRelevanceTest(
   tx: any,
   assignment: WorkspaceSourceAssignment,
@@ -1245,6 +1626,9 @@ export interface IStorage {
   recomputeOperationalSourceActiveState(sourceId: number, tx?: any): Promise<boolean>;
   getWorkspaceProfilesForActiveSourceAssignments(sourceId: number, clientId: number): Promise<WorkspaceSourceProfileRecord[]>;
   getSourceAssignmentSummaries(clientId: number): Promise<Record<number, SourceAssignmentSummary>>;
+  getOperationalSourceSettings(clientId: number, workspaceId: number, sourceId: number): Promise<OperationalSourceSettingsRead>;
+  previewOperationalSourceSettings(clientId: number, workspaceId: number, sourceId: number, input: unknown): Promise<OperationalSourceSettingsPreview>;
+  updateOperationalSourceSettingsAtomic(clientId: number, workspaceId: number, sourceId: number, input: unknown, previewFingerprint: string, actorUserId: number): Promise<OperationalSourceSettingsUpdateResult>;
 
   // Users management
   getUsers(parentId?: number): Promise<User[]>;
@@ -4682,6 +5066,120 @@ export class DatabaseStorage implements IStorage {
         eq(workspaceSourceAssignmentTests.assignmentId, assignmentId),
       ))
       .orderBy(desc(workspaceSourceAssignmentTests.createdAt));
+  }
+
+  async getOperationalSourceSettings(clientId: number, workspaceId: number, sourceId: number): Promise<OperationalSourceSettingsRead> {
+    const row = await loadOperationalSourceSettingsContext(db, clientId, workspaceId, sourceId);
+    return buildOperationalSettingsRead(row);
+  }
+
+  async previewOperationalSourceSettings(clientId: number, workspaceId: number, sourceId: number, input: unknown): Promise<OperationalSourceSettingsPreview> {
+    let parsed;
+    try {
+      parsed = operationalSourceSettingsPreviewRequestSchema.parse(input || {});
+    } catch (error) {
+      throw toStorageValidationError(error, "Invalid operational source settings preview");
+    }
+    const row = await loadOperationalSourceSettingsContext(db, clientId, workspaceId, sourceId);
+    return buildOperationalSettingsPreview(row, parsed.settings);
+  }
+
+  async updateOperationalSourceSettingsAtomic(
+    clientId: number,
+    workspaceId: number,
+    sourceId: number,
+    input: unknown,
+    previewFingerprint: string,
+    actorUserId: number,
+  ): Promise<OperationalSourceSettingsUpdateResult> {
+    let parsed;
+    try {
+      parsed = operationalSourceSettingsUpdateRequestSchema.parse({ previewFingerprint, settings: input || {} });
+    } catch (error) {
+      throw toStorageValidationError(error, "Invalid operational source settings update");
+    }
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`nws360.operational_source_settings.${clientId}.${workspaceId}.${sourceId}`}))`);
+      const row = await loadOperationalSourceSettingsContext(tx, clientId, workspaceId, sourceId);
+      const normalizedSettings = normalizeOperationalSourceSettings(parsed.settings, row.source);
+      const selectorValidation = validateOperationalSourceSelectors(normalizedSettings);
+      if (!selectorValidation.valid) {
+        throw new StorageBoundaryError("Invalid website selector configuration", {
+          status: 400,
+          code: "invalid_selector_configuration",
+          details: selectorValidation.errors,
+        });
+      }
+      const expectedFingerprint = operationalPreviewFingerprint(row, normalizedSettings);
+      if (expectedFingerprint !== parsed.previewFingerprint) {
+        throw new StorageBoundaryError("Operational source settings preview is stale", {
+          status: 409,
+          code: "stale_operational_source_settings_preview",
+          details: { expectedPrefix: expectedFingerprint.slice(0, 12), receivedPrefix: parsed.previewFingerprint.slice(0, 12) },
+        });
+      }
+      const allowed = settingsUpdateAllowed(row.source, row.linkedAssignments);
+      if (!allowed.allowed) {
+        throw new StorageBoundaryError("Operational source must be inactive and all linked assignments disabled before settings can change", {
+          status: 409,
+          code: "operational_source_update_not_allowed",
+          details: { reasons: allowed.reasons },
+        });
+      }
+      const changedFields = diffOperationalSourceSettings(currentOperationalSourceSettings(row.source), normalizedSettings);
+      if (changedFields.length === 0) {
+        throw new StorageBoundaryError("No operational source setting changes were provided", {
+          status: 400,
+          code: "no_operational_source_settings_changed",
+        });
+      }
+      const [source] = await tx.update(sources).set({
+        ...operationalSourceSettingsPatch(normalizedSettings),
+        active: false,
+      } as Partial<InsertSource>).where(and(eq(sources.id, sourceId), eq(sources.clientId, clientId))).returning();
+      if (!source) throw new StorageBoundaryError("Source not found", { status: 404, code: "source_not_found" });
+      const assignments = await tx.update(workspaceSourceAssignments).set({
+        testStatus: "stale",
+        status: sql`CASE WHEN ${workspaceSourceAssignments.status} = 'active' THEN 'paused' ELSE ${workspaceSourceAssignments.status} END`,
+        enabled: false,
+        sourceValidationIdentity: null,
+        updatedAt: new Date(),
+      } as any).where(and(
+        eq(workspaceSourceAssignments.clientId, clientId),
+        eq(workspaceSourceAssignments.sourceId, sourceId),
+        sql`${workspaceSourceAssignments.status} <> 'archived'`,
+      )).returning();
+      await this.recomputeOperationalSourceActiveState(sourceId, tx);
+      const auditLog = await createAuditLogInTransaction(tx, {
+        userId: actorUserId,
+        clientId,
+        action: "operational_source_settings_update",
+        entity: "source",
+        entityId: sourceId,
+        details: safeStorageAuditDetails({
+          clientId,
+          workspaceId,
+          sourceId,
+          affectedAssignmentIds: assignments.map((assignment) => assignment.id),
+          changedFields,
+          oldUrl: sanitizeOperationalUrlForEvidence(row.source.url),
+          newUrl: sanitizeOperationalUrlForEvidence(source.url),
+          collectorStrategy: normalizedSettings.collectorConfig.strategy,
+          selectorFields: operationalSelectorFieldNames(normalizedSettings),
+          whitelist: {
+            enabled: normalizedSettings.filterConfig.whitelist.enabled,
+            keywordCount: normalizedSettings.filterConfig.whitelist.keywords.length,
+          },
+          blacklist: {
+            enabled: normalizedSettings.filterConfig.blacklist.enabled,
+            keywordCount: normalizedSettings.filterConfig.blacklist.keywords.length,
+          },
+          staleRequired: true,
+          fingerprintPrefix: parsed.previewFingerprint.slice(0, 12),
+        }),
+      });
+      return { source, assignments, auditLog, changedFields, staleRequired: true };
+    });
   }
 
   async previewWorkspaceSourceAssignment(clientId: number, workspaceId: number, input: unknown): Promise<WorkspaceSourceAssignmentPreview> {
