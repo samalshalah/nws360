@@ -10,7 +10,7 @@ import {
   selectPrimaryAppearance,
   validatePublisherCanonicalKey,
 } from "../shared/publisher-catalog";
-import { isBlockedNetworkAddress, validatePublisherChannel } from "../server/publisher-channel-validator";
+import { isBlockedNetworkAddress, isGloballyRoutableAddress, validatePublisherChannel } from "../server/publisher-channel-validator";
 
 type User = { id: number; role: string; userScope: string; clientId: number | null };
 type MemoryState = {
@@ -263,20 +263,33 @@ class MemoryPublisherCatalog {
   }
 
   addAppearance(appearance: any) {
-    const article = this.state.articles.find((item) => item.id === appearance.articleId && item.clientId === appearance.clientId);
+    const normalizedAppearance = { ...appearance };
+    const article = this.state.articles.find((item) => item.id === normalizedAppearance.articleId && item.clientId === normalizedAppearance.clientId);
     if (!article) throw error("appearance_article_client_mismatch", 409);
-    if (appearance.sourceId != null && !this.state.sources.some((source) => source.id === appearance.sourceId && source.clientId === appearance.clientId)) {
-      throw error("appearance_source_client_mismatch", 409);
+    if (normalizedAppearance.sourceId != null) {
+      const source = this.state.sources.find((item) => item.id === normalizedAppearance.sourceId && item.clientId === normalizedAppearance.clientId);
+      if (!source) throw error("appearance_source_client_mismatch", 409);
+      if (source.publisherChannelId != null) {
+        const sourceChannel = this.state.channels.find((channel) => channel.id === source.publisherChannelId);
+        if (!sourceChannel) throw error("appearance_source_channel_mismatch", 409);
+        if (normalizedAppearance.publisherChannelId != null && normalizedAppearance.publisherChannelId !== source.publisherChannelId) throw error("appearance_source_channel_mismatch", 409);
+        if (normalizedAppearance.publisherProfileId != null && normalizedAppearance.publisherProfileId !== sourceChannel.publisherProfileId) throw error("appearance_source_channel_mismatch", 409);
+        normalizedAppearance.publisherChannelId = source.publisherChannelId;
+        normalizedAppearance.publisherProfileId = sourceChannel.publisherProfileId;
+      }
     }
-    const publisher = appearance.publisherProfileId != null ? this.state.publishers.find((item) => item.id === appearance.publisherProfileId) : null;
-    if (appearance.publisherProfileId != null && !publisher) throw error("publisher_not_found", 404);
-    if (publisher?.scopeType === "client_private" && publisher.ownerClientId !== appearance.clientId) {
+    if (normalizedAppearance.publisherChannelId != null && normalizedAppearance.publisherProfileId == null) {
+      throw error("appearance_channel_requires_publisher", 400);
+    }
+    const publisher = normalizedAppearance.publisherProfileId != null ? this.state.publishers.find((item) => item.id === normalizedAppearance.publisherProfileId) : null;
+    if (normalizedAppearance.publisherProfileId != null && !publisher) throw error("publisher_not_found", 404);
+    if (publisher?.scopeType === "client_private" && publisher.ownerClientId !== normalizedAppearance.clientId) {
       throw error("appearance_private_publisher_client_mismatch", 409);
     }
-    if (appearance.publisherChannelId != null && !this.state.channels.some((channel) => channel.id === appearance.publisherChannelId && channel.publisherProfileId === appearance.publisherProfileId)) {
+    if (normalizedAppearance.publisherChannelId != null && !this.state.channels.some((channel) => channel.id === normalizedAppearance.publisherChannelId && channel.publisherProfileId === normalizedAppearance.publisherProfileId)) {
       throw error("appearance_channel_publisher_mismatch", 409);
     }
-    const row = { id: this.ids.appearance++, ...clone(appearance) };
+    const row = { id: this.ids.appearance++, ...clone(normalizedAppearance) };
     this.state.articleAppearances.push(row);
     return row;
   }
@@ -399,6 +412,8 @@ assert.equal(catalog.state.sources.length, 0);
 assert.equal(catalog.state.articles.length, 0);
 assert.equal(catalog.state.processingJobs.length, 0);
 assert.throws(() => normalizePublisherChannel({ channelType: "google_news", url: "https://news.google.com/search?q=iraq" }), /Google News/);
+assert.throws(() => normalizePublisherChannel({ channelType: "rss", url: "https://user:password@example.com/feed" }), /credentials/);
+assert.throws(() => normalizePublisherChannel({ channelType: "rss", url: "https://user%3Aname:pass%40word@example.com/feed" }), /credentials/);
 const noLanguageAlias = catalog.createAlias(created.profile.id, { alias: "Shafaq" });
 assert.equal(noLanguageAlias.languageCode, "und");
 assert.throws(() => catalog.createAlias(created.profile.id, { alias: "Shafaq" }), (err: any) => err.code === "duplicate_publisher_alias");
@@ -473,6 +488,12 @@ assert.throws(() => catalog.addAppearance({ clientId: 1, articleId: clientTwoArt
 assert.throws(() => catalog.addAppearance({ clientId: 1, articleId: baseArticle.id, sourceId: clientTwoSource.id, publisherProfileId: created.profile.id, appearanceType: "original", appearanceKey: "bad-source" }), (err: any) => err.code === "appearance_source_client_mismatch");
 assert.throws(() => catalog.addAppearance({ clientId: 1, articleId: baseArticle.id, publisherProfileId: privatePublisher.profile.id, publisherChannelId: created.channels[0].id, appearanceType: "original", appearanceKey: "bad-channel" }), (err: any) => err.code === "appearance_channel_publisher_mismatch");
 assert.throws(() => catalog.addAppearance({ clientId: 2, articleId: clientTwoArticle.id, publisherProfileId: privatePublisher.profile.id, appearanceType: "original", appearanceKey: "bad-private" }), (err: any) => err.code === "appearance_private_publisher_client_mismatch");
+assert.throws(() => catalog.addAppearance({ clientId: 1, articleId: baseArticle.id, publisherChannelId: created.channels[0].id, appearanceType: "original", appearanceKey: "missing-publisher" }), (err: any) => err.code === "appearance_channel_requires_publisher");
+const sourceWithChannel = catalog.addSource({ clientId: 1, name: "Shafaq source", url: "https://shafaq.com/rss", publisherChannelId: created.channels[0].id });
+const derivedAppearance = catalog.addAppearance({ clientId: 1, articleId: baseArticle.id, sourceId: sourceWithChannel.id, appearanceType: "rss", appearanceKey: "derived-from-source" });
+assert.equal(derivedAppearance.publisherChannelId, created.channels[0].id);
+assert.equal(derivedAppearance.publisherProfileId, created.profile.id);
+assert.throws(() => catalog.addAppearance({ clientId: 1, articleId: baseArticle.id, sourceId: sourceWithChannel.id, publisherProfileId: privatePublisher.profile.id, publisherChannelId: privatePublisher.channels[0].id, appearanceType: "rss", appearanceKey: "source-channel-mismatch" }), (err: any) => err.code === "appearance_source_channel_mismatch");
 
 const otherPublisher = catalog.create(publisherRequest({
   profile: { name: "Rudaw", primaryDomain: "rudaw.net", canonicalKey: "global:rudaw" },
@@ -501,11 +522,18 @@ const safeResolver = async () => ["93.184.216.34"];
 const okFetch = async () => ({
   status: 200,
   headers: { get: () => null },
-  text: async () => "<html><title>ok</title></html>",
+  body: (async function* () { yield "<html><title>ok</title></html>"; })(),
 });
+function headers(values: Record<string, string | null> = {}) {
+  return { get: (name: string) => values[name.toLowerCase()] ?? null };
+}
 const websiteValidation = await validatePublisherChannel(created.profile as any, created.channels[0] as any, {
   resolveHost: safeResolver,
-  fetchUrl: okFetch,
+  requestUrl: async (request) => {
+    assert.equal(request.approvedAddress, "93.184.216.34");
+    assert.equal(request.hostname, "shafaq.com");
+    return okFetch();
+  },
 });
 assert.equal(websiteValidation.validationStatus, "valid");
 assert.equal(websiteValidation.evidence.networkTested, true);
@@ -513,24 +541,24 @@ assert.equal(websiteValidation.evidence.networkTested, true);
 const rssChannel = normalizePublisherChannel({ channelType: "rss", url: "https://www.shafaq.com/rss.xml" }, created.profile.id);
 const rssValidation = await validatePublisherChannel(created.profile as any, rssChannel as any, {
   resolveHost: safeResolver,
-  fetchUrl: async () => ({
+  requestUrl: async () => ({
     status: 200,
-    headers: { get: () => null },
-    text: async () => "<?xml version=\"1.0\"?><rss><channel></channel></rss>",
+    headers: headers({ "content-length": String(Buffer.byteLength("<?xml version=\"1.0\"?><rss><channel></channel></rss>")) }),
+    body: (async function* () { yield "<?xml version=\"1.0\"?><rss><channel></channel></rss>"; })(),
   }),
 });
 assert.equal(rssValidation.validationStatus, "valid");
 
 const invalidRssValidation = await validatePublisherChannel(created.profile as any, rssChannel as any, {
   resolveHost: safeResolver,
-  fetchUrl: okFetch,
+  requestUrl: okFetch,
 });
 assert.equal(invalidRssValidation.validationStatus, "invalid");
 assert.equal(invalidRssValidation.errorCode, "invalid_feed_structure");
 
 const socialValidation = await validatePublisherChannel(privatePublisher.profile as any, privatePublisher.channels[0] as any, {
   resolveHost: safeResolver,
-  fetchUrl: okFetch,
+  requestUrl: okFetch,
 });
 assert.equal(socialValidation.validationStatus, "needs_review");
 assert.equal(socialValidation.evidence.networkTested, false);
@@ -540,18 +568,23 @@ const manualValidation = await validatePublisherChannel(created.profile as any, 
   channelType: "television",
   normalizedUrl: "",
   url: "",
-} as any, { resolveHost: safeResolver, fetchUrl: okFetch });
+} as any, { resolveHost: safeResolver, requestUrl: okFetch });
 assert.equal(manualValidation.validationStatus, "needs_review");
 assert.equal(manualValidation.reason, "manual_review_required");
 
 for (const blocked of ["127.0.0.1", "::1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.1.1", "169.254.169.254"]) {
   assert.equal(isBlockedNetworkAddress(blocked), true, `${blocked} should be blocked`);
 }
+for (const blocked of ["::ffff:127.0.0.1", "::ffff:10.1.2.3", "::127.0.0.1", "2130706433", "0x7f000001", "224.0.0.1", "240.0.0.1", "100.64.0.1"]) {
+  assert.equal(isBlockedNetworkAddress(blocked), true, `${blocked} should be blocked`);
+}
+assert.equal(isGloballyRoutableAddress("8.8.8.8"), true);
+assert.equal(isGloballyRoutableAddress("::ffff:8.8.8.8"), true);
 const localhostValidation = await validatePublisherChannel(created.profile as any, {
   ...created.channels[0],
   normalizedUrl: "http://localhost/admin",
   url: "http://localhost/admin",
-} as any, { resolveHost: safeResolver, fetchUrl: okFetch });
+} as any, { resolveHost: safeResolver, requestUrl: okFetch });
 assert.equal(localhostValidation.validationStatus, "invalid");
 assert.equal(localhostValidation.errorCode, "blocked_network_target");
 
@@ -561,7 +594,7 @@ const redirectValidation = await validatePublisherChannel(created.profile as any
   url: "https://redirect.example/start",
 } as any, {
   resolveHost: async (host) => host === "redirect.example" ? ["93.184.216.34"] : ["127.0.0.1"],
-  fetchUrl: async () => ({
+  requestUrl: async () => ({
     status: 302,
     headers: { get: (name: string) => name.toLowerCase() === "location" ? "http://127.0.0.1/private" : null },
     text: async () => "",
@@ -569,5 +602,83 @@ const redirectValidation = await validatePublisherChannel(created.profile as any
 });
 assert.equal(redirectValidation.validationStatus, "invalid");
 assert.equal(redirectValidation.errorCode, "blocked_network_target");
+
+let mixedDnsRequested = false;
+const mixedDnsValidation = await validatePublisherChannel(created.profile as any, {
+  ...created.channels[0],
+  normalizedUrl: "https://mixed.example/feed",
+  url: "https://mixed.example/feed",
+} as any, {
+  resolveHost: async () => ["93.184.216.34", "127.0.0.1"],
+  requestUrl: async () => {
+    mixedDnsRequested = true;
+    return okFetch();
+  },
+});
+assert.equal(mixedDnsValidation.validationStatus, "invalid");
+assert.equal(mixedDnsValidation.errorCode, "blocked_resolved_address");
+assert.equal(mixedDnsRequested, false);
+
+const credentialValidation = await validatePublisherChannel(created.profile as any, {
+  ...rssChannel,
+  normalizedUrl: "https://user:password@example.com/feed",
+  url: "https://user:password@example.com/feed",
+} as any, { resolveHost: safeResolver, requestUrl: okFetch });
+assert.equal(credentialValidation.validationStatus, "invalid");
+assert.equal(credentialValidation.errorCode, "url_credentials_not_allowed");
+
+const oversizedLengthValidation = await validatePublisherChannel(created.profile as any, rssChannel as any, {
+  resolveHost: safeResolver,
+  maxBytes: 8,
+  requestUrl: async () => ({
+    status: 200,
+    headers: headers({ "content-length": "9" }),
+    body: (async function* () { yield "<rss></rss>"; })(),
+  }),
+});
+assert.equal(oversizedLengthValidation.validationStatus, "invalid");
+assert.equal(oversizedLengthValidation.errorCode, "response_too_large");
+
+const streamingTooLargeValidation = await validatePublisherChannel(created.profile as any, rssChannel as any, {
+  resolveHost: safeResolver,
+  maxBytes: 8,
+  requestUrl: async () => ({
+    status: 200,
+    headers: headers(),
+    body: (async function* () {
+      yield "<rss>";
+      yield "too-large";
+    })(),
+  }),
+});
+assert.equal(streamingTooLargeValidation.validationStatus, "invalid");
+assert.equal(streamingTooLargeValidation.errorCode, "response_too_large");
+
+const exactBody = "<rss></rss>";
+const exactLimitValidation = await validatePublisherChannel(created.profile as any, rssChannel as any, {
+  resolveHost: safeResolver,
+  maxBytes: Buffer.byteLength(exactBody),
+  requestUrl: async () => ({
+    status: 200,
+    headers: headers({ "content-length": String(Buffer.byteLength(exactBody)) }),
+    body: (async function* () { yield exactBody; })(),
+  }),
+});
+assert.equal(exactLimitValidation.validationStatus, "valid");
+
+const stalledBodyValidation = await validatePublisherChannel(created.profile as any, rssChannel as any, {
+  resolveHost: safeResolver,
+  timeoutMs: 20,
+  requestUrl: async (request) => ({
+    status: 200,
+    headers: headers(),
+    body: (async function* () {
+      yield "<rss>";
+      await new Promise((_resolve, reject) => request.signal.addEventListener("abort", () => reject(Object.assign(new Error("timeout"), { code: "timeout" })), { once: true }));
+    })(),
+  }),
+});
+assert.equal(stalledBodyValidation.validationStatus, "unreachable");
+assert.equal(stalledBodyValidation.errorCode, "timeout");
 
 console.log("publisher catalog behavioral tests passed");

@@ -349,6 +349,17 @@ function safeJsonMetadata(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function publisherChannelValidationIdentity(channel: PublisherChannel): string {
+  return JSON.stringify({
+    publisherProfileId: channel.publisherProfileId,
+    channelType: channel.channelType,
+    normalizedUrl: channel.normalizedUrl || null,
+    externalId: channel.externalId || null,
+    handle: channel.handle || null,
+    updatedAt: channel.updatedAt instanceof Date ? channel.updatedAt.toISOString() : channel.updatedAt ? new Date(channel.updatedAt).toISOString() : null,
+  });
+}
+
 async function assertPublisherScopeChangeSafe(tx: any, current: PublisherProfile, next: ReturnType<typeof normalizePublisherProfile>) {
   const scopeChanged = current.scopeType !== next.scopeType || (current.ownerClientId || null) !== (next.ownerClientId || null);
   if (!scopeChanged) return;
@@ -3707,14 +3718,24 @@ export class DatabaseStorage implements IStorage {
     if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
     const [current] = await db.select().from(publisherChannels).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).limit(1);
     if (!current) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
+    const validatedIdentity = publisherChannelValidationIdentity(current);
     const validation = await performPublisherChannelValidation(profile, current);
     const result = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM publisher_channels WHERE id = ${channelId} AND publisher_profile_id = ${publisherId} FOR UPDATE`);
+      const [lockedCurrent] = await tx.select().from(publisherChannels).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).limit(1);
+      if (!lockedCurrent) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
+      if (publisherChannelValidationIdentity(lockedCurrent) !== validatedIdentity) {
+        throw new StorageBoundaryError("Publisher channel changed while validation was running", {
+          status: 409,
+          code: "channel_changed_during_validation",
+        });
+      }
       const [channel] = await tx.update(publisherChannels).set({
         validationStatus: validation.validationStatus,
         lastValidatedAt: new Date(),
         updatedAt: new Date(),
         metadata: {
-          ...safeJsonMetadata(current.metadata),
+          ...safeJsonMetadata(lockedCurrent.metadata),
           validationEvidence: validation.evidence,
           validationReason: validation.reason,
           validationErrorCode: validation.errorCode || null,
@@ -3918,10 +3939,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createArticleAppearance(input: InsertArticleAppearance): Promise<ArticleAppearance> {
+    const appearanceInput = { ...input };
     return db.transaction(async (tx) => {
       const [article] = await tx.select({ id: articles.id, clientId: articles.clientId })
         .from(articles)
-        .where(and(eq(articles.id, input.articleId), eq(articles.clientId, input.clientId)))
+        .where(and(eq(articles.id, appearanceInput.articleId), eq(articles.clientId, appearanceInput.clientId)))
         .limit(1);
       if (!article) {
         throw new StorageBoundaryError("Article does not belong to the appearance client", {
@@ -3930,10 +3952,10 @@ export class DatabaseStorage implements IStorage {
         });
       }
 
-      if (input.sourceId != null) {
-        const [source] = await tx.select({ id: sources.id, clientId: sources.clientId })
+      if (appearanceInput.sourceId != null) {
+        const [source] = await tx.select({ id: sources.id, clientId: sources.clientId, publisherChannelId: sources.publisherChannelId })
           .from(sources)
-          .where(and(eq(sources.id, input.sourceId), eq(sources.clientId, input.clientId)))
+          .where(and(eq(sources.id, appearanceInput.sourceId), eq(sources.clientId, appearanceInput.clientId)))
           .limit(1);
         if (!source) {
           throw new StorageBoundaryError("Source does not belong to the appearance client", {
@@ -3941,12 +3963,45 @@ export class DatabaseStorage implements IStorage {
             code: "appearance_source_client_mismatch",
           });
         }
+        if (source.publisherChannelId != null) {
+          const [sourceChannel] = await tx.select({
+            id: publisherChannels.id,
+            publisherProfileId: publisherChannels.publisherProfileId,
+          }).from(publisherChannels).where(eq(publisherChannels.id, source.publisherChannelId)).limit(1);
+          if (!sourceChannel) {
+            throw new StorageBoundaryError("Source publisher channel is not a valid publisher channel", {
+              status: 409,
+              code: "appearance_source_channel_mismatch",
+            });
+          }
+          if (appearanceInput.publisherChannelId != null && appearanceInput.publisherChannelId !== source.publisherChannelId) {
+            throw new StorageBoundaryError("Appearance publisher channel conflicts with source publisher channel", {
+              status: 409,
+              code: "appearance_source_channel_mismatch",
+            });
+          }
+          if (appearanceInput.publisherProfileId != null && appearanceInput.publisherProfileId !== sourceChannel.publisherProfileId) {
+            throw new StorageBoundaryError("Appearance publisher conflicts with source publisher channel", {
+              status: 409,
+              code: "appearance_source_channel_mismatch",
+            });
+          }
+          appearanceInput.publisherChannelId = source.publisherChannelId;
+          appearanceInput.publisherProfileId = sourceChannel.publisherProfileId;
+        }
       }
 
-      if (input.publisherProfileId != null) {
-        const [publisher] = await tx.select().from(publisherProfiles).where(eq(publisherProfiles.id, input.publisherProfileId)).limit(1);
+      if (appearanceInput.publisherChannelId != null && appearanceInput.publisherProfileId == null) {
+        throw new StorageBoundaryError("publisherProfileId is required when publisherChannelId is present", {
+          status: 400,
+          code: "appearance_channel_requires_publisher",
+        });
+      }
+
+      if (appearanceInput.publisherProfileId != null) {
+        const [publisher] = await tx.select().from(publisherProfiles).where(eq(publisherProfiles.id, appearanceInput.publisherProfileId)).limit(1);
         if (!publisher) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
-        if (publisher.scopeType === "client_private" && publisher.ownerClientId !== input.clientId) {
+        if (publisher.scopeType === "client_private" && publisher.ownerClientId !== appearanceInput.clientId) {
           throw new StorageBoundaryError("Private publisher does not belong to the appearance client", {
             status: 409,
             code: "appearance_private_publisher_client_mismatch",
@@ -3954,18 +4009,12 @@ export class DatabaseStorage implements IStorage {
         }
       }
 
-      if (input.publisherChannelId != null) {
-        if (input.publisherProfileId == null) {
-          throw new StorageBoundaryError("publisherProfileId is required when publisherChannelId is present", {
-            status: 400,
-            code: "appearance_channel_requires_publisher",
-          });
-        }
+      if (appearanceInput.publisherChannelId != null) {
         const [channel] = await tx.select({ id: publisherChannels.id })
           .from(publisherChannels)
           .where(and(
-            eq(publisherChannels.id, input.publisherChannelId),
-            eq(publisherChannels.publisherProfileId, input.publisherProfileId),
+            eq(publisherChannels.id, appearanceInput.publisherChannelId),
+            eq(publisherChannels.publisherProfileId, appearanceInput.publisherProfileId as number),
           ))
           .limit(1);
         if (!channel) {
@@ -3976,7 +4025,7 @@ export class DatabaseStorage implements IStorage {
         }
       }
 
-      const [appearance] = await tx.insert(articleAppearances).values(input).returning();
+      const [appearance] = await tx.insert(articleAppearances).values(appearanceInput).returning();
       return appearance;
     });
   }

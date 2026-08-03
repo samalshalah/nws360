@@ -1,7 +1,10 @@
 import { lookup } from "node:dns/promises";
+import http from "node:http";
+import https from "node:https";
 import net from "node:net";
+import type { IncomingMessage } from "node:http";
 import type { PublisherChannel, PublisherProfile } from "@shared/schema";
-import { normalizeDomain, parseUrl, type PublisherChannelType } from "@shared/publisher-catalog";
+import { normalizeDomain, parseUrl, urlHasCredentials, type PublisherChannelType } from "@shared/publisher-catalog";
 
 export type ChannelValidationStatus = "valid" | "invalid" | "unreachable" | "needs_review";
 
@@ -12,19 +15,33 @@ export type ChannelValidationResult = {
   evidence: Record<string, unknown>;
 };
 
+export type ResolvedAddress = {
+  address: string;
+  family?: 4 | 6;
+};
+
+export type ValidatorHeaders = {
+  get(name: string): string | null;
+};
+
 export type ValidatorHttpResponse = {
   status: number;
-  url?: string;
-  headers: {
-    get(name: string): string | null;
-  };
-  text?: () => Promise<string>;
-  arrayBuffer?: () => Promise<ArrayBuffer>;
+  headers: ValidatorHeaders;
+  body?: AsyncIterable<Uint8Array | Buffer | string>;
+  abort?: () => void;
+};
+
+export type PinnedHttpRequest = {
+  url: URL;
+  hostname: string;
+  approvedAddress: string;
+  family?: 4 | 6;
+  signal: AbortSignal;
 };
 
 export type ChannelValidatorDeps = {
-  resolveHost?: (hostname: string) => Promise<string[]>;
-  fetchUrl?: (url: string, init: { signal: AbortSignal; redirect: "manual" }) => Promise<ValidatorHttpResponse>;
+  resolveHost?: (hostname: string, signal: AbortSignal) => Promise<Array<string | ResolvedAddress>>;
+  requestUrl?: (request: PinnedHttpRequest) => Promise<ValidatorHttpResponse>;
   timeoutMs?: number;
   maxRedirects?: number;
   maxBytes?: number;
@@ -35,6 +52,34 @@ const SOCIAL_CHANNEL_TYPES = new Set<PublisherChannelType>(["telegram", "faceboo
 const MANUAL_CHANNEL_TYPES = new Set<PublisherChannelType>(["television", "radio", "other"]);
 const METADATA_HOSTS = new Set(["metadata", "metadata.google.internal", "169.254.169.254", "169.254.170.2"]);
 
+type NormalizedResolvedAddress = {
+  address: string;
+  family: 4 | 6;
+};
+
+class ValidationDeadline {
+  private controller = new AbortController();
+  private timeout: NodeJS.Timeout;
+
+  constructor(private readonly timeoutMs: number) {
+    this.timeout = setTimeout(() => {
+      this.controller.abort(Object.assign(new Error("Validation timed out."), { code: "timeout" }));
+    }, timeoutMs);
+  }
+
+  get signal() {
+    return this.controller.signal;
+  }
+
+  clear() {
+    clearTimeout(this.timeout);
+  }
+}
+
+function validationError(message: string, code: string) {
+  return Object.assign(new Error(message), { code });
+}
+
 function sanitizeUrlForEvidence(value: string): string {
   const parsed = new URL(value);
   parsed.username = "";
@@ -43,109 +88,266 @@ function sanitizeUrlForEvidence(value: string): string {
   return parsed.toString().slice(0, 700);
 }
 
+function stripIpv6Brackets(value: string): string {
+  return value.trim().replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+}
+
+function parseNumberPart(part: string): number | null {
+  if (/^0x[0-9a-f]+$/i.test(part)) return Number.parseInt(part.slice(2), 16);
+  if (/^0[0-7]+$/.test(part) && part.length > 1) return Number.parseInt(part, 8);
+  if (/^\d+$/.test(part)) return Number.parseInt(part, 10);
+  return null;
+}
+
+function intToIpv4(value: number): string | null {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) return null;
+  return [
+    (value >>> 24) & 255,
+    (value >>> 16) & 255,
+    (value >>> 8) & 255,
+    value & 255,
+  ].join(".");
+}
+
+function normalizeIpv4Address(input: string): string | null {
+  const value = stripIpv6Brackets(input);
+  if (net.isIP(value) === 4) return value;
+  const wholeNumber = parseNumberPart(value);
+  if (wholeNumber !== null && !value.includes(".")) return intToIpv4(wholeNumber);
+
+  const parts = value.split(".");
+  if (parts.length >= 2 && parts.length <= 4) {
+    const numbers = parts.map(parseNumberPart);
+    if (numbers.some((part) => part === null)) return null;
+    const nums = numbers as number[];
+    if (nums.some((part) => part < 0 || part > 255)) return null;
+    while (nums.length < 4) nums.push(0);
+    return nums.join(".");
+  }
+  return null;
+}
+
+function embeddedIpv4FromIpv6(input: string): string | null {
+  const value = stripIpv6Brackets(input);
+  const dotted = value.match(/(?:^|:)(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (dotted) return normalizeIpv4Address(dotted[1]);
+
+  const mapped = value.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (!mapped) return null;
+  const high = Number.parseInt(mapped[1], 16);
+  const low = Number.parseInt(mapped[2], 16);
+  if (!Number.isInteger(high) || !Number.isInteger(low)) return null;
+  return [
+    (high >>> 8) & 255,
+    high & 255,
+    (low >>> 8) & 255,
+    low & 255,
+  ].join(".");
+}
+
+function ipv4ToNumber(address: string): number {
+  return address.split(".").reduce((sum, part) => (sum << 8) + Number(part), 0) >>> 0;
+}
+
+function ipv4InCidr(address: string, base: string, bits: number): boolean {
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return (ipv4ToNumber(address) & mask) === (ipv4ToNumber(base) & mask);
+}
+
+function isPublicIpv4(address: string): boolean {
+  return ![
+    ["0.0.0.0", 8],
+    ["10.0.0.0", 8],
+    ["100.64.0.0", 10],
+    ["127.0.0.0", 8],
+    ["169.254.0.0", 16],
+    ["172.16.0.0", 12],
+    ["192.0.0.0", 24],
+    ["192.0.2.0", 24],
+    ["192.168.0.0", 16],
+    ["198.18.0.0", 15],
+    ["198.51.100.0", 24],
+    ["203.0.113.0", 24],
+    ["224.0.0.0", 4],
+    ["240.0.0.0", 4],
+  ].some(([base, bits]) => ipv4InCidr(address, String(base), Number(bits)));
+}
+
 function firstIpv6Hextet(address: string): number | null {
-  const first = address.toLowerCase().split(":")[0];
+  const first = stripIpv6Brackets(address).split(":")[0];
   if (!first) return null;
   const value = Number.parseInt(first, 16);
   return Number.isFinite(value) ? value : null;
 }
 
-export function isBlockedNetworkAddress(address: string): boolean {
-  const value = address.toLowerCase();
-  if (value === "localhost" || value.endsWith(".localhost")) return true;
-  if (METADATA_HOSTS.has(value)) return true;
+function isPublicIpv6(address: string): boolean {
+  const value = stripIpv6Brackets(address);
+  const embeddedIpv4 = embeddedIpv4FromIpv6(value);
+  if (embeddedIpv4) return isPublicIpv4(embeddedIpv4);
+  if (value === "::" || value === "::1") return false;
+  const hextet = firstIpv6Hextet(value);
+  if (hextet === null) return false;
+  if (hextet === 0) return false;
+  if (hextet >= 0xfc00 && hextet <= 0xfdff) return false;
+  if (hextet >= 0xfe80 && hextet <= 0xfebf) return false;
+  if (hextet >= 0xff00 && hextet <= 0xffff) return false;
+  if (value.startsWith("2001:db8:")) return false;
+  if (value.startsWith("2001:") || value.startsWith("2002:")) return false;
+  return true;
+}
 
-  const ipVersion = net.isIP(value);
-  if (ipVersion === 4) {
-    const [a, b] = value.split(".").map((part) => Number.parseInt(part, 10));
-    return a === 0
-      || a === 10
-      || a === 127
-      || (a === 100 && b >= 64 && b <= 127)
-      || (a === 169 && b === 254)
-      || (a === 172 && b >= 16 && b <= 31)
-      || (a === 192 && b === 168);
-  }
-  if (ipVersion === 6) {
-    if (value === "::1" || value === "::" || value.endsWith(":1")) return true;
-    if (value.startsWith("fe80:")) return true;
-    const hextet = firstIpv6Hextet(value);
-    return hextet !== null && hextet >= 0xfc00 && hextet <= 0xfdff;
-  }
+export function isGloballyRoutableAddress(address: string): boolean {
+  const value = stripIpv6Brackets(address);
+  const normalizedIpv4 = normalizeIpv4Address(value);
+  if (normalizedIpv4) return isPublicIpv4(normalizedIpv4);
+  if (net.isIP(value) === 6) return isPublicIpv6(value);
   return false;
 }
 
-async function defaultResolveHost(hostname: string): Promise<string[]> {
-  const rows = await lookup(hostname, { all: true, verbatim: false });
-  return rows.map((row) => row.address);
+export function isBlockedNetworkAddress(address: string): boolean {
+  const value = stripIpv6Brackets(address);
+  if (value === "localhost" || value.endsWith(".localhost")) return true;
+  if (METADATA_HOSTS.has(value)) return true;
+  if (net.isIP(value) || normalizeIpv4Address(value)) return !isGloballyRoutableAddress(value);
+  return false;
 }
 
-async function defaultFetchUrl(url: string, init: { signal: AbortSignal; redirect: "manual" }): Promise<ValidatorHttpResponse> {
-  return fetch(url, init) as Promise<ValidatorHttpResponse>;
+function normalizeResolvedAddress(value: string | ResolvedAddress): NormalizedResolvedAddress | null {
+  const raw = typeof value === "string" ? value : value.address;
+  const normalizedIpv4 = normalizeIpv4Address(raw);
+  if (normalizedIpv4) return { address: normalizedIpv4, family: 4 };
+  const stripped = stripIpv6Brackets(raw);
+  if (net.isIP(stripped) === 6) return { address: stripped, family: 6 };
+  return null;
 }
 
-async function assertSafeNetworkTarget(url: URL, deps: Required<Pick<ChannelValidatorDeps, "resolveHost">>) {
+async function withAbort<T>(operation: Promise<T>, signal: AbortSignal, code = "timeout"): Promise<T> {
+  if (signal.aborted) throw validationError("Validation timed out.", code);
+  return Promise.race([
+    operation,
+    new Promise<T>((_resolve, reject) => {
+      const onAbort = () => reject(validationError("Validation timed out.", code));
+      signal.addEventListener("abort", onAbort, { once: true });
+      operation.finally(() => signal.removeEventListener("abort", onAbort)).catch(() => signal.removeEventListener("abort", onAbort));
+    }),
+  ]);
+}
+
+async function defaultResolveHost(hostname: string, signal: AbortSignal): Promise<ResolvedAddress[]> {
+  const rows = await withAbort(lookup(hostname, { all: true, verbatim: false }), signal, "dns_timeout");
+  return rows.map((row) => ({ address: row.address, family: row.family as 4 | 6 }));
+}
+
+function incomingHeaders(headers: IncomingMessage["headers"]): ValidatorHeaders {
+  return {
+    get(name: string) {
+      const value = headers[name.toLowerCase()];
+      if (Array.isArray(value)) return value.join(", ");
+      return value == null ? null : String(value);
+    },
+  };
+}
+
+async function defaultRequestUrl(request: PinnedHttpRequest): Promise<ValidatorHttpResponse> {
+  return new Promise((resolve, reject) => {
+    const isHttps = request.url.protocol === "https:";
+    const transport = isHttps ? https : http;
+    const req = transport.request({
+      protocol: request.url.protocol,
+      hostname: request.approvedAddress,
+      family: request.family,
+      port: request.url.port ? Number(request.url.port) : isHttps ? 443 : 80,
+      method: "GET",
+      path: `${request.url.pathname}${request.url.search}`,
+      headers: {
+        Host: request.url.host,
+        "User-Agent": "NWS360-PublisherChannelValidator/1.0",
+        Accept: request.url.pathname.toLowerCase().includes("rss") || request.url.pathname.toLowerCase().includes("feed")
+          ? "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.5"
+          : "text/html, application/xhtml+xml, */*;q=0.5",
+      },
+      servername: request.hostname,
+      agent: false,
+      timeout: 0,
+    }, (res) => {
+      resolve({
+        status: res.statusCode || 0,
+        headers: incomingHeaders(res.headers),
+        body: res,
+        abort: () => res.destroy(validationError("Validation body read aborted.", "validation_aborted")),
+      });
+    });
+    const abort = () => req.destroy(validationError("Validation timed out.", "timeout"));
+    request.signal.addEventListener("abort", abort, { once: true });
+    req.on("error", reject);
+    req.on("close", () => request.signal.removeEventListener("abort", abort));
+    req.end();
+  });
+}
+
+function assertValidValidationUrl(url: URL) {
   if (!["http:", "https:"].includes(url.protocol)) {
-    throw Object.assign(new Error("Only HTTP and HTTPS URLs can be validated."), { code: "unsupported_protocol" });
+    throw validationError("Only HTTP and HTTPS URLs can be validated.", "unsupported_protocol");
+  }
+  if (urlHasCredentials(url)) {
+    throw validationError("URL credentials are not allowed for channel validation.", "url_credentials_not_allowed");
   }
   if (isBlockedNetworkAddress(url.hostname)) {
-    throw Object.assign(new Error("Unsafe validation target."), { code: "blocked_network_target" });
-  }
-  const addresses = await deps.resolveHost(url.hostname);
-  if (!addresses.length) {
-    throw Object.assign(new Error("Validation target did not resolve."), { code: "dns_no_records" });
-  }
-  const blocked = addresses.find(isBlockedNetworkAddress);
-  if (blocked) {
-    throw Object.assign(new Error("Validation target resolved to a blocked network address."), { code: "blocked_resolved_address" });
+    throw validationError("Unsafe validation target.", "blocked_network_target");
   }
 }
 
-async function readResponseText(response: ValidatorHttpResponse, maxBytes: number): Promise<string> {
-  if (typeof response.arrayBuffer === "function") {
-    const buffer = Buffer.from(await response.arrayBuffer());
-    return buffer.subarray(0, maxBytes).toString("utf8");
+async function resolveApprovedAddress(url: URL, deps: Required<ChannelValidatorDeps>, signal: AbortSignal): Promise<NormalizedResolvedAddress> {
+  assertValidValidationUrl(url);
+  const rows = await withAbort(Promise.resolve(deps.resolveHost(url.hostname, signal)), signal, "dns_timeout");
+  const addresses = rows.map(normalizeResolvedAddress).filter((row): row is NormalizedResolvedAddress => Boolean(row));
+  if (!addresses.length) throw validationError("Validation target did not resolve.", "dns_no_records");
+  const nonPublic = addresses.find((row) => !isGloballyRoutableAddress(row.address));
+  if (nonPublic) {
+    throw validationError("Validation target resolved to a non-public network address.", "blocked_resolved_address");
   }
-  if (typeof response.text === "function") {
-    const text = await response.text();
-    return text.slice(0, maxBytes);
-  }
-  return "";
+  return addresses[0];
 }
 
-async function fetchWithSafeRedirects(initialUrl: URL, deps: Required<ChannelValidatorDeps>) {
+async function fetchWithSafeRedirects(initialUrl: URL, deps: Required<ChannelValidatorDeps>, signal: AbortSignal) {
   let currentUrl = initialUrl;
   for (let redirectCount = 0; redirectCount <= deps.maxRedirects; redirectCount += 1) {
-    await assertSafeNetworkTarget(currentUrl, deps);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), deps.timeoutMs);
-    try {
-      const response = await deps.fetchUrl(currentUrl.toString(), { signal: controller.signal, redirect: "manual" });
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get("location");
-        if (!location) {
-          return { response, finalUrl: currentUrl, redirectCount };
-        }
-        currentUrl = new URL(location, currentUrl);
-        continue;
-      }
-      return { response, finalUrl: currentUrl, redirectCount };
-    } finally {
-      clearTimeout(timeout);
+    const approved = await resolveApprovedAddress(currentUrl, deps, signal);
+    const response = await withAbort(
+      Promise.resolve(deps.requestUrl({
+        url: currentUrl,
+        hostname: currentUrl.hostname,
+        approvedAddress: approved.address,
+        family: approved.family,
+        signal,
+      })),
+      signal,
+      "connection_timeout",
+    );
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      response.abort?.();
+      if (!location) return { response, finalUrl: currentUrl, redirectCount, approvedAddress: approved.address };
+      currentUrl = new URL(location, currentUrl);
+      continue;
     }
+    return { response, finalUrl: currentUrl, redirectCount, approvedAddress: approved.address };
   }
-  throw Object.assign(new Error("Validation redirect limit exceeded."), { code: "redirect_limit_exceeded" });
+  throw validationError("Validation redirect limit exceeded.", "redirect_limit_exceeded");
 }
 
 function errorResult(error: unknown, fallbackStatus: ChannelValidationStatus = "unreachable"): ChannelValidationResult {
   const anyError = error as any;
   const code = typeof anyError?.code === "string" ? anyError.code : anyError?.name === "AbortError" ? "timeout" : "validation_error";
-  const blocked = code.startsWith("blocked") || code === "unsupported_protocol";
+  const invalid = code.startsWith("blocked")
+    || code === "unsupported_protocol"
+    || code === "url_credentials_not_allowed"
+    || code === "response_too_large";
   return {
-    validationStatus: blocked ? "invalid" : fallbackStatus,
-    reason: blocked ? "unsafe_validation_target" : "validation_failed",
+    validationStatus: invalid ? "invalid" : fallbackStatus,
+    reason: code === "response_too_large" ? "response_too_large" : invalid ? "unsafe_validation_target" : "validation_failed",
     errorCode: code,
-    evidence: { networkTested: false, errorCode: code },
+    evidence: { networkTested: code === "response_too_large", errorCode: code },
   };
 }
 
@@ -156,6 +358,38 @@ function publisherDomainCompatible(finalUrl: URL, publisher: PublisherProfile): 
   return Boolean(finalDomain && (finalDomain === publisherDomain || finalDomain.endsWith(`.${publisherDomain}`)));
 }
 
+async function readResponseTextLimited(response: ValidatorHttpResponse, maxBytes: number, signal: AbortSignal): Promise<string> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && Number.isFinite(Number(contentLength)) && Number(contentLength) > maxBytes) {
+    response.abort?.();
+    throw validationError("Validation response is too large.", "response_too_large");
+  }
+
+  if (response.body) {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const abort = () => response.abort?.();
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      for await (const chunk of response.body) {
+        if (signal.aborted) throw validationError("Validation timed out.", "timeout");
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        total += buffer.length;
+        if (total > maxBytes) {
+          response.abort?.();
+          throw validationError("Validation response exceeded size limit.", "response_too_large");
+        }
+        chunks.push(buffer);
+      }
+      return Buffer.concat(chunks, total).toString("utf8");
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  }
+
+  return "";
+}
+
 export async function validatePublisherChannel(
   publisher: PublisherProfile,
   channel: PublisherChannel,
@@ -164,74 +398,76 @@ export async function validatePublisherChannel(
   const channelType = channel.channelType as PublisherChannelType;
   const mergedDeps: Required<ChannelValidatorDeps> = {
     resolveHost: deps.resolveHost || defaultResolveHost,
-    fetchUrl: deps.fetchUrl || defaultFetchUrl,
+    requestUrl: deps.requestUrl || defaultRequestUrl,
     timeoutMs: deps.timeoutMs ?? 5000,
     maxRedirects: deps.maxRedirects ?? 3,
     maxBytes: deps.maxBytes ?? 64 * 1024,
   };
+  const deadline = new ValidationDeadline(mergedDeps.timeoutMs);
 
-  if (MANUAL_CHANNEL_TYPES.has(channelType)) {
-    return {
-      validationStatus: "needs_review",
-      reason: "manual_review_required",
-      evidence: { networkTested: false, channelType },
-    };
-  }
-
-  if (SOCIAL_CHANNEL_TYPES.has(channelType)) {
-    const parsed = parseUrl(channel.normalizedUrl || channel.url || "");
-    if (!parsed || !channel.normalizedUrl) {
+  try {
+    if (MANUAL_CHANNEL_TYPES.has(channelType)) {
       return {
-        validationStatus: "invalid",
-        reason: "missing_public_social_url",
-        errorCode: "missing_public_social_url",
+        validationStatus: "needs_review",
+        reason: "manual_review_required",
         evidence: { networkTested: false, channelType },
       };
     }
-    try {
-      await assertSafeNetworkTarget(parsed, mergedDeps);
+
+    if (SOCIAL_CHANNEL_TYPES.has(channelType)) {
+      const parsed = parseUrl(channel.normalizedUrl || channel.url || "");
+      if (!parsed || !channel.normalizedUrl) {
+        return {
+          validationStatus: "invalid",
+          reason: "missing_public_social_url",
+          errorCode: "missing_public_social_url",
+          evidence: { networkTested: false, channelType },
+        };
+      }
+      try {
+        await resolveApprovedAddress(parsed, mergedDeps, deadline.signal);
+        return {
+          validationStatus: "needs_review",
+          reason: "social_network_review_required",
+          evidence: {
+            networkTested: false,
+            safetyChecked: true,
+            channelType,
+            normalizedUrl: sanitizeUrlForEvidence(parsed.toString()),
+            handle: channel.handle || null,
+          },
+        };
+      } catch (error) {
+        return errorResult(error, "invalid");
+      }
+    }
+
+    if (!NETWORK_CHANNEL_TYPES.has(channelType)) {
       return {
         validationStatus: "needs_review",
-        reason: "social_network_review_required",
-        evidence: {
-          networkTested: false,
-          safetyChecked: true,
-          channelType,
-          normalizedUrl: sanitizeUrlForEvidence(parsed.toString()),
-          handle: channel.handle || null,
-        },
+        reason: "manual_review_required",
+        evidence: { networkTested: false, channelType },
       };
-    } catch (error) {
-      return errorResult(error, "invalid");
     }
-  }
 
-  if (!NETWORK_CHANNEL_TYPES.has(channelType)) {
-    return {
-      validationStatus: "needs_review",
-      reason: "manual_review_required",
-      evidence: { networkTested: false, channelType },
-    };
-  }
+    const parsed = parseUrl(channel.normalizedUrl || channel.url || "");
+    if (!parsed) {
+      return {
+        validationStatus: "invalid",
+        reason: "missing_or_invalid_url",
+        errorCode: "invalid_url",
+        evidence: { networkTested: false, channelType },
+      };
+    }
 
-  const parsed = parseUrl(channel.normalizedUrl || channel.url || "");
-  if (!parsed) {
-    return {
-      validationStatus: "invalid",
-      reason: "missing_or_invalid_url",
-      errorCode: "invalid_url",
-      evidence: { networkTested: false, channelType },
-    };
-  }
-
-  try {
-    const { response, finalUrl, redirectCount } = await fetchWithSafeRedirects(parsed, mergedDeps);
+    const { response, finalUrl, redirectCount, approvedAddress } = await fetchWithSafeRedirects(parsed, mergedDeps, deadline.signal);
     const commonEvidence = {
       networkTested: true,
       channelType,
       statusCode: response.status,
       finalUrl: sanitizeUrlForEvidence(finalUrl.toString()),
       redirectCount,
+      approvedAddressFamily: net.isIP(approvedAddress),
     };
     if (response.status < 200 || response.status >= 400) {
       return {
@@ -242,6 +478,7 @@ export async function validatePublisherChannel(
       };
     }
     if (channelType === "website" && !publisherDomainCompatible(finalUrl, publisher)) {
+      response.abort?.();
       return {
         validationStatus: "invalid",
         reason: "domain_not_compatible_with_publisher",
@@ -250,15 +487,24 @@ export async function validatePublisherChannel(
       };
     }
     if (channelType === "rss") {
-      const text = await readResponseText(response, mergedDeps.maxBytes);
-      if (!/<(rss|feed|rdf:RDF)(\s|>)/i.test(text)) {
+      try {
+        const text = await readResponseTextLimited(response, mergedDeps.maxBytes, deadline.signal);
+        if (!/<(rss|feed|rdf:RDF)(\s|>)/i.test(text)) {
+          return {
+            validationStatus: "invalid",
+            reason: "rss_atom_structure_not_found",
+            errorCode: "invalid_feed_structure",
+            evidence: commonEvidence,
+          };
+        }
+      } catch (error) {
         return {
-          validationStatus: "invalid",
-          reason: "rss_atom_structure_not_found",
-          errorCode: "invalid_feed_structure",
-          evidence: commonEvidence,
+          ...errorResult(error, "unreachable"),
+          evidence: { ...commonEvidence, errorCode: (error as any)?.code || "validation_error" },
         };
       }
+    } else {
+      response.abort?.();
     }
     return {
       validationStatus: "valid",
@@ -267,5 +513,7 @@ export async function validatePublisherChannel(
     };
   } catch (error) {
     return errorResult(error);
+  } finally {
+    deadline.clear();
   }
 }

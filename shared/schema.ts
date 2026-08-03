@@ -499,6 +499,9 @@ export const articleAppearances = pgTable("article_appearances", {
   check("article_appearances_collector_type_ck", sql`
     ${table.collectorType} IS NULL OR ${table.collectorType} IN ('google_news', 'rss_app', 'direct', 'manual', 'other')
   `),
+  check("article_appearances_channel_requires_publisher_ck", sql`
+    ${table.publisherChannelId} IS NULL OR ${table.publisherProfileId} IS NOT NULL
+  `),
 ]);
 
 export const insertArticleAppearanceSchema = createInsertSchema(articleAppearances).omit({ id: true, createdAt: true, updatedAt: true });

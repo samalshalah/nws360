@@ -1,45 +1,107 @@
 const assert = require("node:assert/strict");
 const migration = require("./migrate-publisher-catalog.cjs");
 
-function tableFromColumns(columns, rows = []) {
-  return { columns: new Set(columns), rows: rows.map((row) => ({ ...row })) };
+function inferColumnDetails(table, column) {
+  const definition = migration.TABLE_COLUMNS[table]?.find(([name]) => name === column)?.[1] || "text";
+  const lower = definition.toLowerCase();
+  let data_type = "text";
+  let udt_name = "text";
+  if (lower.includes("serial") || lower.includes("integer")) {
+    data_type = "integer";
+    udt_name = "int4";
+  } else if (lower.includes("boolean")) {
+    data_type = "boolean";
+    udt_name = "bool";
+  } else if (lower.includes("jsonb")) {
+    data_type = "jsonb";
+    udt_name = "jsonb";
+  } else if (lower.includes("uuid")) {
+    data_type = "uuid";
+    udt_name = "uuid";
+  } else if (lower.includes("timestamp")) {
+    data_type = "timestamp without time zone";
+    udt_name = "timestamp";
+  } else if (lower.includes("text[]")) {
+    data_type = "ARRAY";
+    udt_name = "_text";
+  }
+  return {
+    column_name: column,
+    data_type,
+    udt_name,
+    is_nullable: lower.includes("not null") || lower.includes("primary key") ? "NO" : "YES",
+    column_default: lower.includes("serial") ? `nextval('${table}_${column}_seq'::regclass)` : lower.includes("default") ? "default" : null,
+  };
+}
+
+function tableFromColumns(columns, rows = [], options = {}) {
+  const columnDetails = {};
+  for (const column of columns) {
+    columnDetails[column] = { ...inferColumnDetails(options.table || "", column), ...(options.columnDetails?.[column] || {}) };
+  }
+  return {
+    columns: new Set(columns),
+    rows: rows.map((row) => ({ ...row })),
+    columnDetails,
+    primaryKeys: new Set(options.primaryKeys || (columns.includes("id") ? ["id"] : [])),
+  };
 }
 
 function cloneState(state) {
   const tables = {};
   for (const [name, table] of Object.entries(state.tables)) {
-    tables[name] = tableFromColumns([...table.columns], table.rows);
+    tables[name] = tableFromColumns([...table.columns], table.rows, {
+      table: name,
+      columnDetails: table.columnDetails,
+      primaryKeys: [...(table.primaryKeys || [])],
+    });
   }
   return {
     tables,
     indexes: new Set(state.indexes),
     constraints: new Set(state.constraints),
+    foreignKeyDetails: new Map(state.foreignKeyDetails || []),
   };
 }
 
 function emptyBaseState() {
   return {
     tables: {
-      users: tableFromColumns(["id", "username", "role", "user_scope", "client_id"], [{ id: 2, username: "admin@nws360.com", role: "admin", user_scope: "platform", client_id: null }]),
-      clients: tableFromColumns(["id", "name"], []),
-      sources: tableFromColumns(["id", "client_id", "name", "url"], []),
-      articles: tableFromColumns(["id", "client_id", "source_id", "url"], []),
-      platform_reset_audit: tableFromColumns(["id", "result"], [{ id: 1, result: "success" }]),
+      users: tableFromColumns(["id", "username", "role", "user_scope", "client_id"], [{ id: 2, username: "admin@nws360.com", role: "admin", user_scope: "platform", client_id: null }], { table: "users" }),
+      clients: tableFromColumns(["id", "name"], [], { table: "clients" }),
+      sources: tableFromColumns(["id", "client_id", "name", "url"], [], { table: "sources" }),
+      articles: tableFromColumns(["id", "client_id", "source_id", "url"], [], { table: "articles" }),
+      platform_reset_audit: tableFromColumns(["id", "result"], [{ id: 1, result: "success" }], { table: "platform_reset_audit" }),
     },
     indexes: new Set(),
     constraints: new Set(),
+    foreignKeyDetails: new Map(),
   };
 }
 
 function fullyMigratedState() {
   const state = emptyBaseState();
   for (const [table, columns] of Object.entries(migration.TABLE_COLUMNS)) {
-    if (!state.tables[table]) state.tables[table] = tableFromColumns([]);
-    for (const [name] of columns) state.tables[table].columns.add(name);
+    if (!state.tables[table]) state.tables[table] = tableFromColumns([], [], { table });
+    for (const [name] of columns) {
+      state.tables[table].columns.add(name);
+      state.tables[table].columnDetails[name] = inferColumnDetails(table, name);
+      if (name === "id") state.tables[table].primaryKeys.add(name);
+    }
   }
   for (const name of Object.keys(migration.INDEXES)) state.indexes.add(name);
   for (const name of Object.keys(migration.CHECKS)) state.constraints.add(name);
-  for (const name of Object.keys(migration.FOREIGN_KEYS)) state.constraints.add(name);
+  for (const [name, spec] of Object.entries(migration.FOREIGN_KEYS)) {
+    state.constraints.add(name);
+    const ref = String(spec.references).match(/^([a-z_]+)\(([^)]+)\)$/);
+    state.foreignKeyDetails.set(name, {
+      conname: name,
+      table_name: spec.table,
+      foreign_table_name: ref?.[1],
+      columns: Array.isArray(spec.columns) ? spec.columns : [spec.column],
+      foreign_columns: ref?.[2].split(",").map((column) => column.trim()) || [],
+    });
+  }
   return state;
 }
 
@@ -124,11 +186,25 @@ class MockPgClient {
     }
     if (normalized.startsWith("SELECT") && normalized.includes("information_schema.columns")) {
       const table = params[0];
-      const columns = this.state.tables[table]?.columns || new Set();
-      return { rows: [...columns].map((column_name) => ({ column_name })), rowCount: columns.size };
+      const tableState = this.state.tables[table];
+      const columns = tableState?.columns || new Set();
+      const rows = [...columns].map((column_name) => ({
+        column_name,
+        ...(tableState?.columnDetails?.[column_name] || inferColumnDetails(table, column_name)),
+      }));
+      return { rows, rowCount: columns.size };
+    }
+    if (normalized.startsWith("SELECT A.ATTNAME AS COLUMN_NAME") || normalized.includes("FROM pg_index i")) {
+      const table = params[0];
+      const primaryKeys = this.state.tables[table]?.primaryKeys || new Set();
+      return { rows: [...primaryKeys].map((column_name) => ({ column_name })), rowCount: primaryKeys.size };
     }
     if (normalized.startsWith("SELECT") && normalized.includes("FROM pg_indexes")) {
       return { rows: [...this.state.indexes].map((indexname) => ({ indexname })), rowCount: this.state.indexes.size };
+    }
+    if (normalized.startsWith("SELECT C.CONNAME") || normalized.includes("ARRAY_AGG(a.attname")) {
+      const rows = [...this.state.foreignKeyDetails.values()].filter((row) => this.state.constraints.has(row.conname));
+      return { rows, rowCount: rows.length };
     }
     if (normalized.startsWith("SELECT") && normalized.includes("FROM pg_constraint")) {
       return { rows: [...this.state.constraints].map((conname) => ({ conname })), rowCount: this.state.constraints.size };
@@ -213,7 +289,7 @@ class MockPgClient {
     if (normalized.startsWith("CREATE TABLE IF NOT EXISTS ")) {
       const table = normalized.match(/CREATE TABLE IF NOT EXISTS ([a-z_]+)/)?.[1];
       if (table && !this.state.tables[table]) {
-        this.state.tables[table] = tableFromColumns(migration.TABLE_COLUMNS[table].map(([name]) => name));
+        this.state.tables[table] = tableFromColumns(migration.TABLE_COLUMNS[table].map(([name]) => name), [], { table });
       }
       return { rows: [], rowCount: 0 };
     }
@@ -221,8 +297,29 @@ class MockPgClient {
       const match = normalized.match(/ALTER TABLE ([a-z_]+) ADD COLUMN IF NOT EXISTS ([a-z_]+)/);
       if (match) {
         const [, table, column] = match;
-        if (!this.state.tables[table]) this.state.tables[table] = tableFromColumns([]);
+        if (!this.state.tables[table]) this.state.tables[table] = tableFromColumns([], [], { table });
         this.state.tables[table].columns.add(column);
+        this.state.tables[table].columnDetails[column] = inferColumnDetails(table, column);
+        if (column === "id" && normalized.includes("PRIMARY KEY")) this.state.tables[table].primaryKeys.add(column);
+      }
+      return { rows: [], rowCount: 0 };
+    }
+    if (normalized.startsWith("ALTER TABLE ") && normalized.includes(" ADD PRIMARY KEY ")) {
+      const match = normalized.match(/ALTER TABLE ([a-z_]+) ADD PRIMARY KEY \(id\)/);
+      if (match) this.state.tables[match[1]]?.primaryKeys.add("id");
+      return { rows: [], rowCount: 0 };
+    }
+    if (normalized.startsWith("ALTER TABLE ") && normalized.includes(" ALTER COLUMN ") && normalized.includes(" SET NOT NULL")) {
+      const match = normalized.match(/ALTER TABLE ([a-z_]+) ALTER COLUMN ([a-z_]+) SET NOT NULL/);
+      if (match && this.state.tables[match[1]]?.columnDetails?.[match[2]]) {
+        this.state.tables[match[1]].columnDetails[match[2]].is_nullable = "NO";
+      }
+      return { rows: [], rowCount: 0 };
+    }
+    if (normalized.startsWith("ALTER TABLE ") && normalized.includes(" ALTER COLUMN ") && normalized.includes(" SET DEFAULT")) {
+      const match = normalized.match(/ALTER TABLE ([a-z_]+) ALTER COLUMN ([a-z_]+) SET DEFAULT/);
+      if (match && this.state.tables[match[1]]?.columnDetails?.[match[2]]) {
+        this.state.tables[match[1]].columnDetails[match[2]].column_default = "default";
       }
       return { rows: [], rowCount: 0 };
     }
@@ -252,7 +349,20 @@ class MockPgClient {
     }
     if (normalized.startsWith("DO $$") && normalized.includes("ADD CONSTRAINT")) {
       const match = normalized.match(/ADD CONSTRAINT ([a-z_]+)/);
-      if (match) this.state.constraints.add(match[1]);
+      if (match) {
+        this.state.constraints.add(match[1]);
+        const spec = migration.FOREIGN_KEYS[match[1]];
+        if (spec) {
+          const ref = String(spec.references).match(/^([a-z_]+)\(([^)]+)\)$/);
+          this.state.foreignKeyDetails.set(match[1], {
+            conname: match[1],
+            table_name: spec.table,
+            foreign_table_name: ref?.[1],
+            columns: Array.isArray(spec.columns) ? spec.columns : [spec.column],
+            foreign_columns: ref?.[2].split(",").map((column) => column.trim()) || [],
+          });
+        }
+      }
       return { rows: [], rowCount: 0 };
     }
 
@@ -304,6 +414,69 @@ class MockPgClient {
   assert.ok(safePartialClient.state.tables.publisher_channels.columns.has("validation_status"));
   assert.ok(safePartialClient.state.indexes.has("publisher_channels_type_idx"));
   assert.ok(safePartialClient.state.constraints.has("publisher_channels_validation_status_ck"));
+
+  const emptyMissingId = fullyMigratedState();
+  emptyMissingId.tables.publisher_aliases.columns.delete("id");
+  delete emptyMissingId.tables.publisher_aliases.columnDetails.id;
+  emptyMissingId.tables.publisher_aliases.primaryKeys.delete("id");
+  const emptyMissingIdClient = new MockPgClient(emptyMissingId);
+  const emptyMissingIdReport = await migration.runPublisherCatalogMigration(emptyMissingIdClient, { dryRun: true, apply: false });
+  assert.equal(emptyMissingIdReport.applySafe, true);
+  assert.equal(emptyMissingIdReport.before.partialSchemaRepairs.some((repair) => repair.table === "publisher_aliases" && repair.column === "id"), true);
+  await migration.runPublisherCatalogMigration(emptyMissingIdClient, { apply: true });
+  assert.ok(emptyMissingIdClient.state.tables.publisher_aliases.columns.has("id"));
+  assert.ok(emptyMissingIdClient.state.tables.publisher_aliases.primaryKeys.has("id"));
+
+  const populatedMissingId = fullyMigratedState();
+  populatedMissingId.tables.publisher_aliases.columns.delete("id");
+  delete populatedMissingId.tables.publisher_aliases.columnDetails.id;
+  populatedMissingId.tables.publisher_aliases.primaryKeys.delete("id");
+  populatedMissingId.tables.publisher_aliases.rows.push({ publisher_profile_id: 1, alias: "A", normalized_alias: "a", language_code: "und", alias_type: "name" });
+  const populatedMissingIdReport = await migration.runPublisherCatalogMigration(new MockPgClient(populatedMissingId), { dryRun: true, apply: false });
+  assert.equal(populatedMissingIdReport.applySafe, false);
+  assert.equal(populatedMissingIdReport.before.missingPrimaryKeys.some((risk) => risk.table === "publisher_aliases"), true);
+
+  const idWithoutPrimaryKey = fullyMigratedState();
+  idWithoutPrimaryKey.tables.publisher_channels.primaryKeys.delete("id");
+  const idWithoutPrimaryKeyReport = await migration.runPublisherCatalogMigration(new MockPgClient(idWithoutPrimaryKey), { dryRun: true, apply: false });
+  assert.equal(idWithoutPrimaryKeyReport.applySafe, true);
+  assert.equal(idWithoutPrimaryKeyReport.before.partialSchemaRepairs.some((repair) => repair.table === "publisher_channels" && repair.statement.includes("ADD PRIMARY KEY")), true);
+
+  const wrongIdType = fullyMigratedState();
+  wrongIdType.tables.publisher_channels.columnDetails.id.data_type = "text";
+  wrongIdType.tables.publisher_channels.columnDetails.id.udt_name = "text";
+  const wrongIdTypeReport = await migration.runPublisherCatalogMigration(new MockPgClient(wrongIdType), { dryRun: true, apply: false });
+  assert.equal(wrongIdTypeReport.applySafe, false);
+  assert.equal(wrongIdTypeReport.before.incompatibleColumnDefinitions.some((item) => item.table === "publisher_channels" && item.column === "id"), true);
+
+  const wrongJsonArrayType = fullyMigratedState();
+  wrongJsonArrayType.tables.publisher_profiles.columnDetails.metadata.data_type = "text";
+  wrongJsonArrayType.tables.publisher_profiles.columnDetails.metadata.udt_name = "text";
+  wrongJsonArrayType.tables.publisher_profiles.columnDetails.language_codes.data_type = "text";
+  wrongJsonArrayType.tables.publisher_profiles.columnDetails.language_codes.udt_name = "text";
+  const wrongJsonArrayReport = await migration.runPublisherCatalogMigration(new MockPgClient(wrongJsonArrayType), { dryRun: true, apply: false });
+  assert.equal(wrongJsonArrayReport.applySafe, false);
+  assert.equal(wrongJsonArrayReport.before.incompatibleColumnDefinitions.some((item) => item.column === "metadata"), true);
+  assert.equal(wrongJsonArrayReport.before.incompatibleColumnDefinitions.some((item) => item.column === "language_codes"), true);
+
+  const nullableRequired = fullyMigratedState();
+  nullableRequired.tables.publisher_profiles.columnDetails.name.is_nullable = "YES";
+  nullableRequired.tables.publisher_profiles.rows.push({ id: 1, canonical_key: "global:x", scope_type: "global", owner_client_id: null, name: "X", slug: "x", status: "draft", verification_status: "unverified" });
+  const nullableRequiredReport = await migration.runPublisherCatalogMigration(new MockPgClient(nullableRequired), { dryRun: true, apply: false });
+  assert.equal(nullableRequiredReport.applySafe, false);
+  assert.equal(nullableRequiredReport.before.partialSchemaRisks.some((risk) => risk.table === "publisher_profiles" && risk.column === "name"), true);
+
+  const wrongForeignKey = fullyMigratedState();
+  wrongForeignKey.foreignKeyDetails.set("article_appearances_article_client_fk", {
+    conname: "article_appearances_article_client_fk",
+    table_name: "article_appearances",
+    foreign_table_name: "sources",
+    columns: ["article_id", "client_id"],
+    foreign_columns: ["id", "client_id"],
+  });
+  const wrongForeignKeyReport = await migration.runPublisherCatalogMigration(new MockPgClient(wrongForeignKey), { dryRun: true, apply: false });
+  assert.equal(wrongForeignKeyReport.applySafe, false);
+  assert.equal(wrongForeignKeyReport.before.malformedForeignKeys.some((item) => item.name === "article_appearances_article_client_fk"), true);
 
   const unsafePartial = fullyMigratedState();
   unsafePartial.tables.publisher_profiles.columns.delete("canonical_key");

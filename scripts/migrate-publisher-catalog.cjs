@@ -283,6 +283,7 @@ const CHECKS = {
   client_publisher_selections_priority_ck: { table: "client_publisher_selections", expression: "priority IN ('critical', 'high', 'standard', 'low')" },
   article_appearances_type_ck: { table: "article_appearances", expression: "appearance_type IN ('original', 'rss', 'republished', 'social', 'video', 'broadcast', 'collector')" },
   article_appearances_collector_type_ck: { table: "article_appearances", expression: "collector_type IS NULL OR collector_type IN ('google_news', 'rss_app', 'direct', 'manual', 'other')" },
+  article_appearances_channel_requires_publisher_ck: { table: "article_appearances", expression: "publisher_channel_id IS NULL OR publisher_profile_id IS NOT NULL" },
 };
 
 const FOREIGN_KEYS = {
@@ -366,6 +367,27 @@ async function existingColumns(client, tableName) {
   return new Set(result.rows.map((row) => row.column_name));
 }
 
+async function existingColumnDefinitions(client, tableName) {
+  const result = await client.query(`
+    SELECT column_name, data_type, udt_name, is_nullable, column_default
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = $1
+  `, [tableName]);
+  return new Map(result.rows.map((row) => [row.column_name, row]));
+}
+
+async function existingPrimaryKeyColumns(client, tableName) {
+  const result = await client.query(`
+    SELECT a.attname AS column_name
+      FROM pg_index i
+      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+     WHERE i.indrelid = $1::regclass
+       AND i.indisprimary
+  `, [tableName]);
+  return new Set(result.rows.map((row) => row.column_name));
+}
+
 async function existingIndexes(client) {
   const result = await client.query(`
     SELECT indexname
@@ -382,6 +404,26 @@ async function existingConstraints(client) {
      WHERE connamespace = 'public'::regnamespace
   `);
   return new Set(result.rows.map((row) => row.conname));
+}
+
+async function existingForeignKeyDetails(client) {
+  const result = await client.query(`
+    SELECT
+      c.conname,
+      c.conrelid::regclass::text AS table_name,
+      c.confrelid::regclass::text AS foreign_table_name,
+      ARRAY_AGG(a.attname ORDER BY k.ord)::text[] AS columns,
+      ARRAY_AGG(fa.attname ORDER BY k.ord)::text[] AS foreign_columns
+    FROM pg_constraint c
+    JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+    JOIN unnest(c.confkey) WITH ORDINALITY AS fk(attnum, ord) ON fk.ord = k.ord
+    JOIN pg_attribute fa ON fa.attrelid = c.confrelid AND fa.attnum = fk.attnum
+    WHERE c.contype = 'f'
+      AND c.connamespace = 'public'::regnamespace
+    GROUP BY c.conname, c.conrelid, c.confrelid
+  `);
+  return new Map(result.rows.map((row) => [row.conname, row]));
 }
 
 async function countRowsIfTableExists(client, table) {
@@ -443,6 +485,7 @@ async function incompatibleRows(client) {
     googleNewsPublisherChannels: await countIfColumnsExist(client, "publisher_channels", ["channel_type"], "channel_type = 'google_news'"),
     invalidSelectionStatus: await countIfColumnsExist(client, "client_publisher_selections", ["status"], "status NOT IN ('candidate', 'approved', 'blocked', 'archived')"),
     invalidAppearanceType: await countIfColumnsExist(client, "article_appearances", ["appearance_type"], "appearance_type NOT IN ('original', 'rss', 'republished', 'social', 'video', 'broadcast', 'collector')"),
+    appearanceChannelMissingPublisher: await countIfColumnsExist(client, "article_appearances", ["publisher_channel_id", "publisher_profile_id"], "publisher_channel_id IS NOT NULL AND publisher_profile_id IS NULL"),
     duplicateCanonicalKeys: await duplicateCount(client, "publisher_profiles", ["canonical_key"], "trim(canonical_key) <> ''"),
     duplicateNormalizedDomains: await duplicateCount(client, "publisher_profiles", ["scope_type", "owner_client_id", "normalized_primary_domain"], "normalized_primary_domain IS NOT NULL AND trim(normalized_primary_domain) <> ''"),
     duplicateDomainScopeKeys: await duplicateCount(client, "publisher_profiles", ["domain_scope_key"], "domain_scope_key IS NOT NULL AND trim(domain_scope_key) <> ''"),
@@ -536,6 +579,170 @@ async function tenantMismatchCounts(client) {
   };
 }
 
+function expectedColumnSpec(name, definition) {
+  const lower = definition.toLowerCase();
+  const expected = {
+    name,
+    definition,
+    dataType: "text",
+    udtName: null,
+    notNull: /\bnot\s+null\b/.test(lower) || /\bprimary\s+key\b/.test(lower),
+    defaultRequired: /\bdefault\b/.test(lower) || /\bserial\b/.test(lower),
+    primaryKey: /\bprimary\s+key\b/.test(lower),
+    generated: /\bserial\b/.test(lower),
+  };
+  if (/\bserial\b/.test(lower) || /\binteger\b/.test(lower)) expected.dataType = "integer";
+  else if (/\bboolean\b/.test(lower)) expected.dataType = "boolean";
+  else if (/\bjsonb\b/.test(lower)) expected.dataType = "jsonb";
+  else if (/\buuid\b/.test(lower)) expected.dataType = "uuid";
+  else if (/\btimestamp\b/.test(lower)) expected.dataType = "timestamp without time zone";
+  else if (/\btext\[\]/.test(lower)) {
+    expected.dataType = "ARRAY";
+    expected.udtName = "_text";
+  }
+  return expected;
+}
+
+function actualColumnTypeCompatible(actual, expected) {
+  if (!actual) return true;
+  if (expected.udtName) return actual.data_type === expected.dataType && actual.udt_name === expected.udtName;
+  return actual.data_type === expected.dataType || (expected.dataType === "timestamp without time zone" && actual.data_type === "timestamp");
+}
+
+function idRepairStatement(table) {
+  return `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS id serial PRIMARY KEY`;
+}
+
+function primaryKeyRepairStatement(table) {
+  return `ALTER TABLE ${table} ADD PRIMARY KEY (id)`;
+}
+
+function notNullRepairStatement(table, column) {
+  return `ALTER TABLE ${table} ALTER COLUMN ${column} SET NOT NULL`;
+}
+
+function defaultRepairStatement(table, column, definition) {
+  const match = definition.match(/\bDEFAULT\s+(.+)$/i);
+  return match ? `ALTER TABLE ${table} ALTER COLUMN ${column} SET DEFAULT ${match[1]}` : null;
+}
+
+function parseReference(reference) {
+  const match = String(reference).match(/^([a-z_]+)\(([^)]+)\)$/i);
+  if (!match) return null;
+  return {
+    table: match[1],
+    columns: match[2].split(",").map((column) => column.trim()),
+  };
+}
+
+async function partialSchemaSafety(client, missingColumns, tableRowCounts, constraintSet) {
+  const partialSchemaRisks = [];
+  const partialSchemaRepairs = [];
+  const incompatibleColumnDefinitions = [];
+  const missingPrimaryKeys = [];
+  const malformedForeignKeys = [];
+  const foreignKeyDetails = await existingForeignKeyDetails(client);
+
+  for (const [tableName, columns] of Object.entries(TABLE_COLUMNS)) {
+    const exists = await tableExists(client, tableName);
+    if (!exists) continue;
+    const rowCount = tableRowCounts[tableName] || 0;
+    const actualColumns = await existingColumnDefinitions(client, tableName);
+    const primaryKeys = await existingPrimaryKeyColumns(client, tableName);
+
+    for (const [name, definition] of columns) {
+      const expected = expectedColumnSpec(name, definition);
+      const actual = actualColumns.get(name);
+      if (!actual) {
+        if (name === "id") {
+          if (rowCount === 0) {
+            partialSchemaRepairs.push({ table: tableName, column: name, reason: "Empty catalog table is missing id primary key; apply will add it safely.", statement: idRepairStatement(tableName) });
+          } else {
+            missingPrimaryKeys.push({ table: tableName, column: name, rowCount, reason: "Populated catalog table is missing id primary key." });
+            partialSchemaRisks.push({ table: tableName, column: name, rowCount, reason: "Populated catalog table is missing id primary key; automatic repair is unsafe." });
+          }
+        } else if (rowCount > 0 && expected.notNull && !expected.defaultRequired && !(tableName === "publisher_aliases" && name === "language_code")) {
+          partialSchemaRisks.push({ table: tableName, column: name, rowCount, reason: "Populated table is missing a required NOT NULL column without a safe default." });
+        }
+        continue;
+      }
+
+      if (!actualColumnTypeCompatible(actual, expected)) {
+        incompatibleColumnDefinitions.push({
+          table: tableName,
+          column: name,
+          expected: expected.udtName || expected.dataType,
+          actual: actual.udt_name || actual.data_type,
+          reason: "Column type is not compatible with the required publisher catalog schema.",
+        });
+      }
+
+      if (expected.notNull && actual.is_nullable === "YES") {
+        if (rowCount === 0 || expected.defaultRequired || (tableName === "publisher_aliases" && name === "language_code")) {
+          partialSchemaRepairs.push({ table: tableName, column: name, reason: "Required column is nullable; apply will set NOT NULL after safe backfills.", statement: notNullRepairStatement(tableName, name) });
+        } else {
+          partialSchemaRisks.push({ table: tableName, column: name, rowCount, reason: "Required column is nullable in a populated table." });
+        }
+      }
+
+      if (expected.defaultRequired && !actual.column_default) {
+        const repair = defaultRepairStatement(tableName, name, definition);
+        if (repair) {
+          partialSchemaRepairs.push({ table: tableName, column: name, reason: "Column default is missing; apply will restore the required default.", statement: repair });
+        } else if (name === "id") {
+          partialSchemaRisks.push({ table: tableName, column: name, rowCount, reason: "Generated id default is missing." });
+        }
+      }
+
+      if (expected.primaryKey && !primaryKeys.has(name)) {
+        missingPrimaryKeys.push({ table: tableName, column: name, rowCount, reason: "Expected primary key is missing." });
+        if (rowCount === 0) {
+          partialSchemaRepairs.push({ table: tableName, column: name, reason: "Empty catalog table id exists without primary key; apply will add it safely.", statement: primaryKeyRepairStatement(tableName) });
+        } else {
+          partialSchemaRisks.push({ table: tableName, column: name, rowCount, reason: "Populated table id exists without primary key; automatic repair is unsafe." });
+        }
+      }
+    }
+  }
+
+  for (const [name, spec] of Object.entries(FOREIGN_KEYS)) {
+    if (!constraintSet.has(name)) continue;
+    const actual = foreignKeyDetails.get(name);
+    const reference = parseReference(spec.references);
+    const expectedColumns = Array.isArray(spec.columns) ? spec.columns : [spec.column];
+    if (!actual || !reference) continue;
+    const actualTable = String(actual.table_name || "").replace(/^public\./, "");
+    const actualForeignTable = String(actual.foreign_table_name || "").replace(/^public\./, "");
+    const actualColumns = Array.isArray(actual.columns) ? actual.columns : [];
+    const actualForeignColumns = Array.isArray(actual.foreign_columns) ? actual.foreign_columns : [];
+    if (
+      actualTable !== spec.table
+      || actualForeignTable !== reference.table
+      || actualColumns.join(",") !== expectedColumns.join(",")
+      || actualForeignColumns.join(",") !== reference.columns.join(",")
+    ) {
+      malformedForeignKeys.push({
+        name,
+        expected: { table: spec.table, columns: expectedColumns, references: spec.references },
+        actual: { table: actualTable, columns: actualColumns, references: `${actualForeignTable}(${actualForeignColumns.join(", ")})` },
+      });
+    }
+  }
+
+  if (incompatibleColumnDefinitions.length > 0) {
+    for (const item of incompatibleColumnDefinitions) {
+      partialSchemaRisks.push({ table: item.table, column: item.column, reason: item.reason, expected: item.expected, actual: item.actual });
+    }
+  }
+  if (malformedForeignKeys.length > 0) {
+    for (const item of malformedForeignKeys) {
+      partialSchemaRisks.push({ table: item.expected.table, constraint: item.name, reason: "Foreign key exists but references the wrong table or columns.", expected: item.expected, actual: item.actual });
+    }
+  }
+
+  return { partialSchemaRisks, partialSchemaRepairs, incompatibleColumnDefinitions, missingPrimaryKeys, malformedForeignKeys };
+}
+
 async function inspect(client) {
   const missingColumns = {};
   const missingTables = [];
@@ -556,18 +763,7 @@ async function inspect(client) {
   for (const table of [...PUBLISHER_TABLES, "sources", "articles", "clients", "users", "platform_reset_audit"]) {
     tableRowCounts[table] = await countRowsIfTableExists(client, table);
   }
-
-  const unsafePartialSchemaRisks = [];
-  for (const table of PUBLISHER_TABLES) {
-    const exists = await tableExists(client, table);
-    const unsafeMissingNotNull = missingColumns[table]?.some((column) =>
-      /NOT NULL/i.test(column.definition)
-      && !(table === "publisher_aliases" && column.name === "language_code")
-    );
-    if (exists && tableRowCounts[table] > 0 && unsafeMissingNotNull) {
-      unsafePartialSchemaRisks.push(`${table} has rows but is missing NOT NULL catalog columns`);
-    }
-  }
+  const partialSchema = await partialSchemaSafety(client, missingColumns, tableRowCounts, constraintSet);
 
   return {
     missingTables,
@@ -578,11 +774,16 @@ async function inspect(client) {
     missingCheckConstraints: Object.keys(CHECKS).filter((name) => !constraintSet.has(name)),
     incompatibleRows: incompatible,
     tenantMismatches,
-    unsafePartialSchemaRisks,
+    partialSchemaRisks: partialSchema.partialSchemaRisks,
+    partialSchemaRepairs: partialSchema.partialSchemaRepairs,
+    incompatibleColumnDefinitions: partialSchema.incompatibleColumnDefinitions,
+    missingPrimaryKeys: partialSchema.missingPrimaryKeys,
+    malformedForeignKeys: partialSchema.malformedForeignKeys,
+    unsafePartialSchemaRisks: partialSchema.partialSchemaRisks,
     tableRowCounts,
     applySafe: Object.values(incompatible).every((count) => Number(count) === 0)
       && Object.values(tenantMismatches).every((count) => Number(count) === 0)
-      && unsafePartialSchemaRisks.length === 0,
+      && partialSchema.partialSchemaRisks.length === 0,
   };
 }
 
@@ -606,8 +807,11 @@ BEGIN
 END $$`;
 }
 
-function plannedStatements() {
+function plannedStatements(plan) {
   const createTables = PUBLISHER_TABLES.map((table) => TABLE_CREATE_SQL[table]);
+  const partialRepairs = Array.isArray(plan?.partialSchemaRepairs)
+    ? plan.partialSchemaRepairs.map((repair) => repair.statement)
+    : [];
   const alterColumns = Object.entries(TABLE_COLUMNS).flatMap(([table, columns]) =>
     columns
       .filter(([name]) => name !== "id")
@@ -615,6 +819,7 @@ function plannedStatements() {
   );
   return [
     ...createTables,
+    ...partialRepairs,
     ...alterColumns,
     ...SAFE_REPAIR_STATEMENTS,
     ...Object.values(INDEXES),
@@ -625,7 +830,7 @@ function plannedStatements() {
 
 async function runPublisherCatalogMigration(client, args) {
   const before = await inspect(client);
-  const statements = plannedStatements();
+  const statements = plannedStatements(before);
   if (!args.apply) {
     return {
       migration: "publisher-catalog",
@@ -720,13 +925,17 @@ module.exports = {
   countRowsIfTableExists,
   duplicateCount,
   existingColumns,
+  existingColumnDefinitions,
   existingConstraints,
+  existingForeignKeyDetails,
   existingIndexes,
+  existingPrimaryKeyColumns,
   hasColumns,
   incompatibleRows,
   inspect,
   main,
   parseArgs,
+  partialSchemaSafety,
   plannedStatements,
   runPublisherCatalogMigration,
   tableExists,

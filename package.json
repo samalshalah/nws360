@@ -32,7 +32,7 @@
     "test:workspace-relevance-migration": "node scripts/test-workspace-relevance-migration.cjs",
     "test:client-enrollment": "tsx scripts/test-client-enrollment.ts",
     "test:client-enrollment-migration": "node scripts/test-client-enrollment-migration.cjs",
-    "test:publisher-catalog": "tsx scripts/test-publisher-catalog.ts",
+    "test:publisher-catalog": "tsx scripts/test-publisher-catalog.ts && tsx scripts/test-publisher-production-paths.ts",
     "test:publisher-catalog-migration": "node scripts/test-publisher-catalog-migration.cjs",
     "test:iraq-taxonomy-migration": "node scripts/test-iraq-taxonomy-migration.cjs",
     "test:reset-platform": "node scripts/test-reset-platform.cjs && tsx scripts/test-user-scope-validation.ts",

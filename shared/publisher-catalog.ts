@@ -154,6 +154,16 @@ export function parseUrl(value: unknown): URL | null {
   }
 }
 
+export function urlHasCredentials(url: URL): boolean {
+  return Boolean(url.username || url.password);
+}
+
+export function assertUrlHasNoCredentials(url: URL) {
+  if (urlHasCredentials(url)) {
+    throw new Error("Publisher channel URLs must not contain username or password credentials.");
+  }
+}
+
 export function normalizeDomain(value: unknown): string | null {
   const parsed = parseUrl(value);
   const host = parsed?.hostname || cleanPublisherText(value);
@@ -176,6 +186,7 @@ function stripTrackingParams(url: URL, options?: { preserveQuery?: boolean }) {
 export function normalizeHttpUrl(value: unknown, options?: { preserveQuery?: boolean; trailingSlash?: "keep" | "remove" }): string {
   const parsed = parseUrl(value);
   if (!parsed || !["http:", "https:"].includes(parsed.protocol)) return "";
+  assertUrlHasNoCredentials(parsed);
   parsed.protocol = "https:";
   parsed.hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
   stripTrackingParams(parsed, options);
@@ -219,6 +230,7 @@ export function normalizePublisherChannelUrl(channelType: PublisherChannelType |
   if (type === "telegram") {
     const input = raw.replace(/^@/, "");
     const parsed = parseUrl(input.includes(".") || input.includes("/") ? input : `https://t.me/${input}`);
+    if (parsed) assertUrlHasNoCredentials(parsed);
     const handle = parsed ? extractHandleFromPath(parsed) : input;
     if (parsed?.pathname.startsWith("/joinchat") || parsed?.pathname.includes("+")) {
       warnings.push("Telegram invite URLs are not canonical public publisher channels.");
@@ -230,6 +242,7 @@ export function normalizePublisherChannelUrl(channelType: PublisherChannelType |
   if (type === "facebook") {
     const input = raw.includes(".") || raw.includes("/") ? raw : `https://facebook.com/${raw.replace(/^@/, "")}`;
     const parsed = parseUrl(input);
+    if (parsed) assertUrlHasNoCredentials(parsed);
     const handle = parsed ? extractHandleFromPath(parsed) : raw.replace(/^@/, "");
     return { channelType: type, normalizedUrl: handle ? `https://facebook.com/${handle}` : normalizeHttpUrl(input), handle: handle || null, externalId: null, warnings };
   }
@@ -237,6 +250,7 @@ export function normalizePublisherChannelUrl(channelType: PublisherChannelType |
   if (type === "x") {
     const input = raw.includes(".") || raw.includes("/") ? raw : `https://x.com/${raw.replace(/^@/, "")}`;
     const parsed = parseUrl(input);
+    if (parsed) assertUrlHasNoCredentials(parsed);
     const handle = parsed ? extractHandleFromPath(parsed) : raw.replace(/^@/, "");
     const normalizedHandle = handle ? handle.toLowerCase() : null;
     return { channelType: type, normalizedUrl: normalizedHandle ? `https://x.com/${normalizedHandle}` : normalizeHttpUrl(input), handle: normalizedHandle, externalId: null, warnings };
@@ -245,6 +259,7 @@ export function normalizePublisherChannelUrl(channelType: PublisherChannelType |
   if (type === "youtube") {
     const input = raw.includes(".") || raw.includes("/") ? raw : `https://youtube.com/${raw.startsWith("@") ? raw : `@${raw}`}`;
     const parsed = parseUrl(input);
+    if (parsed) assertUrlHasNoCredentials(parsed);
     const parts = parsed?.pathname.split("/").filter(Boolean) || [];
     const channelIndex = parts.findIndex((part) => part.toLowerCase() === "channel");
     const channelId = channelIndex >= 0 ? parts[channelIndex + 1] || null : null;
@@ -259,6 +274,7 @@ export function normalizePublisherChannelUrl(channelType: PublisherChannelType |
     const host = type === "linkedin" ? "linkedin.com" : `${type}.com`;
     const input = raw.includes(".") || raw.includes("/") ? raw : `https://${host}/${raw.replace(/^@/, "")}`;
     const parsed = parseUrl(input);
+    if (parsed) assertUrlHasNoCredentials(parsed);
     const handle = parsed ? extractHandleFromPath(parsed) : raw.replace(/^@/, "");
     return { channelType: type, normalizedUrl: normalizeHttpUrl(input), handle: handle || null, externalId: null, warnings };
   }
