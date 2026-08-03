@@ -61,9 +61,11 @@ interface Source {
 interface Client {
   id: number;
   name: string;
+  slug?: string | null;
   organizationType: string;
   defaultLanguage: string;
   active: boolean;
+  lifecycleStatus?: string | null;
   allowedRegions: string[] | null;
 }
 
@@ -368,13 +370,10 @@ function SourcesTab() {
 function ClientsTab() {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const { data: clients, isLoading } = useQuery<Client[]>({ queryKey: ["/api/admin/clients"] });
-  const [showAddDialog, setShowAddDialog] = useState(false);
-  const [editClient, setEditClient] = useState<Client | null>(null);
-  const [deactivateConfirm, setDeactivateConfirm] = useState<Client | null>(null);
+  const [lifecycleConfirm, setLifecycleConfirm] = useState<Client | null>(null);
   const [expandedKeywords, setExpandedKeywords] = useState<number | null>(null);
-  const [addForm, setAddForm] = useState({ name: "", organizationType: "", defaultLanguage: "en", active: true, allowedRegions: "" });
-  const [editForm, setEditForm] = useState({ name: "", organizationType: "", defaultLanguage: "en", active: true, allowedRegions: "" });
   const [newKeyword, setNewKeyword] = useState({ term: "", priority: "primary" });
 
   const { data: keywords } = useQuery<ClientKeyword[]>({
@@ -382,43 +381,17 @@ function ClientsTab() {
     enabled: !!expandedKeywords,
   });
 
-  const handleAddClient = async () => {
+  const handleLifecycleChange = async () => {
+    if (!lifecycleConfirm) return;
+    const nextActive = !lifecycleConfirm.active;
     try {
-      await apiRequest("POST", "/api/admin/clients", {
-        ...addForm,
-        allowedRegions: addForm.allowedRegions.split(",").map(s => s.trim()).filter(Boolean),
+      await apiRequest("PUT", `/api/admin/clients/${lifecycleConfirm.id}`, {
+        active: nextActive,
+        lifecycleStatus: nextActive ? "setup" : "suspended",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/clients"] });
-      toast({ title: t("Client created successfully") });
-      setShowAddDialog(false);
-      setAddForm({ name: "", organizationType: "", defaultLanguage: "en", active: true, allowedRegions: "" });
-    } catch (err: any) {
-      toast({ title: t("Error"), description: err.message, variant: "destructive" });
-    }
-  };
-
-  const handleEditClient = async () => {
-    if (!editClient) return;
-    try {
-      await apiRequest("PUT", `/api/admin/clients/${editClient.id}`, {
-        ...editForm,
-        allowedRegions: editForm.allowedRegions.split(",").map(s => s.trim()).filter(Boolean),
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/clients"] });
-      toast({ title: t("Client updated successfully") });
-      setEditClient(null);
-    } catch (err: any) {
-      toast({ title: t("Error"), description: err.message, variant: "destructive" });
-    }
-  };
-
-  const handleDeactivate = async () => {
-    if (!deactivateConfirm) return;
-    try {
-      await apiRequest("DELETE", `/api/admin/clients/${deactivateConfirm.id}`);
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/clients"] });
-      toast({ title: t("Client deactivated") });
-      setDeactivateConfirm(null);
+      toast({ title: nextActive ? t("Client reactivated") : t("Client suspended") });
+      setLifecycleConfirm(null);
     } catch (err: any) {
       toast({ title: t("Error"), description: err.message, variant: "destructive" });
     }
@@ -446,17 +419,6 @@ function ClientsTab() {
     }
   };
 
-  const openEdit = (client: Client) => {
-    setEditClient(client);
-    setEditForm({
-      name: client.name,
-      organizationType: client.organizationType,
-      defaultLanguage: client.defaultLanguage,
-      active: client.active,
-      allowedRegions: (client.allowedRegions || []).join(", "),
-    });
-  };
-
   if (isLoading) {
     return (
       <div className="space-y-3">
@@ -469,7 +431,7 @@ function ClientsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <TabInfo description="Create and manage client organizations. Each client can have their own users, sources, and data scope for multi-tenant intelligence delivery." />
-        <Button onClick={() => setShowAddDialog(true)} data-testid="button-add-client">
+        <Button onClick={() => setLocation("/admin/clients/new")} data-testid="button-add-client">
           <Plus className="w-4 h-4 mr-1" />{t("Add Client")}
         </Button>
       </div>
@@ -484,7 +446,7 @@ function ClientsTab() {
             <p className="mt-2 text-sm text-muted-foreground">
               {t("Create the first client workspace to begin source setup, user invitations, and monitoring configuration.")}
             </p>
-            <Button className="mt-5" onClick={() => setShowAddDialog(true)} data-testid="button-create-first-client">
+            <Button className="mt-5" onClick={() => setLocation("/admin/clients/new")} data-testid="button-create-first-client">
               <Plus className="w-4 h-4 mr-1" />{t("Create First Client")}
             </Button>
           </CardContent>
@@ -498,12 +460,12 @@ function ClientsTab() {
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <CardTitle className="text-base">{client.name}</CardTitle>
                 {client.active ? (
-                  <Badge className="bg-green-500/15 text-green-700 dark:text-green-400 border-green-500/20">{t("Active")}</Badge>
+                  <Badge className="bg-green-500/15 text-green-700 dark:text-green-400 border-green-500/20">{client.lifecycleStatus || t("Active")}</Badge>
                 ) : (
-                  <Badge variant="destructive">{t("Inactive")}</Badge>
+                  <Badge variant="destructive">{client.lifecycleStatus || t("Suspended")}</Badge>
                 )}
               </div>
-              <CardDescription>{client.organizationType}</CardDescription>
+              <CardDescription>{client.organizationType}{client.slug ? ` · ${client.slug}` : ""}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex items-center gap-4 text-sm text-muted-foreground flex-wrap">
@@ -513,11 +475,17 @@ function ClientsTab() {
                 )}
               </div>
               <div className="flex items-center gap-1 flex-wrap">
-                <Button size="sm" variant="ghost" onClick={() => openEdit(client)} data-testid={`button-edit-client-${client.id}`}>
-                  <Settings className="w-4 h-4 mr-1" />{t("Edit")}
+                <Button size="sm" variant="ghost" onClick={() => setLocation(`/admin/clients/${client.id}/setup`)} data-testid={`button-open-client-setup-${client.id}`}>
+                  <Settings className="w-4 h-4 mr-1" />{t("Open Setup")}
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => setDeactivateConfirm(client)} data-testid={`button-deactivate-client-${client.id}`}>
-                  <XCircle className="w-4 h-4 mr-1" />{t("Deactivate")}
+                <Button size="sm" variant="ghost" onClick={() => setLocation(`/admin/clients/${client.id}/setup`)} data-testid={`button-edit-client-${client.id}`}>
+                  <Settings className="w-4 h-4 mr-1" />{t("Edit Organization")}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setLocation(`/admin/clients/${client.id}/setup`)} data-testid={`button-workspaces-client-${client.id}`}>
+                  <Database className="w-4 h-4 mr-1" />{t("View Workspaces")}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setLifecycleConfirm(client)} data-testid={`button-toggle-lifecycle-client-${client.id}`}>
+                  <XCircle className="w-4 h-4 mr-1" />{client.active ? t("Suspend") : t("Reactivate")}
                 </Button>
                 <Button
                   size="sm"
@@ -574,107 +542,22 @@ function ClientsTab() {
         ))}
       </div>
 
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("Add Client")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>{t("Name")}</Label>
-              <Input value={addForm.name} onChange={e => setAddForm(f => ({ ...f, name: e.target.value }))} data-testid="input-add-client-name" />
-            </div>
-            <div className="space-y-2">
-              <Label>{t("Organization Type")}</Label>
-              <Input value={addForm.organizationType} onChange={e => setAddForm(f => ({ ...f, organizationType: e.target.value }))} data-testid="input-add-client-org-type" />
-            </div>
-            <div className="space-y-2">
-              <Label>{t("Default Language")}</Label>
-              <Select value={addForm.defaultLanguage} onValueChange={v => setAddForm(f => ({ ...f, defaultLanguage: v }))}>
-                <SelectTrigger data-testid="select-add-client-language">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="en">English</SelectItem>
-                  <SelectItem value="ar">Arabic</SelectItem>
-                  <SelectItem value="fr">French</SelectItem>
-                  <SelectItem value="es">Spanish</SelectItem>
-                  <SelectItem value="tr">Turkish</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>{t("Allowed Regions (comma separated)")}</Label>
-              <Input value={addForm.allowedRegions} onChange={e => setAddForm(f => ({ ...f, allowedRegions: e.target.value }))} placeholder="US, EU, MENA" data-testid="input-add-client-regions" />
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={addForm.active} onCheckedChange={v => setAddForm(f => ({ ...f, active: v }))} data-testid="switch-add-client-active" />
-              <Label>{t("Active")}</Label>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAddDialog(false)} data-testid="button-cancel-add-client">{t("Cancel")}</Button>
-            <Button onClick={handleAddClient} data-testid="button-save-add-client">{t("Create")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!editClient} onOpenChange={() => setEditClient(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("Edit Client")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>{t("Name")}</Label>
-              <Input value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} data-testid="input-edit-client-name" />
-            </div>
-            <div className="space-y-2">
-              <Label>{t("Organization Type")}</Label>
-              <Input value={editForm.organizationType} onChange={e => setEditForm(f => ({ ...f, organizationType: e.target.value }))} data-testid="input-edit-client-org-type" />
-            </div>
-            <div className="space-y-2">
-              <Label>{t("Default Language")}</Label>
-              <Select value={editForm.defaultLanguage} onValueChange={v => setEditForm(f => ({ ...f, defaultLanguage: v }))}>
-                <SelectTrigger data-testid="select-edit-client-language">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="en">English</SelectItem>
-                  <SelectItem value="ar">Arabic</SelectItem>
-                  <SelectItem value="fr">French</SelectItem>
-                  <SelectItem value="es">Spanish</SelectItem>
-                  <SelectItem value="tr">Turkish</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>{t("Allowed Regions (comma separated)")}</Label>
-              <Input value={editForm.allowedRegions} onChange={e => setEditForm(f => ({ ...f, allowedRegions: e.target.value }))} data-testid="input-edit-client-regions" />
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={editForm.active} onCheckedChange={v => setEditForm(f => ({ ...f, active: v }))} data-testid="switch-edit-client-active" />
-              <Label>{t("Active")}</Label>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditClient(null)} data-testid="button-cancel-edit-client">{t("Cancel")}</Button>
-            <Button onClick={handleEditClient} data-testid="button-save-edit-client">{t("Save")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <AlertDialog open={!!deactivateConfirm} onOpenChange={() => setDeactivateConfirm(null)}>
+      <AlertDialog open={!!lifecycleConfirm} onOpenChange={() => setLifecycleConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("Deactivate Client")}</AlertDialogTitle>
+            <AlertDialogTitle>{lifecycleConfirm?.active ? t("Suspend Client") : t("Reactivate Client")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("Are you sure you want to deactivate")} "{deactivateConfirm?.name}"?
+              {lifecycleConfirm?.active
+                ? t("This keeps the client record for setup history, but stops primary management views from treating it as active.")
+                : t("This returns the client to setup lifecycle without activating monitoring.")}
+              {" "}"{lifecycleConfirm?.name}"
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel data-testid="button-cancel-deactivate-client">{t("Cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeactivate} data-testid="button-confirm-deactivate-client">{t("Deactivate")}</AlertDialogAction>
+            <AlertDialogCancel data-testid="button-cancel-lifecycle-client">{t("Cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLifecycleChange} data-testid="button-confirm-lifecycle-client">
+              {lifecycleConfirm?.active ? t("Suspend") : t("Reactivate")}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

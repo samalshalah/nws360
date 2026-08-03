@@ -9,7 +9,31 @@ import { enqueueAIJob, awaitJobResult, checkClientAiBudget } from "./ai/ai-gatew
 import { startScheduler, stopScheduler, _schedulerTickForTesting } from "./ai/ai-scheduler";
 import { db } from "./db";
 import { buildClientEmbassyProfile } from "./embassy-profile";
-import { analyticsCache, articles, processingJobs, PLAN_LIMITS, SYSTEM_ROLES, CAPS, resolveEffectiveCaps, type AlertRule } from "@shared/schema";
+import {
+  adminAuditLogs,
+  analyticsCache,
+  articles,
+  clients,
+  clientSettings,
+  processingJobs,
+  workspaceRelevanceProfiles,
+  workspaces,
+  PLAN_LIMITS,
+  SYSTEM_ROLES,
+  CAPS,
+  resolveEffectiveCaps,
+  type AlertRule,
+} from "@shared/schema";
+import {
+  normalizeClientEnrollment,
+  normalizeSlug,
+  normalizeWorkspaceName,
+  stableEnrollmentJson,
+  validateWorkspaceScope,
+  isDiplomaticOrganizationType,
+  type NormalizedClientEnrollment,
+} from "@shared/client-enrollment";
+import { getCountry } from "@shared/country-registry";
 import { isGoogleNewsEditionCode } from "@shared/google-news-regions";
 import { isSourceCategoryCode } from "@shared/source-categories";
 import {
@@ -116,6 +140,14 @@ const clientSettingsInputSchema = z.object({
   embassyAliases: z.array(z.string().trim().min(1).max(160)).max(80).optional(),
   ambassadorAliases: z.array(z.string().trim().min(1).max(160)).max(80).optional(),
   bilateralCategoryLabel: z.string().trim().min(1).max(160).nullable().optional(),
+  representedCountryCode: z.string().trim().min(1).max(12).nullable().optional(),
+  hostCountryCode: z.string().trim().min(1).max(12).nullable().optional(),
+  headquartersCountryCode: z.string().trim().min(1).max(12).nullable().optional(),
+  defaultTimezone: z.string().trim().min(2).max(80).nullable().optional(),
+  defaultLanguages: z.array(z.string().trim().min(2).max(20)).max(20).optional(),
+  websiteUrl: z.string().trim().max(500).nullable().optional(),
+  contactName: z.string().trim().max(200).nullable().optional(),
+  contactEmail: z.string().trim().email().max(254).nullable().optional(),
 }).strict();
 
 const articleWorkflowUpdateSchema = z.object({
@@ -730,6 +762,14 @@ function buildClientSettingsPayload(client: any, settings: any) {
     defaultTargetLanguage: settings?.defaultTargetLanguage || client.defaultLanguage || CLIENT_SETTING_DEFAULTS.defaultTargetLanguage,
     reportExportFormat: settings?.reportExportFormat || CLIENT_SETTING_DEFAULTS.reportExportFormat,
     reportIncludeSummaries: settings?.reportIncludeSummaries ?? CLIENT_SETTING_DEFAULTS.reportIncludeSummaries,
+    representedCountryCode: settings?.representedCountryCode ?? embassyProfile?.representedCountryCode ?? embassyProfile?.homeCountryCode ?? null,
+    hostCountryCode: settings?.hostCountryCode ?? null,
+    headquartersCountryCode: settings?.headquartersCountryCode ?? null,
+    defaultTimezone: settings?.defaultTimezone ?? null,
+    defaultLanguages: settings?.defaultLanguages ?? [],
+    websiteUrl: settings?.websiteUrl ?? null,
+    contactName: settings?.contactName ?? null,
+    contactEmail: settings?.contactEmail ?? null,
     homeCountryCode: settings?.homeCountryCode ?? embassyProfile?.homeCountryCode ?? null,
     homeCountryName: settings?.homeCountryName ?? embassyProfile?.homeCountryName ?? null,
     homeCountryAliases: settings?.homeCountryAliases ?? embassyProfile?.homeCountryAliases ?? [],
@@ -1236,6 +1276,232 @@ function workspaceRelevanceProfileFromRecords(workspace: any, profile?: any): Wo
   });
 }
 
+function enrollmentFingerprint(enrollment: NormalizedClientEnrollment): string {
+  return createHash("sha256").update(stableEnrollmentJson(enrollment)).digest("hex");
+}
+
+function safeAuditDetails(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => {
+    if (typeof item === "string" && item.length > 500) return item.slice(0, 500);
+    return item;
+  });
+}
+
+async function getClientOrNotFound(clientId: number, res: Response) {
+  if (!Number.isInteger(clientId) || clientId <= 0) {
+    res.status(400).json({ message: "Invalid client ID" });
+    return null;
+  }
+  const client = await storage.getClient(clientId);
+  if (!client) {
+    safeNotFound(res);
+    return null;
+  }
+  return client;
+}
+
+async function getAdminWorkspaceOrNotFound(clientId: number, workspaceId: number, res: Response) {
+  if (!Number.isInteger(workspaceId) || workspaceId <= 0) {
+    res.status(400).json({ message: "Invalid workspace ID" });
+    return null;
+  }
+  const workspace = await storage.getWorkspace(workspaceId);
+  if (!workspace || workspace.clientId !== clientId) {
+    safeNotFound(res);
+    return null;
+  }
+  return workspace;
+}
+
+async function buildClientReadiness(clientId: number) {
+  const [client, settings, workspaceRows] = await Promise.all([
+    storage.getClient(clientId),
+    storage.getClientSettings(clientId),
+    storage.getWorkspaces(clientId),
+  ]);
+  const profileRows = await Promise.all(workspaceRows.map((workspace) => storage.getWorkspaceRelevanceProfile(workspace.id, clientId)));
+  const relevanceProfilesConfigured = profileRows.filter(Boolean).length;
+  const organizationConfigured = Boolean(client && settings);
+  const activeWorkspaceCount = workspaceRows.filter((workspace: any) => workspace.active !== false && workspace.status === "active").length;
+  const blockers = [
+    workspaceRows.length === 0 ? "workspace_missing" : null,
+    relevanceProfilesConfigured === 0 ? "relevance_profile_missing" : null,
+    "publisher_profiles_missing",
+    "source_channels_missing",
+    "source_assignments_missing",
+    activeWorkspaceCount === 0 ? "workspace_inactive" : null,
+  ].filter(Boolean);
+  return {
+    organizationConfigured,
+    workspaceCount: workspaceRows.length,
+    activeWorkspaceCount,
+    relevanceProfilesConfigured,
+    publisherProfilesConfigured: 0,
+    sourceChannelsConfigured: 0,
+    sourceAssignmentsConfigured: 0,
+    monitoringReady: false,
+    blockers,
+  };
+}
+
+async function buildClientSetupPayload(clientId: number) {
+  const [client, settings, workspaceRows, readiness] = await Promise.all([
+    storage.getClient(clientId),
+    storage.getClientSettings(clientId),
+    storage.getWorkspaces(clientId),
+    buildClientReadiness(clientId),
+  ]);
+  const workspacesWithProfiles = await Promise.all(workspaceRows.map(async (workspace) => ({
+    ...workspace,
+    relevanceProfile: await storage.getWorkspaceRelevanceProfile(workspace.id, clientId) || null,
+  })));
+  return {
+    client,
+    organizationProfile: settings || null,
+    workspaces: workspacesWithProfiles,
+    readiness,
+  };
+}
+
+async function findClientByEnrollmentKey(enrollmentKey: string) {
+  const [client] = await db.select().from(clients).where(eq(clients.enrollmentKey, enrollmentKey));
+  return client;
+}
+
+async function findClientBySlug(slug: string) {
+  const [client] = await db.select().from(clients).where(eq(clients.slug, slug));
+  return client;
+}
+
+async function buildEnrollmentResult(clientId: number, idempotent = false) {
+  const setup = await buildClientSetupPayload(clientId);
+  const firstWorkspace = setup.workspaces[0] || null;
+  return {
+    idempotent,
+    client: setup.client,
+    organizationProfile: setup.organizationProfile,
+    workspace: firstWorkspace,
+    relevanceProfile: firstWorkspace?.relevanceProfile || null,
+    readiness: setup.readiness,
+  };
+}
+
+async function createEnrollmentTransaction(enrollment: NormalizedClientEnrollment, fingerprint: string, userId: number) {
+  return db.transaction(async (tx) => {
+    const existingByKey = await tx.select().from(clients).where(eq(clients.enrollmentKey, enrollment.enrollmentKey)).limit(1);
+    if (existingByKey[0]) {
+      const existing = existingByKey[0];
+      if (existing.enrollmentRequestFingerprint === fingerprint) {
+        return { clientId: existing.id, idempotent: true };
+      }
+      const error: any = new Error("Enrollment key already exists for a different request");
+      error.status = 409;
+      throw error;
+    }
+
+    const existingSlug = await tx.select().from(clients).where(eq(clients.slug, enrollment.organization.slug)).limit(1);
+    if (existingSlug[0]) {
+      const error: any = new Error("Client slug already exists");
+      error.status = 409;
+      throw error;
+    }
+
+    const representedCountry = getCountry(enrollment.organizationContext.representedCountryCode);
+    const legacyHomeCountryCode = isDiplomaticOrganizationType(enrollment.organization.organizationType)
+      ? enrollment.organizationContext.representedCountryCode
+      : null;
+
+    const [client] = await tx.insert(clients).values({
+      name: enrollment.organization.name,
+      slug: enrollment.organization.slug,
+      organizationType: enrollment.organization.organizationType,
+      defaultLanguage: enrollment.organization.defaultLanguage,
+      active: true,
+      lifecycleStatus: "setup",
+      enrollmentKey: enrollment.enrollmentKey,
+      enrollmentRequestFingerprint: fingerprint,
+      allowedRegions: null,
+    }).returning();
+
+    const [settings] = await tx.insert(clientSettings).values({
+      clientId: client.id,
+      representedCountryCode: enrollment.organizationContext.representedCountryCode,
+      hostCountryCode: enrollment.organizationContext.hostCountryCode,
+      headquartersCountryCode: enrollment.organizationContext.headquartersCountryCode,
+      defaultTimezone: enrollment.organizationContext.defaultTimezone,
+      defaultLanguages: enrollment.organizationContext.defaultLanguages,
+      websiteUrl: enrollment.organization.websiteUrl,
+      contactName: enrollment.organization.contactName,
+      contactEmail: enrollment.organization.contactEmail,
+      homeCountryCode: legacyHomeCountryCode,
+      homeCountryName: legacyHomeCountryCode ? representedCountry?.name || legacyHomeCountryCode : null,
+      bilateralCategoryLabel: legacyHomeCountryCode === "US" ? "U.S.-Iraq Relations" : null,
+    }).returning();
+
+    const [workspace] = await tx.insert(workspaces).values({
+      clientId: client.id,
+      name: enrollment.workspace.name,
+      normalizedName: enrollment.workspace.normalizedName,
+      description: enrollment.workspace.description,
+      purpose: enrollment.workspace.purpose,
+      scopeMode: enrollment.workspace.scopeMode,
+      globalScope: enrollment.workspace.globalScope,
+      primaryCountryCodes: enrollment.workspace.primaryCountryCodes,
+      secondaryCountryCodes: enrollment.workspace.secondaryCountryCodes,
+      regionCodes: enrollment.workspace.regionCodes,
+      subnationalAreas: enrollment.workspace.subnationalAreas,
+      preferredLanguages: enrollment.workspace.preferredLanguages,
+      timezone: enrollment.workspace.timezone,
+      taxonomyTemplateCode: enrollment.workspace.taxonomyTemplateCode,
+      relevanceProfileCode: enrollment.workspace.relevanceProfileCode,
+      reportingTemplateCode: enrollment.workspace.reportingTemplateCode,
+      status: "draft",
+      active: false,
+      createdBy: userId,
+    }).returning();
+
+    const [profile] = await tx.insert(workspaceRelevanceProfiles).values({
+      workspaceId: workspace.id,
+      topics: enrollment.relevanceProfile.topics,
+      subtopics: enrollment.relevanceProfile.subtopics,
+      industries: enrollment.relevanceProfile.industries,
+      entities: enrollment.relevanceProfile.entities,
+      organizations: enrollment.relevanceProfile.organizations,
+      people: enrollment.relevanceProfile.people,
+      projects: enrollment.relevanceProfile.projects,
+      events: enrollment.relevanceProfile.events,
+      multilingualAliases: enrollment.relevanceProfile.multilingualAliases || [],
+      inclusionTerms: enrollment.relevanceProfile.inclusionTerms,
+      exclusionTerms: enrollment.relevanceProfile.exclusionTerms,
+      impactTerms: enrollment.relevanceProfile.impactTerms,
+      contextualTerms: enrollment.relevanceProfile.contextualTerms,
+      minimumConfidence: enrollment.relevanceProfile.minimumConfidence,
+      includeContextualByDefault: enrollment.relevanceProfile.includeContextualByDefault,
+      contextualLabel: enrollment.relevanceProfile.contextualLabel,
+      active: enrollment.relevanceProfile.active,
+    }).returning();
+
+    await tx.insert(adminAuditLogs).values({
+      userId,
+      action: "client_enrollment",
+      entity: "client",
+      entityId: client.id,
+      clientId: client.id,
+      details: safeAuditDetails({
+        clientId: client.id,
+        workspaceId: workspace.id,
+        relevanceProfileId: profile.id,
+        settingsId: settings.id,
+        lifecycleStatus: "setup",
+        workspaceStatus: "draft",
+        monitoringActive: false,
+      }),
+    });
+
+    return { clientId: client.id, idempotent: false };
+  });
+}
+
 async function ensureUserInTenant(userId: number | undefined, clientId: number, res: any): Promise<boolean> {
   if (!userId) return true;
   const targetUser = await storage.getUser(userId);
@@ -1307,6 +1573,10 @@ export async function registerRoutes(
 
       if (defaultLanguage) {
         await storage.updateClient(clientId, { defaultLanguage });
+      }
+      if (settingsInput.representedCountryCode && !settingsInput.homeCountryCode) {
+        settingsInput.homeCountryCode = settingsInput.representedCountryCode;
+        settingsInput.homeCountryName = getCountry(settingsInput.representedCountryCode)?.name || settingsInput.representedCountryCode;
       }
       const settings = await storage.upsertClientSettings(clientId, settingsInput);
       const client = await storage.getClient(clientId);
@@ -3941,49 +4211,351 @@ export async function registerRoutes(
   });
 
   // === ADMIN: CLIENTS MANAGEMENT ===
-  app.get("/api/admin/clients", async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+  app.get("/api/admin/clients", requireSystemAdmin(), async (req, res) => {
     const allClients = await storage.getClients();
     res.json(allClients);
   });
 
-  app.post("/api/admin/clients", async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+  app.post("/api/admin/client-enrollments/preview", requireSystemAdmin(), async (req, res) => {
+    const preview = normalizeClientEnrollment(req.body || {});
+    if (preview.normalized) {
+      const [existingKey, existingSlug] = await Promise.all([
+        findClientByEnrollmentKey(preview.normalized.enrollmentKey),
+        findClientBySlug(preview.normalized.organization.slug),
+      ]);
+      if (existingKey) {
+        preview.errors.push("enrollmentKey already exists");
+      }
+      if (existingSlug) {
+        preview.errors.push("slug already exists");
+      }
+      preview.valid = preview.errors.length === 0;
+    }
+    res.status(preview.valid ? 200 : 400).json(preview);
+  });
+
+  app.post("/api/admin/client-enrollments", requireSystemAdmin(), async (req, res) => {
     const user = req.user as any;
-    const { name, organizationType, defaultLanguage, active, allowedRegions } = req.body;
-    if (!name || typeof name !== "string" || name.trim().length === 0) return res.status(400).json({ message: "Client name is required" });
+    const preview = normalizeClientEnrollment(req.body || {});
+    if (!preview.valid || !preview.normalized) {
+      return res.status(400).json(preview);
+    }
+    const fingerprint = enrollmentFingerprint(preview.normalized);
     try {
-      const client = await storage.createClient({ name: sanitizeInput(name), organizationType: organizationType || "media", defaultLanguage: defaultLanguage || "en", active: active !== false, allowedRegions: allowedRegions || null });
-      await storage.createAuditLog({ userId: user.id, action: "create", entity: "client", entityId: client.id, details: `Created client: ${client.name}` });
-      res.status(201).json(client);
-    } catch (err) {
-      res.status(400).json({ message: "Invalid input" });
+      const result = await createEnrollmentTransaction(preview.normalized, fingerprint, user.id);
+      const payload = await buildEnrollmentResult(result.clientId, result.idempotent);
+      res.status(result.idempotent ? 200 : 201).json({
+        ...payload,
+        enrollmentKey: preview.normalized.enrollmentKey,
+        requestFingerprint: fingerprint,
+      });
+    } catch (err: any) {
+      const status = Number(err?.status) || 500;
+      res.status(status).json({ message: err?.message || "Client enrollment failed" });
     }
   });
 
-  app.put("/api/admin/clients/:id", async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+  app.get("/api/admin/clients/:clientId/setup", requireSystemAdmin(), async (req, res) => {
+    const clientId = Number(req.params.clientId);
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    res.json(await buildClientSetupPayload(client.id));
+  });
+
+  app.patch("/api/admin/clients/:clientId/setup", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = Number(req.params.clientId);
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    const body = req.body || {};
+    const clientUpdates: Record<string, any> = {};
+    if (typeof body.name === "string" && body.name.trim()) clientUpdates.name = sanitizeInput(body.name);
+    if (typeof body.slug === "string" && body.slug.trim()) clientUpdates.slug = normalizeSlug(body.slug);
+    if (typeof body.organizationType === "string") clientUpdates.organizationType = body.organizationType;
+    if (typeof body.defaultLanguage === "string" && body.defaultLanguage.trim()) clientUpdates.defaultLanguage = body.defaultLanguage.trim().toLowerCase();
+    if (typeof body.lifecycleStatus === "string") clientUpdates.lifecycleStatus = body.lifecycleStatus;
+    if (typeof body.active === "boolean") clientUpdates.active = body.active;
+
+    const settingsUpdates: Record<string, any> = {};
+    const profileFields = [
+      "representedCountryCode",
+      "hostCountryCode",
+      "headquartersCountryCode",
+      "defaultTimezone",
+      "defaultLanguages",
+      "websiteUrl",
+      "contactName",
+      "contactEmail",
+    ];
+    for (const key of profileFields) {
+      if (key in body) settingsUpdates[key] = body[key] || null;
+    }
+    if (settingsUpdates.representedCountryCode && isDiplomaticOrganizationType(clientUpdates.organizationType || client.organizationType)) {
+      settingsUpdates.homeCountryCode = settingsUpdates.representedCountryCode;
+      settingsUpdates.homeCountryName = getCountry(settingsUpdates.representedCountryCode)?.name || settingsUpdates.representedCountryCode;
+    }
+
+    if (Object.keys(clientUpdates).length > 0) await storage.updateClient(clientId, clientUpdates);
+    if (Object.keys(settingsUpdates).length > 0) await storage.upsertClientSettings(clientId, settingsUpdates);
+    await storage.createAuditLog({
+      userId: user.id,
+      clientId,
+      action: "organization_change",
+      entity: "client",
+      entityId: clientId,
+      details: safeAuditDetails({ clientUpdates: Object.keys(clientUpdates), settingsUpdates: Object.keys(settingsUpdates) }),
+    });
+    res.json(await buildClientSetupPayload(clientId));
+  });
+
+  app.get("/api/admin/clients/:clientId/readiness", requireSystemAdmin(), async (req, res) => {
+    const clientId = Number(req.params.clientId);
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    res.json(await buildClientReadiness(client.id));
+  });
+
+  app.get("/api/admin/clients/:clientId/workspaces", requireSystemAdmin(), async (req, res) => {
+    const clientId = Number(req.params.clientId);
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    const items = await storage.getWorkspaces(client.id);
+    res.json({ items, total: items.length });
+  });
+
+  app.post("/api/admin/clients/:clientId/workspaces", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = Number(req.params.clientId);
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    const profile = workspaceRelevanceProfileInputSchema.parse(req.body.relevanceProfile || {});
+    const normalizedWorkspace = {
+      name: String(req.body.name || "").trim(),
+      description: typeof req.body.description === "string" ? req.body.description.trim() || null : null,
+      purpose: req.body.purpose || "custom",
+      scopeMode: req.body.scopeMode || "hybrid",
+      globalScope: Boolean(req.body.globalScope),
+      primaryCountryCodes: Array.isArray(req.body.primaryCountryCodes) ? req.body.primaryCountryCodes : [],
+      secondaryCountryCodes: Array.isArray(req.body.secondaryCountryCodes) ? req.body.secondaryCountryCodes : [],
+      regionCodes: Array.isArray(req.body.regionCodes) ? req.body.regionCodes : [],
+      subnationalAreas: Array.isArray(req.body.subnationalAreas) ? req.body.subnationalAreas : [],
+      preferredLanguages: Array.isArray(req.body.preferredLanguages) ? req.body.preferredLanguages : [],
+      timezone: req.body.timezone || "UTC",
+      taxonomyTemplateCode: req.body.taxonomyTemplateCode || null,
+      relevanceProfileCode: req.body.relevanceProfileCode || null,
+      reportingTemplateCode: req.body.reportingTemplateCode || null,
+    };
+    const preview = normalizeClientEnrollment({
+      enrollmentKey: "workspace-preview-only",
+      organization: { name: client.name, organizationType: "media", defaultLanguage: client.defaultLanguage || "en", slug: client.slug || `client-${client.id}` },
+      organizationContext: { defaultLanguages: [client.defaultLanguage || "en"], defaultTimezone: normalizedWorkspace.timezone },
+      workspace: normalizedWorkspace,
+      relevanceProfile: profile,
+    });
+    const workspaceErrors = preview.normalized ? validateWorkspaceScope(preview.normalized.workspace, preview.normalized.relevanceProfile) : preview.errors;
+    if (!preview.normalized || workspaceErrors.length > 0) return res.status(400).json({ message: workspaceErrors[0] || "Invalid workspace" });
+    const existing = (await storage.getWorkspaces(client.id)).find((workspace: any) => workspace.normalizedName === preview.normalized!.workspace.normalizedName);
+    if (existing) return res.status(409).json({ message: "Workspace name already exists for this client" });
+    const workspace = await storage.createWorkspace({
+      ...preview.normalized.workspace,
+      clientId: client.id,
+      status: "draft",
+      active: false,
+      createdBy: user.id,
+    } as any);
+    await storage.upsertWorkspaceRelevanceProfile({
+      workspaceId: workspace.id,
+      topics: profile.topics ?? [],
+      subtopics: profile.subtopics ?? [],
+      industries: profile.industries ?? [],
+      entities: profile.entities ?? [],
+      organizations: profile.organizations ?? [],
+      people: profile.people ?? [],
+      projects: profile.projects ?? [],
+      events: profile.events ?? [],
+      multilingualAliases: profile.multilingualAliases ?? [],
+      inclusionTerms: profile.inclusionTerms ?? [],
+      exclusionTerms: profile.exclusionTerms ?? [],
+      impactTerms: profile.impactTerms ?? [],
+      contextualTerms: profile.contextualTerms ?? [],
+      minimumConfidence: profile.minimumConfidence ?? 60,
+      includeContextualByDefault: profile.includeContextualByDefault ?? false,
+      contextualLabel: profile.contextualLabel ?? "Strategic Context",
+      active: profile.active ?? true,
+    } as any, client.id);
+    await storage.createAuditLog({ userId: user.id, clientId: client.id, action: "workspace_create", entity: "workspace", entityId: workspace.id, details: safeAuditDetails({ status: "draft", active: false }) });
+    res.status(201).json(workspace);
+  });
+
+  app.get("/api/admin/clients/:clientId/workspaces/:workspaceId", requireSystemAdmin(), async (req, res) => {
+    const clientId = Number(req.params.clientId);
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    const workspace = await getAdminWorkspaceOrNotFound(client.id, Number(req.params.workspaceId), res);
+    if (!workspace) return;
+    const profile = await storage.getWorkspaceRelevanceProfile(workspace.id, client.id);
+    res.json({ workspace, relevanceProfile: profile || null });
+  });
+
+  app.patch("/api/admin/clients/:clientId/workspaces/:workspaceId", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = Number(req.params.clientId);
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    const existing = await getAdminWorkspaceOrNotFound(client.id, Number(req.params.workspaceId), res);
+    if (!existing) return;
+    const updates: Record<string, any> = {};
+    const allowed = ["name", "description", "purpose", "scopeMode", "globalScope", "primaryCountryCodes", "secondaryCountryCodes", "regionCodes", "subnationalAreas", "preferredLanguages", "timezone", "taxonomyTemplateCode", "relevanceProfileCode", "reportingTemplateCode", "status"];
+    for (const key of allowed) {
+      if (key in req.body) updates[key] = req.body[key];
+    }
+    if ("name" in updates) updates.normalizedName = normalizeWorkspaceName(updates.name);
+    if (updates.status && updates.status !== "active") updates.active = false;
+    if (updates.status === "active") {
+      const readiness = await buildClientReadiness(client.id);
+      if (!readiness.monitoringReady) return res.status(409).json({ message: "Workspace cannot activate before publisher and source setup is complete", readiness });
+    }
+    const updated = await storage.updateWorkspace(existing.id, updates as any);
+    await storage.createAuditLog({ userId: user.id, clientId: client.id, action: "workspace_change", entity: "workspace", entityId: existing.id, details: safeAuditDetails({ fields: Object.keys(updates) }) });
+    res.json(updated);
+  });
+
+  app.get("/api/admin/clients/:clientId/workspaces/:workspaceId/relevance-profile", requireSystemAdmin(), async (req, res) => {
+    const clientId = Number(req.params.clientId);
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    const workspace = await getAdminWorkspaceOrNotFound(client.id, Number(req.params.workspaceId), res);
+    if (!workspace) return;
+    const profile = await storage.getWorkspaceRelevanceProfile(workspace.id, client.id);
+    res.json({ profile: profile || null, effectiveProfile: workspaceRelevanceProfileFromRecords(workspace, profile) });
+  });
+
+  app.put("/api/admin/clients/:clientId/workspaces/:workspaceId/relevance-profile", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = Number(req.params.clientId);
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    const workspace = await getAdminWorkspaceOrNotFound(client.id, Number(req.params.workspaceId), res);
+    if (!workspace) return;
+    const parsed = workspaceRelevanceProfileInputSchema.parse(req.body);
+    const existing = await storage.getWorkspaceRelevanceProfile(workspace.id, client.id);
+    const profile = await storage.upsertWorkspaceRelevanceProfile({
+      workspaceId: workspace.id,
+      topics: parsed.topics ?? existing?.topics ?? [],
+      subtopics: parsed.subtopics ?? existing?.subtopics ?? [],
+      industries: parsed.industries ?? existing?.industries ?? [],
+      entities: parsed.entities ?? existing?.entities ?? [],
+      organizations: parsed.organizations ?? existing?.organizations ?? [],
+      people: parsed.people ?? existing?.people ?? [],
+      projects: parsed.projects ?? existing?.projects ?? [],
+      events: parsed.events ?? existing?.events ?? [],
+      multilingualAliases: parsed.multilingualAliases ?? existing?.multilingualAliases ?? [],
+      inclusionTerms: parsed.inclusionTerms ?? existing?.inclusionTerms ?? [],
+      exclusionTerms: parsed.exclusionTerms ?? existing?.exclusionTerms ?? [],
+      impactTerms: parsed.impactTerms ?? existing?.impactTerms ?? [],
+      contextualTerms: parsed.contextualTerms ?? existing?.contextualTerms ?? [],
+      minimumConfidence: parsed.minimumConfidence ?? existing?.minimumConfidence ?? 60,
+      includeContextualByDefault: parsed.includeContextualByDefault ?? existing?.includeContextualByDefault ?? false,
+      contextualLabel: parsed.contextualLabel ?? existing?.contextualLabel ?? "Strategic Context",
+      active: parsed.active ?? existing?.active ?? true,
+    } as any, client.id);
+    await storage.createAuditLog({ userId: user.id, clientId: client.id, action: "workspace_relevance_change", entity: "workspace", entityId: workspace.id, details: safeAuditDetails({ profileId: profile.id }) });
+    res.json({ profile, effectiveProfile: workspaceRelevanceProfileFromRecords(workspace, profile) });
+  });
+
+  app.post("/api/admin/clients/:clientId/workspaces/:workspaceId/relevance/preview", requireSystemAdmin(), async (req, res) => {
+    const clientId = Number(req.params.clientId);
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    const workspace = await getAdminWorkspaceOrNotFound(client.id, Number(req.params.workspaceId), res);
+    if (!workspace) return;
+    const profile = await storage.getWorkspaceRelevanceProfile(workspace.id, client.id);
+    const sample = workspaceRelevancePreviewSchema.parse(req.body || {});
+    const relevance = evaluateWorkspaceRelevance(sample, workspaceRelevanceProfileFromRecords(workspace, profile));
+    res.json({ writes: false, relevance });
+  });
+
+  app.get("/api/admin/clients/:clientId/workspaces/:workspaceId/relevance/review", requireSystemAdmin(), async (req, res) => {
+    const clientId = Number(req.params.clientId);
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    const workspace = await getAdminWorkspaceOrNotFound(client.id, Number(req.params.workspaceId), res);
+    if (!workspace) return;
+    const includeContextual = req.query.includeContextual === "true";
+    const items = await storage.getWorkspaceRelevanceReviewQueue(workspace.id, client.id, { includeContextual });
+    res.json({ items, total: items.length });
+  });
+
+  app.patch("/api/admin/clients/:clientId/workspaces/:workspaceId/articles/:articleId/relevance", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = Number(req.params.clientId);
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    const workspace = await getAdminWorkspaceOrNotFound(client.id, Number(req.params.workspaceId), res);
+    if (!workspace) return;
+    const articleId = Number(req.params.articleId);
+    if (!Number.isInteger(articleId) || articleId <= 0) return res.status(400).json({ message: "Invalid article ID" });
+    const input = articleRelevanceUpdateSchema.omit({ workspaceId: true }).parse(req.body);
+    const article = await storage.getArticle(articleId, client.id);
+    if (!article) return safeNotFound(res);
+    const updated = await storage.upsertArticleWorkspaceRelevance({
+      articleId,
+      workspaceId: workspace.id,
+      clientId: client.id,
+      relevanceStatus: input.relevanceStatus,
+      confidence: 100,
+      shortReason: input.relevanceReason || input.reviewNote || "Manually reviewed by platform admin.",
+      matchedScope: { manual_review: ["platform_admin_decision"] },
+      principalCountryCodes: [],
+      materiallyAffectedCountryCodes: [],
+      supportingSignals: [{ type: "manual_review", field: "platform_admin", term: "decision" }],
+      evaluationMethod: "manual",
+      evaluatorVersion: RELEVANCE_ENGINE_VERSION,
+      manualOverride: !input.reopen,
+      reviewedBy: user.id,
+      reviewedAt: new Date(),
+      reviewNote: input.reviewNote || input.relevanceReason || null,
+      reopenedAt: input.reopen ? new Date() : null,
+      evaluatedAt: new Date(),
+    } as any);
+    const history = await storage.getWorkspaceRelevanceHistory(workspace.id, articleId, client.id);
+    await storage.createAuditLog({ userId: user.id, clientId: client.id, action: "workspace_relevance_review", entity: "article", entityId: articleId, details: safeAuditDetails({ workspaceId: workspace.id, relevanceStatus: input.relevanceStatus, reopen: Boolean(input.reopen) }) });
+    res.json({ relevance: updated, history });
+  });
+
+  app.post("/api/admin/clients", requireSystemAdmin(), async (req, res) => {
+    res.status(410).json({ message: "Use POST /api/admin/client-enrollments to create clients with a draft workspace and relevance profile." });
+  });
+
+  app.put("/api/admin/clients/:id", requireSystemAdmin(), async (req, res) => {
     const user = req.user as any;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid client ID" });
-    const allowedFields = ['name', 'organizationType', 'defaultLanguage', 'active', 'allowedRegions', 'aiEnabled', 'dailyTokenBudget', 'dailyJobLimit'] as const;
+    const allowedFields = ['name', 'slug', 'organizationType', 'defaultLanguage', 'active', 'lifecycleStatus', 'allowedRegions', 'aiEnabled', 'dailyTokenBudget', 'dailyJobLimit'] as const;
     const cleanUpdates: Record<string, any> = {};
     for (const key of allowedFields) {
       if (key in req.body && req.body[key] !== undefined) cleanUpdates[key] = req.body[key];
     }
+    if (typeof cleanUpdates.slug === "string") cleanUpdates.slug = normalizeSlug(cleanUpdates.slug);
     const client = await storage.updateClient(id, cleanUpdates);
     if (!client) return res.status(404).json({ message: "Client not found" });
-    await storage.createAuditLog({ userId: user.id, action: "update", entity: "client", entityId: id, details: `Updated client: ${JSON.stringify(cleanUpdates)}` });
+    await storage.createAuditLog({
+      userId: user.id,
+      action: "lifecycleStatus" in cleanUpdates ? "lifecycle_status_change" : "update",
+      entity: "client",
+      entityId: id,
+      clientId: id,
+      details: safeAuditDetails({ fields: Object.keys(cleanUpdates) }),
+    });
     res.json(client);
   });
 
-  app.delete("/api/admin/clients/:id", async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+  app.delete("/api/admin/clients/:id", requireSystemAdmin(), async (req, res) => {
     const user = req.user as any;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid client ID" });
-    await storage.deleteClient(id);
-    await storage.createAuditLog({ userId: user.id, action: "deactivate", entity: "client", entityId: id, details: `Deactivated client #${id}` });
+    await storage.updateClient(id, { active: false, lifecycleStatus: "suspended" } as any);
+    await storage.createAuditLog({ userId: user.id, action: "lifecycle_status_change", entity: "client", entityId: id, details: `Suspended client #${id}` });
     res.sendStatus(204);
   });
 

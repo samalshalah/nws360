@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Eye, History, Loader2, RefreshCw, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
+import { useLocation } from "wouter";
+import { ArrowLeft, CheckCircle2, Eye, History, Loader2, RefreshCw, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -108,6 +109,12 @@ const emptyProfile: RelevanceProfile = {
   active: true,
 };
 
+type WorkspaceRelevanceProps = {
+  adminClientId?: number;
+  adminWorkspaceId?: number;
+  backHref?: string;
+};
+
 function parseList(value: string): string[] {
   const seen = new Set<string>();
   return value
@@ -172,9 +179,10 @@ function statusVariant(value: string): "default" | "secondary" | "destructive" |
   return "secondary";
 }
 
-export default function WorkspaceRelevance() {
+export default function WorkspaceRelevance({ adminClientId, adminWorkspaceId, backHref }: WorkspaceRelevanceProps = {}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
   const [form, setForm] = useState<RelevanceProfile>(emptyProfile);
   const [previewArticle, setPreviewArticle] = useState({
@@ -187,17 +195,29 @@ export default function WorkspaceRelevance() {
   const [previewResult, setPreviewResult] = useState<any>(null);
   const [includeContextualReview, setIncludeContextualReview] = useState(false);
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
+  const adminMode = Boolean(adminClientId);
+  const workspaceListUrl = adminMode ? `/api/admin/clients/${adminClientId}/workspaces` : "/api/workspaces";
+  const workspaceApiBase = (workspaceId: string | number) =>
+    adminMode ? `/api/admin/clients/${adminClientId}/workspaces/${workspaceId}` : `/api/workspaces/${workspaceId}`;
 
   const { data: workspaceData, isLoading: loadingWorkspaces } = useQuery<{ items: Workspace[]; total: number }>({
-    queryKey: ["/api/workspaces"],
+    queryKey: [workspaceListUrl],
+    queryFn: async () => {
+      const res = await apiRequest("GET", workspaceListUrl);
+      return res.json();
+    },
   });
   const workspaces = workspaceData?.items || [];
 
   useEffect(() => {
+    if (adminWorkspaceId && selectedWorkspaceId !== String(adminWorkspaceId)) {
+      setSelectedWorkspaceId(String(adminWorkspaceId));
+      return;
+    }
     if (!selectedWorkspaceId && workspaces.length > 0) {
       setSelectedWorkspaceId(String(workspaces[0].id));
     }
-  }, [selectedWorkspaceId, workspaces]);
+  }, [adminWorkspaceId, selectedWorkspaceId, workspaces]);
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => String(workspace.id) === selectedWorkspaceId) || null,
@@ -205,8 +225,12 @@ export default function WorkspaceRelevance() {
   );
 
   const { data: profileData, isFetching: loadingProfile } = useQuery<{ profile: Partial<RelevanceProfile> | null; effectiveProfile: any }>({
-    queryKey: ["/api/workspaces", selectedWorkspaceId, "relevance-profile"],
+    queryKey: [workspaceApiBase(selectedWorkspaceId), "relevance-profile"],
     enabled: Boolean(selectedWorkspaceId),
+    queryFn: async () => {
+      const res = await apiRequest("GET", `${workspaceApiBase(selectedWorkspaceId)}/relevance-profile`);
+      return res.json();
+    },
   });
 
   useEffect(() => {
@@ -219,22 +243,22 @@ export default function WorkspaceRelevance() {
   }, [profileData]);
 
   const { data: reviewData, isFetching: loadingReview } = useQuery<{ items: ReviewItem[]; total: number }>({
-    queryKey: ["/api/workspaces", selectedWorkspaceId, "relevance", "review", includeContextualReview],
+    queryKey: [workspaceApiBase(selectedWorkspaceId), "relevance", "review", includeContextualReview],
     enabled: Boolean(selectedWorkspaceId),
     queryFn: async () => {
       const suffix = includeContextualReview ? "?includeContextual=true" : "";
-      const res = await apiRequest("GET", `/api/workspaces/${selectedWorkspaceId}/relevance/review${suffix}`);
+      const res = await apiRequest("GET", `${workspaceApiBase(selectedWorkspaceId)}/relevance/review${suffix}`);
       return res.json();
     },
   });
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("PUT", `/api/workspaces/${selectedWorkspaceId}/relevance-profile`, form);
+      const res = await apiRequest("PUT", `${workspaceApiBase(selectedWorkspaceId)}/relevance-profile`, form);
       return res.json();
     },
     onSuccess: (data) => {
-      queryClient.setQueryData(["/api/workspaces", selectedWorkspaceId, "relevance-profile"], data);
+      queryClient.setQueryData([workspaceApiBase(selectedWorkspaceId), "relevance-profile"], data);
       toast({ title: "Relevance profile saved" });
     },
     onError: (error) => {
@@ -244,7 +268,7 @@ export default function WorkspaceRelevance() {
 
   const previewMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/workspaces/${selectedWorkspaceId}/relevance/preview`, previewArticle);
+      const res = await apiRequest("POST", `${workspaceApiBase(selectedWorkspaceId)}/relevance/preview`, previewArticle);
       return res.json();
     },
     onSuccess: (data) => setPreviewResult(data.relevance),
@@ -255,7 +279,7 @@ export default function WorkspaceRelevance() {
 
   const reviewMutation = useMutation({
     mutationFn: async ({ articleId, relevanceStatus, reopen }: { articleId: number; relevanceStatus: string; reopen?: boolean }) => {
-      const res = await apiRequest("PATCH", `/api/workspaces/${selectedWorkspaceId}/articles/${articleId}/relevance`, {
+      const res = await apiRequest("PATCH", `${workspaceApiBase(selectedWorkspaceId)}/articles/${articleId}/relevance`, {
         relevanceStatus,
         reviewNote: reviewNotes[articleId] || (reopen ? "Reopened for automated review." : "Manual decision from workspace relevance review."),
         reopen,
@@ -263,7 +287,7 @@ export default function WorkspaceRelevance() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/workspaces", selectedWorkspaceId, "relevance", "review"] });
+      queryClient.invalidateQueries({ queryKey: [workspaceApiBase(selectedWorkspaceId), "relevance", "review"] });
       toast({ title: "Manual decision saved" });
     },
     onError: (error) => {
@@ -295,7 +319,7 @@ export default function WorkspaceRelevance() {
             <SlidersHorizontal className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Workspace relevance</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{adminMode ? "Admin workspace relevance" : "Workspace relevance"}</h1>
             <p className="text-sm text-muted-foreground">Create a client workspace before configuring relevance rules.</p>
           </div>
         </div>
@@ -312,11 +336,16 @@ export default function WorkspaceRelevance() {
     <div className="space-y-5 animate-in fade-in duration-300">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-3">
+          {backHref && (
+            <Button variant="ghost" size="icon" onClick={() => setLocation(backHref)}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          )}
           <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
             <SlidersHorizontal className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Workspace relevance</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{adminMode ? "Admin workspace relevance" : "Workspace relevance"}</h1>
             <p className="text-sm text-muted-foreground">Control what each monitoring workspace includes, reviews, and excludes.</p>
           </div>
         </div>
@@ -486,7 +515,7 @@ export default function WorkspaceRelevance() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/workspaces", selectedWorkspaceId, "relevance", "review"] })}
+                  onClick={() => queryClient.invalidateQueries({ queryKey: [workspaceApiBase(selectedWorkspaceId), "relevance", "review"] })}
                 >
                   <RefreshCw className="h-4 w-4" />
                 </Button>

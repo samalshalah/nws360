@@ -6,13 +6,43 @@ import type { WebsiteCollectorConfig } from "./source-collector";
 import type { SourceFilterConfig } from "./source-filter";
 import { normalizeUserScopeClientAssignment } from "./user-scope";
 
+export const ORGANIZATION_TYPES = [
+  "embassy",
+  "diplomatic_mission",
+  "government_agency",
+  "international_organization",
+  "media",
+  "media_company",
+  "newsroom",
+  "tv_station",
+  "ngo",
+  "humanitarian_organization",
+  "research_organization",
+  "university",
+  "commercial_intelligence",
+  "corporate",
+  "other",
+] as const;
+
+export type OrganizationType = typeof ORGANIZATION_TYPES[number];
+
+export const CLIENT_LIFECYCLE_STATUSES = ["setup", "active", "suspended", "archived"] as const;
+export type ClientLifecycleStatus = typeof CLIENT_LIFECYCLE_STATUSES[number];
+
+export const WORKSPACE_STATUSES = ["draft", "ready", "active", "paused", "archived"] as const;
+export type WorkspaceStatus = typeof WORKSPACE_STATUSES[number];
+
 // === CLIENTS ===
 export const clients = pgTable("clients", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  slug: text("slug"),
   organizationType: text("organization_type").notNull().default("media"),
   defaultLanguage: text("default_language").default("en"),
   active: boolean("active").default(true),
+  lifecycleStatus: text("lifecycle_status").notNull().default("active"),
+  enrollmentKey: text("enrollment_key"),
+  enrollmentRequestFingerprint: text("enrollment_request_fingerprint"),
   allowedRegions: text("allowed_regions").array(),
   aiEnabled: boolean("ai_enabled").default(false),
   aiTier: text("ai_tier").notNull().default("none"),
@@ -20,9 +50,35 @@ export const clients = pgTable("clients", {
   dailyTokenBudget: integer("daily_token_budget").default(0),
   dailyJobLimit: integer("daily_job_limit").default(0),
   createdAt: timestamp("created_at").defaultNow(),
-});
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("clients_slug_unique").on(table.slug),
+  uniqueIndex("clients_enrollment_key_unique").on(table.enrollmentKey),
+  check("clients_lifecycle_status_ck", sql`
+    ${table.lifecycleStatus} IN ('setup', 'active', 'suspended', 'archived')
+  `),
+  check("clients_organization_type_ck", sql`
+    ${table.organizationType} IN (
+      'embassy',
+      'diplomatic_mission',
+      'government_agency',
+      'international_organization',
+      'media',
+      'media_company',
+      'newsroom',
+      'tv_station',
+      'ngo',
+      'humanitarian_organization',
+      'research_organization',
+      'university',
+      'commercial_intelligence',
+      'corporate',
+      'other'
+    )
+  `),
+]);
 
-export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true });
+export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true, updatedAt: true });
 
 // === CLIENT SETTINGS ===
 export const clientSettings = pgTable("client_settings", {
@@ -45,6 +101,14 @@ export const clientSettings = pgTable("client_settings", {
   embassyAliases: text("embassy_aliases").array(),
   ambassadorAliases: text("ambassador_aliases").array(),
   bilateralCategoryLabel: text("bilateral_category_label"),
+  representedCountryCode: text("represented_country_code"),
+  hostCountryCode: text("host_country_code"),
+  headquartersCountryCode: text("headquarters_country_code"),
+  defaultTimezone: text("default_timezone"),
+  defaultLanguages: text("default_languages").array(),
+  websiteUrl: text("website_url"),
+  contactName: text("contact_name"),
+  contactEmail: text("contact_email"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -1122,6 +1186,7 @@ export const workspaces = pgTable("workspaces", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").notNull(),
   name: text("name").notNull(),
+  normalizedName: text("normalized_name"),
   description: text("description"),
   purpose: text("purpose").notNull().default("custom"),
   scopeMode: text("scope_mode").notNull().default("hybrid"),
@@ -1135,12 +1200,16 @@ export const workspaces = pgTable("workspaces", {
   taxonomyTemplateCode: text("taxonomy_template_code"),
   relevanceProfileCode: text("relevance_profile_code"),
   reportingTemplateCode: text("reporting_template_code"),
+  status: text("status").notNull().default("active"),
   active: boolean("active").notNull().default(true),
+  activatedAt: timestamp("activated_at"),
+  activatedBy: integer("activated_by").references(() => users.id),
   createdBy: integer("created_by"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
   uniqueIndex("workspaces_id_client_unique").on(table.id, table.clientId),
+  uniqueIndex("workspaces_client_normalized_name_unique").on(table.clientId, table.normalizedName),
   index("workspaces_client_idx").on(table.clientId),
   index("workspaces_client_active_idx").on(table.clientId, table.active),
   check("workspaces_scope_mode_ck", sql`
@@ -1161,6 +1230,9 @@ export const workspaces = pgTable("workspaces", {
       'industry_intelligence',
       'custom'
     )
+  `),
+  check("workspaces_status_ck", sql`
+    ${table.status} IN ('draft', 'ready', 'active', 'paused', 'archived')
   `),
 ]);
 

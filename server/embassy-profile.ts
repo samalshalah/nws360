@@ -9,6 +9,7 @@ type ClientProfileSource = {
 };
 
 type ClientSettingsProfileSource = {
+  representedCountryCode?: string | null;
   homeCountryCode?: string | null;
   homeCountryName?: string | null;
   homeCountryAliases?: string[] | null;

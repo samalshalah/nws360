@@ -125,6 +125,7 @@ export function buildPlatformAdminNavTree(t: any): NavGroup[] {
       adminOnly: true,
       items: [
         { key: "adminDashboard", label: t("nav.adminDashboard", "SaaS Dashboard"), href: "/admin", icon: LayoutDashboard, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
+        { key: "clientEnrollment", label: t("nav.clientEnrollment", "Enroll Client"), href: "/admin/clients/new", icon: Users, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
         { key: "opsDashboard", label: t("nav.opsDashboard", "Queue & Jobs"), href: "/admin/ops", icon: Activity, caps: [CAPS.ADMIN_OPERATIONS] },
         { key: "sourceHealth", label: t("nav.sourceHealth", "Source Health"), href: "/sources/health", icon: Monitor, caps: [CAPS.SOURCE_HEALTH_VIEW] },
         { key: "productIntelligence", label: t("nav.productIntelligence", "Product Analytics"), href: "/admin/product-analytics", icon: Lightbulb, caps: [CAPS.ADMIN_PRODUCT_ANALYTICS] },
@@ -194,6 +195,7 @@ export const ROUTE_CAPS: RouteCapConfig[] = [
   { path: "/workspace/relevance", caps: [CAPS.SETTINGS_VIEW] },
   { path: "/knowledge", caps: [CAPS.KNOWLEDGE_VIEW] },
   { path: "/settings", caps: [CAPS.SETTINGS_VIEW] },
+  { path: "/admin/clients", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin/dashboard", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin/ops", caps: [CAPS.ADMIN_OPERATIONS], adminOnly: true },
@@ -221,6 +223,7 @@ export function canAccessRoute(
 
 export const ADMIN_ONLY_ROUTES = [
   "/admin",
+  "/admin/clients",
   "/admin/dashboard",
   "/admin/ops",
   "/admin/product-analytics",

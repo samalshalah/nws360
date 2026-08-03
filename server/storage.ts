@@ -112,6 +112,7 @@ import {
   type AiUsageLog, type InsertAiUsageLog,
 } from "@shared/schema";
 import { normalizeUserScopeClientAssignment } from "@shared/user-scope";
+import { normalizeWorkspaceName } from "@shared/client-enrollment";
 import { eq, like, and, or, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
 const AUTO_PAUSE_THRESHOLD_DB = 5;
@@ -2682,7 +2683,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateClient(id: number, updates: Partial<InsertClient>): Promise<Client | undefined> {
-    const [client] = await db.update(clients).set(updates).where(eq(clients.id, id)).returning();
+    const [client] = await db.update(clients).set({ ...updates, updatedAt: new Date() } as any).where(eq(clients.id, id)).returning();
     return client;
   }
 
@@ -3802,12 +3803,21 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createWorkspace(data: InsertWorkspace): Promise<Workspace> {
-    const [row] = await db.insert(workspaces).values(data as any).returning();
+    const values = {
+      ...data,
+      normalizedName: (data as any).normalizedName || normalizeWorkspaceName((data as any).name),
+    };
+    const [row] = await db.insert(workspaces).values(values as any).returning();
     return row;
   }
 
   async updateWorkspace(id: number, data: Partial<InsertWorkspace>): Promise<Workspace | undefined> {
-    const [row] = await db.update(workspaces).set(data as any).where(eq(workspaces.id, id)).returning();
+    const values = {
+      ...data,
+      ...("name" in data ? { normalizedName: normalizeWorkspaceName((data as any).name) } : {}),
+      updatedAt: new Date(),
+    };
+    const [row] = await db.update(workspaces).set(values as any).where(eq(workspaces.id, id)).returning();
     return row;
   }
 

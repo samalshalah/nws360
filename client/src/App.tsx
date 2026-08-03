@@ -55,6 +55,9 @@ import ClientSettings from "@/pages/ClientSettings";
 import ClientAlerts from "@/pages/ClientAlerts";
 import WorkQueue from "@/pages/WorkQueue";
 import WorkspaceRelevance from "@/pages/WorkspaceRelevance";
+import ClientEnrollmentWizard from "@/pages/ClientEnrollmentWizard";
+import ClientSetup from "@/pages/ClientSetup";
+import AdminWorkspaceRelevance from "@/pages/AdminWorkspaceRelevance";
 import { AIStagePage } from "@/components/analytics/AIStagePage";
 
 const sentimentPage = () => (
@@ -205,6 +208,15 @@ function Router() {
 
       <Route path="/sources/health">
         <ProtectedPage component={SourceHealth} />
+      </Route>
+      <Route path="/admin/clients/new">
+        <ProtectedPage component={ClientEnrollmentWizard} />
+      </Route>
+      <Route path="/admin/clients/:clientId/setup">
+        <ProtectedPage component={ClientSetup} />
+      </Route>
+      <Route path="/admin/clients/:clientId/workspaces/:workspaceId/relevance">
+        <ProtectedPage component={AdminWorkspaceRelevance} />
       </Route>
       <Route path="/admin/dashboard">
         <ProtectedPage component={AdminDashboard} />

@@ -1,6 +1,7 @@
 export const CLIENT_BILATERAL_CATEGORY_CODE = "client_bilateral_relations" as const;
 
 export type EmbassyProfile = {
+  representedCountryCode?: string | null;
   homeCountryCode?: string | null;
   homeCountryName?: string | null;
   homeCountryAliases?: string[] | null;
@@ -10,6 +11,7 @@ export type EmbassyProfile = {
 };
 
 export const US_EMBASSY_BAGHDAD_PROFILE: Required<EmbassyProfile> = {
+  representedCountryCode: "US",
   homeCountryCode: "US",
   homeCountryName: "United States",
   homeCountryAliases: [
@@ -223,8 +225,13 @@ function cleanedString(value: unknown): string | null {
 
 export function normalizeEmbassyProfile(profile?: EmbassyProfile | null): EmbassyProfile | null {
   if (!profile) return null;
+  const representedCountryCode =
+    cleanedString(profile.representedCountryCode)?.toUpperCase() ||
+    cleanedString(profile.homeCountryCode)?.toUpperCase() ||
+    null;
   const normalized: EmbassyProfile = {
-    homeCountryCode: cleanedString(profile.homeCountryCode)?.toUpperCase() || null,
+    representedCountryCode,
+    homeCountryCode: representedCountryCode,
     homeCountryName: cleanedString(profile.homeCountryName),
     homeCountryAliases: uniqueTrimmed(profile.homeCountryAliases),
     embassyAliases: uniqueTrimmed(profile.embassyAliases),
@@ -233,6 +240,7 @@ export function normalizeEmbassyProfile(profile?: EmbassyProfile | null): Embass
   };
 
   const hasProfileValue = Boolean(
+    normalized.representedCountryCode ||
     normalized.homeCountryCode ||
     normalized.homeCountryName ||
     normalized.bilateralCategoryLabel ||
@@ -259,7 +267,8 @@ export function getBilateralCategoryLabel(profile?: EmbassyProfile | null): stri
   const normalized = normalizeEmbassyProfile(profile);
   if (!normalized) return "Bilateral Relations";
   if (normalized.bilateralCategoryLabel) return normalized.bilateralCategoryLabel;
-  if (normalized.homeCountryCode === "US") return "U.S.-Iraq Relations";
+  const representedCountryCode = normalized.representedCountryCode || normalized.homeCountryCode;
+  if (representedCountryCode === "US") return "U.S.-Iraq Relations";
   if (normalized.homeCountryName) return `${normalized.homeCountryName}-Iraq Relations`;
   return "Bilateral Relations";
 }
