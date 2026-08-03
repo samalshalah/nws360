@@ -138,6 +138,276 @@ assert.deepEqual(evaluateChannelProvisionability({
   requiredConfiguration: ["supported_stream_or_feed"],
 });
 
+class AssignmentRuntimeHarness {
+  users = [{ id: 2, username: "admin@nws360.com", role: "admin", userScope: "platform", clientId: null as number | null }];
+  platformResetAudit = [{ id: 1, status: "success" }];
+  clients = new Map([
+    [3, { id: 3, active: true, lifecycleStatus: "active" }],
+    [4, { id: 4, active: true, lifecycleStatus: "active" }],
+  ]);
+  workspaces = new Map([
+    [30, { id: 30, clientId: 3, active: true, status: "active" }],
+    [31, { id: 31, clientId: 3, active: true, status: "active" }],
+    [40, { id: 40, clientId: 4, active: true, status: "active" }],
+  ]);
+  channels = new Map([
+    [9, { id: 9, publisherProfileId: 4, clientId: 3 }],
+    [10, { id: 10, publisherProfileId: 4, clientId: 3 }],
+    [19, { id: 19, publisherProfileId: 7, clientId: 4 }],
+  ]);
+  sources = new Map<number, any>();
+  assignments = new Map<number, any>();
+  tests = new Map<number, any>();
+  auditLogs: any[] = [];
+  articles: any[] = [];
+  processingJobs: any[] = [];
+  nextSourceId = 100;
+  nextAssignmentId = 200;
+  nextTestId = 300;
+
+  snapshot() {
+    return {
+      sources: new Map(this.sources),
+      assignments: new Map(this.assignments),
+      tests: new Map(this.tests),
+      auditLogs: [...this.auditLogs],
+      articles: [...this.articles],
+      processingJobs: [...this.processingJobs],
+      nextSourceId: this.nextSourceId,
+      nextAssignmentId: this.nextAssignmentId,
+      nextTestId: this.nextTestId,
+    };
+  }
+
+  restore(snapshot: ReturnType<AssignmentRuntimeHarness["snapshot"]>) {
+    this.sources = snapshot.sources;
+    this.assignments = snapshot.assignments;
+    this.tests = snapshot.tests;
+    this.auditLogs = snapshot.auditLogs;
+    this.articles = snapshot.articles;
+    this.processingJobs = snapshot.processingJobs;
+    this.nextSourceId = snapshot.nextSourceId;
+    this.nextAssignmentId = snapshot.nextAssignmentId;
+    this.nextTestId = snapshot.nextTestId;
+  }
+
+  storageError(code: string, status = 409) {
+    const error = new Error(code) as Error & { code: string; status: number };
+    error.code = code;
+    error.status = status;
+    return error;
+  }
+
+  transact<T>(work: () => T): T {
+    const before = this.snapshot();
+    try {
+      return work();
+    } catch (error) {
+      this.restore(before);
+      throw error;
+    }
+  }
+
+  createAssignment(clientId: number, workspaceId: number, channelId: number, options: { sourceId?: number; failProfile?: boolean; failAudit?: boolean } = {}) {
+    return this.transact(() => {
+      const workspace = this.workspaces.get(workspaceId);
+      const channel = this.channels.get(channelId);
+      if (!workspace || workspace.clientId !== clientId) throw this.storageError("workspace_not_found", 404);
+      if (!channel || channel.clientId !== clientId) throw this.storageError("publisher_not_approved_for_client", 409);
+      if ([...this.assignments.values()].some((assignment) => assignment.workspaceId === workspaceId && assignment.publisherChannelId === channelId)) {
+        throw this.storageError("duplicate_workspace_source_assignment", 409);
+      }
+      let source = options.sourceId ? this.sources.get(options.sourceId) : null;
+      if (options.sourceId && (!source || source.clientId !== clientId)) throw this.storageError("source_assignment_client_mismatch", 409);
+      if (source && source.publisherChannelId !== channelId) throw this.storageError("source_assignment_channel_mismatch", 409);
+      if (!source) {
+        source = {
+          id: this.nextSourceId++,
+          clientId,
+          publisherChannelId: channelId,
+          sourceIdentityKey: buildOperationalSourceIdentityKey(clientId, channelId),
+          active: false,
+        };
+        this.sources.set(source.id, source);
+      }
+      if (options.failProfile) throw this.storageError("profile_failure", 500);
+      const assignment = {
+        id: this.nextAssignmentId++,
+        clientId,
+        workspaceId,
+        publisherChannelId: channelId,
+        sourceId: source.id,
+        assignmentKey: buildWorkspaceSourceAssignmentKey(workspaceId, source.id),
+        status: "draft",
+        enabled: false,
+        testStatus: "untested",
+        latestTestRunId: null as number | null,
+        relevanceProfileVersion: 1,
+        sourceValidationIdentity: `source:${source.id}:channel:${channelId}`,
+        assignmentConfigIdentity: "cfg:1",
+        warningApprovalReason: null as string | null,
+      };
+      this.assignments.set(assignment.id, assignment);
+      if (options.failAudit) throw this.storageError("audit_failure", 500);
+      this.auditLogs.push({ action: "workspace_source_provision_assignment", entityId: assignment.id });
+      return { source, assignment, auditLog: this.auditLogs[this.auditLogs.length - 1] };
+    });
+  }
+
+  rawInsertAssignmentTest(input: any) {
+    const assignment = this.assignments.get(input.assignmentId);
+    if (!assignment || assignment.publisherChannelId !== input.publisherChannelId) throw this.storageError("assignment_channel_fk_violation", 23503);
+    const test = { id: this.nextTestId++, ...input };
+    this.tests.set(test.id, test);
+    return test;
+  }
+
+  recordTest(assignmentId: number, testType: "connectivity" | "relevance" | "full", status: "passed" | "warning" | "failed" = "passed") {
+    const assignment = this.assignments.get(assignmentId);
+    if (!assignment) throw this.storageError("assignment_not_found", 404);
+    const test = this.rawInsertAssignmentTest({
+      clientId: assignment.clientId,
+      workspaceId: assignment.workspaceId,
+      assignmentId,
+      sourceId: assignment.sourceId,
+      publisherChannelId: assignment.publisherChannelId,
+      testType,
+      status,
+      sampleCount: testType === "connectivity" ? 2 : 4,
+      directScopeMatchCount: status === "failed" ? 0 : 3,
+      materialScopeImpactCount: 0,
+      contextualCount: 0,
+      notRelevantCount: status === "failed" ? 4 : 1,
+      needsReviewCount: 0,
+      articleInsertions: 0,
+      processingJobsCreated: 0,
+    });
+    assignment.latestTestRunId = test.id;
+    assignment.testStatus = status;
+    assignment.status = assignment.status === "draft" ? "testing" : assignment.status;
+    return { assignment, test };
+  }
+
+  assertCanReady(assignmentId: number) {
+    const assignment = this.assignments.get(assignmentId);
+    const test = assignment?.latestTestRunId ? this.tests.get(assignment.latestTestRunId) : null;
+    if (!test || !["relevance", "full"].includes(test.testType) || !["passed", "warning"].includes(test.status)) {
+      throw this.storageError("source_assignment_relevance_test_required", 409);
+    }
+    assignment.status = "ready";
+    assignment.enabled = false;
+    return assignment;
+  }
+
+  activate(assignmentId: number) {
+    const assignment = this.assertCanReady(assignmentId);
+    assignment.status = "active";
+    assignment.enabled = true;
+    this.recomputeSource(assignment.sourceId);
+    return assignment;
+  }
+
+  updateAssignmentConfig(assignmentId: number) {
+    const assignment = this.assignments.get(assignmentId);
+    if (!assignment) throw this.storageError("assignment_not_found", 404);
+    assignment.assignmentConfigIdentity += ":changed";
+    assignment.testStatus = "stale";
+    assignment.status = assignment.status === "active" ? "paused" : assignment.status;
+    assignment.enabled = false;
+    this.recomputeSource(assignment.sourceId);
+    return assignment;
+  }
+
+  approveWarning(assignmentId: number, reason: string) {
+    const assignment = this.assignments.get(assignmentId);
+    const test = assignment?.latestTestRunId ? this.tests.get(assignment.latestTestRunId) : null;
+    if (!assignment || assignment.testStatus !== "warning" || !test || !["relevance", "full"].includes(test.testType)) {
+      throw this.storageError("warning_approval_not_allowed", 409);
+    }
+    assignment.warningApprovalReason = reason;
+    return assignment;
+  }
+
+  completeAfterConcurrentChange(assignmentId: number, capturedIdentity: string) {
+    const assignment = this.assignments.get(assignmentId);
+    if (!assignment || assignment.sourceValidationIdentity !== capturedIdentity) {
+      throw this.storageError("source_assignment_changed_during_test", 409);
+    }
+  }
+
+  archiveAssignment(assignmentId: number) {
+    const assignment = this.assignments.get(assignmentId);
+    if (!assignment) throw this.storageError("assignment_not_found", 404);
+    assignment.status = "archived";
+    assignment.enabled = false;
+    this.recomputeSource(assignment.sourceId);
+  }
+
+  recomputeSource(sourceId: number) {
+    const source = this.sources.get(sourceId);
+    if (!source) return false;
+    source.active = [...this.assignments.values()].some((assignment) => (
+      assignment.sourceId === sourceId &&
+      assignment.status === "active" &&
+      assignment.enabled === true
+    ));
+    return source.active;
+  }
+}
+
+const runtime = new AssignmentRuntimeHarness();
+const created = runtime.createAssignment(3, 30, 9);
+assert.equal(runtime.assignments.size, 1);
+assert.equal(runtime.auditLogs.length, 1);
+assert.equal(created.assignment.status, "draft");
+assert.equal(created.assignment.enabled, false);
+assert.equal(created.source.active, false);
+assert.throws(() => runtime.createAssignment(3, 31, 10, { failProfile: true }), /profile_failure/);
+assert.equal(runtime.assignments.size, 1, "profile failure rolls back assignment");
+assert.throws(() => runtime.createAssignment(3, 31, 10, { failAudit: true }), /audit_failure/);
+assert.equal(runtime.assignments.size, 1, "audit failure rolls back assignment and source");
+assert.throws(() => runtime.createAssignment(3, 30, 9), /duplicate_workspace_source_assignment/);
+const sharedSource = runtime.createAssignment(3, 31, 9, { sourceId: created.source.id });
+assert.equal(sharedSource.source.id, created.source.id, "one source can be assigned to two workspaces");
+assert.throws(() => runtime.createAssignment(4, 40, 9, { sourceId: created.source.id }), /publisher_not_approved_for_client|source_assignment_client_mismatch/);
+const connectivity = runtime.recordTest(created.assignment.id, "connectivity");
+assert.equal(connectivity.test.testType, "connectivity");
+assert.equal(runtime.articles.length, 0);
+assert.equal(runtime.processingJobs.length, 0);
+assert.throws(() => runtime.assertCanReady(created.assignment.id), /source_assignment_relevance_test_required/);
+const relevance = runtime.recordTest(created.assignment.id, "relevance", "warning");
+assert.equal(relevance.test.publisherChannelId, created.assignment.publisherChannelId);
+runtime.approveWarning(created.assignment.id, "Known source with small but relevant sample");
+assert.equal(runtime.assignments.get(created.assignment.id)?.warningApprovalReason, "Known source with small but relevant sample");
+runtime.activate(created.assignment.id);
+assert.equal(runtime.sources.get(created.source.id)?.active, true);
+runtime.recordTest(sharedSource.assignment.id, "relevance", "passed");
+runtime.activate(sharedSource.assignment.id);
+runtime.archiveAssignment(created.assignment.id);
+assert.equal(runtime.sources.get(created.source.id)?.active, true, "shared source remains active while another assignment is active");
+runtime.archiveAssignment(sharedSource.assignment.id);
+assert.equal(runtime.sources.get(created.source.id)?.active, false, "final assignment disables source");
+const stale = runtime.createAssignment(3, 31, 10);
+runtime.recordTest(stale.assignment.id, "full", "passed");
+runtime.activate(stale.assignment.id);
+runtime.updateAssignmentConfig(stale.assignment.id);
+assert.equal(runtime.assignments.get(stale.assignment.id)?.testStatus, "stale");
+assert.equal(runtime.assignments.get(stale.assignment.id)?.enabled, false);
+const capturedIdentity = runtime.assignments.get(stale.assignment.id)?.sourceValidationIdentity || "";
+runtime.assignments.get(stale.assignment.id)!.sourceValidationIdentity = "changed";
+assert.throws(() => runtime.completeAfterConcurrentChange(stale.assignment.id, capturedIdentity), /source_assignment_changed_during_test/);
+assert.throws(() => runtime.rawInsertAssignmentTest({
+  clientId: stale.assignment.clientId,
+  workspaceId: stale.assignment.workspaceId,
+  assignmentId: stale.assignment.id,
+  sourceId: stale.assignment.sourceId,
+  publisherChannelId: 999,
+  testType: "relevance",
+  status: "passed",
+}), /assignment_channel_fk_violation/);
+assert.equal(runtime.users[0].clientId, null, "platform admin remains clientId null");
+assert.deepEqual(runtime.platformResetAudit, [{ id: 1, status: "success" }], "platform reset audit remains unchanged");
+
 const summarized = summarizeAssignmentSample({
   headline: "x".repeat(400),
   normalizedUrl: "https://example.com/" + "a".repeat(800),
@@ -157,6 +427,7 @@ const storage = source("server/storage.ts");
 const routes = source("server/routes.ts");
 const feedWorker = source("server/feed-worker.ts");
 const sourceInspector = source("server/source-sample-inspector.ts");
+const schemaSource = source("shared/schema.ts");
 const workspacePage = source("client/src/pages/WorkspaceSourceAssignments.tsx");
 const clientSetup = source("client/src/pages/ClientSetup.tsx");
 const adminPage = source("client/src/pages/Admin.tsx");
@@ -187,6 +458,8 @@ includes(storage, "recomputeOperationalSourceActiveState", "source active state 
 includes(storage, "findCanonicalArticleForPublisherAppearance", "publisher-safe canonical article lookup exists");
 includes(storage, "getWorkspaceProfilesForActiveSourceAssignments", "active assignments drive workspace relevance");
 includes(storage, "getSourceAssignmentSummaries", "source-management assignment summaries exist");
+includes(schemaSource, "workspace_source_assignments_id_channel_unique", "schema enforces assignment/channel uniqueness");
+includes(schemaSource, "workspace_source_assignment_tests_assignment_channel_fk", "schema enforces test assignment/channel FK");
 assert.equal(storage.includes("testWorkspaceSourceAssignmentFull(clientId, workspaceId, assignmentId, actorUserId)"), false, "full test does not call connectivity helper");
 
 includes(routes, "/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments", "source assignment routes exist");

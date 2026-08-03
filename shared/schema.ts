@@ -1608,9 +1608,10 @@ export const workspaceSourceAssignments = pgTable("workspace_source_assignments"
 }, (table) => [
   uniqueIndex("workspace_source_assignments_key_unique").on(table.assignmentKey),
   uniqueIndex("workspace_source_assignments_workspace_source_unique").on(table.workspaceId, table.sourceId),
-  uniqueIndex("workspace_source_assignments_workspace_channel_unique").on(table.workspaceId, table.publisherChannelId),
-  uniqueIndex("workspace_source_assignments_id_client_workspace_unique").on(table.id, table.clientId, table.workspaceId),
-  uniqueIndex("workspace_source_assignments_id_source_unique").on(table.id, table.sourceId),
+    uniqueIndex("workspace_source_assignments_workspace_channel_unique").on(table.workspaceId, table.publisherChannelId),
+    uniqueIndex("workspace_source_assignments_id_client_workspace_unique").on(table.id, table.clientId, table.workspaceId),
+    uniqueIndex("workspace_source_assignments_id_source_unique").on(table.id, table.sourceId),
+    uniqueIndex("workspace_source_assignments_id_channel_unique").on(table.id, table.publisherChannelId),
   index("workspace_source_assignments_client_idx").on(table.clientId, table.status),
   index("workspace_source_assignments_workspace_idx").on(table.workspaceId, table.status),
   index("workspace_source_assignments_source_idx").on(table.sourceId, table.status),
@@ -1710,11 +1711,16 @@ export const workspaceSourceAssignmentTests = pgTable("workspace_source_assignme
     foreignColumns: [sources.id, sources.clientId],
     name: "workspace_source_assignment_tests_source_client_fk",
   }),
-  foreignKey({
-    columns: [table.assignmentId, table.sourceId],
-    foreignColumns: [workspaceSourceAssignments.id, workspaceSourceAssignments.sourceId],
-    name: "workspace_source_assignment_tests_assignment_source_fk",
-  }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.assignmentId, table.sourceId],
+      foreignColumns: [workspaceSourceAssignments.id, workspaceSourceAssignments.sourceId],
+      name: "workspace_source_assignment_tests_assignment_source_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.assignmentId, table.publisherChannelId],
+      foreignColumns: [workspaceSourceAssignments.id, workspaceSourceAssignments.publisherChannelId],
+      name: "workspace_source_assignment_tests_assignment_channel_fk",
+    }).onDelete("cascade"),
   check("workspace_source_assignment_tests_type_ck", sql`
     ${table.testType} IN ('connectivity', 'relevance', 'full')
   `),
