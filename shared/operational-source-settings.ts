@@ -138,7 +138,8 @@ export const operationalSourceSettingsPreviewRequestSchema = z.object({
 }).strict();
 
 export const operationalSourceSettingsUpdateRequestSchema = z.object({
-  previewFingerprint: z.string().trim().min(32).max(256),
+  previewFingerprint: z.string().trim().regex(/^[a-f0-9]{64}$/),
+  previewExpiresAt: z.string().trim().datetime(),
   settings: operationalSourceSettingsSchema,
 }).strict();
 

@@ -232,16 +232,18 @@ function KeywordRuleEditor({
 }
 
 function PreviewResults({ preview }: { preview: NormalizedOperationalPreview }) {
-  const sampleOk = preview.inspection.acceptedItemCount >= 3;
-  const noiseOk = preview.noiseRate <= 40;
+  const quality = preview.quality;
+  const sampleThresholdLabel = quality.minimumSampleCount > 0 ? `${quality.minimumSampleCount}+` : "configured";
+  const relevanceThresholdLabel = quality.minimumDirectMatchRate > 0 ? `${quality.minimumDirectMatchRate}%` : "configured";
+  const noiseThresholdLabel = quality.maximumNoiseRate > 0 ? `${quality.maximumNoiseRate}%` : "configured";
   return (
     <div className="space-y-4" data-testid="operational-preview-results">
       <div className="flex flex-wrap gap-2">
         <StateBadge label={preview.inspection.success ? "Technically valid" : "Technical failure"} state={preview.inspection.success ? "pass" : "fail"} />
-        <StateBadge label={sampleOk ? "Minimum sample ok" : "Small sample"} state={sampleOk ? "pass" : "warn"} />
-        <StateBadge label={preview.productionCandidate ? "Relevance threshold ok" : "Relevance needs review"} state={preview.productionCandidate ? "pass" : "warn"} />
-        <StateBadge label={noiseOk ? "Noise threshold ok" : "Noise elevated"} state={noiseOk ? "pass" : "warn"} />
-        <StateBadge label={preview.productionCandidate ? "Production candidate" : "Not production-ready"} state={preview.productionCandidate ? "pass" : "warn"} />
+        <StateBadge label={quality.passesMinimumSample ? `Minimum sample ${sampleThresholdLabel} ok` : `Below sample ${sampleThresholdLabel}`} state={quality.passesMinimumSample ? "pass" : "warn"} />
+        <StateBadge label={quality.passesRelevance ? `Relevance ${relevanceThresholdLabel} ok` : `Below relevance ${relevanceThresholdLabel}`} state={quality.passesRelevance ? "pass" : "warn"} />
+        <StateBadge label={quality.passesNoise ? `Noise <= ${noiseThresholdLabel}` : `Noise > ${noiseThresholdLabel}`} state={quality.passesNoise ? "pass" : "warn"} />
+        <StateBadge label={preview.productionCandidate ? "Production candidate" : `Not production-ready: ${labelize(quality.outcomeReason)}`} state={preview.productionCandidate ? "pass" : "warn"} />
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
@@ -282,6 +284,10 @@ function PreviewResults({ preview }: { preview: NormalizedOperationalPreview }) 
         <Metric label="Direct-match rate" value={`${preview.directMatchRate}%`} />
         <Metric label="Relevant rate" value={`${preview.relevantRate}%`} />
         <Metric label="Noise rate" value={`${preview.noiseRate}%`} />
+        <Metric label="Minimum sample" value={quality.minimumSampleCount} />
+        <Metric label="Minimum relevance" value={`${quality.minimumDirectMatchRate}%`} />
+        <Metric label="Maximum noise" value={`${quality.maximumNoiseRate}%`} />
+        <Metric label="Preview expires" value={preview.previewExpiresAt || "missing"} />
       </div>
 
       <div className="space-y-2">
@@ -428,9 +434,10 @@ export function OperationalSourceSettingsDialog({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (!preview?.previewFingerprint || !previewSettingsForSave) throw new Error("Preview again before saving.");
+      if (!preview?.previewFingerprint || !preview.previewExpiresAt || !previewSettingsForSave) throw new Error("Preview again before saving.");
       const res = await apiRequest("PATCH", settingsPath, {
         previewFingerprint: preview.previewFingerprint,
+        previewExpiresAt: preview.previewExpiresAt,
         settings: previewSettingsForSave,
       });
       return res.json();
@@ -439,13 +446,24 @@ export function OperationalSourceSettingsDialog({
       queryClient.invalidateQueries({ queryKey: [settingsPath] });
       queryClient.invalidateQueries({ queryKey: [sourceAssignmentsQueryKey] });
       queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/workspaces/${workspaceId}/source-assignments`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/setup`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/source-summaries`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/workspaces/${workspaceId}/sources`] });
       toast({ title: "Operational settings saved", description: "Assignments are stale and disabled. No ingestion or activation started." });
       setConfirmOpen(false);
       onOpenChange(false);
     },
     onError: (error) => {
       const parsed = parseError(error);
-      if (parsed.status === 409 || parsed.code === "stale_operational_source_settings_preview") {
+      if (parsed.code === "operational_source_settings_preview_expired") {
+        const message = "The source settings preview expired. Run Preview again before saving.";
+        setPreviewSettingsSnapshot(null);
+        setPreviewSettingsForSave(null);
+        setLocalError(message);
+        toast({ variant: "destructive", title: "Preview expired", description: message });
+        return;
+      }
+      if (parsed.code === "stale_operational_source_settings_preview") {
         const message = "The source, assignment, channel, profile, or settings changed after preview. Run Preview again before saving.";
         setPreviewSettingsSnapshot(null);
         setPreviewSettingsForSave(null);

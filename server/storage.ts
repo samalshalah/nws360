@@ -150,6 +150,7 @@ import {
   nextWorkspaceSourceAssignmentStatusAfterTest,
   nextWorkspaceSourceAssignmentStatusAfterWarningApproval,
   summarizeAssignmentSample,
+  WORKSPACE_SOURCE_ASSIGNMENT_MINIMUM_SAMPLE_COUNT,
   workspaceSourceAssignmentInputSchema,
   workspaceSourceAssignmentTestInputSchema,
   workspaceSourceAssignmentStatusInputSchema,
@@ -183,8 +184,13 @@ import {
   type OperationalSourceSettings,
 } from "@shared/operational-source-settings";
 import {
+  assertOperationalSettingsPreviewNotExpired,
+  operationalSettingsPreviewExpiresAt,
   operationalSettingsFingerprint,
+  systemOperationalSettingsClock,
   validateOperationalSourceSelectors,
+  verifyOperationalSettingsFingerprint,
+  type OperationalSettingsClock,
   type OperationalSettingsFingerprintInput,
 } from "./operational-source-settings";
 import { eq, like, and, or, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
@@ -376,8 +382,8 @@ export type OperationalSourceSettingsRead = {
   settings: OperationalSourceSettings;
   publisher: Pick<PublisherProfile, "id" | "name" | "scopeType" | "status">;
   channel: Pick<PublisherChannel, "id" | "name" | "channelType" | "url" | "normalizedUrl" | "verificationStatus" | "validationStatus" | "lifecycleStatus">;
-  assignment: Pick<WorkspaceSourceAssignment, "id" | "workspaceId" | "sourceId" | "publisherChannelId" | "status" | "enabled" | "priority" | "sourceRole" | "testStatus" | "latestTestRunId" | "updatedAt">;
-  linkedAssignments: Array<Pick<WorkspaceSourceAssignment, "id" | "workspaceId" | "status" | "enabled" | "testStatus">>;
+  assignment: Pick<WorkspaceSourceAssignment, "id" | "workspaceId" | "sourceId" | "publisherChannelId" | "status" | "enabled" | "priority" | "sourceRole" | "testStatus" | "latestTestRunId" | "minimumDirectMatchRate" | "maximumNoiseRate" | "updatedAt">;
+  linkedAssignments: Array<Pick<WorkspaceSourceAssignment, "id" | "workspaceId" | "status" | "enabled" | "testStatus" | "updatedAt">>;
   relevanceProfileVersion: number;
   currentState: {
     sourceIdentity: string;
@@ -400,6 +406,7 @@ export type OperationalSourceSettingsPreview = {
   changedFields: OperationalSourceSettingField[];
   normalizedSettings: OperationalSourceSettings;
   previewFingerprint: string;
+  previewExpiresAt: string;
   currentSourceIdentity: string;
   proposedSourceIdentity: string;
   inspection: {
@@ -424,6 +431,16 @@ export type OperationalSourceSettingsPreview = {
   directMatchRate: number;
   relevantRate: number;
   noiseRate: number;
+  quality: {
+    minimumSampleCount: number;
+    minimumDirectMatchRate: number;
+    maximumNoiseRate: number;
+    passesMinimumSample: boolean;
+    passesRelevance: boolean;
+    passesNoise: boolean;
+    outcomeStatus: "passed" | "warning" | "failed";
+    outcomeReason: string;
+  };
   productionCandidate: boolean;
   expectedImpact: {
     staleRequired: boolean;
@@ -603,6 +620,12 @@ function percentToRate(value: number | null | undefined, fallback: number): numb
   const numeric = Number(value ?? Math.round(fallback * 100));
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(0, Math.min(1, numeric / 100));
+}
+
+function clampPercent(value: number | null | undefined, fallback: number): number {
+  const numeric = Number(value ?? fallback);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.round(Math.max(0, Math.min(100, numeric)));
 }
 
 function cleanOptionalString(value: unknown): string | null {
@@ -941,24 +964,53 @@ function profileVersionForOperationalContext(profile: WorkspaceRelevanceProfile 
   return profile?.profileVersion || assignment.relevanceProfileVersion || 1;
 }
 
-function operationalFingerprintInput(row: OperationalSourceSettingsContext, settings: OperationalSourceSettings): OperationalSettingsFingerprintInput {
+function orderedOperationalLinkedAssignments(assignments: WorkspaceSourceAssignment[]): OperationalSettingsFingerprintInput["linkedAssignments"] {
+  return assignments
+    .map((assignment) => ({
+      id: assignment.id,
+      workspaceId: assignment.workspaceId,
+      status: assignment.status,
+      enabled: assignment.enabled,
+      testStatus: assignment.testStatus || null,
+      updatedAt: isoDateIdentity(assignment.updatedAt),
+    }))
+    .sort((a, b) => a.id - b.id);
+}
+
+function toOperationalSettingsStorageError(error: unknown): StorageBoundaryError {
+  if (error instanceof StorageBoundaryError) return error;
+  const anyError = error as any;
+  return new StorageBoundaryError(anyError?.message || "Operational source settings verification failed", {
+    status: Number.isFinite(Number(anyError?.status)) ? Number(anyError.status) : 400,
+    code: typeof anyError?.code === "string" ? anyError.code : "operational_source_settings_verification_failed",
+    details: anyError?.details,
+  });
+}
+
+function operationalFingerprintInput(
+  row: OperationalSourceSettingsContext,
+  settings: OperationalSourceSettings,
+  expiresAt: string,
+): OperationalSettingsFingerprintInput {
   return {
     clientId: row.client.id,
     workspaceId: row.workspace.id,
     sourceId: row.source.id,
     sourceIdentity: sourceValidationIdentity(row.source, row.channel),
     sourceUpdatedAt: null,
-    assignmentId: row.assignment.id,
-    assignmentUpdatedAt: isoDateIdentity(row.assignment.updatedAt),
+    requestedAssignmentId: row.assignment.id,
+    requestedWorkspaceId: row.workspace.id,
+    linkedAssignments: orderedOperationalLinkedAssignments(row.linkedAssignments),
     channelId: row.channel.id,
     channelUpdatedAt: isoDateIdentity(row.channel.updatedAt),
     relevanceProfileVersion: profileVersionForOperationalContext(row.profile, row.assignment),
+    expiresAt,
     settings,
   };
 }
 
-function operationalPreviewFingerprint(row: OperationalSourceSettingsContext, settings: OperationalSourceSettings): string {
-  return operationalSettingsFingerprint(operationalFingerprintInput(row, settings));
+function operationalPreviewFingerprint(row: OperationalSourceSettingsContext, settings: OperationalSourceSettings, expiresAt: string): string {
+  return operationalSettingsFingerprint(operationalFingerprintInput(row, settings, expiresAt));
 }
 
 function operationalAssignmentSamples(
@@ -984,6 +1036,7 @@ function buildOperationalSettingsRead(row: OperationalSourceSettingsContext): Op
     status: assignment.status,
     enabled: assignment.enabled,
     testStatus: assignment.testStatus,
+    updatedAt: assignment.updatedAt,
   }));
   const allowed = settingsUpdateAllowed(row.source, row.linkedAssignments);
   return {
@@ -1023,6 +1076,8 @@ function buildOperationalSettingsRead(row: OperationalSourceSettingsContext): Op
       sourceRole: row.assignment.sourceRole,
       testStatus: row.assignment.testStatus,
       latestTestRunId: row.assignment.latestTestRunId,
+      minimumDirectMatchRate: row.assignment.minimumDirectMatchRate,
+      maximumNoiseRate: row.assignment.maximumNoiseRate,
       updatedAt: row.assignment.updatedAt,
     },
     linkedAssignments,
@@ -1141,7 +1196,11 @@ async function loadOperationalSourceSettingsContext(
   };
 }
 
-function buildOperationalSettingsPreview(row: OperationalSourceSettingsContext, settingsInput: unknown): OperationalSourceSettingsPreview | Promise<OperationalSourceSettingsPreview> {
+function buildOperationalSettingsPreview(
+  row: OperationalSourceSettingsContext,
+  settingsInput: unknown,
+  clock: OperationalSettingsClock = systemOperationalSettingsClock,
+): OperationalSourceSettingsPreview | Promise<OperationalSourceSettingsPreview> {
   const currentSettings = currentOperationalSourceSettings(row.source);
   const normalizedSettings = normalizeOperationalSourceSettings(settingsInput, row.source);
   const selectorValidation = validateOperationalSourceSelectors(normalizedSettings);
@@ -1154,21 +1213,32 @@ function buildOperationalSettingsPreview(row: OperationalSourceSettingsContext, 
   }
   const proposedSource = applyOperationalSourceSettings(row.source, normalizedSettings) as Source;
   return inspectOperationalSourceSample(proposedSource, row.channel, { limit: 25 }).then((inspection) => {
+    const previewExpiresAt = operationalSettingsPreviewExpiresAt(clock);
     const sampleResults = inspection.success ? operationalAssignmentSamples(proposedSource, inspection.items, row) : [];
     const counts = countAssignmentSamples(sampleResults);
     const rates = calculateAssignmentTestRates(counts);
+    const minimumSampleCount = WORKSPACE_SOURCE_ASSIGNMENT_MINIMUM_SAMPLE_COUNT;
+    const minimumDirectMatchRate = clampPercent(row.assignment.minimumDirectMatchRate, 50);
+    const maximumNoiseRate = clampPercent(row.assignment.maximumNoiseRate, 40);
     const outcome = evaluateAssignmentTestOutcome({
       ...counts,
-      minimumDirectMatchRate: percentToRate(row.assignment.minimumDirectMatchRate, 0.5),
-      maximumNoiseRate: percentToRate(row.assignment.maximumNoiseRate, 0.4),
+      minimumDirectMatchRate: minimumDirectMatchRate / 100,
+      maximumNoiseRate: maximumNoiseRate / 100,
       fatalError: !inspection.success,
     });
     const changedFields = diffOperationalSourceSettings(currentSettings, normalizedSettings);
+    let previewFingerprint: string;
+    try {
+      previewFingerprint = operationalPreviewFingerprint(row, normalizedSettings, previewExpiresAt);
+    } catch (error) {
+      throw toOperationalSettingsStorageError(error);
+    }
     return {
       writes: false,
       changedFields,
       normalizedSettings,
-      previewFingerprint: operationalPreviewFingerprint(row, normalizedSettings),
+      previewFingerprint,
+      previewExpiresAt,
       currentSourceIdentity: sourceValidationIdentity(row.source, row.channel),
       proposedSourceIdentity: sourceValidationIdentity(proposedSource, row.channel),
       inspection: {
@@ -1193,6 +1263,16 @@ function buildOperationalSettingsPreview(row: OperationalSourceSettingsContext, 
       directMatchRate: rateToPercent(rates.directMatchRate, 0),
       relevantRate: rateToPercent(rates.relevantRate, 0),
       noiseRate: rateToPercent(rates.noiseRate, 0),
+      quality: {
+        minimumSampleCount,
+        minimumDirectMatchRate,
+        maximumNoiseRate,
+        passesMinimumSample: counts.sampleCount >= minimumSampleCount,
+        passesRelevance: rates.directMatchRate >= minimumDirectMatchRate / 100 || rates.relevantRate >= minimumDirectMatchRate / 100,
+        passesNoise: inspection.success && rates.noiseRate <= maximumNoiseRate / 100,
+        outcomeStatus: outcome.status,
+        outcomeReason: outcome.reason,
+      },
       productionCandidate: outcome.status === "passed",
       expectedImpact: {
         staleRequired: changedFields.length > 0,
@@ -1628,7 +1708,7 @@ export interface IStorage {
   getSourceAssignmentSummaries(clientId: number): Promise<Record<number, SourceAssignmentSummary>>;
   getOperationalSourceSettings(clientId: number, workspaceId: number, sourceId: number): Promise<OperationalSourceSettingsRead>;
   previewOperationalSourceSettings(clientId: number, workspaceId: number, sourceId: number, input: unknown): Promise<OperationalSourceSettingsPreview>;
-  updateOperationalSourceSettingsAtomic(clientId: number, workspaceId: number, sourceId: number, input: unknown, previewFingerprint: string, actorUserId: number): Promise<OperationalSourceSettingsUpdateResult>;
+  updateOperationalSourceSettingsAtomic(clientId: number, workspaceId: number, sourceId: number, input: unknown, previewFingerprint: string, previewExpiresAt: string, actorUserId: number, options?: { clock?: OperationalSettingsClock }): Promise<OperationalSourceSettingsUpdateResult>;
 
   // Users management
   getUsers(parentId?: number): Promise<User[]>;
@@ -5090,16 +5170,28 @@ export class DatabaseStorage implements IStorage {
     sourceId: number,
     input: unknown,
     previewFingerprint: string,
+    previewExpiresAt: string,
     actorUserId: number,
+    options: { clock?: OperationalSettingsClock } = {},
   ): Promise<OperationalSourceSettingsUpdateResult> {
     let parsed;
     try {
-      parsed = operationalSourceSettingsUpdateRequestSchema.parse({ previewFingerprint, settings: input || {} });
+      parsed = operationalSourceSettingsUpdateRequestSchema.parse({ previewFingerprint, previewExpiresAt, settings: input || {} });
     } catch (error) {
       throw toStorageValidationError(error, "Invalid operational source settings update");
     }
+    try {
+      assertOperationalSettingsPreviewNotExpired(parsed.previewExpiresAt, options.clock || systemOperationalSettingsClock);
+    } catch (error) {
+      throw toOperationalSettingsStorageError(error);
+    }
     return db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`nws360.operational_source_settings.${clientId}.${workspaceId}.${sourceId}`}))`);
+      try {
+        assertOperationalSettingsPreviewNotExpired(parsed.previewExpiresAt, options.clock || systemOperationalSettingsClock);
+      } catch (error) {
+        throw toOperationalSettingsStorageError(error);
+      }
       const row = await loadOperationalSourceSettingsContext(tx, clientId, workspaceId, sourceId);
       const normalizedSettings = normalizeOperationalSourceSettings(parsed.settings, row.source);
       const selectorValidation = validateOperationalSourceSelectors(normalizedSettings);
@@ -5110,12 +5202,20 @@ export class DatabaseStorage implements IStorage {
           details: selectorValidation.errors,
         });
       }
-      const expectedFingerprint = operationalPreviewFingerprint(row, normalizedSettings);
-      if (expectedFingerprint !== parsed.previewFingerprint) {
+      let fingerprintVerification;
+      try {
+        fingerprintVerification = verifyOperationalSettingsFingerprint(
+          parsed.previewFingerprint,
+          operationalFingerprintInput(row, normalizedSettings, parsed.previewExpiresAt),
+        );
+      } catch (error) {
+        throw toOperationalSettingsStorageError(error);
+      }
+      if (!fingerprintVerification.ok) {
         throw new StorageBoundaryError("Operational source settings preview is stale", {
           status: 409,
           code: "stale_operational_source_settings_preview",
-          details: { expectedPrefix: expectedFingerprint.slice(0, 12), receivedPrefix: parsed.previewFingerprint.slice(0, 12) },
+          details: { reason: fingerprintVerification.reason },
         });
       }
       const allowed = settingsUpdateAllowed(row.source, row.linkedAssignments);
@@ -5130,7 +5230,7 @@ export class DatabaseStorage implements IStorage {
       if (changedFields.length === 0) {
         throw new StorageBoundaryError("No operational source setting changes were provided", {
           status: 400,
-          code: "no_operational_source_settings_changed",
+          code: "operational_source_settings_no_changes",
         });
       }
       const [source] = await tx.update(sources).set({

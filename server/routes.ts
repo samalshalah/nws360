@@ -2093,12 +2093,14 @@ export async function registerRoutes(
   }
 
   const legacyOperationalSourceTestFields = new Set([
+    "type",
     "url",
     "intervalMinutes",
     "maxArticlesPerFetch",
     "retentionDays",
     "collectorConfig",
     "filterConfig",
+    "refreshPriority",
     "active",
   ]);
 
@@ -4265,6 +4267,14 @@ export async function registerRoutes(
       if (key in req.body && req.body[key] !== undefined) cleanUpdates[key] = req.body[key];
     }
     if (Object.keys(cleanUpdates).length === 0) return res.status(400).json({ message: "No valid fields to update" });
+    const existingSource = await storage.getSource(id, clientId);
+    if (!existingSource) return res.status(404).json({ message: "Source not found" });
+    if (await legacyOperationalSettingsWorkflowRequired(existingSource, clientId, cleanUpdates)) {
+      return res.status(409).json({
+        message: "Use the guarded operational source settings workflow for assigned publisher-linked sources.",
+        code: "operational_source_settings_workflow_required",
+      });
+    }
     const source = await storage.updateSource(id, cleanUpdates, clientId);
     if (!source) return res.status(404).json({ message: "Source not found" });
     await storage.createAuditLog({ userId: user.id, action: "update", entity: "source", entityId: id, details: `Updated source: ${JSON.stringify(cleanUpdates)}` });
@@ -4817,6 +4827,7 @@ export async function registerRoutes(
         sourceId,
         req.body?.settings,
         req.body?.previewFingerprint,
+        req.body?.previewExpiresAt,
         user.id,
       ));
     } catch (err) {

@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import * as cheerio from "cheerio";
 import {
   stableOperationalSettingsJson,
@@ -16,12 +16,31 @@ export type OperationalSettingsFingerprintInput = {
   sourceId: number;
   sourceIdentity: string;
   sourceUpdatedAt?: string | null;
-  assignmentId: number;
-  assignmentUpdatedAt?: string | null;
+  requestedAssignmentId: number;
+  requestedWorkspaceId: number;
+  linkedAssignments: Array<{
+    id: number;
+    workspaceId: number;
+    status: string;
+    enabled: boolean;
+    testStatus?: string | null;
+    updatedAt?: string | null;
+  }>;
   channelId: number;
   channelUpdatedAt?: string | null;
   relevanceProfileVersion: number;
+  expiresAt: string;
   settings: OperationalSourceSettings;
+};
+
+export type OperationalSettingsClock = {
+  now(): Date;
+};
+
+export const OPERATIONAL_SETTINGS_PREVIEW_TTL_MS = 10 * 60 * 1000;
+
+export const systemOperationalSettingsClock: OperationalSettingsClock = {
+  now: () => new Date(),
 };
 
 const SELECTOR_VALIDATION_HTML = `
@@ -64,15 +83,75 @@ export function validateOperationalSourceSelectors(settings: OperationalSourceSe
   return { valid: errors.length === 0, errors };
 }
 
-function fingerprintSecret(): string {
-  return process.env.SESSION_SECRET
-    || process.env.REPL_ID
-    || process.env.DATABASE_URL
-    || "nws360-development-operational-source-settings";
+function operationalSettingsConfigError(message: string) {
+  return Object.assign(new Error(message), {
+    status: 503,
+    code: "operational_settings_hmac_secret_missing",
+  });
 }
 
-export function operationalSettingsFingerprint(input: OperationalSettingsFingerprintInput): string {
-  return createHmac("sha256", fingerprintSecret())
+function fingerprintSecret(secretOverride?: string): string {
+  const secret = secretOverride
+    || process.env.OPERATIONAL_SETTINGS_HMAC_SECRET
+    || process.env.SESSION_SECRET
+    || (process.env.NODE_ENV !== "production" ? process.env.OPERATIONAL_SETTINGS_TEST_HMAC_SECRET : undefined);
+  if (!secret || Buffer.byteLength(secret, "utf8") < 32) {
+    throw operationalSettingsConfigError("Operational source settings HMAC secret is not configured.");
+  }
+  return secret;
+}
+
+export function assertOperationalSettingsPreviewNotExpired(
+  expiresAt: string,
+  clock: OperationalSettingsClock = systemOperationalSettingsClock,
+) {
+  const expires = new Date(expiresAt);
+  if (Number.isNaN(expires.getTime())) {
+    throw Object.assign(new Error("Operational source settings preview expiry is invalid."), {
+      status: 400,
+      code: "invalid_operational_source_settings_preview_expiry",
+    });
+  }
+  if (expires.getTime() <= clock.now().getTime()) {
+    throw Object.assign(new Error("Operational source settings preview expired."), {
+      status: 409,
+      code: "operational_source_settings_preview_expired",
+    });
+  }
+}
+
+export function operationalSettingsPreviewExpiresAt(
+  clock: OperationalSettingsClock = systemOperationalSettingsClock,
+): string {
+  return new Date(clock.now().getTime() + OPERATIONAL_SETTINGS_PREVIEW_TTL_MS).toISOString();
+}
+
+export function operationalSettingsFingerprint(
+  input: OperationalSettingsFingerprintInput,
+  options: { secret?: string } = {},
+): string {
+  return createHmac("sha256", fingerprintSecret(options.secret))
     .update(stableOperationalSettingsJson(input))
     .digest("hex");
+}
+
+export function verifyOperationalSettingsFingerprint(
+  receivedFingerprint: string,
+  input: OperationalSettingsFingerprintInput,
+  options: { secret?: string } = {},
+) {
+  if (!/^[a-f0-9]{64}$/.test(receivedFingerprint)) {
+    return { ok: false, reason: "malformed_fingerprint" as const };
+  }
+  const expected = operationalSettingsFingerprint(input, options);
+  const received = Buffer.from(receivedFingerprint, "hex");
+  const expectedBuffer = Buffer.from(expected, "hex");
+  if (received.length !== expectedBuffer.length) {
+    return { ok: false, reason: "fingerprint_mismatch" as const };
+  }
+  const matched = timingSafeEqual(received, expectedBuffer);
+  return {
+    ok: matched,
+    reason: matched ? "matched" as const : "fingerprint_mismatch" as const,
+  };
 }

@@ -62,6 +62,8 @@ export type OperationalSettingsReadResponse = {
     sourceRole?: string;
     testStatus?: string;
     latestTestRunId?: number | null;
+    minimumDirectMatchRate?: number | null;
+    maximumNoiseRate?: number | null;
     updatedAt?: string | Date | null;
   } | null;
   linkedAssignments?: Array<{
@@ -70,6 +72,7 @@ export type OperationalSettingsReadResponse = {
     status?: string;
     enabled?: boolean;
     testStatus?: string;
+    updatedAt?: string | Date | null;
   }>;
   relevanceProfileVersion?: number;
   currentState?: {
@@ -125,6 +128,8 @@ export type NormalizedOperationalSettingsRead = {
     sourceRole: string;
     testStatus: string;
     latestTestRunId: number | null;
+    minimumDirectMatchRate: number;
+    maximumNoiseRate: number;
   };
   linkedAssignments: Array<{
     id: number;
@@ -132,6 +137,7 @@ export type NormalizedOperationalSettingsRead = {
     status: string;
     enabled: boolean;
     testStatus: string;
+    updatedAt: string | null;
   }>;
   relevanceProfileVersion: number;
   currentState: {
@@ -156,6 +162,7 @@ export type OperationalPreviewResponse = {
   changedFields?: unknown;
   normalizedSettings?: Partial<OperationalSourceSettings> | null;
   previewFingerprint?: string | null;
+  previewExpiresAt?: string | null;
   currentSourceIdentity?: string | null;
   proposedSourceIdentity?: string | null;
   inspection?: {
@@ -187,6 +194,16 @@ export type OperationalPreviewResponse = {
   directMatchRate?: number;
   relevantRate?: number;
   noiseRate?: number;
+  quality?: {
+    minimumSampleCount?: number;
+    minimumDirectMatchRate?: number;
+    maximumNoiseRate?: number;
+    passesMinimumSample?: boolean;
+    passesRelevance?: boolean;
+    passesNoise?: boolean;
+    outcomeStatus?: string;
+    outcomeReason?: string;
+  } | null;
   productionCandidate?: boolean;
   expectedImpact?: {
     staleRequired?: boolean;
@@ -206,6 +223,7 @@ export type NormalizedOperationalPreview = {
   changedFields: OperationalSourceSettingField[];
   normalizedSettings: OperationalSourceSettings | null;
   previewFingerprint: string | null;
+  previewExpiresAt: string | null;
   currentSourceIdentity: string | null;
   proposedSourceIdentity: string | null;
   inspection: {
@@ -245,6 +263,16 @@ export type NormalizedOperationalPreview = {
   directMatchRate: number;
   relevantRate: number;
   noiseRate: number;
+  quality: {
+    minimumSampleCount: number;
+    minimumDirectMatchRate: number;
+    maximumNoiseRate: number;
+    passesMinimumSample: boolean;
+    passesRelevance: boolean;
+    passesNoise: boolean;
+    outcomeStatus: string;
+    outcomeReason: string;
+  };
   productionCandidate: boolean;
   expectedImpact: {
     staleRequired: boolean;
@@ -390,6 +418,7 @@ export function normalizeOperationalSettingsRead(input: OperationalSettingsReadR
         status: String(item.status || "unknown"),
         enabled: Boolean(item.enabled),
         testStatus: String(item.testStatus || "unknown"),
+        updatedAt: optionalString(item.updatedAt),
       })).filter((item) => Number.isFinite(item.id))
     : [];
   const identityMissing = !source || !Number.isFinite(Number(assignment.id)) || !Number.isFinite(Number(channel.id));
@@ -423,6 +452,8 @@ export function normalizeOperationalSettingsRead(input: OperationalSettingsReadR
       sourceRole: String(assignment.sourceRole || "primary"),
       testStatus: String(assignment.testStatus || "unknown"),
       latestTestRunId: Number.isFinite(Number(assignment.latestTestRunId)) ? Number(assignment.latestTestRunId) : null,
+      minimumDirectMatchRate: finiteNumber(assignment.minimumDirectMatchRate, 50),
+      maximumNoiseRate: finiteNumber(assignment.maximumNoiseRate, 40),
     },
     linkedAssignments,
     relevanceProfileVersion: finiteNumber(input?.relevanceProfileVersion, 1),
@@ -474,11 +505,13 @@ export function normalizeOperationalPreview(input: OperationalPreviewResponse | 
   const inspection = isRecord(input?.inspection) ? input!.inspection! : {};
   const counts = isRecord(input?.relevanceCounts) ? input!.relevanceCounts! : {};
   const impact = isRecord(input?.expectedImpact) ? input!.expectedImpact! : {};
+  const quality = isRecord(input?.quality) ? input!.quality! : {};
   return {
     writes: input?.writes === true,
     changedFields: normalizeChangedFields(input?.changedFields),
     normalizedSettings: input?.normalizedSettings ? normalizeSettings(input.normalizedSettings) : null,
     previewFingerprint: optionalString(input?.previewFingerprint),
+    previewExpiresAt: optionalString(input?.previewExpiresAt),
     currentSourceIdentity: optionalString(input?.currentSourceIdentity),
     proposedSourceIdentity: optionalString(input?.proposedSourceIdentity),
     inspection: {
@@ -510,6 +543,16 @@ export function normalizeOperationalPreview(input: OperationalPreviewResponse | 
     directMatchRate: finiteNumber(input?.directMatchRate, 0),
     relevantRate: finiteNumber(input?.relevantRate, 0),
     noiseRate: finiteNumber(input?.noiseRate, 0),
+    quality: {
+      minimumSampleCount: finiteNumber(quality.minimumSampleCount, 0),
+      minimumDirectMatchRate: finiteNumber(quality.minimumDirectMatchRate, 0),
+      maximumNoiseRate: finiteNumber(quality.maximumNoiseRate, 0),
+      passesMinimumSample: quality.passesMinimumSample === true,
+      passesRelevance: quality.passesRelevance === true,
+      passesNoise: quality.passesNoise === true,
+      outcomeStatus: String(quality.outcomeStatus || "unknown"),
+      outcomeReason: String(quality.outcomeReason || "unknown"),
+    },
     productionCandidate: input?.productionCandidate === true,
     expectedImpact: {
       staleRequired: impact.staleRequired === true,
@@ -570,7 +613,8 @@ export function canSaveOperationalSettings(input: {
   saving: boolean;
 }) {
   if (!input.dirty || !input.updateAllowed || input.identityError || input.previewing || input.saving) return false;
-  if (!input.preview?.previewFingerprint || !input.preview.inspection.success) return false;
+  if (!input.preview?.previewFingerprint || !input.preview.previewExpiresAt || !input.preview.inspection.success) return false;
+  if (input.preview.changedFields.length === 0) return false;
   if (!input.previewSettingsSnapshot || settingsSnapshot(input.currentSettings) !== input.previewSettingsSnapshot) return false;
   if (!input.preview.productionCandidate && !input.acknowledgement) return false;
   return true;

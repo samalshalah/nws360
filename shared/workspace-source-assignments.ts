@@ -49,6 +49,8 @@ export const WORKSPACE_SOURCE_ASSIGNMENT_RUN_STATUSES = [
   "failed",
 ] as const;
 
+export const WORKSPACE_SOURCE_ASSIGNMENT_MINIMUM_SAMPLE_COUNT = 3;
+
 export type WorkspaceSourceAssignmentStatus = typeof WORKSPACE_SOURCE_ASSIGNMENT_STATUSES[number];
 export type WorkspaceSourceAssignmentTestStatus = typeof WORKSPACE_SOURCE_ASSIGNMENT_TEST_STATUSES[number];
 export type WorkspaceSourceAssignmentPriority = typeof WORKSPACE_SOURCE_ASSIGNMENT_PRIORITIES[number];
@@ -215,7 +217,7 @@ export function evaluateAssignmentTestOutcome(input: {
   if (rates.directMatchRate < input.minimumDirectMatchRate && rates.relevantRate < input.minimumDirectMatchRate) {
     return { status: "warning" as const, reason: "relevance_below_direct_threshold" };
   }
-  if (input.sampleCount < 3) return { status: "warning" as const, reason: "small_sample" };
+  if (input.sampleCount < WORKSPACE_SOURCE_ASSIGNMENT_MINIMUM_SAMPLE_COUNT) return { status: "warning" as const, reason: "small_sample" };
   if (input.contextualCount > input.directScopeMatchCount + input.materialScopeImpactCount) {
     return { status: "warning" as const, reason: "contextual_coverage_dominates" };
   }
