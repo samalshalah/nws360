@@ -147,6 +147,8 @@ import {
   evaluateAssignmentTestOutcome,
   evaluateChannelProvisionability,
   mapPublisherChannelTypeToSourceType,
+  nextWorkspaceSourceAssignmentStatusAfterTest,
+  nextWorkspaceSourceAssignmentStatusAfterWarningApproval,
   summarizeAssignmentSample,
   workspaceSourceAssignmentInputSchema,
   workspaceSourceAssignmentTestInputSchema,
@@ -5066,7 +5068,12 @@ export class DatabaseStorage implements IStorage {
         testedBy: actorUserId,
       } as InsertWorkspaceSourceAssignmentTest).returning();
       const [assignment] = await tx.update(workspaceSourceAssignments).set({
-        status: row.assignment.status === "draft" ? "testing" : row.assignment.status,
+        status: nextWorkspaceSourceAssignmentStatusAfterTest({
+          currentStatus: row.assignment.status,
+          testType: "connectivity",
+          runStatus: status,
+        }),
+        enabled: row.assignment.status === "draft" || row.assignment.status === "testing" ? false : row.assignment.enabled,
         testStatus: mapRunStatusToAssignmentTestStatus(status),
         latestTestRunId: testRun.id,
         sourceValidationIdentity: validationIdentity,
@@ -5175,7 +5182,12 @@ export class DatabaseStorage implements IStorage {
         testedBy: actorUserId,
       } as InsertWorkspaceSourceAssignmentTest).returning();
       const [assignment] = await tx.update(workspaceSourceAssignments).set({
-        status: row.assignment.status === "draft" ? "testing" : row.assignment.status,
+        status: nextWorkspaceSourceAssignmentStatusAfterTest({
+          currentStatus: row.assignment.status,
+          testType: "relevance",
+          runStatus: outcome.status,
+        }),
+        enabled: row.assignment.status === "draft" || row.assignment.status === "testing" ? false : row.assignment.enabled,
         testStatus: mapRunStatusToAssignmentTestStatus(outcome.status),
         relevanceProfileVersion: currentProfileVersion,
         sourceValidationIdentity: validationIdentity,
@@ -5288,7 +5300,12 @@ export class DatabaseStorage implements IStorage {
         testedBy: actorUserId,
       } as InsertWorkspaceSourceAssignmentTest).returning();
       const [assignment] = await tx.update(workspaceSourceAssignments).set({
-        status: row.assignment.status === "draft" ? "testing" : row.assignment.status,
+        status: nextWorkspaceSourceAssignmentStatusAfterTest({
+          currentStatus: row.assignment.status,
+          testType: "full",
+          runStatus: outcome.status,
+        }),
+        enabled: row.assignment.status === "draft" || row.assignment.status === "testing" ? false : row.assignment.enabled,
         testStatus: assignmentStatusFromRunStatus(outcome.status),
         relevanceProfileVersion: currentProfileVersion,
         sourceValidationIdentity: validationIdentity,
@@ -5338,6 +5355,8 @@ export class DatabaseStorage implements IStorage {
         });
       }
       const [assignment] = await tx.update(workspaceSourceAssignments).set({
+        status: nextWorkspaceSourceAssignmentStatusAfterWarningApproval({ currentStatus: current.status }),
+        enabled: false,
         warningApprovedAt: new Date(),
         warningApprovedBy: actorUserId,
         warningApprovalReason: parsed.reason,

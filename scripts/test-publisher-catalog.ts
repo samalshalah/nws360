@@ -10,7 +10,7 @@ import {
   selectPrimaryAppearance,
   validatePublisherCanonicalKey,
 } from "../shared/publisher-catalog";
-import { isBlockedNetworkAddress, isGloballyRoutableAddress, validatePublisherChannel } from "../server/publisher-channel-validator";
+import { fetchPublicUrlText, isBlockedNetworkAddress, isGloballyRoutableAddress, validatePublisherChannel } from "../server/publisher-channel-validator";
 
 type User = { id: number; role: string; userScope: string; clientId: number | null };
 type MemoryState = {
@@ -665,6 +665,84 @@ const exactLimitValidation = await validatePublisherChannel(created.profile as a
   }),
 });
 assert.equal(exactLimitValidation.validationStatus, "valid");
+
+const smallHtml = "<html><body>ok</body></html>";
+const smallHtmlFetch = await fetchPublicUrlText("https://www.shafaq.com/", {
+  resolveHost: safeResolver,
+  maxBytes: Buffer.byteLength(smallHtml) + 1,
+  truncateOnLimit: true,
+  requestUrl: async () => ({
+    status: 200,
+    headers: headers({ "content-length": String(Buffer.byteLength(smallHtml)) }),
+    body: (async function* () { yield smallHtml; })(),
+  }),
+});
+assert.equal(smallHtmlFetch.truncated, false);
+assert.equal(smallHtmlFetch.bytesRead, Buffer.byteLength(smallHtml));
+
+const exactLimitFetch = await fetchPublicUrlText("https://www.shafaq.com/", {
+  resolveHost: safeResolver,
+  maxBytes: Buffer.byteLength(smallHtml),
+  truncateOnLimit: true,
+  requestUrl: async () => ({
+    status: 200,
+    headers: headers({ "content-length": String(Buffer.byteLength(smallHtml)) }),
+    body: (async function* () { yield smallHtml; })(),
+  }),
+});
+assert.equal(exactLimitFetch.truncated, false);
+assert.equal(exactLimitFetch.bytesRead, Buffer.byteLength(smallHtml));
+
+let contentLengthAbortCalled = false;
+const contentLengthTruncatedFetch = await fetchPublicUrlText("https://www.shafaq.com/", {
+  resolveHost: safeResolver,
+  maxBytes: 8,
+  truncateOnLimit: true,
+  requestUrl: async () => ({
+    status: 200,
+    headers: headers({ "content-length": "20" }),
+    body: (async function* () { yield "12345678901234567890"; })(),
+    abort: () => { contentLengthAbortCalled = true; },
+  }),
+});
+assert.equal(contentLengthTruncatedFetch.truncated, true);
+assert.equal(contentLengthTruncatedFetch.bytesRead, 8);
+assert.equal(contentLengthTruncatedFetch.text, "12345678");
+assert.equal(contentLengthTruncatedFetch.declaredContentLength, 20);
+assert.equal(contentLengthAbortCalled, true);
+
+let streamingAbortCalled = false;
+const streamingTruncatedFetch = await fetchPublicUrlText("https://www.shafaq.com/", {
+  resolveHost: safeResolver,
+  maxBytes: 8,
+  truncateOnLimit: true,
+  requestUrl: async () => ({
+    status: 200,
+    headers: headers(),
+    body: (async function* () {
+      yield "1234";
+      yield "56789";
+    })(),
+    abort: () => { streamingAbortCalled = true; },
+  }),
+});
+assert.equal(streamingTruncatedFetch.truncated, true);
+assert.equal(streamingTruncatedFetch.bytesRead, 8);
+assert.equal(streamingTruncatedFetch.text, "12345678");
+assert.equal(streamingAbortCalled, true);
+
+await assert.rejects(
+  () => fetchPublicUrlText("https://www.shafaq.com/rss.xml", {
+    resolveHost: safeResolver,
+    maxBytes: 8,
+    requestUrl: async () => ({
+      status: 200,
+      headers: headers({ "content-length": "20" }),
+      body: (async function* () { yield "<rss>too-large</rss>"; })(),
+    }),
+  }),
+  (err: any) => err.code === "response_too_large",
+);
 
 const stalledBodyValidation = await validatePublisherChannel(created.profile as any, rssChannel as any, {
   resolveHost: safeResolver,

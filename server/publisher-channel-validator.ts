@@ -46,6 +46,7 @@ export type ChannelValidatorDeps = {
   timeoutMs?: number;
   maxRedirects?: number;
   maxBytes?: number;
+  truncateOnLimit?: boolean;
 };
 
 const NETWORK_CHANNEL_TYPES = new Set<PublisherChannelType>(["website", "rss"]);
@@ -364,9 +365,22 @@ function publisherDomainCompatible(finalUrl: URL, publisher: PublisherProfile): 
   return Boolean(finalDomain && (finalDomain === publisherDomain || finalDomain.endsWith(`.${publisherDomain}`)));
 }
 
-async function readResponseTextLimited(response: ValidatorHttpResponse, maxBytes: number, signal: AbortSignal): Promise<string> {
+type LimitedReadResult = {
+  text: string;
+  bytesRead: number;
+  truncated: boolean;
+  declaredContentLength: number | null;
+};
+
+function declaredContentLength(response: ValidatorHttpResponse): number | null {
   const contentLength = response.headers.get("content-length");
-  if (contentLength && Number.isFinite(Number(contentLength)) && Number(contentLength) > maxBytes) {
+  const parsed = contentLength ? Number(contentLength) : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+async function readResponseTextLimited(response: ValidatorHttpResponse, maxBytes: number, signal: AbortSignal, truncateOnLimit = false): Promise<LimitedReadResult> {
+  const declaredLength = declaredContentLength(response);
+  if (declaredLength !== null && declaredLength > maxBytes && !truncateOnLimit) {
     response.abort?.();
     throw validationError("Validation response is too large.", "response_too_large");
   }
@@ -374,26 +388,47 @@ async function readResponseTextLimited(response: ValidatorHttpResponse, maxBytes
   if (response.body) {
     const chunks: Buffer[] = [];
     let total = 0;
+    let truncated = Boolean(declaredLength !== null && declaredLength > maxBytes && truncateOnLimit);
     const abort = () => response.abort?.();
     signal.addEventListener("abort", abort, { once: true });
     try {
       for await (const chunk of response.body) {
         if (signal.aborted) throw validationError("Validation timed out.", "timeout");
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        total += buffer.length;
-        if (total > maxBytes) {
+        if (total + buffer.length > maxBytes) {
+          if (!truncateOnLimit) {
+            response.abort?.();
+            throw validationError("Validation response exceeded size limit.", "response_too_large");
+          }
+          const remaining = Math.max(0, maxBytes - total);
+          if (remaining > 0) {
+            chunks.push(buffer.subarray(0, remaining));
+            total += remaining;
+          }
+          truncated = true;
           response.abort?.();
-          throw validationError("Validation response exceeded size limit.", "response_too_large");
+          break;
         }
+        total += buffer.length;
         chunks.push(buffer);
       }
-      return Buffer.concat(chunks, total).toString("utf8");
+      return {
+        text: Buffer.concat(chunks, total).toString("utf8"),
+        bytesRead: total,
+        truncated,
+        declaredContentLength: declaredLength,
+      };
     } finally {
       signal.removeEventListener("abort", abort);
     }
   }
 
-  return "";
+  return {
+    text: "",
+    bytesRead: 0,
+    truncated: Boolean(declaredLength !== null && declaredLength > maxBytes && truncateOnLimit),
+    declaredContentLength: declaredLength,
+  };
 }
 
 export type SafeTextFetchResult = {
@@ -404,6 +439,9 @@ export type SafeTextFetchResult = {
   approvedAddressFamily: number;
   contentType: string | null;
   elapsedMs: number;
+  bytesRead: number;
+  truncated: boolean;
+  declaredContentLength: number | null;
 };
 
 export async function fetchPublicUrlText(
@@ -416,6 +454,7 @@ export async function fetchPublicUrlText(
     timeoutMs: deps.timeoutMs ?? 8000,
     maxRedirects: deps.maxRedirects ?? 3,
     maxBytes: deps.maxBytes ?? 256 * 1024,
+    truncateOnLimit: deps.truncateOnLimit ?? false,
   };
   const deadline = new ValidationDeadline(mergedDeps.timeoutMs);
   const started = Date.now();
@@ -423,15 +462,18 @@ export async function fetchPublicUrlText(
     const parsed = parseUrl(value);
     if (!parsed) throw validationError("Invalid validation URL.", "invalid_url");
     const { response, finalUrl, redirectCount, approvedAddress } = await fetchWithSafeRedirects(parsed, mergedDeps, deadline.signal, deps.accept);
-    const text = await readResponseTextLimited(response, mergedDeps.maxBytes, deadline.signal);
+    const body = await readResponseTextLimited(response, mergedDeps.maxBytes, deadline.signal, mergedDeps.truncateOnLimit);
     return {
-      text,
+      text: body.text,
       statusCode: response.status,
       finalUrl: sanitizeUrlForEvidence(finalUrl.toString()),
       redirectCount,
       approvedAddressFamily: net.isIP(approvedAddress),
       contentType: response.headers.get("content-type"),
       elapsedMs: Date.now() - started,
+      bytesRead: body.bytesRead,
+      truncated: body.truncated,
+      declaredContentLength: body.declaredContentLength,
     };
   } finally {
     deadline.clear();
@@ -450,6 +492,7 @@ export async function validatePublisherChannel(
     timeoutMs: deps.timeoutMs ?? 5000,
     maxRedirects: deps.maxRedirects ?? 3,
     maxBytes: deps.maxBytes ?? 64 * 1024,
+    truncateOnLimit: false,
   };
   const deadline = new ValidationDeadline(mergedDeps.timeoutMs);
 
@@ -536,8 +579,8 @@ export async function validatePublisherChannel(
     }
     if (channelType === "rss") {
       try {
-        const text = await readResponseTextLimited(response, mergedDeps.maxBytes, deadline.signal);
-        if (!/<(rss|feed|rdf:RDF)(\s|>)/i.test(text)) {
+        const body = await readResponseTextLimited(response, mergedDeps.maxBytes, deadline.signal);
+        if (!/<(rss|feed|rdf:RDF)(\s|>)/i.test(body.text)) {
           return {
             validationStatus: "invalid",
             reason: "rss_atom_structure_not_found",

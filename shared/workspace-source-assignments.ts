@@ -225,6 +225,30 @@ export function evaluateAssignmentTestOutcome(input: {
   return { status: "passed" as const, reason: "thresholds_met" };
 }
 
+export function nextWorkspaceSourceAssignmentStatusAfterTest(input: {
+  currentStatus: WorkspaceSourceAssignmentStatus | string;
+  testType: WorkspaceSourceAssignmentTestType | string;
+  runStatus: WorkspaceSourceAssignmentRunStatus | string;
+}): WorkspaceSourceAssignmentStatus {
+  const current = WORKSPACE_SOURCE_ASSIGNMENT_STATUSES.includes(input.currentStatus as WorkspaceSourceAssignmentStatus)
+    ? input.currentStatus as WorkspaceSourceAssignmentStatus
+    : "draft";
+  if (current === "active" || current === "paused" || current === "archived" || current === "ready") return current;
+  if (input.testType === "connectivity") return current === "draft" ? "testing" : current;
+  if ((input.testType === "relevance" || input.testType === "full") && input.runStatus === "passed") return "ready";
+  return current === "draft" ? "testing" : current;
+}
+
+export function nextWorkspaceSourceAssignmentStatusAfterWarningApproval(input: {
+  currentStatus: WorkspaceSourceAssignmentStatus | string;
+}): WorkspaceSourceAssignmentStatus {
+  const current = WORKSPACE_SOURCE_ASSIGNMENT_STATUSES.includes(input.currentStatus as WorkspaceSourceAssignmentStatus)
+    ? input.currentStatus as WorkspaceSourceAssignmentStatus
+    : "draft";
+  if (current === "draft" || current === "testing" || current === "active") return "ready";
+  return current;
+}
+
 export type ProvisionabilityResult = {
   provisionable: boolean;
   manualOnly: boolean;

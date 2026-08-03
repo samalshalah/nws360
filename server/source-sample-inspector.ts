@@ -3,7 +3,7 @@ import * as cheerio from "cheerio";
 import RssParser from "rss-parser";
 import type { PublisherChannel, Source } from "@shared/schema";
 import { getGoogleNewsEdition } from "@shared/google-news-regions";
-import { normalizeWebsiteCollectorConfig } from "@shared/source-collector";
+import { normalizeWebsiteCollectorConfig, type WebsiteCollectorConfig } from "@shared/source-collector";
 import { filterSourceItems, normalizeSourceFilterConfig } from "@shared/source-filter";
 import {
   fetchPublicUrlText,
@@ -46,9 +46,13 @@ export type OperationalSourceInspectionResult = {
     timingMs?: number | null;
     contentType?: string | null;
     approvedAddressFamily?: number | null;
+    bytesRead?: number | null;
+    responseTruncated?: boolean | null;
+    declaredContentLength?: number | null;
     articleInsertions: 0;
     appearancesCreated: 0;
     rejectedItemsCreated: 0;
+    sourceFetchLogsCreated: 0;
     processingJobsCreated: 0;
   };
   items: OperationalSourceSampleItem[];
@@ -76,6 +80,10 @@ const parser = new RssParser({
 
 const RSS_ACCEPT = "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.5";
 const HTML_ACCEPT = "text/html, application/xhtml+xml, application/rss+xml, application/atom+xml, application/xml;q=0.8, */*;q=0.5";
+const DEFAULT_STRICT_FETCH_BYTES = 256 * 1024;
+const HTML_INSPECTION_MAX_BYTES = 1024 * 1024;
+const MAX_JSON_LD_SCRIPT_BYTES = 96 * 1024;
+const MAX_JSON_LD_TOTAL_BYTES = 192 * 1024;
 const SOCIAL_SOURCE_TYPES = new Set(["facebook", "twitter", "x", "instagram", "telegram", "youtube", "tiktok", "linkedin"]);
 const MANUAL_CHANNEL_TYPES = new Set(["television", "radio", "podcast", "other"]);
 
@@ -222,12 +230,256 @@ function mapFeedItems(feed: any, finalUrl: string, options: { googleNews?: boole
   }).filter((item: OperationalSourceSampleItem) => item.url && item.title.length >= 3);
 }
 
-function websiteItemsFromHtml(html: string, finalUrl: string, limit: number): OperationalSourceSampleItem[] {
-  const $ = cheerio.load(html);
+function selectorConfigurationError(field: string, error?: unknown) {
+  return Object.assign(new Error(`Invalid website selector configuration for ${field}.`), {
+    code: "invalid_selector_configuration",
+    cause: error,
+  });
+}
+
+function safeSelect($: ReturnType<typeof cheerio.load>, selector: string, field: string) {
+  try {
+    return $(selector);
+  } catch (error) {
+    throw selectorConfigurationError(field, error);
+  }
+}
+
+function safeFind(scope: cheerio.Cheerio<any>, selector: string, field: string) {
+  try {
+    return scope.find(selector);
+  } catch (error) {
+    throw selectorConfigurationError(field, error);
+  }
+}
+
+function firstSrcsetUrl(value: unknown): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.split(",")[0]?.trim().split(/\s+/)[0] || "";
+}
+
+function textFromElement(element: cheerio.Cheerio<any>): string {
+  return cleanText(
+    element.attr("aria-label")
+    || element.attr("title")
+    || element.attr("alt")
+    || element.attr("content")
+    || element.text(),
+  );
+}
+
+function dateFromElement(element: cheerio.Cheerio<any>): string {
+  return cleanText(element.attr("datetime") || element.attr("content") || element.attr("title") || element.text());
+}
+
+function imageUrlFromElement(element: cheerio.Cheerio<any>, finalUrl: string): string | null {
+  return normalizeUrl(
+    element.attr("src")
+    || element.attr("data-src")
+    || element.attr("data-original")
+    || firstSrcsetUrl(element.attr("srcset")),
+    finalUrl,
+  );
+}
+
+function dedupeItems(items: OperationalSourceSampleItem[], limit: number): OperationalSourceSampleItem[] {
   const seen = new Set<string>();
+  const result: OperationalSourceSampleItem[] = [];
+  for (const item of items) {
+    if (!item.url || seen.has(item.url)) continue;
+    seen.add(item.url);
+    result.push(item);
+    if (result.length >= limit * 3) break;
+  }
+  return result;
+}
+
+function jsonLdArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  return value == null ? [] : [value];
+}
+
+function jsonLdString(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return jsonLdString(record["@id"] || record.url || record.name || record.text);
+  }
+  return "";
+}
+
+function jsonLdTypes(value: unknown): string[] {
+  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return jsonLdArray(record["@type"]).map((type) => String(type || "").toLowerCase());
+}
+
+function flattenJsonLd(value: unknown, result: Record<string, unknown>[] = [], depth = 0): Record<string, unknown>[] {
+  if (depth > 4 || result.length >= 80) return result;
+  for (const item of jsonLdArray(value)) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    result.push(record);
+    if (record["@graph"]) flattenJsonLd(record["@graph"], result, depth + 1);
+    if (record.mainEntity) flattenJsonLd(record.mainEntity, result, depth + 1);
+    if (record.itemListElement) flattenJsonLd(record.itemListElement, result, depth + 1);
+  }
+  return result;
+}
+
+function jsonLdImage(value: unknown, finalUrl: string): string | null {
+  for (const candidate of jsonLdArray(value)) {
+    const raw = typeof candidate === "string" ? candidate : jsonLdString(candidate);
+    const normalized = normalizeUrl(raw, finalUrl);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function structuredArticlesFromJsonLd($: ReturnType<typeof cheerio.load>, finalUrl: string, limit: number): OperationalSourceSampleItem[] {
   const items: OperationalSourceSampleItem[] = [];
-  $("article a[href], main a[href], [role='main'] a[href], h1 a[href], h2 a[href], h3 a[href]").each((_, element) => {
+  let totalBytes = 0;
+  $("script[type='application/ld+json']").each((_, element) => {
+    if (items.length >= limit * 3 || totalBytes >= MAX_JSON_LD_TOTAL_BYTES) return false;
+    const raw = $(element).contents().text().trim();
+    const bytes = Buffer.byteLength(raw);
+    if (!raw || bytes > MAX_JSON_LD_SCRIPT_BYTES || totalBytes + bytes > MAX_JSON_LD_TOTAL_BYTES) return;
+    totalBytes += bytes;
+    try {
+      for (const record of flattenJsonLd(JSON.parse(raw))) {
+        if (items.length >= limit * 3) break;
+        const types = jsonLdTypes(record);
+        if (!types.some((type) => ["newsarticle", "article", "blogposting"].includes(type))) continue;
+        const title = cleanText(record.headline || record.name);
+        const url = normalizeUrl(jsonLdString(record.url || record.mainEntityOfPage), finalUrl);
+        if (!title || title.length < 8 || !url) continue;
+        items.push({
+          title,
+          url,
+          content: cleanText(record.description || record.articleBody || title),
+          publishedAt: parseDate(record.datePublished || record.dateModified),
+          image: jsonLdImage(record.image, finalUrl),
+          imageTitle: null,
+        });
+      }
+    } catch {
+      return;
+    }
+  });
+  return dedupeItems(items, limit);
+}
+
+function configuredSelectorItems(
+  $: ReturnType<typeof cheerio.load>,
+  finalUrl: string,
+  limit: number,
+  selectors: NonNullable<WebsiteCollectorConfig["selectors"]>,
+): OperationalSourceSampleItem[] {
+  if (!selectors.item) return [];
+  const items: OperationalSourceSampleItem[] = [];
+  safeSelect($, selectors.item, "item").each((_, element) => {
     if (items.length >= limit * 3) return false;
+    const container = $(element);
+    const link = selectors.link
+      ? safeFind(container, selectors.link, "link").first()
+      : container.is("a[href]")
+        ? container
+        : container.find("a[href]").first();
+    const href = normalizeUrl(link.attr("href") || "", finalUrl);
+    if (!href) return;
+    const titleElement = selectors.title ? safeFind(container, selectors.title, "title").first() : container.find("h1,h2,h3,h4,[class*='title'],[class*='headline']").first();
+    const summaryElement = selectors.summary ? safeFind(container, selectors.summary, "summary").first() : container.find("p,[class*='summary'],[class*='excerpt'],[class*='description']").first();
+    const imageElement = selectors.image ? safeFind(container, selectors.image, "image").first() : container.find("img").first();
+    const dateElement = selectors.date ? safeFind(container, selectors.date, "date").first() : container.find("time,[datetime]").first();
+    const title = cleanText(textFromElement(titleElement) || textFromElement(link));
+    if (title.length < 8 || title.length > 500) return;
+    const summary = cleanText(textFromElement(summaryElement)) || title;
+    items.push({
+      title,
+      url: href,
+      content: summary,
+      publishedAt: parseDate(dateFromElement(dateElement)),
+      image: imageUrlFromElement(imageElement, finalUrl),
+      imageTitle: cleanText(imageElement.attr("alt") || imageElement.attr("title")) || null,
+    });
+  });
+  return dedupeItems(items, limit);
+}
+
+const NAV_TEXT_RE = /^(home|homepage|about|contact|privacy|terms|login|log in|sign in|sign up|register|registration|search|menu|category|categories|section|sections|tag|tags|author|authors|share|shares|subscribe|advertise|archive|archives|rss|feed|facebook|twitter|x|instagram|youtube|telegram|linkedin|english|arabic|kurdish|read more|more|more news|latest|all news|عربي|العربية|كوردی|فارسی)$/i;
+const UTILITY_SEGMENTS = new Set(["about", "contact", "privacy", "terms", "login", "signin", "signup", "register", "registration", "search", "tag", "tags", "author", "authors", "category", "categories", "section", "sections", "archive", "archives", "page", "pages"]);
+const LANGUAGE_SEGMENTS = new Set(["ar", "en", "ku", "ckb", "fr", "fa", "tr"]);
+const SOCIAL_HOST_RE = /(^|\.)((facebook|fb|instagram|twitter|x|youtube|youtu|tiktok|telegram|t|linkedin|whatsapp)\.com|youtu\.be|t\.me)$/i;
+const STATIC_ASSET_RE = /\.(?:avif|bmp|css|csv|docx?|gif|ico|jpe?g|js|json|mp3|mp4|pdf|png|svg|txt|webm|webp|xlsx?|xml|zip)$/i;
+const ARTICLE_SIGNAL_RE = /(?:news|article|story|stories|press|release|releases|media|public-release|politic|econom|business|security|iraq|kurdistan|government|statement|announcement)/i;
+const DATE_OR_ID_RE = /(?:\/(?:19|20)\d{2}(?:[\/-]|\b)|\/\d{4,}(?:[\/.-]|$)|[a-f0-9]{10,})/i;
+
+function normalizedHost(value: string): string {
+  try {
+    return new URL(value).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function samePublisherDomain(candidateUrl: string, finalUrl: string): boolean {
+  const candidate = normalizedHost(candidateUrl);
+  const base = normalizedHost(finalUrl);
+  return Boolean(candidate && base && (candidate === base || candidate.endsWith(`.${base}`) || base.endsWith(`.${candidate}`)));
+}
+
+function pathSegments(url: URL): string[] {
+  return url.pathname.split("/").map((part) => {
+    try {
+      return decodeURIComponent(part).trim().toLowerCase();
+    } catch {
+      return part.trim().toLowerCase();
+    }
+  }).filter(Boolean);
+}
+
+function isUtilityArticleUrl(urlValue: string, title: string): boolean {
+  try {
+    const parsed = new URL(urlValue);
+    const segments = pathSegments(parsed);
+    if (parsed.hash || segments.length === 0) return true;
+    if (SOCIAL_HOST_RE.test(parsed.hostname)) return true;
+    if (STATIC_ASSET_RE.test(parsed.pathname)) return true;
+    if (NAV_TEXT_RE.test(title)) return true;
+    if (segments.length === 1 && LANGUAGE_SEGMENTS.has(segments[0])) return true;
+    const nonLanguageSegments = segments.filter((segment) => !LANGUAGE_SEGMENTS.has(segment));
+    if (nonLanguageSegments.length <= 2 && nonLanguageSegments.some((segment) => UTILITY_SEGMENTS.has(segment))) return true;
+    if (nonLanguageSegments.length <= 1 && nonLanguageSegments.some((segment) => /^(news|media|press|releases|stories|articles)$/i.test(segment))) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function articleLinkScore(item: OperationalSourceSampleItem, finalUrl: string, container: cheerio.Cheerio<any>): number {
+  let score = 0;
+  if (samePublisherDomain(item.url, finalUrl)) score += 2;
+  try {
+    const parsed = new URL(item.url);
+    if (ARTICLE_SIGNAL_RE.test(parsed.pathname)) score += 3;
+    if (DATE_OR_ID_RE.test(parsed.pathname)) score += 2;
+  } catch {
+    return -20;
+  }
+  if (container.is("article") || container.closest("article").length) score += 2;
+  if (container.find("time,[datetime]").length) score += 1;
+  if (cleanText(item.content) && item.content !== item.title) score += 1;
+  if (item.title.length >= 28) score += 1;
+  if (!samePublisherDomain(item.url, finalUrl)) score -= 4;
+  if (isUtilityArticleUrl(item.url, item.title)) score -= 10;
+  return score;
+}
+
+function genericItemsFromHtml($: ReturnType<typeof cheerio.load>, finalUrl: string, limit: number): OperationalSourceSampleItem[] {
+  const seen = new Set<string>();
+  const candidates: Array<{ score: number; item: OperationalSourceSampleItem }> = [];
+  $("article a[href], main a[href], [role='main'] a[href], [class*='news'] a[href], [class*='article'] a[href], [class*='story'] a[href], [class*='card'] a[href], h1 a[href], h2 a[href], h3 a[href]").each((_, element) => {
+    if (candidates.length >= limit * 8) return false;
     const link = $(element);
     const href = normalizeUrl(link.attr("href") || "", finalUrl);
     if (!href || seen.has(href)) return;
@@ -236,12 +488,25 @@ function websiteItemsFromHtml(html: string, finalUrl: string, limit: number): Op
     if (title.length < 8 || title.length > 500) return;
     const summary = cleanText(container.find("p,[class*='summary'],[class*='excerpt'],[class*='description']").first().text()) || title;
     const published = container.find("time,[datetime]").first().attr("datetime") || container.find("time").first().text();
-    const image = normalizeUrl(container.find("img").first().attr("src") || container.find("img").first().attr("data-src") || "", finalUrl);
+    const image = imageUrlFromElement(container.find("img").first(), finalUrl);
     const imageTitle = cleanText(container.find("img").first().attr("alt") || container.find("img").first().attr("title")) || null;
+    const item = { title, url: href, content: summary, publishedAt: parseDate(published), image, imageTitle };
+    const score = articleLinkScore(item, finalUrl, container);
+    if (score < 3) return;
     seen.add(href);
-    items.push({ title, url: href, content: summary, publishedAt: parseDate(published), image, imageTitle });
+    candidates.push({ score, item });
   });
-  return items;
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates.map((candidate) => candidate.item).slice(0, limit * 3);
+}
+
+function websiteItemsFromHtml(html: string, finalUrl: string, limit: number, selectors?: WebsiteCollectorConfig["selectors"]): OperationalSourceSampleItem[] {
+  const $ = cheerio.load(html);
+  const structured = structuredArticlesFromJsonLd($, finalUrl, limit);
+  if (selectors?.item) {
+    return dedupeItems([...structured, ...configuredSelectorItems($, finalUrl, limit, selectors)], limit);
+  }
+  return dedupeItems([...structured, ...genericItemsFromHtml($, finalUrl, limit)], limit);
 }
 
 function rssAlternateUrls(html: string, finalUrl: string, configuredFeedUrl?: string | null): string[] {
@@ -307,10 +572,14 @@ function summarizeFailure(source: Source, channel: PublisherChannel | null | und
       rawItemCount: 0,
       itemCount: 0,
       filteredOutCount: 0,
+      bytesRead: null,
+      responseTruncated: null,
+      declaredContentLength: null,
       articleInsertions: 0,
       appearancesCreated: 0,
       rejectedItemsCreated: 0,
       processingJobsCreated: 0,
+      sourceFetchLogsCreated: 0,
     },
     items: [],
     warnings: [],
@@ -341,13 +610,20 @@ export async function inspectOperationalSourceSample(
     requestUrl: options.requestUrl,
     timeoutMs: options.timeoutMs ?? 8000,
     maxRedirects: options.maxRedirects ?? 3,
-    maxBytes: options.maxBytes ?? 256 * 1024,
+    maxBytes: options.maxBytes ?? DEFAULT_STRICT_FETCH_BYTES,
+    truncateOnLimit: false,
+  };
+  const htmlFetchDeps: ChannelValidatorDeps = {
+    ...fetchDeps,
+    maxBytes: Math.min(options.maxBytes ?? HTML_INSPECTION_MAX_BYTES, HTML_INSPECTION_MAX_BYTES),
+    truncateOnLimit: true,
   };
 
   try {
     let fetched: SafeTextFetchResult;
     let rawItems: OperationalSourceSampleItem[] = [];
     let structure = "unknown";
+    const warnings: string[] = [];
     const requestedUrl = chosen.url;
 
     if (chosen.type === "rss" || chosen.type === "rss_app" || chosen.type === "google_news") {
@@ -357,14 +633,16 @@ export async function inspectOperationalSourceSample(
       rawItems = mapFeedItems(feed, fetched.finalUrl, { googleNews: chosen.type === "google_news" });
       structure = /<feed[\s>]/i.test(fetched.text) ? "atom" : "rss";
     } else {
-      fetched = await fetchText(requestedUrl, { ...fetchDeps, accept: HTML_ACCEPT });
+      fetched = await fetchText(requestedUrl, { ...htmlFetchDeps, accept: HTML_ACCEPT });
       if (fetched.statusCode < 200 || fetched.statusCode >= 400) throw Object.assign(new Error(`HTTP ${fetched.statusCode}`), { code: `http_${fetched.statusCode}` });
+      if (fetched.truncated) warnings.push("response_truncated");
       const config = normalizeWebsiteCollectorConfig(source.collectorConfig);
       if (config.strategy !== "scrape") {
         for (const feedUrl of rssAlternateUrls(fetched.text, fetched.finalUrl, config.feedUrl)) {
           try {
             const feedFetched = await fetchText(feedUrl, { ...fetchDeps, accept: RSS_ACCEPT });
             if (feedFetched.statusCode < 200 || feedFetched.statusCode >= 400) continue;
+            if (feedFetched.truncated) continue;
             const feed = await parser.parseString(feedFetched.text);
             rawItems = mapFeedItems(feed, feedFetched.finalUrl);
             if (rawItems.length) {
@@ -378,7 +656,7 @@ export async function inspectOperationalSourceSample(
         }
       }
       if (rawItems.length === 0) {
-        rawItems = websiteItemsFromHtml(fetched.text, fetched.finalUrl, limit);
+        rawItems = websiteItemsFromHtml(fetched.text, fetched.finalUrl, limit, config.selectors);
         structure = "html_links";
       }
     }
@@ -406,9 +684,13 @@ export async function inspectOperationalSourceSample(
         timingMs: fetched.elapsedMs,
         contentType: fetched.contentType,
         approvedAddressFamily: fetched.approvedAddressFamily,
+        bytesRead: fetched.bytesRead,
+        responseTruncated: fetched.truncated,
+        declaredContentLength: fetched.declaredContentLength,
         articleInsertions: 0,
         appearancesCreated: 0,
         rejectedItemsCreated: 0,
+        sourceFetchLogsCreated: 0,
         processingJobsCreated: 0,
       },
       items: accepted.slice(0, limit).map((item) => ({
@@ -417,7 +699,7 @@ export async function inspectOperationalSourceSample(
         content: cleanText(item.content).slice(0, 2000),
         url: sanitizeUrlForEvidence(item.url),
       })),
-      warnings: accepted.length === 0 ? ["no_items_after_source_filters"] : [],
+      warnings: accepted.length === 0 ? [...warnings, "no_items_after_source_filters"] : warnings,
       errorCode: null,
       errorMessage: null,
     };

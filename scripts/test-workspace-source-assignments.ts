@@ -14,6 +14,8 @@ import {
   calculateAssignmentTestRates,
   evaluateAssignmentTestOutcome,
   evaluateChannelProvisionability,
+  nextWorkspaceSourceAssignmentStatusAfterTest,
+  nextWorkspaceSourceAssignmentStatusAfterWarningApproval,
   normalizeAssignmentThresholds,
   summarizeAssignmentSample,
 } from "../shared/workspace-source-assignments";
@@ -296,6 +298,9 @@ class AssignmentRuntimeHarness {
   tests = new Map<number, any>();
   auditLogs: any[] = [];
   articles: any[] = [];
+  articleAppearances: any[] = [];
+  rejectedIngestionItems: any[] = [];
+  sourceFetchLogs: any[] = [];
   processingJobs: any[] = [];
   nextSourceId = 100;
   nextAssignmentId = 200;
@@ -308,6 +313,9 @@ class AssignmentRuntimeHarness {
       tests: new Map(this.tests),
       auditLogs: [...this.auditLogs],
       articles: [...this.articles],
+      articleAppearances: [...this.articleAppearances],
+      rejectedIngestionItems: [...this.rejectedIngestionItems],
+      sourceFetchLogs: [...this.sourceFetchLogs],
       processingJobs: [...this.processingJobs],
       nextSourceId: this.nextSourceId,
       nextAssignmentId: this.nextAssignmentId,
@@ -321,6 +329,9 @@ class AssignmentRuntimeHarness {
     this.tests = snapshot.tests;
     this.auditLogs = snapshot.auditLogs;
     this.articles = snapshot.articles;
+    this.articleAppearances = snapshot.articleAppearances;
+    this.rejectedIngestionItems = snapshot.rejectedIngestionItems;
+    this.sourceFetchLogs = snapshot.sourceFetchLogs;
     this.processingJobs = snapshot.processingJobs;
     this.nextSourceId = snapshot.nextSourceId;
     this.nextAssignmentId = snapshot.nextAssignmentId;
@@ -409,6 +420,9 @@ class AssignmentRuntimeHarness {
       publisherChannelId: assignment.publisherChannelId,
       testType,
       status,
+      sourceValidationIdentity: assignment.sourceValidationIdentity,
+      assignmentConfigIdentity: assignment.assignmentConfigIdentity,
+      relevanceProfileVersion: assignment.relevanceProfileVersion,
       sampleCount: testType === "connectivity" ? 2 : 4,
       directScopeMatchCount: status === "failed" ? 0 : 3,
       materialScopeImpactCount: 0,
@@ -420,15 +434,32 @@ class AssignmentRuntimeHarness {
     });
     assignment.latestTestRunId = test.id;
     assignment.testStatus = status;
-    assignment.status = assignment.status === "draft" ? "testing" : assignment.status;
+    assignment.status = nextWorkspaceSourceAssignmentStatusAfterTest({
+      currentStatus: assignment.status,
+      testType,
+      runStatus: status,
+    });
+    if (assignment.status !== "active") assignment.enabled = false;
     return { assignment, test };
   }
 
   assertCanReady(assignmentId: number) {
     const assignment = this.assignments.get(assignmentId);
     const test = assignment?.latestTestRunId ? this.tests.get(assignment.latestTestRunId) : null;
+    if (!assignment) throw this.storageError("assignment_not_found", 404);
+    if (assignment?.testStatus === "stale") throw this.storageError("source_assignment_tests_stale", 409);
     if (!test || !["relevance", "full"].includes(test.testType) || !["passed", "warning"].includes(test.status)) {
       throw this.storageError("source_assignment_relevance_test_required", 409);
+    }
+    if (test.status === "warning" && !assignment.warningApprovalReason) {
+      throw this.storageError("source_assignment_warning_approval_required", 409);
+    }
+    if (
+      test.sourceValidationIdentity !== assignment.sourceValidationIdentity
+      || test.assignmentConfigIdentity !== assignment.assignmentConfigIdentity
+      || test.relevanceProfileVersion !== assignment.relevanceProfileVersion
+    ) {
+      throw this.storageError("source_assignment_tests_stale", 409);
     }
     assignment.status = "ready";
     assignment.enabled = false;
@@ -437,6 +468,10 @@ class AssignmentRuntimeHarness {
 
   activate(assignmentId: number) {
     const assignment = this.assertCanReady(assignmentId);
+    const client = this.clients.get(assignment.clientId);
+    const workspace = this.workspaces.get(assignment.workspaceId);
+    if (!client?.active || client.lifecycleStatus !== "active") throw this.storageError("client_inactive", 409);
+    if (!workspace?.active || workspace.status !== "active") throw this.storageError("workspace_inactive", 409);
     assignment.status = "active";
     assignment.enabled = true;
     this.recomputeSource(assignment.sourceId);
@@ -461,6 +496,9 @@ class AssignmentRuntimeHarness {
       throw this.storageError("warning_approval_not_allowed", 409);
     }
     assignment.warningApprovalReason = reason;
+    assignment.status = nextWorkspaceSourceAssignmentStatusAfterWarningApproval({ currentStatus: assignment.status });
+    assignment.enabled = false;
+    this.recomputeSource(assignment.sourceId);
     return assignment;
   }
 
@@ -489,6 +527,28 @@ class AssignmentRuntimeHarness {
     ));
     return source.active;
   }
+
+  readinessCounts(clientId: number) {
+    const assignments = [...this.assignments.values()].filter((assignment) => assignment.clientId === clientId && assignment.status !== "archived");
+    const isCurrent = (assignment: any) => {
+      const test = assignment.latestTestRunId ? this.tests.get(assignment.latestTestRunId) : null;
+      return Boolean(test
+        && test.sourceValidationIdentity === assignment.sourceValidationIdentity
+        && test.assignmentConfigIdentity === assignment.assignmentConfigIdentity
+        && test.relevanceProfileVersion === assignment.relevanceProfileVersion);
+    };
+    const sourceAssignmentsConfigured = assignments.filter((assignment) => (
+      ["ready", "active"].includes(assignment.status)
+      && assignment.sourceId
+      && isCurrent(assignment)
+      && (
+        assignment.testStatus === "passed"
+        || (assignment.testStatus === "warning" && assignment.warningApprovalReason)
+      )
+    )).length;
+    const sourceAssignmentsBlocked = assignments.filter((assignment) => ["untested", "failed", "stale"].includes(assignment.testStatus)).length;
+    return { sourceAssignmentsConfigured, sourceAssignmentsBlocked };
+  }
 }
 
 const runtime = new AssignmentRuntimeHarness();
@@ -508,27 +568,57 @@ assert.equal(sharedSource.source.id, created.source.id, "one source can be assig
 assert.throws(() => runtime.createAssignment(4, 40, 9, { sourceId: created.source.id }), /publisher_not_approved_for_client|source_assignment_client_mismatch/);
 const connectivity = runtime.recordTest(created.assignment.id, "connectivity");
 assert.equal(connectivity.test.testType, "connectivity");
+assert.equal(connectivity.assignment.status, "testing", "connectivity pass keeps assignment non-ready");
+assert.equal(connectivity.assignment.enabled, false, "connectivity pass does not enable assignment");
 assert.equal(runtime.articles.length, 0);
+assert.equal(runtime.articleAppearances.length, 0);
+assert.equal(runtime.rejectedIngestionItems.length, 0);
+assert.equal(runtime.sourceFetchLogs.length, 0);
 assert.equal(runtime.processingJobs.length, 0);
 assert.throws(() => runtime.assertCanReady(created.assignment.id), /source_assignment_relevance_test_required/);
 const relevance = runtime.recordTest(created.assignment.id, "relevance", "warning");
 assert.equal(relevance.test.publisherChannelId, created.assignment.publisherChannelId);
+assert.equal(relevance.assignment.status, "testing", "warning remains non-ready until approval");
+assert.throws(() => runtime.assertCanReady(created.assignment.id), /source_assignment_warning_approval_required/);
 runtime.approveWarning(created.assignment.id, "Known source with small but relevant sample");
 assert.equal(runtime.assignments.get(created.assignment.id)?.warningApprovalReason, "Known source with small but relevant sample");
+assert.equal(runtime.assignments.get(created.assignment.id)?.status, "ready", "approved warning may become ready");
+assert.equal(runtime.assignments.get(created.assignment.id)?.enabled, false, "approved warning never enables assignment");
+assert.equal(runtime.sources.get(created.source.id)?.active, false, "approved warning does not activate source");
 runtime.activate(created.assignment.id);
 assert.equal(runtime.sources.get(created.source.id)?.active, true);
-runtime.recordTest(sharedSource.assignment.id, "relevance", "passed");
+const passedShared = runtime.recordTest(sharedSource.assignment.id, "relevance", "passed");
+assert.equal(passedShared.assignment.status, "ready", "passed relevance test makes draft/testing assignment ready");
+assert.equal(passedShared.assignment.enabled, false, "passed relevance test does not enable assignment");
+assert.equal(runtime.sources.get(created.source.id)?.active, true, "ready assignment does not alter existing active source state");
 runtime.activate(sharedSource.assignment.id);
 runtime.archiveAssignment(created.assignment.id);
 assert.equal(runtime.sources.get(created.source.id)?.active, true, "shared source remains active while another assignment is active");
 runtime.archiveAssignment(sharedSource.assignment.id);
 assert.equal(runtime.sources.get(created.source.id)?.active, false, "final assignment disables source");
 const stale = runtime.createAssignment(3, 31, 10);
-runtime.recordTest(stale.assignment.id, "full", "passed");
+const passedFull = runtime.recordTest(stale.assignment.id, "full", "passed");
+assert.equal(passedFull.assignment.status, "ready", "passed full test makes draft/testing assignment ready");
+assert.equal(passedFull.assignment.enabled, false, "passed full test does not enable assignment");
+assert.equal(runtime.sources.get(stale.source.id)?.active, false, "passed full test does not activate source");
+assert.equal(runtime.readinessCounts(3).sourceAssignmentsConfigured, 1, "readiness counts the ready current assignment");
 runtime.activate(stale.assignment.id);
 runtime.updateAssignmentConfig(stale.assignment.id);
 assert.equal(runtime.assignments.get(stale.assignment.id)?.testStatus, "stale");
 assert.equal(runtime.assignments.get(stale.assignment.id)?.enabled, false);
+assert.throws(() => runtime.assertCanReady(stale.assignment.id), /source_assignment_tests_stale/);
+assert.equal(runtime.readinessCounts(3).sourceAssignmentsBlocked, 1, "stale assignment is counted as blocked");
+const failed = runtime.createAssignment(3, 30, 10);
+const failedFull = runtime.recordTest(failed.assignment.id, "full", "failed");
+assert.equal(failedFull.assignment.status, "testing", "failed full test remains non-ready");
+assert.equal(runtime.readinessCounts(3).sourceAssignmentsBlocked, 2, "failed current assignment is counted as blocked");
+const inactiveClientAssignment = runtime.createAssignment(4, 40, 19);
+runtime.recordTest(inactiveClientAssignment.assignment.id, "full", "passed");
+runtime.clients.get(4)!.active = false;
+assert.throws(() => runtime.activate(inactiveClientAssignment.assignment.id), /client_inactive/);
+runtime.clients.get(4)!.active = true;
+runtime.workspaces.get(40)!.active = false;
+assert.throws(() => runtime.activate(inactiveClientAssignment.assignment.id), /workspace_inactive/);
 const capturedIdentity = runtime.assignments.get(stale.assignment.id)?.sourceValidationIdentity || "";
 runtime.assignments.get(stale.assignment.id)!.sourceValidationIdentity = "changed";
 assert.throws(() => runtime.completeAfterConcurrentChange(stale.assignment.id, capturedIdentity), /source_assignment_changed_during_test/);
@@ -684,6 +774,20 @@ const rssXml = `<?xml version="1.0"?>
   <item><title>Morocco election coverage</title><link>https://fixture.example/b</link><guid>guid-b</guid><description>Election story outside the target workspace.</description><pubDate>Sat, 01 Aug 2026 07:00:00 GMT</pubDate></item>
 </channel></rss>`;
 
+const safeTextResult = (text: string, finalUrl = "https://fixture.example/", overrides: Record<string, unknown> = {}) => ({
+  text,
+  statusCode: 200,
+  finalUrl,
+  redirectCount: 0,
+  approvedAddressFamily: 4,
+  contentType: "text/html",
+  elapsedMs: 12,
+  bytesRead: Buffer.byteLength(text),
+  truncated: false,
+  declaredContentLength: Buffer.byteLength(text),
+  ...overrides,
+});
+
 const inspected = await inspectOperationalSourceSample(baseSource, channel, {
   resolveHost: async () => [{ address: "93.184.216.34", family: 4 }],
   requestUrl: async () => ({
@@ -717,6 +821,144 @@ const filtered = await inspectOperationalSourceSample({
 assert.equal(filtered.safeSourceFacts.rawItemCount, 2);
 assert.equal(filtered.safeSourceFacts.itemCount, 1);
 assert.equal(filtered.items[0].title, "Baghdad security cooperation expands");
+
+const websiteChannel = {
+  ...channel,
+  channelType: "website",
+  normalizedUrl: "https://fixture.example/",
+  url: "https://fixture.example/",
+} as PublisherChannel;
+const websiteSource = {
+  ...baseSource,
+  name: "Fixture Website",
+  url: "https://fixture.example/",
+  type: "website",
+  collectorConfig: null,
+  publisherChannelId: websiteChannel.id,
+} as Source;
+
+const selectorHtml = `
+<main>
+  <div class="krg-card"><a class="story-link" href="/en/news/iraq-cabinet-meets">Open</a><h2>Baghdad cabinet reviews public services</h2><p class="dek">Iraq public services update from government.</p><img src="/image.jpg" alt="Cabinet meeting"><time datetime="2026-08-03T08:00:00Z"></time></div>
+  <div class="krg-card"><a class="story-link" href="/en/news/security-dialogue">Open</a><h2>Security dialogue continues in Erbil</h2><p class="dek">Kurdistan security talks affecting Iraq.</p><time datetime="2026-08-03T07:00:00Z"></time></div>
+</main>`;
+const selectorInspection = await inspectOperationalSourceSample({
+  ...websiteSource,
+  collectorConfig: {
+    strategy: "scrape",
+    selectors: {
+      item: ".krg-card",
+      link: ".story-link",
+      title: "h2",
+      summary: ".dek",
+      image: "img",
+      date: "time",
+    },
+  },
+} as Source, websiteChannel, {
+  fetchText: async (_url, deps) => {
+    assert.equal(deps.truncateOnLimit, true, "website inspection opts into bounded HTML truncation");
+    assert.equal((deps.maxBytes || 0) <= 1024 * 1024, true, "website inspection uses a hard cap no larger than 1 MiB");
+    return safeTextResult(selectorHtml, "https://fixture.example/");
+  },
+});
+assert.equal(selectorInspection.success, true);
+assert.equal(selectorInspection.safeSourceFacts.rawItemCount, 2);
+assert.equal(selectorInspection.items[0].title, "Baghdad cabinet reviews public services");
+assert.equal(selectorInspection.items[0].image, "https://fixture.example/image.jpg");
+assert.equal(selectorInspection.safeSourceFacts.sourceFetchLogsCreated, 0);
+
+const malformedSelectorInspection = await inspectOperationalSourceSample({
+  ...websiteSource,
+  collectorConfig: { strategy: "scrape", selectors: { item: "article[", link: "a" } },
+} as Source, websiteChannel, {
+  fetchText: async () => safeTextResult(selectorHtml, "https://fixture.example/"),
+});
+assert.equal(malformedSelectorInspection.success, false);
+assert.equal(malformedSelectorInspection.errorCode, "invalid_selector_configuration");
+
+const jsonLdHtml = `
+<html><head><script type="application/ld+json">
+{"@context":"https://schema.org","@type":"NewsArticle","headline":"Iraq oil budget talks continue in Baghdad","url":"/news/2026/08/iraq-oil-budget","description":"Budget talks continue with oil revenue focus.","datePublished":"2026-08-03T09:00:00Z","image":"/oil.jpg"}
+</script></head><body>
+  <nav><a href="/en">English</a><a href="/category/politics">Politics</a></nav>
+  <article><a href="/news/2026/08/security-cooperation">Baghdad security cooperation expands with regional partners</a><p>Regional partners discuss Iraq security.</p><time datetime="2026-08-03T08:30:00Z"></time></article>
+</body></html>`;
+const jsonLdInspection = await inspectOperationalSourceSample(websiteSource, websiteChannel, {
+  fetchText: async () => safeTextResult(jsonLdHtml, "https://fixture.example/"),
+});
+assert.equal(jsonLdInspection.success, true);
+assert.equal(jsonLdInspection.items[0].title, "Iraq oil budget talks continue in Baghdad", "JSON-LD article is preferred before generic anchors");
+assert.equal(jsonLdInspection.items.some((item) => item.title === "English"), false, "language switcher link is rejected");
+assert.equal(jsonLdInspection.items.some((item) => item.url.endsWith("/category/politics")), false, "category-only link is rejected");
+
+const cbiFixture = `
+<main>
+  <nav><a href="/en">English</a><a href="/en/about">About</a><a href="/en/search">Search</a></nav>
+  <section class="latest-news"><a href="/en/news/view/1245">Central Bank of Iraq launches Baghdad payment initiative</a><p>Banking update in Iraq.</p><time datetime="2026-08-02T10:00:00Z"></time></section>
+</main>`;
+const cbiInspection = await inspectOperationalSourceSample(websiteSource, websiteChannel, {
+  fetchText: async () => safeTextResult(cbiFixture, "https://cbi.iq/"),
+});
+assert.equal(cbiInspection.safeSourceFacts.rawItemCount, 1, "CBI-style navigation noise is rejected before relevance scoring");
+assert.equal(cbiInspection.items[0].title, "Central Bank of Iraq launches Baghdad payment initiative");
+
+const unIraqFixture = `
+<main>
+  <a href="https://facebook.com/uniraq">Facebook</a>
+  <a href="/en/tags/global">Global</a>
+  <article><a href="/en/press-release/baghdad-humanitarian-update-2026">UN Iraq reports Baghdad humanitarian coordination update</a><p>Iraq coordination update.</p><time datetime="2026-08-02T09:00:00Z"></time></article>
+</main>`;
+const unIraqInspection = await inspectOperationalSourceSample(websiteSource, websiteChannel, {
+  fetchText: async () => safeTextResult(unIraqFixture, "https://iraq.un.org/en"),
+});
+assert.equal(unIraqInspection.safeSourceFacts.rawItemCount, 1, "UN Iraq fixture rejects social/tag navigation noise");
+assert.equal(unIraqInspection.items[0].title, "UN Iraq reports Baghdad humanitarian coordination update");
+
+let shafaqFeedFetchWasStrict = false;
+const shafaqHtml = `<html><head><link rel="alternate" type="application/rss+xml" href="/rss.xml"></head><body><nav><a href="/ar">Arabic</a></nav></body></html>`;
+const shafaqInspection = await inspectOperationalSourceSample(websiteSource, websiteChannel, {
+  fetchText: async (url, deps) => {
+    if (url.endsWith("/rss.xml")) {
+      shafaqFeedFetchWasStrict = deps.truncateOnLimit === false;
+      return safeTextResult(rssXml, "https://fixture.example/rss.xml", {
+        contentType: "application/rss+xml",
+        bytesRead: Buffer.byteLength(rssXml),
+        declaredContentLength: Buffer.byteLength(rssXml),
+      });
+    }
+    assert.equal(deps.truncateOnLimit, true);
+    return safeTextResult(shafaqHtml, "https://fixture.example/", {
+      truncated: true,
+      bytesRead: 1024 * 1024,
+      declaredContentLength: 2 * 1024 * 1024,
+    });
+  },
+});
+assert.equal(shafaqInspection.success, true);
+assert.equal(shafaqInspection.safeSourceFacts.structure, "discovered_rss", "early RSS metadata is discovered from bounded HTML");
+assert.equal(shafaqFeedFetchWasStrict, true, "discovered RSS feed is fetched with strict complete-body parsing");
+assert.deepEqual(shafaqInspection.warnings, ["response_truncated"]);
+
+const rudawHtml = `
+<main>
+  <article class="story-card"><a href="/english/middleeast/iraq/03082026">Iraq parliament debates budget and oil revenue package</a><p>Latest Iraq political and economy coverage.</p><time datetime="2026-08-03T06:00:00Z"></time></article>
+  <a href="/english">English</a><a href="/about">About</a>
+</main>`;
+const rudawInspection = await inspectOperationalSourceSample(websiteSource, websiteChannel, {
+  fetchText: async (_url, deps) => {
+    assert.equal(deps.truncateOnLimit, true);
+    return safeTextResult(rudawHtml, "https://www.rudaw.net/", {
+      truncated: true,
+      bytesRead: 1024 * 1024,
+      declaredContentLength: 3 * 1024 * 1024,
+    });
+  },
+});
+assert.equal(rudawInspection.success, true);
+assert.equal(rudawInspection.safeSourceFacts.structure, "html_links");
+assert.equal(rudawInspection.safeSourceFacts.responseTruncated, true);
+assert.equal(rudawInspection.items[0].title, "Iraq parliament debates budget and oil revenue package");
 
 const unsafe = await inspectOperationalSourceSample({
   ...baseSource,
