@@ -27,6 +27,13 @@ The migration creates or repairs the publisher catalog schema:
 
 It also adds indexes, uniqueness protections, foreign keys, and check constraints for lifecycle, verification, channel validation, appearance types, and global/client-private ownership consistency.
 
+Additional hardening includes:
+
+- `publisher_profiles.domain_scope_key` with unique scope-aware domain protection
+- alias language backfill to `und` before enforcing null-safe alias uniqueness
+- `articles(id, client_id)`, `sources(id, client_id)`, and `publisher_channels(id, publisher_profile_id)` composite uniqueness
+- composite appearance foreign keys for article/client, source/client, and channel/publisher consistency
+
 ## Dry Run
 
 Dry-run is the default behavior. It performs no writes and reports:
@@ -39,6 +46,10 @@ Dry-run is the default behavior. It performs no writes and reports:
 - missing check constraints
 - incompatible row counts
 - tenant mismatch counts
+- conflicting domain-scope rows
+- aliases that would collapse after null language normalization
+- article appearance tenant mismatches
+- source/channel private-publisher mismatches
 - unsafe partial schema risks
 - table row counts
 - planned SQL statements

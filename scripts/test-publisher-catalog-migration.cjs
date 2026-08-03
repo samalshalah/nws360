@@ -133,7 +133,7 @@ class MockPgClient {
     if (normalized.startsWith("SELECT") && normalized.includes("FROM pg_constraint")) {
       return { rows: [...this.state.constraints].map((conname) => ({ conname })), rowCount: this.state.constraints.size };
     }
-    if (normalized.startsWith("SELECT COUNT(*)::int AS count FROM ")) {
+    if (normalized.startsWith("SELECT COUNT(*)::int AS count FROM ") && !normalized.includes(" JOIN ")) {
       const table = normalized.match(/FROM ([a-z_]+)/)?.[1];
       const rows = this.state.tables[table]?.rows || [];
       if (!normalized.includes(" WHERE ")) return { rows: [{ count: rows.length }], rowCount: 1 };
@@ -145,6 +145,8 @@ class MockPgClient {
       const rows = this.state.tables[table]?.rows || [];
       if (table === "publisher_profiles" && normalized.includes("canonical_key")) return { rows: [{ count: duplicateCount(rows, (row) => String(row.canonical_key || "").trim()) }], rowCount: 1 };
       if (table === "publisher_profiles" && normalized.includes("normalized_primary_domain")) return { rows: [{ count: duplicateCount(rows, (row) => row.normalized_primary_domain ? `${row.scope_type}:${row.owner_client_id || ""}:${row.normalized_primary_domain}` : "") }], rowCount: 1 };
+      if (table === "publisher_profiles" && normalized.includes("domain_scope_key")) return { rows: [{ count: duplicateCount(rows, (row) => String(row.domain_scope_key || "").trim()) }], rowCount: 1 };
+      if (table === "publisher_aliases" && normalized.includes("COALESCE(NULLIF(language_code")) return { rows: [{ count: duplicateCount(rows, (row) => `${row.publisher_profile_id}:${row.normalized_alias}:${row.language_code || "und"}`) }], rowCount: 1 };
       if (table === "publisher_channels" && normalized.includes("channel_key")) return { rows: [{ count: duplicateCount(rows, (row) => String(row.channel_key || "").trim()) }], rowCount: 1 };
       if (table === "publisher_channels" && normalized.includes("normalized_url")) return { rows: [{ count: duplicateCount(rows, (row) => String(row.normalized_url || "").trim()) }], rowCount: 1 };
       if (table === "client_publisher_selections") return { rows: [{ count: duplicateCount(rows, (row) => `${row.client_id}:${row.publisher_profile_id}`) }], rowCount: 1 };
@@ -157,6 +159,43 @@ class MockPgClient {
         const publisher = publishers.find((item) => item.id === selection.publisher_profile_id);
         return publisher?.scope_type === "client_private" && publisher.owner_client_id !== selection.client_id;
       }).length;
+      return { rows: [{ count }], rowCount: 1 };
+    }
+    if (normalized.includes("FROM article_appearances aa LEFT JOIN articles a")) {
+      const appearances = this.state.tables.article_appearances?.rows || [];
+      const articles = this.state.tables.articles?.rows || [];
+      const count = appearances.filter((appearance) => !articles.some((article) => article.id === appearance.article_id && article.client_id === appearance.client_id)).length;
+      return { rows: [{ count }], rowCount: 1 };
+    }
+    if (normalized.includes("FROM article_appearances aa LEFT JOIN sources s")) {
+      const appearances = this.state.tables.article_appearances?.rows || [];
+      const sources = this.state.tables.sources?.rows || [];
+      const count = appearances.filter((appearance) => appearance.source_id != null && !sources.some((source) => source.id === appearance.source_id && source.client_id === appearance.client_id)).length;
+      return { rows: [{ count }], rowCount: 1 };
+    }
+    if (normalized.includes("FROM article_appearances aa LEFT JOIN publisher_channels pc")) {
+      const appearances = this.state.tables.article_appearances?.rows || [];
+      const channels = this.state.tables.publisher_channels?.rows || [];
+      const count = appearances.filter((appearance) =>
+        appearance.publisher_channel_id != null
+        && appearance.publisher_profile_id != null
+        && !channels.some((channel) => channel.id === appearance.publisher_channel_id && channel.publisher_profile_id === appearance.publisher_profile_id)
+      ).length;
+      return { rows: [{ count }], rowCount: 1 };
+    }
+    if (normalized.includes("FROM article_appearances aa JOIN publisher_profiles pp")) {
+      const appearances = this.state.tables.article_appearances?.rows || [];
+      const publishers = this.state.tables.publisher_profiles?.rows || [];
+      const count = appearances.filter((appearance) => {
+        const publisher = publishers.find((item) => item.id === appearance.publisher_profile_id);
+        return publisher?.scope_type === "client_private" && publisher.owner_client_id !== appearance.client_id;
+      }).length;
+      return { rows: [{ count }], rowCount: 1 };
+    }
+    if (normalized.includes("FROM sources s LEFT JOIN publisher_channels pc")) {
+      const sources = this.state.tables.sources?.rows || [];
+      const channels = this.state.tables.publisher_channels?.rows || [];
+      const count = sources.filter((source) => source.publisher_channel_id != null && !channels.some((channel) => channel.id === source.publisher_channel_id)).length;
       return { rows: [{ count }], rowCount: 1 };
     }
     if (normalized.includes("FROM sources s JOIN publisher_channels pc")) {
@@ -187,6 +226,25 @@ class MockPgClient {
       }
       return { rows: [], rowCount: 0 };
     }
+    if (normalized.startsWith("UPDATE publisher_profiles SET domain_scope_key")) {
+      const rows = this.state.tables.publisher_profiles?.rows || [];
+      for (const row of rows) {
+        if (!row.normalized_primary_domain) row.domain_scope_key = null;
+        else if (row.scope_type === "global") row.domain_scope_key = `global:${row.normalized_primary_domain}`;
+        else if (row.scope_type === "client_private" && row.owner_client_id != null) row.domain_scope_key = `client:${row.owner_client_id}:${row.normalized_primary_domain}`;
+      }
+      return { rows: [], rowCount: rows.length };
+    }
+    if (normalized.startsWith("UPDATE publisher_aliases SET language_code")) {
+      const rows = this.state.tables.publisher_aliases?.rows || [];
+      for (const row of rows) {
+        if (row.language_code == null || String(row.language_code).trim() === "") row.language_code = "und";
+      }
+      return { rows: [], rowCount: rows.length };
+    }
+    if (normalized.startsWith("ALTER TABLE publisher_aliases ALTER COLUMN language_code")) {
+      return { rows: [], rowCount: 0 };
+    }
     if (normalized.startsWith("CREATE ") && normalized.includes(" INDEX IF NOT EXISTS ")) {
       const match = normalized.match(/INDEX IF NOT EXISTS ([a-z_]+)/);
       if (match) this.state.indexes.add(match[1]);
@@ -209,6 +267,9 @@ class MockPgClient {
   assert.equal(dryRun.writes, false);
   assert.equal(dryRun.applySafe, true);
   assert.ok(dryRun.plannedStatements.length > 0);
+  assert.ok(dryRun.plannedStatements.some((statement) => statement.includes("domain_scope_key")));
+  assert.ok(dryRun.plannedStatements.some((statement) => statement.includes("article_appearances_article_client_fk")));
+  assert.ok(dryRun.plannedStatements.some((statement) => statement.includes("language_code = 'und'")));
   assert.equal(dryRunClient.queries.includes("BEGIN"), false);
   assert.equal(dryRunClient.state.tables.publisher_profiles, undefined);
 
@@ -261,6 +322,44 @@ class MockPgClient {
   assert.equal(invalidReport.applySafe, false);
   assert.equal(invalidReport.before.incompatibleRows.invalidPublisherScopeOwner, 1);
   assert.equal(invalidReport.before.incompatibleRows.googleNewsPublisherChannels, 1);
+
+  const duplicateDomainState = fullyMigratedState();
+  duplicateDomainState.tables.publisher_profiles.rows.push(
+    { id: 1, canonical_key: "global:a", domain_scope_key: "global:dup.example", scope_type: "global", owner_client_id: null, normalized_primary_domain: "dup.example", status: "active", verification_status: "verified" },
+    { id: 2, canonical_key: "global:b", domain_scope_key: "global:dup.example", scope_type: "global", owner_client_id: null, normalized_primary_domain: "dup.example", status: "active", verification_status: "verified" },
+  );
+  const duplicateDomainReport = await migration.runPublisherCatalogMigration(new MockPgClient(duplicateDomainState), { dryRun: true, apply: false });
+  assert.equal(duplicateDomainReport.applySafe, false);
+  assert.equal(duplicateDomainReport.before.incompatibleRows.duplicateDomainScopeKeys, 1);
+
+  const aliasCollapseState = fullyMigratedState();
+  aliasCollapseState.tables.publisher_aliases.rows.push(
+    { id: 1, publisher_profile_id: 1, normalized_alias: "shafaq", language_code: null, alias_type: "name" },
+    { id: 2, publisher_profile_id: 1, normalized_alias: "shafaq", language_code: "und", alias_type: "name" },
+  );
+  const aliasCollapseReport = await migration.runPublisherCatalogMigration(new MockPgClient(aliasCollapseState), { dryRun: true, apply: false });
+  assert.equal(aliasCollapseReport.applySafe, false);
+  assert.equal(aliasCollapseReport.before.incompatibleRows.aliasLanguageCollapseDuplicates, 1);
+
+  const mismatchState = fullyMigratedState();
+  mismatchState.tables.clients.rows.push({ id: 1, name: "Client One" }, { id: 2, name: "Client Two" });
+  mismatchState.tables.articles.rows.push({ id: 1, client_id: 1 });
+  mismatchState.tables.sources.rows.push({ id: 1, client_id: 2, publisher_channel_id: 99 });
+  mismatchState.tables.publisher_profiles.rows.push({ id: 1, canonical_key: "client:2:private", domain_scope_key: "client:2:private.example", scope_type: "client_private", owner_client_id: 2, normalized_primary_domain: "private.example", status: "active", verification_status: "verified" });
+  mismatchState.tables.publisher_channels.rows.push({ id: 1, publisher_profile_id: 1, channel_key: "publisher:1:website:https://private.example", normalized_url: "https://private.example", channel_type: "website", lifecycle_status: "active", validation_status: "valid" });
+  mismatchState.tables.article_appearances.rows.push(
+    { id: 1, client_id: 2, article_id: 1, publisher_profile_id: 1, publisher_channel_id: 1, source_id: null, appearance_key: "bad-article", appearance_type: "original" },
+    { id: 2, client_id: 1, article_id: 1, publisher_profile_id: 1, publisher_channel_id: 1, source_id: 1, appearance_key: "bad-source", appearance_type: "original" },
+    { id: 3, client_id: 1, article_id: 1, publisher_profile_id: 1, publisher_channel_id: 99, source_id: null, appearance_key: "bad-channel", appearance_type: "original" },
+    { id: 4, client_id: 1, article_id: 1, publisher_profile_id: 1, publisher_channel_id: null, source_id: null, appearance_key: "bad-private", appearance_type: "original" },
+  );
+  const mismatchReport = await migration.runPublisherCatalogMigration(new MockPgClient(mismatchState), { dryRun: true, apply: false });
+  assert.equal(mismatchReport.applySafe, false);
+  assert.ok(mismatchReport.before.tenantMismatches.appearanceArticleClientMismatch >= 1);
+  assert.ok(mismatchReport.before.tenantMismatches.appearanceSourceClientMismatch >= 1);
+  assert.ok(mismatchReport.before.tenantMismatches.appearanceChannelPublisherMismatch >= 1);
+  assert.ok(mismatchReport.before.tenantMismatches.appearancePrivatePublisherClientMismatch >= 1);
+  assert.ok(mismatchReport.before.tenantMismatches.sourceChannelPublisherMismatch >= 1);
 
   const rollbackState = emptyBaseState();
   const rollbackClient = new MockPgClient(rollbackState, { failOn: "publisher_channels_normalized_url_unique" });

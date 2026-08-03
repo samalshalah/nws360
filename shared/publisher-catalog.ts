@@ -275,6 +275,35 @@ export function buildPublisherCanonicalKey(scopeType: PublisherScopeType, slug: 
   return `client:${ownerClientId}:${normalizedSlug}`;
 }
 
+export function buildPublisherDomainScopeKey(scopeType: PublisherScopeType, normalizedPrimaryDomain?: string | null, ownerClientId?: number | null): string | null {
+  const domain = cleanPublisherText(normalizedPrimaryDomain).toLowerCase();
+  if (!domain) return null;
+  if (scopeType === "global") return `global:${domain}`;
+  if (!Number.isInteger(ownerClientId) || Number(ownerClientId) <= 0) {
+    throw new Error("Client-private publisher domain requires ownerClientId.");
+  }
+  return `client:${ownerClientId}:${domain}`;
+}
+
+export function validatePublisherCanonicalKey(canonicalKey: unknown, scopeType: PublisherScopeType, ownerClientId?: number | null): string {
+  const key = cleanPublisherText(canonicalKey).toLowerCase();
+  if (!key) throw new Error("canonicalKey is required.");
+  if (scopeType === "global") {
+    if (!/^global:[a-z0-9\u0600-\u06ff][a-z0-9\u0600-\u06ff-]{0,159}$/.test(key)) {
+      throw new Error("Global publisher canonicalKey must use global:<publisher-slug>.");
+    }
+    return key;
+  }
+  if (!Number.isInteger(ownerClientId) || Number(ownerClientId) <= 0) {
+    throw new Error("Client-private publisher requires ownerClientId.");
+  }
+  const pattern = new RegExp(`^client:${ownerClientId}:[a-z0-9\\u0600-\\u06ff][a-z0-9\\u0600-\\u06ff-]{0,159}$`);
+  if (!pattern.test(key)) {
+    throw new Error("Client-private publisher canonicalKey must use client:<ownerClientId>:<publisher-slug>.");
+  }
+  return key;
+}
+
 export function buildPublisherChannelKey(publisherProfileId: number | string, channelType: PublisherChannelType, normalizedUrl: string, externalId?: string | null, handle?: string | null): string {
   const identity = cleanPublisherText(externalId || handle || normalizedUrl).toLowerCase();
   return `publisher:${publisherProfileId}:${channelType}:${identity}`;
@@ -356,12 +385,18 @@ export function normalizePublisherProfile(input: unknown) {
   const primaryDomain = parsed.primaryDomain ? normalizedPrimaryDomain : normalizedPrimaryDomain;
   const ownerClientId = parsed.scopeType === "global" ? null : parsed.ownerClientId ?? null;
   if (parsed.scopeType === "client_private" && !ownerClientId) throw new Error("client_private publisher requires ownerClientId.");
-  const canonicalKey = cleanPublisherText(parsed.canonicalKey) || buildPublisherCanonicalKey(parsed.scopeType, slug, ownerClientId);
+  const canonicalKey = validatePublisherCanonicalKey(
+    cleanPublisherText(parsed.canonicalKey) || buildPublisherCanonicalKey(parsed.scopeType, slug, ownerClientId),
+    parsed.scopeType,
+    ownerClientId,
+  );
+  const domainScopeKey = buildPublisherDomainScopeKey(parsed.scopeType, normalizedPrimaryDomain, ownerClientId);
   return {
     ...parsed,
     name,
     slug,
     canonicalKey,
+    domainScopeKey,
     primaryDomain,
     normalizedPrimaryDomain,
     websiteUrl,
@@ -378,7 +413,7 @@ export function normalizePublisherAlias(input: unknown) {
   return {
     alias,
     normalizedAlias: normalizePublisherComparable(alias),
-    languageCode: normalizeLanguageCode(parsed.languageCode) || null,
+    languageCode: normalizeLanguageCode(parsed.languageCode) || "und",
     aliasType: parsed.aliasType,
   };
 }

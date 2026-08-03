@@ -34,6 +34,7 @@ import {
   type PublisherAlias, type InsertPublisherAlias,
   type PublisherChannel, type InsertPublisherChannel,
   type ClientPublisherSelection, type InsertClientPublisherSelection,
+  type ArticleAppearance, type InsertArticleAppearance,
   type FeatureFlag,
   type ArticleQueryParams,
   type StoryCluster, type InsertStoryCluster,
@@ -127,12 +128,17 @@ import {
 } from "@shared/client-enrollment";
 import {
   clientPublisherSelectionInputSchema,
+  cleanPublisherText,
   normalizeCreatePublisherRequest,
   normalizePublisherAlias,
   normalizePublisherChannel,
   normalizePublisherProfile,
   previewPublisherDuplicates,
 } from "@shared/publisher-catalog";
+import {
+  validatePublisherChannel as performPublisherChannelValidation,
+  type ChannelValidationStatus,
+} from "./publisher-channel-validator";
 import { eq, like, and, or, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
 const AUTO_PAUSE_THRESHOLD_DB = 5;
@@ -291,6 +297,95 @@ function publisherVisibleCondition(clientId?: number, includePrivate = false) {
 
 const PUBLISHER_LIFECYCLE_SET = new Set(["draft", "active", "paused", "archived"]);
 const CHANNEL_VALIDATION_SET = new Set(["untested", "valid", "invalid", "unreachable", "needs_review"]);
+
+function publisherConstraintError(error: unknown): StorageBoundaryError | null {
+  const anyError = error as any;
+  if (anyError?.code !== "23505") return null;
+  const constraint = String(anyError?.constraint || "");
+  if (constraint.includes("publisher_profiles_domain_scope_key")) {
+    return new StorageBoundaryError("Publisher primary domain already exists in this scope", {
+      status: 409,
+      code: "duplicate_publisher_domain",
+    });
+  }
+  if (constraint.includes("publisher_profiles_canonical_key")) {
+    return new StorageBoundaryError("Publisher already exists", { status: 409, code: "duplicate_publisher" });
+  }
+  if (constraint.includes("publisher_aliases_profile_alias_language")) {
+    return new StorageBoundaryError("Publisher alias already exists", { status: 409, code: "duplicate_publisher_alias" });
+  }
+  if (constraint.includes("publisher_channels_channel_key") || constraint.includes("publisher_channels_normalized_url")) {
+    return new StorageBoundaryError("Publisher channel already exists", { status: 409, code: "duplicate_publisher_channel" });
+  }
+  if (constraint.includes("client_publisher_selections_client_publisher")) {
+    return new StorageBoundaryError("Client publisher selection already exists", {
+      status: 409,
+      code: "duplicate_client_publisher_selection",
+    });
+  }
+  return null;
+}
+
+function rethrowPublisherConstraint(error: unknown): never {
+  const mapped = publisherConstraintError(error);
+  if (mapped) throw mapped;
+  throw error;
+}
+
+async function lockPublisherIdentity(tx: any, identity: string | null | undefined) {
+  if (!identity) return;
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${identity}))`);
+}
+
+async function createAuditLogInTransaction(tx: any, log: InsertAdminAuditLog): Promise<AdminAuditLog> {
+  const [entry] = await tx.insert(adminAuditLogs).values({
+    ...log,
+    clientId: (log as any).clientId ?? null,
+  }).returning();
+  return entry;
+}
+
+function safeJsonMetadata(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+async function assertPublisherScopeChangeSafe(tx: any, current: PublisherProfile, next: ReturnType<typeof normalizePublisherProfile>) {
+  const scopeChanged = current.scopeType !== next.scopeType || (current.ownerClientId || null) !== (next.ownerClientId || null);
+  if (!scopeChanged) return;
+
+  const [selectionConflict] = await tx
+    .select({ count: sql<number>`count(*)::int` })
+    .from(clientPublisherSelections)
+    .where(and(
+      eq(clientPublisherSelections.publisherProfileId, current.id),
+      next.scopeType === "client_private"
+        ? sql`${clientPublisherSelections.clientId} <> ${next.ownerClientId}`
+        : sql`FALSE`,
+    ));
+  if (Number(selectionConflict?.count || 0) > 0) {
+    throw new StorageBoundaryError("Publisher scope change would invalidate existing client selections", {
+      status: 409,
+      code: "publisher_scope_change_conflict",
+    });
+  }
+
+  const [sourceConflict] = await tx
+    .select({ count: sql<number>`count(*)::int` })
+    .from(sources)
+    .innerJoin(publisherChannels, eq(sources.publisherChannelId, publisherChannels.id))
+    .where(and(
+      eq(publisherChannels.publisherProfileId, current.id),
+      next.scopeType === "client_private"
+        ? sql`${sources.clientId} <> ${next.ownerClientId}`
+        : sql`FALSE`,
+    ));
+  if (Number(sourceConflict?.count || 0) > 0) {
+    throw new StorageBoundaryError("Publisher scope change would invalidate existing source links", {
+      status: 409,
+      code: "publisher_scope_change_conflict",
+    });
+  }
+}
 
 function workspaceStatusUpdates(status: string, actorUserId: number, readiness: ClientReadinessSnapshot): Record<string, unknown> {
   switch (status) {
@@ -776,7 +871,9 @@ export interface IStorage {
   createPublisherChannel(publisherId: number, input: unknown, actorUserId: number): Promise<{ channel: PublisherChannel; auditLog: AdminAuditLog }>;
   updatePublisherChannel(publisherId: number, channelId: number, input: unknown, actorUserId: number): Promise<{ channel: PublisherChannel; auditLog: AdminAuditLog }>;
   transitionPublisherChannelLifecycle(publisherId: number, channelId: number, status: string, actorUserId: number): Promise<{ channel: PublisherChannel; auditLog: AdminAuditLog }>;
-  validatePublisherChannel(publisherId: number, channelId: number, validationStatus: string, actorUserId: number): Promise<{ channel: PublisherChannel; auditLog: AdminAuditLog }>;
+  validatePublisherChannel(publisherId: number, channelId: number, actorUserId: number): Promise<{ channel: PublisherChannel; auditLog: AdminAuditLog; validation: { validationStatus: ChannelValidationStatus; reason: string; errorCode?: string; evidence: Record<string, unknown> } }>;
+  overridePublisherChannelValidation(publisherId: number, channelId: number, input: unknown, actorUserId: number): Promise<{ channel: PublisherChannel; auditLog: AdminAuditLog }>;
+  createArticleAppearance(input: InsertArticleAppearance): Promise<ArticleAppearance>;
   getClientPublisherSelections(clientId: number): Promise<Array<ClientPublisherSelection & { publisher: PublisherProfile; channelCount: number; sourceLinkCount: number }>>;
   selectClientPublisherAtomic(clientId: number, input: unknown, actorUserId: number): Promise<ClientPublisherSelectionResult>;
   updateClientPublisherSelection(clientId: number, selectionId: number, input: unknown, actorUserId: number): Promise<ClientPublisherSelectionResult>;
@@ -3187,8 +3284,10 @@ export class DatabaseStorage implements IStorage {
       throw toStorageValidationError(error);
     }
 
-    return db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`nws360.publisher.${normalized.profile.canonicalKey}`}))`);
+    try {
+      return await db.transaction(async (tx) => {
+      await lockPublisherIdentity(tx, `nws360.publisher.${normalized.profile.canonicalKey}`);
+      await lockPublisherIdentity(tx, normalized.profile.domainScopeKey ? `nws360.publisher.domain.${normalized.profile.domainScopeKey}` : null);
 
       if (normalized.profile.scopeType === "client_private") {
         const [client] = await tx.select({ id: clients.id }).from(clients).where(eq(clients.id, normalized.profile.ownerClientId as number)).limit(1);
@@ -3204,18 +3303,11 @@ export class DatabaseStorage implements IStorage {
         throw new StorageBoundaryError("Publisher already exists", { status: 409, code: "duplicate_publisher" });
       }
 
-      if (normalized.profile.normalizedPrimaryDomain) {
-        const domainConditions = [
-          eq(publisherProfiles.normalizedPrimaryDomain, normalized.profile.normalizedPrimaryDomain),
-          eq(publisherProfiles.scopeType, normalized.profile.scopeType),
-          normalized.profile.ownerClientId == null
-            ? isNull(publisherProfiles.ownerClientId)
-            : eq(publisherProfiles.ownerClientId, normalized.profile.ownerClientId),
-        ];
+      if (normalized.profile.domainScopeKey) {
         const [duplicateDomain] = await tx
           .select({ id: publisherProfiles.id })
           .from(publisherProfiles)
-          .where(and(...domainConditions))
+          .where(eq(publisherProfiles.domainScopeKey, normalized.profile.domainScopeKey))
           .limit(1);
         if (duplicateDomain) {
           throw new StorageBoundaryError("Publisher primary domain already exists in this scope", {
@@ -3250,6 +3342,7 @@ export class DatabaseStorage implements IStorage {
           throw new StorageBoundaryError("Duplicate publisher channel", { status: 409, code: "duplicate_publisher_channel" });
         }
         channelIdentities.add(key);
+        await lockPublisherIdentity(tx, `nws360.publisher_channel.${channel.normalizedUrl || channel.channelKey}`);
         if (channel.normalizedUrl) {
           const [duplicateChannel] = await tx
             .select({ id: publisherChannels.id })
@@ -3281,79 +3374,104 @@ export class DatabaseStorage implements IStorage {
       }).returning();
 
       return { profile, aliases: aliasRows, channels: channelRows, auditLog };
-    });
+      });
+    } catch (error) {
+      return rethrowPublisherConstraint(error);
+    }
   }
 
   async updatePublisherProfile(id: number, input: unknown, actorUserId: number): Promise<PublisherProfile> {
     const current = await this.getPublisherProfile(id, { includePrivate: true });
     if (!current) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+    const inputRecord = (input || {}) as Record<string, unknown>;
+    if (
+      Object.prototype.hasOwnProperty.call(inputRecord, "canonicalKey")
+      && cleanPublisherText(inputRecord.canonicalKey).toLowerCase()
+      && cleanPublisherText(inputRecord.canonicalKey).toLowerCase() !== current.canonicalKey
+    ) {
+      throw new StorageBoundaryError("Publisher canonicalKey is immutable after creation", {
+        status: 409,
+        code: "publisher_canonical_key_immutable",
+      });
+    }
     let normalized;
     try {
       normalized = normalizePublisherProfile({
         ...current,
-        ...(input as Record<string, unknown>),
+        ...inputRecord,
         canonicalKey: current.canonicalKey,
       });
     } catch (error) {
       throw toStorageValidationError(error);
     }
-    if (normalized.scopeType === "client_private" && normalized.ownerClientId) {
-      const client = await this.getClient(normalized.ownerClientId);
-      if (!client) throw new StorageBoundaryError("Client not found", { status: 404, code: "client_not_found" });
-    }
-    if (normalized.normalizedPrimaryDomain) {
-      const [duplicateDomain] = await db
-        .select({ id: publisherProfiles.id })
-        .from(publisherProfiles)
-        .where(and(
-          eq(publisherProfiles.normalizedPrimaryDomain, normalized.normalizedPrimaryDomain),
-          eq(publisherProfiles.scopeType, normalized.scopeType),
-          normalized.ownerClientId == null ? isNull(publisherProfiles.ownerClientId) : eq(publisherProfiles.ownerClientId, normalized.ownerClientId),
-          sql`${publisherProfiles.id} <> ${id}`,
-        ))
-        .limit(1);
-      if (duplicateDomain) {
-        throw new StorageBoundaryError("Publisher primary domain already exists in this scope", {
-          status: 409,
-          code: "duplicate_publisher_domain",
+    try {
+      return await db.transaction(async (tx) => {
+        await lockPublisherIdentity(tx, `nws360.publisher.${current.canonicalKey}`);
+        await lockPublisherIdentity(tx, normalized.domainScopeKey ? `nws360.publisher.domain.${normalized.domainScopeKey}` : null);
+
+        if (normalized.scopeType === "client_private" && normalized.ownerClientId) {
+          const [client] = await tx.select({ id: clients.id }).from(clients).where(eq(clients.id, normalized.ownerClientId)).limit(1);
+          if (!client) throw new StorageBoundaryError("Client not found", { status: 404, code: "client_not_found" });
+        }
+
+        await assertPublisherScopeChangeSafe(tx, current, normalized);
+
+        if (normalized.domainScopeKey) {
+          const [duplicateDomain] = await tx
+            .select({ id: publisherProfiles.id })
+            .from(publisherProfiles)
+            .where(and(eq(publisherProfiles.domainScopeKey, normalized.domainScopeKey), sql`${publisherProfiles.id} <> ${id}`))
+            .limit(1);
+          if (duplicateDomain) {
+            throw new StorageBoundaryError("Publisher primary domain already exists in this scope", {
+              status: 409,
+              code: "duplicate_publisher_domain",
+            });
+          }
+        }
+
+        const [profile] = await tx.update(publisherProfiles).set({
+          ...normalized,
+          updatedAt: new Date(),
+        } as any).where(eq(publisherProfiles.id, id)).returning();
+        if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+        await createAuditLogInTransaction(tx, {
+          userId: actorUserId,
+          clientId: profile.ownerClientId,
+          action: "publisher_profile_update",
+          entity: "publisher_profile",
+          entityId: id,
+          details: safeStorageAuditDetails({ publisherId: id, changedFields: Object.keys(inputRecord) }),
         });
-      }
+        return profile;
+      });
+    } catch (error) {
+      return rethrowPublisherConstraint(error);
     }
-    const [profile] = await db.update(publisherProfiles).set({
-      ...normalized,
-      updatedAt: new Date(),
-    } as any).where(eq(publisherProfiles.id, id)).returning();
-    await this.createAuditLog({
-      userId: actorUserId,
-      clientId: profile.ownerClientId,
-      action: "publisher_profile_update",
-      entity: "publisher_profile",
-      entityId: id,
-      details: safeStorageAuditDetails({ publisherId: id, changedFields: Object.keys(input as Record<string, unknown>) }),
-    });
-    return profile;
   }
 
   async transitionPublisherLifecycle(id: number, status: string, actorUserId: number) {
     if (!PUBLISHER_LIFECYCLE_SET.has(status)) {
       throw new StorageBoundaryError("Invalid publisher lifecycle status", { status: 400, code: "invalid_publisher_status" });
     }
-    const current = await this.getPublisherProfile(id, { includePrivate: true });
-    if (!current) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
-    const [profile] = await db
-      .update(publisherProfiles)
-      .set({ status, updatedAt: new Date() } as any)
-      .where(eq(publisherProfiles.id, id))
-      .returning();
-    const auditLog = await this.createAuditLog({
-      userId: actorUserId,
-      clientId: profile.ownerClientId,
-      action: "publisher_lifecycle_change",
-      entity: "publisher_profile",
-      entityId: id,
-      details: safeStorageAuditDetails({ publisherId: id, previousStatus: current.status, newStatus: status }),
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(publisherProfiles).where(eq(publisherProfiles.id, id)).limit(1);
+      if (!current) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+      const [profile] = await tx
+        .update(publisherProfiles)
+        .set({ status, updatedAt: new Date() } as any)
+        .where(eq(publisherProfiles.id, id))
+        .returning();
+      const auditLog = await createAuditLogInTransaction(tx, {
+        userId: actorUserId,
+        clientId: profile.ownerClientId,
+        action: "publisher_lifecycle_change",
+        entity: "publisher_profile",
+        entityId: id,
+        details: safeStorageAuditDetails({ publisherId: id, previousStatus: current.status, newStatus: status }),
+      });
+      return { profile, auditLog };
     });
-    return { profile, auditLog };
   }
 
   async getPublisherAliases(publisherId: number): Promise<PublisherAlias[]> {
@@ -3361,64 +3479,104 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPublisherAlias(publisherId: number, input: unknown, actorUserId: number) {
-    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
-    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
     let normalized;
     try {
       normalized = normalizePublisherAlias(input);
     } catch (error) {
       throw toStorageValidationError(error);
     }
-    const [alias] = await db.insert(publisherAliases).values({ ...normalized, publisherProfileId: publisherId } as InsertPublisherAlias).returning();
-    const auditLog = await this.createAuditLog({
-      userId: actorUserId,
-      clientId: profile.ownerClientId,
-      action: "publisher_alias_create",
-      entity: "publisher_alias",
-      entityId: alias.id,
-      details: safeStorageAuditDetails({ publisherId, aliasId: alias.id, aliasType: alias.aliasType, languageCode: alias.languageCode }),
-    });
-    return { alias, auditLog };
+    try {
+      return await db.transaction(async (tx) => {
+        const [profile] = await tx.select().from(publisherProfiles).where(eq(publisherProfiles.id, publisherId)).limit(1);
+        if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+        await lockPublisherIdentity(tx, `nws360.publisher_alias.${publisherId}.${normalized.normalizedAlias}.${normalized.languageCode}`);
+        const [duplicate] = await tx
+          .select({ id: publisherAliases.id })
+          .from(publisherAliases)
+          .where(and(
+            eq(publisherAliases.publisherProfileId, publisherId),
+            eq(publisherAliases.normalizedAlias, normalized.normalizedAlias),
+            eq(publisherAliases.languageCode, normalized.languageCode),
+          ))
+          .limit(1);
+        if (duplicate) throw new StorageBoundaryError("Publisher alias already exists", { status: 409, code: "duplicate_publisher_alias" });
+        const [alias] = await tx.insert(publisherAliases).values({ ...normalized, publisherProfileId: publisherId } as InsertPublisherAlias).returning();
+        const auditLog = await createAuditLogInTransaction(tx, {
+          userId: actorUserId,
+          clientId: profile.ownerClientId,
+          action: "publisher_alias_create",
+          entity: "publisher_alias",
+          entityId: alias.id,
+          details: safeStorageAuditDetails({ publisherId, aliasId: alias.id, aliasType: alias.aliasType, languageCode: alias.languageCode }),
+        });
+        return { alias, auditLog };
+      });
+    } catch (error) {
+      return rethrowPublisherConstraint(error);
+    }
   }
 
   async updatePublisherAlias(publisherId: number, aliasId: number, input: unknown, actorUserId: number) {
-    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
-    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
     let normalized;
     try {
       normalized = normalizePublisherAlias(input);
     } catch (error) {
       throw toStorageValidationError(error);
     }
-    const [alias] = await db.update(publisherAliases).set({
-      ...normalized,
-      updatedAt: new Date(),
-    } as any).where(and(eq(publisherAliases.id, aliasId), eq(publisherAliases.publisherProfileId, publisherId))).returning();
-    if (!alias) throw new StorageBoundaryError("Publisher alias not found", { status: 404, code: "publisher_alias_not_found" });
-    const auditLog = await this.createAuditLog({
-      userId: actorUserId,
-      clientId: profile.ownerClientId,
-      action: "publisher_alias_update",
-      entity: "publisher_alias",
-      entityId: alias.id,
-      details: safeStorageAuditDetails({ publisherId, aliasId: alias.id, changedFields: Object.keys(input as Record<string, unknown>) }),
-    });
-    return { alias, auditLog };
+    try {
+      return await db.transaction(async (tx) => {
+        const [profile] = await tx.select().from(publisherProfiles).where(eq(publisherProfiles.id, publisherId)).limit(1);
+        if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+        await lockPublisherIdentity(tx, `nws360.publisher_alias.${publisherId}.${normalized.normalizedAlias}.${normalized.languageCode}`);
+        const [duplicate] = await tx
+          .select({ id: publisherAliases.id })
+          .from(publisherAliases)
+          .where(and(
+            eq(publisherAliases.publisherProfileId, publisherId),
+            eq(publisherAliases.normalizedAlias, normalized.normalizedAlias),
+            eq(publisherAliases.languageCode, normalized.languageCode),
+            sql`${publisherAliases.id} <> ${aliasId}`,
+          ))
+          .limit(1);
+        if (duplicate) throw new StorageBoundaryError("Publisher alias already exists", { status: 409, code: "duplicate_publisher_alias" });
+        const [alias] = await tx.update(publisherAliases).set({
+          ...normalized,
+          updatedAt: new Date(),
+        } as any).where(and(eq(publisherAliases.id, aliasId), eq(publisherAliases.publisherProfileId, publisherId))).returning();
+        if (!alias) throw new StorageBoundaryError("Publisher alias not found", { status: 404, code: "publisher_alias_not_found" });
+        const auditLog = await createAuditLogInTransaction(tx, {
+          userId: actorUserId,
+          clientId: profile.ownerClientId,
+          action: "publisher_alias_update",
+          entity: "publisher_alias",
+          entityId: alias.id,
+          details: safeStorageAuditDetails({ publisherId, aliasId: alias.id, changedFields: Object.keys(input as Record<string, unknown>) }),
+        });
+        return { alias, auditLog };
+      });
+    } catch (error) {
+      return rethrowPublisherConstraint(error);
+    }
   }
 
   async archivePublisherAlias(publisherId: number, aliasId: number, actorUserId: number) {
-    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
-    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
-    await db.delete(publisherAliases).where(and(eq(publisherAliases.id, aliasId), eq(publisherAliases.publisherProfileId, publisherId)));
-    const auditLog = await this.createAuditLog({
-      userId: actorUserId,
-      clientId: profile.ownerClientId,
-      action: "publisher_alias_archive",
-      entity: "publisher_alias",
-      entityId: aliasId,
-      details: safeStorageAuditDetails({ publisherId, aliasId }),
+    return db.transaction(async (tx) => {
+      const [profile] = await tx.select().from(publisherProfiles).where(eq(publisherProfiles.id, publisherId)).limit(1);
+      if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+      const [alias] = await tx.delete(publisherAliases)
+        .where(and(eq(publisherAliases.id, aliasId), eq(publisherAliases.publisherProfileId, publisherId)))
+        .returning();
+      if (!alias) throw new StorageBoundaryError("Publisher alias not found", { status: 404, code: "publisher_alias_not_found" });
+      const auditLog = await createAuditLogInTransaction(tx, {
+        userId: actorUserId,
+        clientId: profile.ownerClientId,
+        action: "publisher_alias_archive",
+        entity: "publisher_alias",
+        entityId: aliasId,
+        details: safeStorageAuditDetails({ publisherId, aliasId }),
+      });
+      return { auditLog };
     });
-    return { auditLog };
   }
 
   async getPublisherChannels(publisherId: number): Promise<PublisherChannel[]> {
@@ -3441,110 +3599,184 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPublisherChannel(publisherId: number, input: unknown, actorUserId: number) {
-    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
-    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
     let normalized;
     try {
       normalized = normalizePublisherChannel(input, publisherId);
     } catch (error) {
       throw toStorageValidationError(error);
     }
-    if (normalized.normalizedUrl) {
-      const [duplicate] = await db.select({ id: publisherChannels.id }).from(publisherChannels).where(eq(publisherChannels.normalizedUrl, normalized.normalizedUrl)).limit(1);
-      if (duplicate) throw new StorageBoundaryError("Publisher channel already exists", { status: 409, code: "duplicate_publisher_channel" });
+    try {
+      return await db.transaction(async (tx) => {
+        const [profile] = await tx.select().from(publisherProfiles).where(eq(publisherProfiles.id, publisherId)).limit(1);
+        if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+        await lockPublisherIdentity(tx, `nws360.publisher_channel.${normalized.normalizedUrl || normalized.channelKey}`);
+        const duplicateConditions = [eq(publisherChannels.channelKey, normalized.channelKey)];
+        if (normalized.normalizedUrl) duplicateConditions.push(eq(publisherChannels.normalizedUrl, normalized.normalizedUrl));
+        const [duplicate] = await tx
+          .select({ id: publisherChannels.id })
+          .from(publisherChannels)
+          .where(or(...duplicateConditions))
+          .limit(1);
+        if (duplicate) throw new StorageBoundaryError("Publisher channel already exists", { status: 409, code: "duplicate_publisher_channel" });
+        const [channel] = await tx.insert(publisherChannels).values({
+          ...stripPublisherChannelWarnings(normalized),
+          publisherProfileId: publisherId,
+          createdBy: actorUserId,
+        } as InsertPublisherChannel).returning();
+        const auditLog = await createAuditLogInTransaction(tx, {
+          userId: actorUserId,
+          clientId: profile.ownerClientId,
+          action: "publisher_channel_create",
+          entity: "publisher_channel",
+          entityId: channel.id,
+          details: safeStorageAuditDetails({ publisherId, channelId: channel.id, channelType: channel.channelType }),
+        });
+        return { channel, auditLog };
+      });
+    } catch (error) {
+      return rethrowPublisherConstraint(error);
     }
-    const [channel] = await db.insert(publisherChannels).values({
-      ...stripPublisherChannelWarnings(normalized),
-      publisherProfileId: publisherId,
-      createdBy: actorUserId,
-    } as InsertPublisherChannel).returning();
-    const auditLog = await this.createAuditLog({
-      userId: actorUserId,
-      clientId: profile.ownerClientId,
-      action: "publisher_channel_create",
-      entity: "publisher_channel",
-      entityId: channel.id,
-      details: safeStorageAuditDetails({ publisherId, channelId: channel.id, channelType: channel.channelType }),
-    });
-    return { channel, auditLog };
   }
 
   async updatePublisherChannel(publisherId: number, channelId: number, input: unknown, actorUserId: number) {
-    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
-    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
-    const [current] = await db.select().from(publisherChannels).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).limit(1);
-    if (!current) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
-    let normalized;
     try {
-      normalized = normalizePublisherChannel({ ...current, ...(input as Record<string, unknown>) }, publisherId);
+      return await db.transaction(async (tx) => {
+        const [profile] = await tx.select().from(publisherProfiles).where(eq(publisherProfiles.id, publisherId)).limit(1);
+        if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+        const [current] = await tx.select().from(publisherChannels).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).limit(1);
+        if (!current) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
+        let normalized;
+        try {
+          normalized = normalizePublisherChannel({ ...current, ...(input as Record<string, unknown>) }, publisherId);
+        } catch (error) {
+          throw toStorageValidationError(error);
+        }
+        await lockPublisherIdentity(tx, `nws360.publisher_channel.${normalized.normalizedUrl || normalized.channelKey}`);
+        const duplicateConditions = [eq(publisherChannels.channelKey, normalized.channelKey)];
+        if (normalized.normalizedUrl) duplicateConditions.push(eq(publisherChannels.normalizedUrl, normalized.normalizedUrl));
+        const [duplicate] = await tx
+          .select({ id: publisherChannels.id })
+          .from(publisherChannels)
+          .where(and(or(...duplicateConditions), sql`${publisherChannels.id} <> ${channelId}`))
+          .limit(1);
+        if (duplicate) throw new StorageBoundaryError("Publisher channel already exists", { status: 409, code: "duplicate_publisher_channel" });
+        const [channel] = await tx.update(publisherChannels).set({
+          ...stripPublisherChannelWarnings(normalized),
+          updatedAt: new Date(),
+        } as any).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).returning();
+        const auditLog = await createAuditLogInTransaction(tx, {
+          userId: actorUserId,
+          clientId: profile.ownerClientId,
+          action: "publisher_channel_update",
+          entity: "publisher_channel",
+          entityId: channel.id,
+          details: safeStorageAuditDetails({ publisherId, channelId: channel.id, changedFields: Object.keys(input as Record<string, unknown>) }),
+        });
+        return { channel, auditLog };
+      });
     } catch (error) {
-      throw toStorageValidationError(error);
+      return rethrowPublisherConstraint(error);
     }
-    if (normalized.normalizedUrl) {
-      const [duplicate] = await db
-        .select({ id: publisherChannels.id })
-        .from(publisherChannels)
-        .where(and(eq(publisherChannels.normalizedUrl, normalized.normalizedUrl), sql`${publisherChannels.id} <> ${channelId}`))
-        .limit(1);
-      if (duplicate) throw new StorageBoundaryError("Publisher channel already exists", { status: 409, code: "duplicate_publisher_channel" });
-    }
-    const [channel] = await db.update(publisherChannels).set({
-      ...stripPublisherChannelWarnings(normalized),
-      updatedAt: new Date(),
-    } as any).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).returning();
-    const auditLog = await this.createAuditLog({
-      userId: actorUserId,
-      clientId: profile.ownerClientId,
-      action: "publisher_channel_update",
-      entity: "publisher_channel",
-      entityId: channel.id,
-      details: safeStorageAuditDetails({ publisherId, channelId: channel.id, changedFields: Object.keys(input as Record<string, unknown>) }),
-    });
-    return { channel, auditLog };
   }
 
   async transitionPublisherChannelLifecycle(publisherId: number, channelId: number, status: string, actorUserId: number) {
     if (!PUBLISHER_LIFECYCLE_SET.has(status)) {
       throw new StorageBoundaryError("Invalid channel lifecycle status", { status: 400, code: "invalid_channel_status" });
     }
-    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
-    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
-    const [channel] = await db.update(publisherChannels).set({ lifecycleStatus: status, updatedAt: new Date() } as any)
-      .where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId)))
-      .returning();
-    if (!channel) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
-    const auditLog = await this.createAuditLog({
-      userId: actorUserId,
-      clientId: profile.ownerClientId,
-      action: "publisher_channel_lifecycle_change",
-      entity: "publisher_channel",
-      entityId: channel.id,
-      details: safeStorageAuditDetails({ publisherId, channelId: channel.id, newStatus: status }),
+    return db.transaction(async (tx) => {
+      const [profile] = await tx.select().from(publisherProfiles).where(eq(publisherProfiles.id, publisherId)).limit(1);
+      if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+      const [channel] = await tx.update(publisherChannels).set({ lifecycleStatus: status, updatedAt: new Date() } as any)
+        .where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId)))
+        .returning();
+      if (!channel) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
+      const auditLog = await createAuditLogInTransaction(tx, {
+        userId: actorUserId,
+        clientId: profile.ownerClientId,
+        action: "publisher_channel_lifecycle_change",
+        entity: "publisher_channel",
+        entityId: channel.id,
+        details: safeStorageAuditDetails({ publisherId, channelId: channel.id, newStatus: status }),
+      });
+      return { channel, auditLog };
     });
-    return { channel, auditLog };
   }
 
-  async validatePublisherChannel(publisherId: number, channelId: number, validationStatus: string, actorUserId: number) {
-    if (!CHANNEL_VALIDATION_SET.has(validationStatus)) {
-      throw new StorageBoundaryError("Invalid channel validation status", { status: 400, code: "invalid_channel_validation_status" });
-    }
+  async validatePublisherChannel(publisherId: number, channelId: number, actorUserId: number) {
     const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
     if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
-    const [channel] = await db.update(publisherChannels).set({
-      validationStatus,
-      lastValidatedAt: new Date(),
-      updatedAt: new Date(),
-    } as any).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).returning();
-    if (!channel) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
-    const auditLog = await this.createAuditLog({
-      userId: actorUserId,
-      clientId: profile.ownerClientId,
-      action: "publisher_channel_validation",
-      entity: "publisher_channel",
-      entityId: channel.id,
-      details: safeStorageAuditDetails({ publisherId, channelId: channel.id, validationStatus }),
+    const [current] = await db.select().from(publisherChannels).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).limit(1);
+    if (!current) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
+    const validation = await performPublisherChannelValidation(profile, current);
+    const result = await db.transaction(async (tx) => {
+      const [channel] = await tx.update(publisherChannels).set({
+        validationStatus: validation.validationStatus,
+        lastValidatedAt: new Date(),
+        updatedAt: new Date(),
+        metadata: {
+          ...safeJsonMetadata(current.metadata),
+          validationEvidence: validation.evidence,
+          validationReason: validation.reason,
+          validationErrorCode: validation.errorCode || null,
+          validationManualOverride: false,
+        },
+      } as any).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).returning();
+      if (!channel) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
+      const auditLog = await createAuditLogInTransaction(tx, {
+        userId: actorUserId,
+        clientId: profile.ownerClientId,
+        action: "publisher_channel_validation",
+        entity: "publisher_channel",
+        entityId: channel.id,
+        details: safeStorageAuditDetails({
+          publisherId,
+          channelId: channel.id,
+          validationStatus: validation.validationStatus,
+          reason: validation.reason,
+          errorCode: validation.errorCode || null,
+        }),
+      });
+      return { channel, auditLog };
     });
-    return { channel, auditLog };
+    return { ...result, validation };
+  }
+
+  async overridePublisherChannelValidation(publisherId: number, channelId: number, input: unknown, actorUserId: number) {
+    const status = String((input as any)?.validationStatus || (input as any)?.status || "");
+    const reason = cleanPublisherText((input as any)?.reason);
+    if (!CHANNEL_VALIDATION_SET.has(status) || status === "untested") {
+      throw new StorageBoundaryError("Invalid manual validation status", { status: 400, code: "invalid_channel_validation_status" });
+    }
+    if (!reason) {
+      throw new StorageBoundaryError("Manual validation override requires a reason", { status: 400, code: "manual_validation_reason_required" });
+    }
+    return db.transaction(async (tx) => {
+      const [profile] = await tx.select().from(publisherProfiles).where(eq(publisherProfiles.id, publisherId)).limit(1);
+      if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+      const [current] = await tx.select().from(publisherChannels).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).limit(1);
+      if (!current) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
+      const [channel] = await tx.update(publisherChannels).set({
+        validationStatus: status,
+        lastValidatedAt: new Date(),
+        updatedAt: new Date(),
+        metadata: {
+          ...safeJsonMetadata(current.metadata),
+          validationEvidence: { networkTested: false, manual: true, reason },
+          validationReason: reason,
+          validationErrorCode: null,
+          validationManualOverride: true,
+        },
+      } as any).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).returning();
+      const auditLog = await createAuditLogInTransaction(tx, {
+        userId: actorUserId,
+        clientId: profile.ownerClientId,
+        action: "publisher_channel_validation_manual_override",
+        entity: "publisher_channel",
+        entityId: channel.id,
+        details: safeStorageAuditDetails({ publisherId, channelId: channel.id, validationStatus: status, reason }),
+      });
+      return { channel, auditLog };
+    });
   }
 
   async getClientPublisherSelections(clientId: number) {
@@ -3637,47 +3869,116 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateClientPublisherSelection(clientId: number, selectionId: number, input: unknown, actorUserId: number): Promise<ClientPublisherSelectionResult> {
-    const [current] = await db
-      .select()
-      .from(clientPublisherSelections)
-      .where(and(eq(clientPublisherSelections.id, selectionId), eq(clientPublisherSelections.clientId, clientId)))
-      .limit(1);
-    if (!current) throw new StorageBoundaryError("Client publisher selection not found", { status: 404, code: "client_publisher_selection_not_found" });
-    let parsed;
-    try {
-      parsed = clientPublisherSelectionInputSchema.parse({
-        publisherProfileId: current.publisherProfileId,
-        status: (input as any)?.status ?? current.status,
-        priority: (input as any)?.priority ?? current.priority,
-        notes: Object.prototype.hasOwnProperty.call(input as any, "notes") ? (input as any).notes : current.notes,
-      });
-    } catch (error) {
-      throw toStorageValidationError(error, "Invalid client publisher selection");
-    }
-    const publisher = await this.getPublisherProfile(current.publisherProfileId, { clientId });
-    if (!publisher) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
-    const [selection] = await db.update(clientPublisherSelections).set({
-      status: parsed.status,
-      priority: parsed.priority,
-      notes: parsed.notes || null,
-      updatedAt: new Date(),
-    } as any).where(and(eq(clientPublisherSelections.id, selectionId), eq(clientPublisherSelections.clientId, clientId))).returning();
-    const auditLog = await this.createAuditLog({
-      userId: actorUserId,
-      clientId,
-      action: "client_publisher_selection_status_change",
-      entity: "client_publisher_selection",
-      entityId: selection.id,
-      details: safeStorageAuditDetails({
+    return db.transaction(async (tx) => {
+      const [current] = await tx
+        .select()
+        .from(clientPublisherSelections)
+        .where(and(eq(clientPublisherSelections.id, selectionId), eq(clientPublisherSelections.clientId, clientId)))
+        .limit(1);
+      if (!current) throw new StorageBoundaryError("Client publisher selection not found", { status: 404, code: "client_publisher_selection_not_found" });
+      let parsed;
+      try {
+        parsed = clientPublisherSelectionInputSchema.parse({
+          publisherProfileId: current.publisherProfileId,
+          status: (input as any)?.status ?? current.status,
+          priority: (input as any)?.priority ?? current.priority,
+          notes: Object.prototype.hasOwnProperty.call(input as any, "notes") ? (input as any).notes : current.notes,
+        });
+      } catch (error) {
+        throw toStorageValidationError(error, "Invalid client publisher selection");
+      }
+      const [publisher] = await tx.select().from(publisherProfiles).where(and(
+        eq(publisherProfiles.id, current.publisherProfileId),
+        or(eq(publisherProfiles.scopeType, "global"), eq(publisherProfiles.ownerClientId, clientId)),
+      )).limit(1);
+      if (!publisher) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+      const [selection] = await tx.update(clientPublisherSelections).set({
+        status: parsed.status,
+        priority: parsed.priority,
+        notes: parsed.notes || null,
+        updatedAt: new Date(),
+      } as any).where(and(eq(clientPublisherSelections.id, selectionId), eq(clientPublisherSelections.clientId, clientId))).returning();
+      const auditLog = await createAuditLogInTransaction(tx, {
+        userId: actorUserId,
         clientId,
-        publisherId: publisher.id,
-        selectionId: selection.id,
-        previousStatus: current.status,
-        newStatus: selection.status,
-        priority: selection.priority,
-      }),
+        action: "client_publisher_selection_status_change",
+        entity: "client_publisher_selection",
+        entityId: selection.id,
+        details: safeStorageAuditDetails({
+          clientId,
+          publisherId: publisher.id,
+          selectionId: selection.id,
+          previousStatus: current.status,
+          newStatus: selection.status,
+          priority: selection.priority,
+        }),
+      });
+      return { selection, publisher, auditLog };
     });
-    return { selection, publisher, auditLog };
+  }
+
+  async createArticleAppearance(input: InsertArticleAppearance): Promise<ArticleAppearance> {
+    return db.transaction(async (tx) => {
+      const [article] = await tx.select({ id: articles.id, clientId: articles.clientId })
+        .from(articles)
+        .where(and(eq(articles.id, input.articleId), eq(articles.clientId, input.clientId)))
+        .limit(1);
+      if (!article) {
+        throw new StorageBoundaryError("Article does not belong to the appearance client", {
+          status: 409,
+          code: "appearance_article_client_mismatch",
+        });
+      }
+
+      if (input.sourceId != null) {
+        const [source] = await tx.select({ id: sources.id, clientId: sources.clientId })
+          .from(sources)
+          .where(and(eq(sources.id, input.sourceId), eq(sources.clientId, input.clientId)))
+          .limit(1);
+        if (!source) {
+          throw new StorageBoundaryError("Source does not belong to the appearance client", {
+            status: 409,
+            code: "appearance_source_client_mismatch",
+          });
+        }
+      }
+
+      if (input.publisherProfileId != null) {
+        const [publisher] = await tx.select().from(publisherProfiles).where(eq(publisherProfiles.id, input.publisherProfileId)).limit(1);
+        if (!publisher) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+        if (publisher.scopeType === "client_private" && publisher.ownerClientId !== input.clientId) {
+          throw new StorageBoundaryError("Private publisher does not belong to the appearance client", {
+            status: 409,
+            code: "appearance_private_publisher_client_mismatch",
+          });
+        }
+      }
+
+      if (input.publisherChannelId != null) {
+        if (input.publisherProfileId == null) {
+          throw new StorageBoundaryError("publisherProfileId is required when publisherChannelId is present", {
+            status: 400,
+            code: "appearance_channel_requires_publisher",
+          });
+        }
+        const [channel] = await tx.select({ id: publisherChannels.id })
+          .from(publisherChannels)
+          .where(and(
+            eq(publisherChannels.id, input.publisherChannelId),
+            eq(publisherChannels.publisherProfileId, input.publisherProfileId),
+          ))
+          .limit(1);
+        if (!channel) {
+          throw new StorageBoundaryError("Publisher channel does not belong to publisher profile", {
+            status: 409,
+            code: "appearance_channel_publisher_mismatch",
+          });
+        }
+      }
+
+      const [appearance] = await tx.insert(articleAppearances).values(input).returning();
+      return appearance;
+    });
   }
 
   async getClientPublisherReadinessCounts(clientId: number): Promise<ClientPublisherReadinessCounts> {
@@ -3701,24 +4002,10 @@ export class DatabaseStorage implements IStorage {
         or(eq(publisherChannels.lifecycleStatus, "active"), eq(publisherChannels.verificationStatus, "verified")),
       ));
 
-    const [sourceAssignmentCount] = await db.select({ count: sql<number>`count(*)::int` })
-      .from(sources)
-      .innerJoin(publisherChannels, eq(sources.publisherChannelId, publisherChannels.id))
-      .innerJoin(publisherProfiles, eq(publisherChannels.publisherProfileId, publisherProfiles.id))
-      .innerJoin(clientPublisherSelections, and(
-        eq(clientPublisherSelections.publisherProfileId, publisherProfiles.id),
-        eq(clientPublisherSelections.clientId, clientId),
-      ))
-      .where(and(
-        eq(sources.clientId, clientId),
-        eq(clientPublisherSelections.status, "approved"),
-        or(eq(publisherProfiles.scopeType, "global"), eq(publisherProfiles.ownerClientId, clientId)),
-      ));
-
     return {
       publisherProfilesConfigured: Number(selectionCount?.count || 0),
       sourceChannelsConfigured: Number(channelCount?.count || 0),
-      sourceAssignmentsConfigured: Number(sourceAssignmentCount?.count || 0),
+      sourceAssignmentsConfigured: 0,
     };
   }
 

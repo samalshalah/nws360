@@ -26,7 +26,16 @@ Tenant users must never see another client's private publisher. Platform adminis
 - Global publisher: `global:shafaq-news`
 - Client-private publisher: `client:14:private-monitoring-source`
 
-The key is not automatically changed when a display name is edited.
+The key is generated server-side when absent, validated against the publisher scope when supplied, and immutable after creation. A global publisher cannot use a `client:` key, and a client-private publisher cannot use a `global:` key or another client's owner ID.
+
+## Domain Scope Key
+
+Primary-domain uniqueness is enforced with a nullable `domainScopeKey`:
+
+- `global:shafaq.com`
+- `client:14:private-monitor.example`
+
+The key is null when the publisher has no normalized primary domain. It is generated server-side from scope, owner, and normalized domain, and protected by a unique database index. The same domain can exist once globally and once per client-private owner because those are different scopes.
 
 ## Aliases
 
@@ -39,7 +48,13 @@ Examples:
 - وكالة الأنباء العراقية
 - واع
 
-Aliases are unique per publisher by normalized alias and language code.
+Aliases are unique per publisher by normalized alias and language code. Missing or blank language is normalized to `und` so duplicate no-language aliases cannot bypass uniqueness through SQL null behavior.
+
+## Readiness
+
+This phase counts approved client publisher selections and eligible catalog channels only.
+
+`sourceAssignmentsConfigured` remains `0` and monitoring remains not ready until the later workspace source-assignment model exists. A legacy `sources.publisherChannelId` link is useful metadata, but it is not a workspace assignment.
 
 ## Duplicate Preview
 

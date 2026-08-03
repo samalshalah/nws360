@@ -45,6 +45,29 @@ Each channel has a deterministic `channelKey`:
 
 The schema also protects normalized URLs so the same official URL is not created twice as active catalog identity.
 
+Channel creation and URL changes acquire an advisory transaction lock based on the normalized channel identity, then rely on database uniqueness as the final protection. A duplicate concurrent request returns a safe conflict instead of creating a partial channel or audit row.
+
+## Validation
+
+The validation endpoint performs the channel test on the server. The browser cannot declare a channel `valid`.
+
+Network-tested channels:
+
+- `website`: reachable HTTP response and final URL compatible with the publisher domain.
+- `rss`: reachable HTTP response and RSS or Atom structure.
+
+Social channels are normalized and safety-checked, then marked `needs_review` unless a supported safe reachability test is available. Television, radio, and other manual channels require manual review.
+
+Validation blocks unsafe destinations before request:
+
+- localhost and loopback
+- private network ranges
+- link-local addresses
+- cloud metadata addresses
+- redirects into blocked destinations
+
+Manual override is a separate audited action and requires a reason. It records that no network test occurred.
+
 ## Source Linkage
 
 The existing `sources` table has optional `publisherChannelId`.

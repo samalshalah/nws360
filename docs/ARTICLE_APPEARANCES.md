@@ -55,6 +55,17 @@ Google News data belongs on the appearance:
 
 The actual publisher remains the publisher profile.
 
+## Tenant Consistency
+
+An appearance must stay inside one client boundary:
+
+- `(articleId, clientId)` must match an article owned by that client.
+- `(sourceId, clientId)` must match a source owned by that client when a source is present.
+- `(publisherChannelId, publisherProfileId)` must match a channel owned by that publisher when both are present.
+- Client-private publishers can only appear for their owning client.
+
+The migration adds composite uniqueness and foreign-key protections for these relationships, and storage validates the same rules before insert.
+
 ## Primary Selection
 
 Primary appearance selection is deterministic and prefers:

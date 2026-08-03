@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb, uniqueIndex, index, uuid, check } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, uniqueIndex, index, uuid, check, foreignKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { relations, sql } from "drizzle-orm";
@@ -180,6 +180,7 @@ export const insertUserSchema = createInsertSchema(users)
 export const publisherProfiles = pgTable("publisher_profiles", {
   id: serial("id").primaryKey(),
   canonicalKey: text("canonical_key").notNull(),
+  domainScopeKey: text("domain_scope_key"),
   name: text("name").notNull(),
   slug: text("slug").notNull(),
   legalName: text("legal_name"),
@@ -207,6 +208,7 @@ export const publisherProfiles = pgTable("publisher_profiles", {
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
   uniqueIndex("publisher_profiles_canonical_key_unique").on(table.canonicalKey),
+  uniqueIndex("publisher_profiles_domain_scope_key_unique").on(table.domainScopeKey),
   index("publisher_profiles_scope_idx").on(table.scopeType, table.ownerClientId),
   index("publisher_profiles_domain_idx").on(table.normalizedPrimaryDomain),
   index("publisher_profiles_country_idx").on(table.countryCode),
@@ -257,7 +259,7 @@ export const publisherAliases = pgTable("publisher_aliases", {
   publisherProfileId: integer("publisher_profile_id").notNull().references(() => publisherProfiles.id, { onDelete: "cascade" }),
   alias: text("alias").notNull(),
   normalizedAlias: text("normalized_alias").notNull(),
-  languageCode: text("language_code"),
+  languageCode: text("language_code").notNull().default("und"),
   aliasType: text("alias_type").notNull().default("name"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -298,6 +300,7 @@ export const publisherChannels = pgTable("publisher_channels", {
 }, (table) => [
   uniqueIndex("publisher_channels_channel_key_unique").on(table.channelKey),
   uniqueIndex("publisher_channels_normalized_url_unique").on(table.normalizedUrl),
+  uniqueIndex("publisher_channels_id_profile_unique").on(table.id, table.publisherProfileId),
   index("publisher_channels_profile_idx").on(table.publisherProfileId),
   index("publisher_channels_type_idx").on(table.channelType),
   check("publisher_channels_channel_type_ck", sql`
@@ -381,7 +384,10 @@ export const sources = pgTable("sources", {
   deletedAt: timestamp("deleted_at"),
   lastFetchedAt: timestamp("last_fetched_at"),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  uniqueIndex("sources_id_client_unique").on(table.id, table.clientId),
+  index("sources_publisher_channel_idx").on(table.publisherChannelId),
+]);
 
 export const insertSourceSchema = createInsertSchema(sources).omit({ id: true, createdAt: true, lastFetchedAt: true, deletedAt: true });
 
@@ -469,8 +475,24 @@ export const articleAppearances = pgTable("article_appearances", {
 }, (table) => [
   uniqueIndex("article_appearances_client_key_unique").on(table.clientId, table.appearanceKey),
   index("article_appearances_article_idx").on(table.articleId),
+  index("article_appearances_source_idx").on(table.sourceId),
   index("article_appearances_client_publisher_idx").on(table.clientId, table.publisherProfileId),
   index("article_appearances_channel_idx").on(table.publisherChannelId),
+  foreignKey({
+    columns: [table.articleId, table.clientId],
+    foreignColumns: [articles.id, articles.clientId],
+    name: "article_appearances_article_client_fk",
+  }).onDelete("cascade"),
+  foreignKey({
+    columns: [table.sourceId, table.clientId],
+    foreignColumns: [sources.id, sources.clientId],
+    name: "article_appearances_source_client_fk",
+  }),
+  foreignKey({
+    columns: [table.publisherChannelId, table.publisherProfileId],
+    foreignColumns: [publisherChannels.id, publisherChannels.publisherProfileId],
+    name: "article_appearances_channel_publisher_fk",
+  }),
   check("article_appearances_type_ck", sql`
     ${table.appearanceType} IN ('original', 'rss', 'republished', 'social', 'video', 'broadcast', 'collector')
   `),

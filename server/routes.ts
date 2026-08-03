@@ -1307,6 +1307,9 @@ function sendAdminStorageError(res: Response, err: unknown, fallback = "Admin op
     if (constraint.includes("publisher_profiles_canonical_key")) {
       return res.status(409).json({ message: "Publisher already exists", code: "duplicate_publisher" });
     }
+    if (constraint.includes("publisher_profiles_domain_scope_key")) {
+      return res.status(409).json({ message: "Publisher primary domain already exists in this scope", code: "duplicate_publisher_domain" });
+    }
     if (constraint.includes("publisher_channels_channel_key") || constraint.includes("publisher_channels_normalized_url")) {
       return res.status(409).json({ message: "Publisher channel already exists", code: "duplicate_publisher_channel" });
     }
@@ -4429,11 +4432,23 @@ export async function registerRoutes(
     const channelId = parsePositiveId(req.params.channelId);
     if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
     if (!channelId) return res.status(400).json({ message: "Invalid channel ID" });
-    const validationStatus = String(req.body?.validationStatus || req.body?.status || "valid");
     try {
-      res.json(await storage.validatePublisherChannel(publisherId, channelId, validationStatus, user.id));
+      res.json(await storage.validatePublisherChannel(publisherId, channelId, user.id));
     } catch (err) {
       return sendAdminStorageError(res, err, "Publisher channel validation failed");
+    }
+  });
+
+  app.post("/api/admin/publishers/:publisherId/channels/:channelId/validation-override", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const publisherId = parsePositiveId(req.params.publisherId);
+    const channelId = parsePositiveId(req.params.channelId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    if (!channelId) return res.status(400).json({ message: "Invalid channel ID" });
+    try {
+      res.json(await storage.overridePublisherChannelValidation(publisherId, channelId, req.body || {}, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher channel validation override failed");
     }
   });
 

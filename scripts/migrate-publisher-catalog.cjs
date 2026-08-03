@@ -13,6 +13,7 @@ const TABLE_COLUMNS = {
   publisher_profiles: [
     ["id", "serial PRIMARY KEY"],
     ["canonical_key", "text NOT NULL"],
+    ["domain_scope_key", "text"],
     ["name", "text NOT NULL"],
     ["slug", "text NOT NULL"],
     ["legal_name", "text"],
@@ -44,7 +45,7 @@ const TABLE_COLUMNS = {
     ["publisher_profile_id", "integer NOT NULL"],
     ["alias", "text NOT NULL"],
     ["normalized_alias", "text NOT NULL"],
-    ["language_code", "text"],
+    ["language_code", "text NOT NULL DEFAULT 'und'"],
     ["alias_type", "text NOT NULL DEFAULT 'name'"],
     ["created_at", "timestamp DEFAULT now()"],
     ["updated_at", "timestamp DEFAULT now()"],
@@ -121,6 +122,7 @@ const TABLE_CREATE_SQL = {
   publisher_profiles: `CREATE TABLE IF NOT EXISTS publisher_profiles (
   id serial PRIMARY KEY,
   canonical_key text NOT NULL,
+  domain_scope_key text,
   name text NOT NULL,
   slug text NOT NULL,
   legal_name text,
@@ -152,7 +154,7 @@ const TABLE_CREATE_SQL = {
   publisher_profile_id integer NOT NULL,
   alias text NOT NULL,
   normalized_alias text NOT NULL,
-  language_code text,
+  language_code text NOT NULL DEFAULT 'und',
   alias_type text NOT NULL DEFAULT 'name',
   created_at timestamp DEFAULT now(),
   updated_at timestamp DEFAULT now()
@@ -224,6 +226,7 @@ const TABLE_CREATE_SQL = {
 
 const INDEXES = {
   publisher_profiles_canonical_key_unique: "CREATE UNIQUE INDEX IF NOT EXISTS publisher_profiles_canonical_key_unique ON publisher_profiles (canonical_key)",
+  publisher_profiles_domain_scope_key_unique: "CREATE UNIQUE INDEX IF NOT EXISTS publisher_profiles_domain_scope_key_unique ON publisher_profiles (domain_scope_key) WHERE domain_scope_key IS NOT NULL",
   publisher_profiles_scope_idx: "CREATE INDEX IF NOT EXISTS publisher_profiles_scope_idx ON publisher_profiles (scope_type, owner_client_id)",
   publisher_profiles_domain_idx: "CREATE INDEX IF NOT EXISTS publisher_profiles_domain_idx ON publisher_profiles (normalized_primary_domain)",
   publisher_profiles_country_idx: "CREATE INDEX IF NOT EXISTS publisher_profiles_country_idx ON publisher_profiles (country_code)",
@@ -231,24 +234,32 @@ const INDEXES = {
   publisher_aliases_normalized_idx: "CREATE INDEX IF NOT EXISTS publisher_aliases_normalized_idx ON publisher_aliases (normalized_alias)",
   publisher_channels_channel_key_unique: "CREATE UNIQUE INDEX IF NOT EXISTS publisher_channels_channel_key_unique ON publisher_channels (channel_key)",
   publisher_channels_normalized_url_unique: "CREATE UNIQUE INDEX IF NOT EXISTS publisher_channels_normalized_url_unique ON publisher_channels (normalized_url)",
+  publisher_channels_id_profile_unique: "CREATE UNIQUE INDEX IF NOT EXISTS publisher_channels_id_profile_unique ON publisher_channels (id, publisher_profile_id)",
   publisher_channels_profile_idx: "CREATE INDEX IF NOT EXISTS publisher_channels_profile_idx ON publisher_channels (publisher_profile_id)",
   publisher_channels_type_idx: "CREATE INDEX IF NOT EXISTS publisher_channels_type_idx ON publisher_channels (channel_type)",
   client_publisher_selections_client_publisher_unique: "CREATE UNIQUE INDEX IF NOT EXISTS client_publisher_selections_client_publisher_unique ON client_publisher_selections (client_id, publisher_profile_id)",
   client_publisher_selections_client_status_idx: "CREATE INDEX IF NOT EXISTS client_publisher_selections_client_status_idx ON client_publisher_selections (client_id, status)",
   article_appearances_client_key_unique: "CREATE UNIQUE INDEX IF NOT EXISTS article_appearances_client_key_unique ON article_appearances (client_id, appearance_key)",
   article_appearances_article_idx: "CREATE INDEX IF NOT EXISTS article_appearances_article_idx ON article_appearances (article_id)",
+  article_appearances_source_idx: "CREATE INDEX IF NOT EXISTS article_appearances_source_idx ON article_appearances (source_id)",
   article_appearances_client_publisher_idx: "CREATE INDEX IF NOT EXISTS article_appearances_client_publisher_idx ON article_appearances (client_id, publisher_profile_id)",
   article_appearances_channel_idx: "CREATE INDEX IF NOT EXISTS article_appearances_channel_idx ON article_appearances (publisher_channel_id)",
+  articles_id_client_unique: "CREATE UNIQUE INDEX IF NOT EXISTS articles_id_client_unique ON articles (id, client_id)",
+  sources_id_client_unique: "CREATE UNIQUE INDEX IF NOT EXISTS sources_id_client_unique ON sources (id, client_id)",
   sources_publisher_channel_idx: "CREATE INDEX IF NOT EXISTS sources_publisher_channel_idx ON sources (publisher_channel_id)",
 };
 
 const UNIQUE_INDEX_NAMES = new Set([
   "publisher_profiles_canonical_key_unique",
+  "publisher_profiles_domain_scope_key_unique",
   "publisher_aliases_profile_alias_language_unique",
   "publisher_channels_channel_key_unique",
   "publisher_channels_normalized_url_unique",
+  "publisher_channels_id_profile_unique",
   "client_publisher_selections_client_publisher_unique",
   "article_appearances_client_key_unique",
+  "articles_id_client_unique",
+  "sources_id_client_unique",
 ]);
 
 const CHECKS = {
@@ -291,7 +302,29 @@ const FOREIGN_KEYS = {
   article_appearances_publisher_fk: { table: "article_appearances", column: "publisher_profile_id", references: "publisher_profiles(id)" },
   article_appearances_channel_fk: { table: "article_appearances", column: "publisher_channel_id", references: "publisher_channels(id)" },
   article_appearances_source_fk: { table: "article_appearances", column: "source_id", references: "sources(id)" },
+  article_appearances_article_client_fk: { table: "article_appearances", columns: ["article_id", "client_id"], references: "articles(id, client_id)", onDelete: "CASCADE" },
+  article_appearances_source_client_fk: { table: "article_appearances", columns: ["source_id", "client_id"], references: "sources(id, client_id)" },
+  article_appearances_channel_publisher_fk: { table: "article_appearances", columns: ["publisher_channel_id", "publisher_profile_id"], references: "publisher_channels(id, publisher_profile_id)" },
 };
+
+const SAFE_REPAIR_STATEMENTS = [
+  `UPDATE publisher_profiles
+      SET domain_scope_key = CASE
+        WHEN normalized_primary_domain IS NULL OR trim(normalized_primary_domain) = '' THEN NULL
+        WHEN scope_type = 'global' THEN 'global:' || normalized_primary_domain
+        WHEN scope_type = 'client_private' AND owner_client_id IS NOT NULL THEN 'client:' || owner_client_id::text || ':' || normalized_primary_domain
+        ELSE NULL
+      END
+    WHERE domain_scope_key IS DISTINCT FROM CASE
+        WHEN normalized_primary_domain IS NULL OR trim(normalized_primary_domain) = '' THEN NULL
+        WHEN scope_type = 'global' THEN 'global:' || normalized_primary_domain
+        WHEN scope_type = 'client_private' AND owner_client_id IS NOT NULL THEN 'client:' || owner_client_id::text || ':' || normalized_primary_domain
+        ELSE NULL
+      END`,
+  "UPDATE publisher_aliases SET language_code = 'und' WHERE language_code IS NULL OR trim(language_code) = ''",
+  "ALTER TABLE publisher_aliases ALTER COLUMN language_code SET DEFAULT 'und'",
+  "ALTER TABLE publisher_aliases ALTER COLUMN language_code SET NOT NULL",
+];
 
 function parseArgs(argv) {
   return {
@@ -385,6 +418,21 @@ async function duplicateCount(client, table, columns, whereSql = "TRUE") {
   return Number(result.rows[0]?.count || 0);
 }
 
+async function duplicateByExpression(client, table, requiredColumns, expression, whereSql = "TRUE") {
+  if (!(await hasColumns(client, table, requiredColumns))) return 0;
+  const result = await client.query(`
+    SELECT COALESCE(SUM(duplicate_count - 1), 0)::int AS count
+      FROM (
+        SELECT ${expression} AS key, COUNT(*)::int AS duplicate_count
+          FROM ${table}
+         WHERE ${whereSql}
+         GROUP BY ${expression}
+        HAVING COUNT(*) > 1
+      ) duplicates
+  `);
+  return Number(result.rows[0]?.count || 0);
+}
+
 async function incompatibleRows(client) {
   return {
     invalidPublisherScopeOwner: await countIfColumnsExist(client, "publisher_profiles", ["scope_type", "owner_client_id"], "NOT ((scope_type = 'global' AND owner_client_id IS NULL) OR (scope_type = 'client_private' AND owner_client_id IS NOT NULL))"),
@@ -397,6 +445,20 @@ async function incompatibleRows(client) {
     invalidAppearanceType: await countIfColumnsExist(client, "article_appearances", ["appearance_type"], "appearance_type NOT IN ('original', 'rss', 'republished', 'social', 'video', 'broadcast', 'collector')"),
     duplicateCanonicalKeys: await duplicateCount(client, "publisher_profiles", ["canonical_key"], "trim(canonical_key) <> ''"),
     duplicateNormalizedDomains: await duplicateCount(client, "publisher_profiles", ["scope_type", "owner_client_id", "normalized_primary_domain"], "normalized_primary_domain IS NOT NULL AND trim(normalized_primary_domain) <> ''"),
+    duplicateDomainScopeKeys: await duplicateCount(client, "publisher_profiles", ["domain_scope_key"], "domain_scope_key IS NOT NULL AND trim(domain_scope_key) <> ''"),
+    duplicateDomainScopeExpressions: await duplicateByExpression(
+      client,
+      "publisher_profiles",
+      ["scope_type", "owner_client_id", "normalized_primary_domain"],
+      "CASE WHEN normalized_primary_domain IS NULL OR trim(normalized_primary_domain) = '' THEN NULL WHEN scope_type = 'global' THEN 'global:' || normalized_primary_domain WHEN scope_type = 'client_private' AND owner_client_id IS NOT NULL THEN 'client:' || owner_client_id::text || ':' || normalized_primary_domain ELSE NULL END",
+      "normalized_primary_domain IS NOT NULL AND trim(normalized_primary_domain) <> ''",
+    ),
+    aliasLanguageCollapseDuplicates: await duplicateByExpression(
+      client,
+      "publisher_aliases",
+      ["publisher_profile_id", "normalized_alias", "language_code"],
+      "publisher_profile_id::text || ':' || normalized_alias || ':' || COALESCE(NULLIF(language_code, ''), 'und')",
+    ),
     duplicateChannelKeys: await duplicateCount(client, "publisher_channels", ["channel_key"], "trim(channel_key) <> ''"),
     duplicateChannelUrls: await duplicateCount(client, "publisher_channels", ["normalized_url"], "normalized_url IS NOT NULL AND trim(normalized_url) <> ''"),
     duplicateClientSelections: await duplicateCount(client, "client_publisher_selections", ["client_id", "publisher_profile_id"]),
@@ -415,7 +477,52 @@ async function tenantMismatchCounts(client) {
              AND pp.owner_client_id <> cps.client_id
         `)).rows[0]?.count || 0)
       : 0,
-    sourceChannelTenantMismatch: await hasColumns(client, "sources", ["client_id", "publisher_channel_id"]) && await hasColumns(client, "publisher_channels", ["id", "publisher_profile_id"]) && await hasColumns(client, "publisher_profiles", ["id", "scope_type", "owner_client_id"])
+    appearanceArticleClientMismatch: await hasColumns(client, "article_appearances", ["article_id", "client_id"]) && await hasColumns(client, "articles", ["id", "client_id"])
+      ? Number((await client.query(`
+          SELECT COUNT(*)::int AS count
+            FROM article_appearances aa
+            LEFT JOIN articles a ON a.id = aa.article_id AND a.client_id = aa.client_id
+           WHERE a.id IS NULL
+        `)).rows[0]?.count || 0)
+      : 0,
+    appearanceSourceClientMismatch: await hasColumns(client, "article_appearances", ["source_id", "client_id"]) && await hasColumns(client, "sources", ["id", "client_id"])
+      ? Number((await client.query(`
+          SELECT COUNT(*)::int AS count
+            FROM article_appearances aa
+            LEFT JOIN sources s ON s.id = aa.source_id AND s.client_id = aa.client_id
+           WHERE aa.source_id IS NOT NULL
+             AND s.id IS NULL
+        `)).rows[0]?.count || 0)
+      : 0,
+    appearanceChannelPublisherMismatch: await hasColumns(client, "article_appearances", ["publisher_channel_id", "publisher_profile_id"]) && await hasColumns(client, "publisher_channels", ["id", "publisher_profile_id"])
+      ? Number((await client.query(`
+          SELECT COUNT(*)::int AS count
+            FROM article_appearances aa
+            LEFT JOIN publisher_channels pc ON pc.id = aa.publisher_channel_id AND pc.publisher_profile_id = aa.publisher_profile_id
+           WHERE aa.publisher_channel_id IS NOT NULL
+             AND aa.publisher_profile_id IS NOT NULL
+             AND pc.id IS NULL
+        `)).rows[0]?.count || 0)
+      : 0,
+    appearancePrivatePublisherClientMismatch: await hasColumns(client, "article_appearances", ["publisher_profile_id", "client_id"]) && await hasColumns(client, "publisher_profiles", ["id", "scope_type", "owner_client_id"])
+      ? Number((await client.query(`
+          SELECT COUNT(*)::int AS count
+            FROM article_appearances aa
+            JOIN publisher_profiles pp ON pp.id = aa.publisher_profile_id
+           WHERE pp.scope_type = 'client_private'
+             AND pp.owner_client_id <> aa.client_id
+        `)).rows[0]?.count || 0)
+      : 0,
+    sourceChannelPublisherMismatch: await hasColumns(client, "sources", ["publisher_channel_id"]) && await hasColumns(client, "publisher_channels", ["id"])
+      ? Number((await client.query(`
+          SELECT COUNT(*)::int AS count
+            FROM sources s
+            LEFT JOIN publisher_channels pc ON pc.id = s.publisher_channel_id
+           WHERE s.publisher_channel_id IS NOT NULL
+             AND pc.id IS NULL
+        `)).rows[0]?.count || 0)
+      : 0,
+    sourceChannelPrivatePublisherClientMismatch: await hasColumns(client, "sources", ["client_id", "publisher_channel_id"]) && await hasColumns(client, "publisher_channels", ["id", "publisher_profile_id"]) && await hasColumns(client, "publisher_profiles", ["id", "scope_type", "owner_client_id"])
       ? Number((await client.query(`
           SELECT COUNT(*)::int AS count
             FROM sources s
@@ -453,7 +560,11 @@ async function inspect(client) {
   const unsafePartialSchemaRisks = [];
   for (const table of PUBLISHER_TABLES) {
     const exists = await tableExists(client, table);
-    if (exists && tableRowCounts[table] > 0 && missingColumns[table]?.some((column) => /NOT NULL/i.test(column.definition))) {
+    const unsafeMissingNotNull = missingColumns[table]?.some((column) =>
+      /NOT NULL/i.test(column.definition)
+      && !(table === "publisher_aliases" && column.name === "language_code")
+    );
+    if (exists && tableRowCounts[table] > 0 && unsafeMissingNotNull) {
       unsafePartialSchemaRisks.push(`${table} has rows but is missing NOT NULL catalog columns`);
     }
   }
@@ -486,10 +597,11 @@ END $$`;
 
 function foreignKeyStatement(name, spec) {
   const onDelete = spec.onDelete ? ` ON DELETE ${spec.onDelete}` : "";
+  const columns = Array.isArray(spec.columns) ? spec.columns.join(", ") : spec.column;
   return `DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '${name}') THEN
-    ALTER TABLE ${spec.table} ADD CONSTRAINT ${name} FOREIGN KEY (${spec.column}) REFERENCES ${spec.references}${onDelete};
+    ALTER TABLE ${spec.table} ADD CONSTRAINT ${name} FOREIGN KEY (${columns}) REFERENCES ${spec.references}${onDelete};
   END IF;
 END $$`;
 }
@@ -504,6 +616,7 @@ function plannedStatements() {
   return [
     ...createTables,
     ...alterColumns,
+    ...SAFE_REPAIR_STATEMENTS,
     ...Object.values(INDEXES),
     ...Object.entries(FOREIGN_KEYS).map(([name, spec]) => foreignKeyStatement(name, spec)),
     ...Object.entries(CHECKS).map(([name, spec]) => constraintStatement(name, spec)),
