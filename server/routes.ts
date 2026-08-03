@@ -79,6 +79,7 @@ import { runAnalyticsComputation } from "./analytics-worker";
 import { runDataRetention, onSourceHardDeleted } from "./data-retention-worker";
 import { startLearningWorker } from "./learning-worker";
 import { buildBriefingDeliveryPreview, deliverDueBriefings, getEmailProviderStatus } from "./briefing-delivery";
+import { buildWorkspaceSourceAssignmentPublisherResponse } from "./source-assignment-publisher-dto";
 
 const scryptAsync = promisify(scrypt);
 const CONFIGURABLE_SOCIAL_FEED_SOURCE_TYPES = new Set(["facebook", "instagram", "twitter", "telegram", "youtube"]);
@@ -4766,11 +4767,12 @@ export async function registerRoutes(
       buildClientReadiness(client.id),
       storage.getWorkspaceRelevanceProfile(workspace.id, client.id),
     ]);
-    const approvedPublishers = await Promise.all(publishers.map(async (selection: any) => ({
-      ...selection,
-      channels: (await storage.getPublisherChannels(selection.publisher.id)).filter((channel: any) => channel.lifecycleStatus !== "archived"),
+    const publisherChannelRows = await Promise.all(publishers.map(async (selection: any) => ({
+      selection,
+      channels: selection.publisher?.id ? await storage.getPublisherChannels(selection.publisher.id) : [],
     })));
-    res.json({ client, workspace, relevanceProfile: relevanceProfile || null, assignments, approvedPublishers, operationalSources: sources, readiness });
+    const { approvedPublishers, publisherEligibilitySummary } = buildWorkspaceSourceAssignmentPublisherResponse(publisherChannelRows);
+    res.json({ client, workspace, relevanceProfile: relevanceProfile || null, assignments, approvedPublishers, publisherEligibilitySummary, operationalSources: sources, readiness });
   });
 
   app.post("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments/preview", requireSystemAdmin(), async (req, res) => {

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { buildWorkspaceSourceAssignmentPublisherResponse } from "../server/source-assignment-publisher-dto";
 import { inspectOperationalSourceSample, sourceValidationIdentity } from "../server/source-sample-inspector";
 import type { PublisherChannel, Source } from "../shared/schema";
+import { normalizeWorkspaceSourceAssignmentResponse } from "../shared/workspace-source-assignment-response";
 import {
   WORKSPACE_SOURCE_ASSIGNMENT_PRIORITIES,
   WORKSPACE_SOURCE_ASSIGNMENT_STATUSES,
@@ -28,6 +30,140 @@ assert.deepEqual(WORKSPACE_SOURCE_ASSIGNMENT_STATUSES, ["draft", "testing", "rea
 assert.deepEqual(WORKSPACE_SOURCE_ASSIGNMENT_TEST_STATUSES, ["untested", "passed", "warning", "failed", "stale"]);
 assert.deepEqual(WORKSPACE_SOURCE_ASSIGNMENT_PRIORITIES, ["critical", "high", "standard", "low"]);
 assert.deepEqual(WORKSPACE_SOURCE_ROLES, ["primary", "official", "regional", "contextual", "specialist", "social", "collector", "other"]);
+
+function fixturePublisher(id: number, name: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    name,
+    status: "active",
+    scopeType: "global",
+    verificationStatus: "verified",
+    ownerClientId: null,
+    ...overrides,
+  } as any;
+}
+
+function fixtureSelection(id: number, publisher: any, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    clientId: 1,
+    publisherProfileId: publisher.id,
+    status: "approved",
+    priority: "high",
+    notes: null,
+    selectedBy: 2,
+    selectedAt: new Date("2026-08-03T00:00:00Z"),
+    updatedAt: new Date("2026-08-03T00:00:00Z"),
+    publisher,
+    channelCount: 99,
+    sourceLinkCount: "2",
+    privateLeak: "must_not_be_serialized",
+    ...overrides,
+  } as any;
+}
+
+function fixtureChannel(id: number, publisherProfileId: number, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    publisherProfileId,
+    name: `Channel ${id}`,
+    channelType: "website",
+    url: `https://publisher-${publisherProfileId}.example/`,
+    normalizedUrl: `https://publisher-${publisherProfileId}.example`,
+    countryCode: "IQ",
+    languageCodes: ["ar", "en"],
+    isPrimary: true,
+    verificationStatus: "verified",
+    lifecycleStatus: "active",
+    validationStatus: "valid",
+    metadata: { secret: "must_not_be_serialized" },
+    createdAt: new Date("2026-08-03T00:00:00Z"),
+    updatedAt: new Date("2026-08-03T00:00:00Z"),
+    ...overrides,
+  } as PublisherChannel;
+}
+
+const productionPublisherFixtures = Array.from({ length: 7 }, (_, index) => {
+  const publisher = fixturePublisher(index + 1, `Approved Publisher ${index + 1}`);
+  return {
+    selection: fixtureSelection(index + 1, publisher, { priority: index < 3 ? "critical" : "high" }),
+    channels: [fixtureChannel(index + 1, publisher.id)],
+  };
+});
+const parliamentPublisher = fixturePublisher(8, "Iraqi Council of Representatives", { status: "draft", verificationStatus: "unverified" });
+const productionPublisherResponse = buildWorkspaceSourceAssignmentPublisherResponse([
+  ...productionPublisherFixtures,
+  {
+    selection: fixtureSelection(8, parliamentPublisher, { status: "candidate" }),
+    channels: [fixtureChannel(8, parliamentPublisher.id, { validationStatus: "invalid", lifecycleStatus: "draft", verificationStatus: "unverified" })],
+  },
+]);
+assert.equal(productionPublisherResponse.approvedPublishers.length, 7, "fixture returns seven approved publisher DTOs");
+assert.equal(productionPublisherResponse.publisherEligibilitySummary.approvedPublisherCount, 7);
+assert.equal(productionPublisherResponse.publisherEligibilitySummary.eligibleChannelCount, 7);
+assert.equal(productionPublisherResponse.publisherEligibilitySummary.excludedSelectionCount, 1);
+assert.equal(productionPublisherResponse.publisherEligibilitySummary.excludedChannelCount, 1);
+assert.equal(productionPublisherResponse.approvedPublishers.some((item) => item.publisher.name === "Iraqi Council of Representatives"), false, "candidate publisher is excluded");
+assert.deepEqual(Object.keys(productionPublisherResponse.approvedPublishers[0].selection).sort(), ["clientId", "id", "notes", "priority", "publisherProfileId", "status"]);
+assert.deepEqual(Object.keys(productionPublisherResponse.approvedPublishers[0].publisher).sort(), ["id", "name", "scopeType", "status", "verificationStatus"]);
+assert.equal("privateLeak" in productionPublisherResponse.approvedPublishers[0].selection, false, "selection spread does not leak unknown fields");
+assert.equal("metadata" in productionPublisherResponse.approvedPublishers[0].channels[0], false, "channel DTO does not leak metadata");
+
+const edgePublisher = fixturePublisher(30, "Eligibility Edge Publisher");
+const edgeResponse = buildWorkspaceSourceAssignmentPublisherResponse([
+  { selection: fixtureSelection(20, edgePublisher), channels: [
+    fixtureChannel(20, edgePublisher.id),
+    fixtureChannel(21, edgePublisher.id, { validationStatus: "invalid" }),
+    fixtureChannel(22, edgePublisher.id, { lifecycleStatus: "archived" }),
+    fixtureChannel(23, edgePublisher.id, { verificationStatus: "unverified" }),
+    fixtureChannel(24, edgePublisher.id + 99),
+    fixtureChannel(25, edgePublisher.id, { metadata: { collectorType: "google_news" } }),
+  ] },
+  { selection: fixtureSelection(21, fixturePublisher(31, "Candidate"), { status: "candidate" }), channels: [fixtureChannel(31, 31)] },
+  { selection: fixtureSelection(22, fixturePublisher(32, "Blocked"), { status: "blocked" }), channels: [fixtureChannel(32, 32)] },
+  { selection: fixtureSelection(23, fixturePublisher(33, "Archived Selection"), { status: "archived" }), channels: [fixtureChannel(33, 33)] },
+  { selection: fixtureSelection(24, fixturePublisher(34, "Inactive Publisher", { status: "paused" })), channels: [fixtureChannel(34, 34)] },
+]);
+assert.equal(edgeResponse.approvedPublishers.length, 1, "only one eligible publisher remains");
+assert.equal(edgeResponse.approvedPublishers[0].channels.length, 1, "only valid verified active same-publisher channel remains");
+assert.equal(edgeResponse.approvedPublishers[0].channelCount, 1, "channelCount matches returned eligible channels");
+assert.equal(edgeResponse.approvedPublishers[0].sourceLinkCount, 2, "sourceLinkCount is numeric");
+assert.equal(edgeResponse.publisherEligibilitySummary.excludedSelectionCount, 4, "candidate, blocked, archived and inactive publisher selections are excluded");
+
+const noValidChannelPublisher = fixturePublisher(40, "Approved Without Valid Channel");
+const noValidChannelResponse = buildWorkspaceSourceAssignmentPublisherResponse([
+  { selection: fixtureSelection(40, noValidChannelPublisher), channels: [fixtureChannel(40, noValidChannelPublisher.id, { validationStatus: "invalid" })] },
+]);
+assert.equal(noValidChannelResponse.approvedPublishers.length, 1, "approved publisher with no valid channels still renders as approved");
+assert.equal(noValidChannelResponse.approvedPublishers[0].channels.length, 0, "invalid channels are not offered");
+assert.equal(noValidChannelResponse.publisherEligibilitySummary.eligibleChannelCount, 0);
+
+const malformedNormalized = normalizeWorkspaceSourceAssignmentResponse({
+  approvedPublishers: [{ selection: undefined, publisher: undefined, channels: undefined }],
+  operationalSources: undefined,
+  assignments: undefined,
+  readiness: undefined,
+} as any);
+assert.equal(malformedNormalized.approvedPublishers.length, 0);
+assert.equal(malformedNormalized.skippedMalformedPublisherCount, 1, "malformed approved publisher entry is skipped");
+assert.deepEqual(malformedNormalized.operationalSources, []);
+assert.deepEqual(malformedNormalized.assignments, []);
+assert.deepEqual(malformedNormalized.readiness.blockers, []);
+
+const validNormalized = normalizeWorkspaceSourceAssignmentResponse({
+  approvedPublishers: productionPublisherResponse.approvedPublishers.slice(0, 1),
+  operationalSources: [],
+  assignments: [],
+  readiness: { blockers: ["client_inactive"], sourceAssignmentsConfigured: 0 },
+  relevanceProfile: null,
+});
+assert.equal(validNormalized.approvedPublishers[0].publisher.name, "Approved Publisher 1", "valid DTO preserves publisher name for rendering");
+assert.equal(validNormalized.approvedPublishers[0].selection.status, "approved", "valid DTO preserves selection status for rendering");
+assert.equal(validNormalized.approvedPublishers[0].channels[0].channelType, "website", "valid DTO preserves channel badge data");
+
+const emptyNormalized = normalizeWorkspaceSourceAssignmentResponse({ approvedPublishers: [], operationalSources: [], assignments: [], readiness: { blockers: ["workspace_inactive"] }, relevanceProfile: null });
+assert.deepEqual(emptyNormalized.approvedPublishers, [], "empty publisher state renders as an empty list");
+assert.deepEqual(emptyNormalized.readiness.blockers, ["workspace_inactive"], "readiness blockers are preserved");
 
 assert.equal(buildWorkspaceSourceAssignmentKey(12, 34), "workspace:12:source:34");
 assert.equal(buildOperationalSourceIdentityKey(7, 9), "client:7:publisher-channel:9");
@@ -467,6 +603,7 @@ includes(routes, "parsePositiveId(req.params.clientId)", "routes parse client ID
 includes(routes, "parsePositiveId(req.params.workspaceId)", "routes parse workspace IDs");
 includes(routes, "parsePositiveId(req.params.assignmentId)", "routes parse assignment IDs");
 includes(routes, "requireSystemAdmin()", "routes require platform admin");
+includes(routes, "buildWorkspaceSourceAssignmentPublisherResponse", "source assignment route uses explicit publisher DTO adapter");
 includes(routes, "storage.getSourceAssignmentSummaries(clientId)", "source list attaches assignment metadata");
 includes(routes, "source_assignment_tests_stale", "readiness reports stale test blocker");
 includes(routes, "workspace_inactive", "readiness reports workspace inactive blocker");
@@ -489,6 +626,7 @@ includes(workspacePage, "Connectivity", "connectivity workflow is visible");
 includes(workspacePage, "Relevance", "relevance workflow is visible");
 includes(workspacePage, "Full", "full source test workflow is visible");
 includes(workspacePage, "Sample headlines", "actual source samples are displayed");
+includes(workspacePage, "skippedMalformedPublisherCount", "malformed publisher records are surfaced without crashing");
 assert.equal(workspacePage.includes("Iraq government announces new public service program"), false, "UI no longer embeds hardcoded relevance sample");
 includes(clientSetup, "Continue to Source Setup", "client setup links to source setup");
 includes(clientSetup, "Assignment tests passed", "client readiness displays passed test count");

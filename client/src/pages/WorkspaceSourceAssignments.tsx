@@ -12,35 +12,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { WORKSPACE_SOURCE_ASSIGNMENT_PRIORITIES, WORKSPACE_SOURCE_ROLES } from "@shared/workspace-source-assignments";
-
-type AssignmentData = {
-  client: { id: number; name: string };
-  workspace: { id: number; name: string; status: string; active: boolean };
-  relevanceProfile: { profileVersion?: number; topics?: string[]; entities?: string[] } | null;
-  approvedPublishers: Array<{
-    selection: { id: number; status: string; priority: string };
-    publisher: { id: number; name: string; status: string; scopeType: string };
-    channels: Array<{
-      id: number;
-      name: string;
-      channelType: string;
-      verificationStatus?: string | null;
-      validationStatus?: string | null;
-      lifecycleStatus?: string | null;
-    }>;
-    channelCount: number;
-    sourceLinkCount: number;
-  }>;
-  operationalSources: Array<{ id: number; name: string; type: string; active: boolean; publisherChannelId?: number | null }>;
-  assignments: Array<any>;
-  readiness: {
-    sourceAssignmentsConfigured: number;
-    sourceAssignmentTestsPassed: number;
-    sourceAssignmentTestsStale: number;
-    sourceAssignmentsBlocked: number;
-    blockers: string[];
-  };
-};
+import {
+  normalizeWorkspaceSourceAssignmentResponse,
+  type WorkspaceSourceAssignmentResponseDto,
+} from "@shared/workspace-source-assignment-response";
 
 function labelize(value: string | null | undefined) {
   return String(value || "").replace(/_/g, " ");
@@ -65,7 +40,7 @@ export default function WorkspaceSourceAssignments() {
   const [preview, setPreview] = useState<any>(null);
 
   const basePath = `/api/admin/clients/${clientId}/workspaces/${workspaceId}/source-assignments`;
-  const { data, isLoading } = useQuery<AssignmentData>({
+  const { data: rawData, isLoading } = useQuery<WorkspaceSourceAssignmentResponseDto>({
     queryKey: [basePath],
     enabled: Number.isInteger(clientId) && clientId > 0 && Number.isInteger(workspaceId) && workspaceId > 0,
     queryFn: async () => {
@@ -73,10 +48,11 @@ export default function WorkspaceSourceAssignments() {
       return res.json();
     },
   });
+  const data = useMemo(() => normalizeWorkspaceSourceAssignmentResponse(rawData), [rawData]);
 
   const eligibleChannels = useMemo(() => {
-    return (data?.approvedPublishers || []).flatMap((item) =>
-      (item.channels || []).map((channel) => ({
+    return data.approvedPublishers.flatMap((item) =>
+      item.channels.map((channel) => ({
         selection: item.selection,
         publisher: item.publisher,
         channel,
@@ -150,7 +126,7 @@ export default function WorkspaceSourceAssignments() {
     return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
   }
 
-  if (!data) {
+  if (!rawData) {
     return <Card><CardContent className="py-12 text-center text-sm text-muted-foreground">Workspace source setup is unavailable.</CardContent></Card>;
   }
 
@@ -172,6 +148,14 @@ export default function WorkspaceSourceAssignments() {
         </div>
         <Badge variant={data.workspace.active ? "default" : "secondary"}>{data.workspace.status}</Badge>
       </div>
+
+      {data.skippedMalformedPublisherCount > 0 && (
+        <Card className="border-amber-300/70 bg-amber-50 text-amber-950">
+          <CardContent className="py-3 text-sm">
+            {data.skippedMalformedPublisherCount} malformed publisher {data.skippedMalformedPublisherCount === 1 ? "entry was" : "entries were"} skipped. Invalid records are not eligible for source assignment.
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-5">
