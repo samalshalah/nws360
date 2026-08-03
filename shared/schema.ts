@@ -5,6 +5,21 @@ import { relations, sql } from "drizzle-orm";
 import type { WebsiteCollectorConfig } from "./source-collector";
 import type { SourceFilterConfig } from "./source-filter";
 import { normalizeUserScopeClientAssignment } from "./user-scope";
+import {
+  ARTICLE_APPEARANCE_TYPES,
+  CHANNEL_VALIDATION_STATUSES,
+  CLIENT_PUBLISHER_SELECTION_PRIORITIES,
+  CLIENT_PUBLISHER_SELECTION_STATUSES,
+  COLLECTOR_TYPES,
+  PUBLISHER_ALIAS_TYPES,
+  PUBLISHER_CHANNEL_TYPES,
+  PUBLISHER_LIFECYCLE_STATUSES,
+  PUBLISHER_OFFICIAL_STATUSES,
+  PUBLISHER_ORGANIZATION_TYPES,
+  PUBLISHER_OWNERSHIP_TYPES,
+  PUBLISHER_SCOPE_TYPES,
+  PUBLISHER_VERIFICATION_STATUSES,
+} from "./publisher-catalog";
 
 export const ORGANIZATION_TYPES = [
   "embassy",
@@ -161,6 +176,188 @@ export const insertUserSchema = createInsertSchema(users)
     }
   });
 
+// === PUBLISHER CATALOG ===
+export const publisherProfiles = pgTable("publisher_profiles", {
+  id: serial("id").primaryKey(),
+  canonicalKey: text("canonical_key").notNull(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull(),
+  legalName: text("legal_name"),
+  organizationType: text("organization_type").notNull().default("other"),
+  description: text("description"),
+  primaryDomain: text("primary_domain"),
+  normalizedPrimaryDomain: text("normalized_primary_domain"),
+  websiteUrl: text("website_url"),
+  logoUrl: text("logo_url"),
+  countryCode: text("country_code"),
+  operatingCountryCodes: text("operating_country_codes").array().notNull().default([]),
+  languageCodes: text("language_codes").array().notNull().default([]),
+  ownershipType: text("ownership_type").notNull().default("unknown"),
+  parentOrganizationName: text("parent_organization_name"),
+  officialStatus: text("official_status").notNull().default("unknown"),
+  verificationStatus: text("verification_status").notNull().default("unverified"),
+  verifiedAt: timestamp("verified_at"),
+  verifiedBy: integer("verified_by").references(() => users.id),
+  scopeType: text("scope_type").notNull().default("global"),
+  ownerClientId: integer("owner_client_id").references(() => clients.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("draft"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+  createdBy: integer("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("publisher_profiles_canonical_key_unique").on(table.canonicalKey),
+  index("publisher_profiles_scope_idx").on(table.scopeType, table.ownerClientId),
+  index("publisher_profiles_domain_idx").on(table.normalizedPrimaryDomain),
+  index("publisher_profiles_country_idx").on(table.countryCode),
+  check("publisher_profiles_scope_owner_ck", sql`
+    (${table.scopeType} = 'global' AND ${table.ownerClientId} IS NULL)
+    OR (${table.scopeType} = 'client_private' AND ${table.ownerClientId} IS NOT NULL)
+  `),
+  check("publisher_profiles_scope_type_ck", sql`
+    ${table.scopeType} IN ('global', 'client_private')
+  `),
+  check("publisher_profiles_organization_type_ck", sql`
+    ${table.organizationType} IN (
+      'news_agency',
+      'newspaper',
+      'magazine',
+      'television',
+      'radio',
+      'digital_news',
+      'government',
+      'diplomatic_mission',
+      'international_organization',
+      'ngo',
+      'think_tank',
+      'research_organization',
+      'corporate',
+      'social_only',
+      'other'
+    )
+  `),
+  check("publisher_profiles_ownership_type_ck", sql`
+    ${table.ownershipType} IN ('public', 'private', 'state_owned', 'nonprofit', 'international', 'unknown')
+  `),
+  check("publisher_profiles_official_status_ck", sql`
+    ${table.officialStatus} IN ('official', 'independent', 'state_affiliated', 'unofficial', 'unknown')
+  `),
+  check("publisher_profiles_verification_status_ck", sql`
+    ${table.verificationStatus} IN ('unverified', 'verified', 'disputed')
+  `),
+  check("publisher_profiles_lifecycle_status_ck", sql`
+    ${table.status} IN ('draft', 'active', 'paused', 'archived')
+  `),
+]);
+
+export const insertPublisherProfileSchema = createInsertSchema(publisherProfiles).omit({ id: true, createdAt: true, updatedAt: true });
+
+export const publisherAliases = pgTable("publisher_aliases", {
+  id: serial("id").primaryKey(),
+  publisherProfileId: integer("publisher_profile_id").notNull().references(() => publisherProfiles.id, { onDelete: "cascade" }),
+  alias: text("alias").notNull(),
+  normalizedAlias: text("normalized_alias").notNull(),
+  languageCode: text("language_code"),
+  aliasType: text("alias_type").notNull().default("name"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("publisher_aliases_profile_alias_language_unique").on(table.publisherProfileId, table.normalizedAlias, table.languageCode),
+  index("publisher_aliases_normalized_idx").on(table.normalizedAlias),
+  check("publisher_aliases_alias_type_ck", sql`
+    ${table.aliasType} IN ('name', 'abbreviation', 'former_name', 'translated_name', 'social_name', 'domain_name', 'other')
+  `),
+]);
+
+export const insertPublisherAliasSchema = createInsertSchema(publisherAliases).omit({ id: true, createdAt: true, updatedAt: true });
+
+export const publisherChannels = pgTable("publisher_channels", {
+  id: serial("id").primaryKey(),
+  publisherProfileId: integer("publisher_profile_id").notNull().references(() => publisherProfiles.id, { onDelete: "cascade" }),
+  channelKey: text("channel_key").notNull(),
+  name: text("name").notNull(),
+  channelType: text("channel_type").notNull(),
+  url: text("url"),
+  normalizedUrl: text("normalized_url"),
+  externalId: text("external_id"),
+  handle: text("handle"),
+  countryCode: text("country_code"),
+  languageCodes: text("language_codes").array().notNull().default([]),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  verificationStatus: text("verification_status").notNull().default("unverified"),
+  verifiedAt: timestamp("verified_at"),
+  verifiedBy: integer("verified_by").references(() => users.id),
+  lifecycleStatus: text("lifecycle_status").notNull().default("draft"),
+  fetchStrategy: text("fetch_strategy"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+  lastValidatedAt: timestamp("last_validated_at"),
+  validationStatus: text("validation_status").notNull().default("untested"),
+  createdBy: integer("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("publisher_channels_channel_key_unique").on(table.channelKey),
+  uniqueIndex("publisher_channels_normalized_url_unique").on(table.normalizedUrl),
+  index("publisher_channels_profile_idx").on(table.publisherProfileId),
+  index("publisher_channels_type_idx").on(table.channelType),
+  check("publisher_channels_channel_type_ck", sql`
+    ${table.channelType} IN (
+      'website',
+      'rss',
+      'telegram',
+      'facebook',
+      'x',
+      'youtube',
+      'instagram',
+      'tiktok',
+      'linkedin',
+      'television',
+      'radio',
+      'podcast',
+      'newsletter',
+      'api',
+      'other'
+    )
+  `),
+  check("publisher_channels_not_google_news_ck", sql`
+    ${table.channelType} <> 'google_news'
+  `),
+  check("publisher_channels_verification_status_ck", sql`
+    ${table.verificationStatus} IN ('unverified', 'verified', 'disputed')
+  `),
+  check("publisher_channels_lifecycle_status_ck", sql`
+    ${table.lifecycleStatus} IN ('draft', 'active', 'paused', 'archived')
+  `),
+  check("publisher_channels_validation_status_ck", sql`
+    ${table.validationStatus} IN ('untested', 'valid', 'invalid', 'unreachable', 'needs_review')
+  `),
+]);
+
+export const insertPublisherChannelSchema = createInsertSchema(publisherChannels).omit({ id: true, createdAt: true, updatedAt: true, lastValidatedAt: true });
+
+export const clientPublisherSelections = pgTable("client_publisher_selections", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  publisherProfileId: integer("publisher_profile_id").notNull().references(() => publisherProfiles.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("candidate"),
+  priority: text("priority").notNull().default("standard"),
+  notes: text("notes"),
+  selectedBy: integer("selected_by").references(() => users.id),
+  selectedAt: timestamp("selected_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("client_publisher_selections_client_publisher_unique").on(table.clientId, table.publisherProfileId),
+  index("client_publisher_selections_client_status_idx").on(table.clientId, table.status),
+  check("client_publisher_selections_status_ck", sql`
+    ${table.status} IN ('candidate', 'approved', 'blocked', 'archived')
+  `),
+  check("client_publisher_selections_priority_ck", sql`
+    ${table.priority} IN ('critical', 'high', 'standard', 'low')
+  `),
+]);
+
+export const insertClientPublisherSelectionSchema = createInsertSchema(clientPublisherSelections).omit({ id: true, selectedAt: true, updatedAt: true });
+
 // === SOURCES ===
 export const sources = pgTable("sources", {
   id: serial("id").primaryKey(),
@@ -180,6 +377,7 @@ export const sources = pgTable("sources", {
   feedToken: uuid("feed_token").defaultRandom().notNull().unique(),
   refreshPriority: text("refresh_priority").default("medium"),
   logoUrl: text("logo_url"),
+  publisherChannelId: integer("publisher_channel_id").references(() => publisherChannels.id),
   deletedAt: timestamp("deleted_at"),
   lastFetchedAt: timestamp("last_fetched_at"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -240,6 +438,48 @@ export const articles = pgTable("articles", {
 ]);
 
 export const insertArticleSchema = createInsertSchema(articles).omit({ id: true, createdAt: true });
+
+// === ARTICLE APPEARANCES (Canonical article channel appearances) ===
+export const articleAppearances = pgTable("article_appearances", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  articleId: integer("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
+  publisherProfileId: integer("publisher_profile_id").references(() => publisherProfiles.id),
+  publisherChannelId: integer("publisher_channel_id").references(() => publisherChannels.id),
+  sourceId: integer("source_id").references(() => sources.id),
+  appearanceKey: text("appearance_key").notNull(),
+  appearanceType: text("appearance_type").notNull(),
+  originalUrl: text("original_url"),
+  normalizedOriginalUrl: text("normalized_original_url"),
+  collectorUrl: text("collector_url"),
+  collectorType: text("collector_type"),
+  collectorQuery: text("collector_query"),
+  collectorEdition: text("collector_edition"),
+  externalId: text("external_id"),
+  headline: text("headline"),
+  caption: text("caption"),
+  languageCode: text("language_code"),
+  publishedAt: timestamp("published_at"),
+  discoveredAt: timestamp("discovered_at").defaultNow(),
+  engagementMetadata: jsonb("engagement_metadata").$type<Record<string, unknown>>().notNull().default({}),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("article_appearances_client_key_unique").on(table.clientId, table.appearanceKey),
+  index("article_appearances_article_idx").on(table.articleId),
+  index("article_appearances_client_publisher_idx").on(table.clientId, table.publisherProfileId),
+  index("article_appearances_channel_idx").on(table.publisherChannelId),
+  check("article_appearances_type_ck", sql`
+    ${table.appearanceType} IN ('original', 'rss', 'republished', 'social', 'video', 'broadcast', 'collector')
+  `),
+  check("article_appearances_collector_type_ck", sql`
+    ${table.collectorType} IS NULL OR ${table.collectorType} IN ('google_news', 'rss_app', 'direct', 'manual', 'other')
+  `),
+]);
+
+export const insertArticleAppearanceSchema = createInsertSchema(articleAppearances).omit({ id: true, createdAt: true, updatedAt: true });
 
 // === REJECTED INGESTION ITEMS (Relevance Gate Audit) ===
 export const rejectedIngestionItems = pgTable("rejected_ingestion_items", {
@@ -1041,15 +1281,20 @@ export const mobileNotificationPrefs = pgTable("mobile_notification_prefs", {
 export const insertMobileNotificationPrefSchema = createInsertSchema(mobileNotificationPrefs).omit({ id: true, createdAt: true });
 
 // === RELATIONS ===
-export const sourceRelations = relations(sources, ({ many }) => ({
+export const sourceRelations = relations(sources, ({ many, one }) => ({
   articles: many(articles),
+  publisherChannel: one(publisherChannels, {
+    fields: [sources.publisherChannelId],
+    references: [publisherChannels.id],
+  }),
 }));
 
-export const articleRelations = relations(articles, ({ one }) => ({
+export const articleRelations = relations(articles, ({ one, many }) => ({
   source: one(sources, {
     fields: [articles.sourceId],
     references: [sources.id],
   }),
+  appearances: many(articleAppearances),
 }));
 
 // === TYPES ===
@@ -1059,8 +1304,23 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Source = typeof sources.$inferSelect;
 export type InsertSource = z.infer<typeof insertSourceSchema>;
 
+export type PublisherProfile = typeof publisherProfiles.$inferSelect;
+export type InsertPublisherProfile = z.infer<typeof insertPublisherProfileSchema>;
+
+export type PublisherAlias = typeof publisherAliases.$inferSelect;
+export type InsertPublisherAlias = z.infer<typeof insertPublisherAliasSchema>;
+
+export type PublisherChannel = typeof publisherChannels.$inferSelect;
+export type InsertPublisherChannel = z.infer<typeof insertPublisherChannelSchema>;
+
+export type ClientPublisherSelection = typeof clientPublisherSelections.$inferSelect;
+export type InsertClientPublisherSelection = z.infer<typeof insertClientPublisherSelectionSchema>;
+
 export type Article = typeof articles.$inferSelect;
 export type InsertArticle = z.infer<typeof insertArticleSchema>;
+
+export type ArticleAppearance = typeof articleAppearances.$inferSelect;
+export type InsertArticleAppearance = z.infer<typeof insertArticleAppearanceSchema>;
 
 export type Keyword = typeof keywords.$inferSelect;
 export type InsertKeyword = z.infer<typeof insertKeywordSchema>;

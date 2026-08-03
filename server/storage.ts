@@ -6,6 +6,7 @@ import {
   users, sources, articles, savedFeedViews, keywords, bookmarks, sourceFetchLogs, rejectedIngestionItems,
   workspaceRelevanceProfiles, articleWorkspaceRelevance, workspaceRelevanceHistory,
   clients, clientSettings, clientKeywords, systemSettings, adminAuditLogs,
+  publisherProfiles, publisherAliases, publisherChannels, clientPublisherSelections, articleAppearances,
   processingJobs, systemErrors, apiKeys, featureFlags, usageMetrics,
   storyClusters, articleAiAnalysis, dailyBriefs, detectedEvents, entityMentions, trendPredictions,
   subscriptions, onboardingState, notificationSettings, whiteLabelSettings, supportTickets,
@@ -29,6 +30,10 @@ import {
   type ClientKeyword, type InsertClientKeyword,
   type SystemSetting, type InsertSystemSetting,
   type AdminAuditLog, type InsertAdminAuditLog,
+  type PublisherProfile, type InsertPublisherProfile,
+  type PublisherAlias, type InsertPublisherAlias,
+  type PublisherChannel, type InsertPublisherChannel,
+  type ClientPublisherSelection, type InsertClientPublisherSelection,
   type FeatureFlag,
   type ArticleQueryParams,
   type StoryCluster, type InsertStoryCluster,
@@ -120,6 +125,14 @@ import {
   normalizeWorkspaceName,
   normalizeWorkspaceSetupUpdate,
 } from "@shared/client-enrollment";
+import {
+  clientPublisherSelectionInputSchema,
+  normalizeCreatePublisherRequest,
+  normalizePublisherAlias,
+  normalizePublisherChannel,
+  normalizePublisherProfile,
+  previewPublisherDuplicates,
+} from "@shared/publisher-catalog";
 import { eq, like, and, or, gte, lte, desc, sql, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 
 const AUTO_PAUSE_THRESHOLD_DB = 5;
@@ -173,12 +186,111 @@ export type AtomicWorkspaceCreateResult = {
   auditLog: AdminAuditLog;
 };
 
+export type PublisherCatalogQuery = {
+  search?: string;
+  countryCode?: string;
+  organizationType?: string;
+  verificationStatus?: string;
+  status?: string;
+  scopeType?: string;
+  ownerClientId?: number;
+  clientId?: number;
+};
+
+export type PublisherProfileDetail = PublisherProfile & {
+  aliases: PublisherAlias[];
+  channels: PublisherChannel[];
+  counts: {
+    aliases: number;
+    channels: number;
+    clientSelections: number;
+    sourceLinks: number;
+    articleAppearances: number;
+  };
+};
+
+export type PublisherCreatePreview = {
+  writes: false;
+  normalized: {
+    profile: ReturnType<typeof normalizePublisherProfile>;
+    aliases: ReturnType<typeof normalizePublisherAlias>[];
+    channels: ReturnType<typeof normalizePublisherChannel>[];
+  };
+  duplicateCandidates: ReturnType<typeof previewPublisherDuplicates>;
+  warnings: string[];
+  creationPlan: {
+    createProfile: boolean;
+    aliasCount: number;
+    channelCount: number;
+    createAuditEvent: boolean;
+  };
+};
+
+export type AtomicPublisherProfileResult = {
+  profile: PublisherProfile;
+  aliases: PublisherAlias[];
+  channels: PublisherChannel[];
+  auditLog: AdminAuditLog;
+};
+
+export type ClientPublisherSelectionResult = {
+  selection: ClientPublisherSelection;
+  publisher: PublisherProfile;
+  auditLog: AdminAuditLog;
+};
+
+export type ClientPublisherReadinessCounts = {
+  publisherProfilesConfigured: number;
+  sourceChannelsConfigured: number;
+  sourceAssignmentsConfigured: number;
+};
+
 function safeStorageAuditDetails(value: unknown): string {
   return JSON.stringify(value, (_key, item) => {
     if (typeof item === "string" && item.length > 500) return item.slice(0, 500);
     return item;
   });
 }
+
+function toStorageValidationError(error: unknown, fallback = "Invalid publisher catalog request"): StorageBoundaryError {
+  const anyError = error as any;
+  if (Array.isArray(anyError?.issues)) {
+    return new StorageBoundaryError(fallback, {
+      status: 400,
+      code: "validation_failed",
+      details: anyError.issues.map((issue: any) => `${Array.isArray(issue.path) ? issue.path.join(".") || "request" : "request"}: ${issue.message}`),
+    });
+  }
+  return new StorageBoundaryError(error instanceof Error ? error.message : fallback, {
+    status: 400,
+    code: "validation_failed",
+  });
+}
+
+function stripPublisherChannelWarnings(channel: ReturnType<typeof normalizePublisherChannel>) {
+  const { warnings: _warnings, ...values } = channel;
+  return {
+    ...values,
+    url: values.url || null,
+    normalizedUrl: values.normalizedUrl || null,
+    externalId: values.externalId || null,
+    handle: values.handle || null,
+  };
+}
+
+function publisherVisibleCondition(clientId?: number, includePrivate = false) {
+  if (includePrivate && !clientId) return undefined;
+  if (clientId) {
+    return or(
+      eq(publisherProfiles.scopeType, "global"),
+      and(eq(publisherProfiles.scopeType, "client_private"), eq(publisherProfiles.ownerClientId, clientId)),
+    );
+  }
+  return includePrivate ? undefined : eq(publisherProfiles.scopeType, "global");
+}
+
+const PUBLISHER_LIFECYCLE_SET = new Set(["draft", "active", "paused", "archived"]);
+const CHANNEL_VALIDATION_SET = new Set(["untested", "valid", "invalid", "unreachable", "needs_review"]);
 
 function workspaceStatusUpdates(status: string, actorUserId: number, readiness: ClientReadinessSnapshot): Record<string, unknown> {
   switch (status) {
@@ -641,6 +753,34 @@ export interface IStorage {
   updateClientSetupAtomic(clientId: number, input: unknown, actorUserId: number): Promise<AtomicClientSetupResult>;
   transitionClientLifecycleAtomic(clientId: number, input: unknown, actorUserId: number, readiness: ClientReadinessSnapshot): Promise<AtomicLifecycleTransitionResult>;
   deleteClient(id: number): Promise<void>;
+
+  // Publisher catalog
+  getPublisherProfiles(params?: PublisherCatalogQuery): Promise<Array<PublisherProfile & {
+    channelCount: number;
+    selectionCount: number;
+    sourceLinkCount: number;
+    articleAppearanceCount: number;
+  }>>;
+  getPublisherProfile(id: number, options?: { clientId?: number; includePrivate?: boolean }): Promise<PublisherProfile | undefined>;
+  getPublisherProfileDetail(id: number, options?: { clientId?: number; includePrivate?: boolean }): Promise<PublisherProfileDetail | undefined>;
+  previewPublisherProfile(input: unknown): Promise<PublisherCreatePreview>;
+  createPublisherProfileAtomic(input: unknown, actorUserId: number): Promise<AtomicPublisherProfileResult>;
+  updatePublisherProfile(id: number, input: unknown, actorUserId: number): Promise<PublisherProfile>;
+  transitionPublisherLifecycle(id: number, status: string, actorUserId: number): Promise<{ profile: PublisherProfile; auditLog: AdminAuditLog }>;
+  getPublisherAliases(publisherId: number): Promise<PublisherAlias[]>;
+  createPublisherAlias(publisherId: number, input: unknown, actorUserId: number): Promise<{ alias: PublisherAlias; auditLog: AdminAuditLog }>;
+  updatePublisherAlias(publisherId: number, aliasId: number, input: unknown, actorUserId: number): Promise<{ alias: PublisherAlias; auditLog: AdminAuditLog }>;
+  archivePublisherAlias(publisherId: number, aliasId: number, actorUserId: number): Promise<{ auditLog: AdminAuditLog }>;
+  getPublisherChannels(publisherId: number): Promise<PublisherChannel[]>;
+  previewPublisherChannel(publisherId: number, input: unknown): Promise<{ writes: false; normalized: ReturnType<typeof normalizePublisherChannel>; duplicate: PublisherChannel | null; warnings: string[] }>;
+  createPublisherChannel(publisherId: number, input: unknown, actorUserId: number): Promise<{ channel: PublisherChannel; auditLog: AdminAuditLog }>;
+  updatePublisherChannel(publisherId: number, channelId: number, input: unknown, actorUserId: number): Promise<{ channel: PublisherChannel; auditLog: AdminAuditLog }>;
+  transitionPublisherChannelLifecycle(publisherId: number, channelId: number, status: string, actorUserId: number): Promise<{ channel: PublisherChannel; auditLog: AdminAuditLog }>;
+  validatePublisherChannel(publisherId: number, channelId: number, validationStatus: string, actorUserId: number): Promise<{ channel: PublisherChannel; auditLog: AdminAuditLog }>;
+  getClientPublisherSelections(clientId: number): Promise<Array<ClientPublisherSelection & { publisher: PublisherProfile; channelCount: number; sourceLinkCount: number }>>;
+  selectClientPublisherAtomic(clientId: number, input: unknown, actorUserId: number): Promise<ClientPublisherSelectionResult>;
+  updateClientPublisherSelection(clientId: number, selectionId: number, input: unknown, actorUserId: number): Promise<ClientPublisherSelectionResult>;
+  getClientPublisherReadinessCounts(clientId: number): Promise<ClientPublisherReadinessCounts>;
 
   // Client Settings
   getClientSettings(clientId: number): Promise<ClientSettings | undefined>;
@@ -2908,6 +3048,678 @@ export class DatabaseStorage implements IStorage {
 
   async deleteClient(id: number): Promise<void> {
     await db.update(clients).set({ active: false }).where(eq(clients.id, id));
+  }
+
+  // === PUBLISHER CATALOG ===
+  async getPublisherProfiles(params: PublisherCatalogQuery = {}) {
+    const conditions = [];
+    const visibility = publisherVisibleCondition(params.clientId, params.scopeType === "client_private" || params.ownerClientId != null);
+    if (visibility) conditions.push(visibility);
+    if (params.search) {
+      const pattern = `%${params.search.trim().toLowerCase()}%`;
+      conditions.push(or(
+        sql`lower(${publisherProfiles.name}) like ${pattern}`,
+        sql`lower(${publisherProfiles.slug}) like ${pattern}`,
+        sql`lower(coalesce(${publisherProfiles.normalizedPrimaryDomain}, '')) like ${pattern}`,
+      ));
+    }
+    if (params.countryCode) conditions.push(eq(publisherProfiles.countryCode, params.countryCode.toUpperCase()));
+    if (params.organizationType) conditions.push(eq(publisherProfiles.organizationType, params.organizationType));
+    if (params.verificationStatus) conditions.push(eq(publisherProfiles.verificationStatus, params.verificationStatus));
+    if (params.status) conditions.push(eq(publisherProfiles.status, params.status));
+    if (params.scopeType) conditions.push(eq(publisherProfiles.scopeType, params.scopeType));
+    if (params.ownerClientId) conditions.push(eq(publisherProfiles.ownerClientId, params.ownerClientId));
+
+    const rows = await db
+      .select()
+      .from(publisherProfiles)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(asc(publisherProfiles.name));
+
+    return Promise.all(rows.map(async (profile) => {
+      const [channelCount, selectionCount, sourceLinkCount, articleAppearanceCount] = await Promise.all([
+        db.select({ count: sql<number>`count(*)::int` }).from(publisherChannels).where(eq(publisherChannels.publisherProfileId, profile.id)),
+        db.select({ count: sql<number>`count(*)::int` }).from(clientPublisherSelections).where(eq(clientPublisherSelections.publisherProfileId, profile.id)),
+        db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(sources)
+          .innerJoin(publisherChannels, eq(sources.publisherChannelId, publisherChannels.id))
+          .where(eq(publisherChannels.publisherProfileId, profile.id)),
+        db.select({ count: sql<number>`count(*)::int` }).from(articleAppearances).where(eq(articleAppearances.publisherProfileId, profile.id)),
+      ]);
+      return {
+        ...profile,
+        channelCount: Number(channelCount[0]?.count || 0),
+        selectionCount: Number(selectionCount[0]?.count || 0),
+        sourceLinkCount: Number(sourceLinkCount[0]?.count || 0),
+        articleAppearanceCount: Number(articleAppearanceCount[0]?.count || 0),
+      };
+    }));
+  }
+
+  async getPublisherProfile(id: number, options: { clientId?: number; includePrivate?: boolean } = {}): Promise<PublisherProfile | undefined> {
+    const conditions = [eq(publisherProfiles.id, id)];
+    const visibility = publisherVisibleCondition(options.clientId, Boolean(options.includePrivate));
+    if (visibility) conditions.push(visibility);
+    const [profile] = await db.select().from(publisherProfiles).where(and(...conditions)).limit(1);
+    return profile;
+  }
+
+  async getPublisherProfileDetail(id: number, options: { clientId?: number; includePrivate?: boolean } = {}): Promise<PublisherProfileDetail | undefined> {
+    const profile = await this.getPublisherProfile(id, options);
+    if (!profile) return undefined;
+    const [aliases, channels, selections, sourceLinks, appearances] = await Promise.all([
+      db.select().from(publisherAliases).where(eq(publisherAliases.publisherProfileId, id)).orderBy(asc(publisherAliases.languageCode), asc(publisherAliases.alias)),
+      db.select().from(publisherChannels).where(eq(publisherChannels.publisherProfileId, id)).orderBy(asc(publisherChannels.channelType), asc(publisherChannels.name)),
+      db.select({ count: sql<number>`count(*)::int` }).from(clientPublisherSelections).where(eq(clientPublisherSelections.publisherProfileId, id)),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(sources)
+        .innerJoin(publisherChannels, eq(sources.publisherChannelId, publisherChannels.id))
+        .where(eq(publisherChannels.publisherProfileId, id)),
+      db.select({ count: sql<number>`count(*)::int` }).from(articleAppearances).where(eq(articleAppearances.publisherProfileId, id)),
+    ]);
+    return {
+      ...profile,
+      aliases,
+      channels,
+      counts: {
+        aliases: aliases.length,
+        channels: channels.length,
+        clientSelections: Number(selections[0]?.count || 0),
+        sourceLinks: Number(sourceLinks[0]?.count || 0),
+        articleAppearances: Number(appearances[0]?.count || 0),
+      },
+    };
+  }
+
+  async previewPublisherProfile(input: unknown): Promise<PublisherCreatePreview> {
+    let normalized;
+    try {
+      normalized = normalizeCreatePublisherRequest(input);
+    } catch (error) {
+      throw toStorageValidationError(error);
+    }
+
+    const existingProfiles = await db.select().from(publisherProfiles);
+    const existingAliases = await db.select().from(publisherAliases);
+    const existingChannels = await db.select().from(publisherChannels);
+    const duplicateCandidates = previewPublisherDuplicates(
+      {
+        name: normalized.profile.name,
+        normalizedPrimaryDomain: normalized.profile.normalizedPrimaryDomain,
+        aliases: normalized.aliases,
+        channels: normalized.channels,
+        countryCode: normalized.profile.countryCode,
+      },
+      existingProfiles.map((profile) => ({
+        id: profile.id,
+        name: profile.name,
+        normalizedPrimaryDomain: profile.normalizedPrimaryDomain,
+        countryCode: profile.countryCode,
+        aliases: existingAliases.filter((alias) => alias.publisherProfileId === profile.id),
+        channels: existingChannels.filter((channel) => channel.publisherProfileId === profile.id),
+      })),
+    );
+    const warnings = [
+      ...normalized.channels.flatMap((channel: any) => channel.warnings || []),
+      ...duplicateCandidates.map((candidate) => candidate.message),
+    ];
+    return {
+      writes: false,
+      normalized,
+      duplicateCandidates,
+      warnings: Array.from(new Set(warnings)),
+      creationPlan: {
+        createProfile: true,
+        aliasCount: normalized.aliases.length,
+        channelCount: normalized.channels.length,
+        createAuditEvent: true,
+      },
+    };
+  }
+
+  async createPublisherProfileAtomic(input: unknown, actorUserId: number): Promise<AtomicPublisherProfileResult> {
+    let normalized;
+    try {
+      normalized = normalizeCreatePublisherRequest(input);
+    } catch (error) {
+      throw toStorageValidationError(error);
+    }
+
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`nws360.publisher.${normalized.profile.canonicalKey}`}))`);
+
+      if (normalized.profile.scopeType === "client_private") {
+        const [client] = await tx.select({ id: clients.id }).from(clients).where(eq(clients.id, normalized.profile.ownerClientId as number)).limit(1);
+        if (!client) throw new StorageBoundaryError("Client not found", { status: 404, code: "client_not_found" });
+      }
+
+      const [duplicateKey] = await tx
+        .select({ id: publisherProfiles.id })
+        .from(publisherProfiles)
+        .where(eq(publisherProfiles.canonicalKey, normalized.profile.canonicalKey))
+        .limit(1);
+      if (duplicateKey) {
+        throw new StorageBoundaryError("Publisher already exists", { status: 409, code: "duplicate_publisher" });
+      }
+
+      if (normalized.profile.normalizedPrimaryDomain) {
+        const domainConditions = [
+          eq(publisherProfiles.normalizedPrimaryDomain, normalized.profile.normalizedPrimaryDomain),
+          eq(publisherProfiles.scopeType, normalized.profile.scopeType),
+          normalized.profile.ownerClientId == null
+            ? isNull(publisherProfiles.ownerClientId)
+            : eq(publisherProfiles.ownerClientId, normalized.profile.ownerClientId),
+        ];
+        const [duplicateDomain] = await tx
+          .select({ id: publisherProfiles.id })
+          .from(publisherProfiles)
+          .where(and(...domainConditions))
+          .limit(1);
+        if (duplicateDomain) {
+          throw new StorageBoundaryError("Publisher primary domain already exists in this scope", {
+            status: 409,
+            code: "duplicate_publisher_domain",
+          });
+        }
+      }
+
+      const [profile] = await tx.insert(publisherProfiles).values({
+        ...normalized.profile,
+        createdBy: actorUserId,
+      } as InsertPublisherProfile).returning();
+
+      const aliasRows = normalized.aliases.length
+        ? await tx.insert(publisherAliases).values(normalized.aliases.map((alias) => ({
+            ...alias,
+            publisherProfileId: profile.id,
+          } as InsertPublisherAlias))).returning()
+        : [];
+
+      const channelValues = normalized.channels.map((channel) => ({
+        ...stripPublisherChannelWarnings(normalizePublisherChannel(channel, profile.id)),
+        publisherProfileId: profile.id,
+        createdBy: actorUserId,
+      } as InsertPublisherChannel));
+      const channelIdentities = new Set<string>();
+      for (const channel of channelValues) {
+        const identity = channel.normalizedUrl || channel.externalId || channel.handle || channel.channelKey;
+        const key = `${channel.channelType}:${identity}`;
+        if (channelIdentities.has(key)) {
+          throw new StorageBoundaryError("Duplicate publisher channel", { status: 409, code: "duplicate_publisher_channel" });
+        }
+        channelIdentities.add(key);
+        if (channel.normalizedUrl) {
+          const [duplicateChannel] = await tx
+            .select({ id: publisherChannels.id })
+            .from(publisherChannels)
+            .where(eq(publisherChannels.normalizedUrl, channel.normalizedUrl))
+            .limit(1);
+          if (duplicateChannel) {
+            throw new StorageBoundaryError("Publisher channel already exists", { status: 409, code: "duplicate_publisher_channel" });
+          }
+        }
+      }
+      const channelRows = channelValues.length
+        ? await tx.insert(publisherChannels).values(channelValues).returning()
+        : [];
+
+      const [auditLog] = await tx.insert(adminAuditLogs).values({
+        userId: actorUserId,
+        clientId: profile.ownerClientId,
+        action: "publisher_profile_create",
+        entity: "publisher_profile",
+        entityId: profile.id,
+        details: safeStorageAuditDetails({
+          publisherId: profile.id,
+          scopeType: profile.scopeType,
+          ownerClientId: profile.ownerClientId,
+          aliasCount: aliasRows.length,
+          channelCount: channelRows.length,
+        }),
+      }).returning();
+
+      return { profile, aliases: aliasRows, channels: channelRows, auditLog };
+    });
+  }
+
+  async updatePublisherProfile(id: number, input: unknown, actorUserId: number): Promise<PublisherProfile> {
+    const current = await this.getPublisherProfile(id, { includePrivate: true });
+    if (!current) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+    let normalized;
+    try {
+      normalized = normalizePublisherProfile({
+        ...current,
+        ...(input as Record<string, unknown>),
+        canonicalKey: current.canonicalKey,
+      });
+    } catch (error) {
+      throw toStorageValidationError(error);
+    }
+    if (normalized.scopeType === "client_private" && normalized.ownerClientId) {
+      const client = await this.getClient(normalized.ownerClientId);
+      if (!client) throw new StorageBoundaryError("Client not found", { status: 404, code: "client_not_found" });
+    }
+    if (normalized.normalizedPrimaryDomain) {
+      const [duplicateDomain] = await db
+        .select({ id: publisherProfiles.id })
+        .from(publisherProfiles)
+        .where(and(
+          eq(publisherProfiles.normalizedPrimaryDomain, normalized.normalizedPrimaryDomain),
+          eq(publisherProfiles.scopeType, normalized.scopeType),
+          normalized.ownerClientId == null ? isNull(publisherProfiles.ownerClientId) : eq(publisherProfiles.ownerClientId, normalized.ownerClientId),
+          sql`${publisherProfiles.id} <> ${id}`,
+        ))
+        .limit(1);
+      if (duplicateDomain) {
+        throw new StorageBoundaryError("Publisher primary domain already exists in this scope", {
+          status: 409,
+          code: "duplicate_publisher_domain",
+        });
+      }
+    }
+    const [profile] = await db.update(publisherProfiles).set({
+      ...normalized,
+      updatedAt: new Date(),
+    } as any).where(eq(publisherProfiles.id, id)).returning();
+    await this.createAuditLog({
+      userId: actorUserId,
+      clientId: profile.ownerClientId,
+      action: "publisher_profile_update",
+      entity: "publisher_profile",
+      entityId: id,
+      details: safeStorageAuditDetails({ publisherId: id, changedFields: Object.keys(input as Record<string, unknown>) }),
+    });
+    return profile;
+  }
+
+  async transitionPublisherLifecycle(id: number, status: string, actorUserId: number) {
+    if (!PUBLISHER_LIFECYCLE_SET.has(status)) {
+      throw new StorageBoundaryError("Invalid publisher lifecycle status", { status: 400, code: "invalid_publisher_status" });
+    }
+    const current = await this.getPublisherProfile(id, { includePrivate: true });
+    if (!current) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+    const [profile] = await db
+      .update(publisherProfiles)
+      .set({ status, updatedAt: new Date() } as any)
+      .where(eq(publisherProfiles.id, id))
+      .returning();
+    const auditLog = await this.createAuditLog({
+      userId: actorUserId,
+      clientId: profile.ownerClientId,
+      action: "publisher_lifecycle_change",
+      entity: "publisher_profile",
+      entityId: id,
+      details: safeStorageAuditDetails({ publisherId: id, previousStatus: current.status, newStatus: status }),
+    });
+    return { profile, auditLog };
+  }
+
+  async getPublisherAliases(publisherId: number): Promise<PublisherAlias[]> {
+    return db.select().from(publisherAliases).where(eq(publisherAliases.publisherProfileId, publisherId)).orderBy(asc(publisherAliases.languageCode), asc(publisherAliases.alias));
+  }
+
+  async createPublisherAlias(publisherId: number, input: unknown, actorUserId: number) {
+    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
+    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+    let normalized;
+    try {
+      normalized = normalizePublisherAlias(input);
+    } catch (error) {
+      throw toStorageValidationError(error);
+    }
+    const [alias] = await db.insert(publisherAliases).values({ ...normalized, publisherProfileId: publisherId } as InsertPublisherAlias).returning();
+    const auditLog = await this.createAuditLog({
+      userId: actorUserId,
+      clientId: profile.ownerClientId,
+      action: "publisher_alias_create",
+      entity: "publisher_alias",
+      entityId: alias.id,
+      details: safeStorageAuditDetails({ publisherId, aliasId: alias.id, aliasType: alias.aliasType, languageCode: alias.languageCode }),
+    });
+    return { alias, auditLog };
+  }
+
+  async updatePublisherAlias(publisherId: number, aliasId: number, input: unknown, actorUserId: number) {
+    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
+    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+    let normalized;
+    try {
+      normalized = normalizePublisherAlias(input);
+    } catch (error) {
+      throw toStorageValidationError(error);
+    }
+    const [alias] = await db.update(publisherAliases).set({
+      ...normalized,
+      updatedAt: new Date(),
+    } as any).where(and(eq(publisherAliases.id, aliasId), eq(publisherAliases.publisherProfileId, publisherId))).returning();
+    if (!alias) throw new StorageBoundaryError("Publisher alias not found", { status: 404, code: "publisher_alias_not_found" });
+    const auditLog = await this.createAuditLog({
+      userId: actorUserId,
+      clientId: profile.ownerClientId,
+      action: "publisher_alias_update",
+      entity: "publisher_alias",
+      entityId: alias.id,
+      details: safeStorageAuditDetails({ publisherId, aliasId: alias.id, changedFields: Object.keys(input as Record<string, unknown>) }),
+    });
+    return { alias, auditLog };
+  }
+
+  async archivePublisherAlias(publisherId: number, aliasId: number, actorUserId: number) {
+    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
+    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+    await db.delete(publisherAliases).where(and(eq(publisherAliases.id, aliasId), eq(publisherAliases.publisherProfileId, publisherId)));
+    const auditLog = await this.createAuditLog({
+      userId: actorUserId,
+      clientId: profile.ownerClientId,
+      action: "publisher_alias_archive",
+      entity: "publisher_alias",
+      entityId: aliasId,
+      details: safeStorageAuditDetails({ publisherId, aliasId }),
+    });
+    return { auditLog };
+  }
+
+  async getPublisherChannels(publisherId: number): Promise<PublisherChannel[]> {
+    return db.select().from(publisherChannels).where(eq(publisherChannels.publisherProfileId, publisherId)).orderBy(asc(publisherChannels.channelType), asc(publisherChannels.name));
+  }
+
+  async previewPublisherChannel(publisherId: number, input: unknown) {
+    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
+    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+    let normalized;
+    try {
+      normalized = normalizePublisherChannel(input, publisherId);
+    } catch (error) {
+      throw toStorageValidationError(error);
+    }
+    const [duplicate] = normalized.normalizedUrl
+      ? await db.select().from(publisherChannels).where(eq(publisherChannels.normalizedUrl, normalized.normalizedUrl)).limit(1)
+      : [undefined];
+    return { writes: false as const, normalized, duplicate: duplicate || null, warnings: normalized.warnings || [] };
+  }
+
+  async createPublisherChannel(publisherId: number, input: unknown, actorUserId: number) {
+    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
+    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+    let normalized;
+    try {
+      normalized = normalizePublisherChannel(input, publisherId);
+    } catch (error) {
+      throw toStorageValidationError(error);
+    }
+    if (normalized.normalizedUrl) {
+      const [duplicate] = await db.select({ id: publisherChannels.id }).from(publisherChannels).where(eq(publisherChannels.normalizedUrl, normalized.normalizedUrl)).limit(1);
+      if (duplicate) throw new StorageBoundaryError("Publisher channel already exists", { status: 409, code: "duplicate_publisher_channel" });
+    }
+    const [channel] = await db.insert(publisherChannels).values({
+      ...stripPublisherChannelWarnings(normalized),
+      publisherProfileId: publisherId,
+      createdBy: actorUserId,
+    } as InsertPublisherChannel).returning();
+    const auditLog = await this.createAuditLog({
+      userId: actorUserId,
+      clientId: profile.ownerClientId,
+      action: "publisher_channel_create",
+      entity: "publisher_channel",
+      entityId: channel.id,
+      details: safeStorageAuditDetails({ publisherId, channelId: channel.id, channelType: channel.channelType }),
+    });
+    return { channel, auditLog };
+  }
+
+  async updatePublisherChannel(publisherId: number, channelId: number, input: unknown, actorUserId: number) {
+    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
+    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+    const [current] = await db.select().from(publisherChannels).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).limit(1);
+    if (!current) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
+    let normalized;
+    try {
+      normalized = normalizePublisherChannel({ ...current, ...(input as Record<string, unknown>) }, publisherId);
+    } catch (error) {
+      throw toStorageValidationError(error);
+    }
+    if (normalized.normalizedUrl) {
+      const [duplicate] = await db
+        .select({ id: publisherChannels.id })
+        .from(publisherChannels)
+        .where(and(eq(publisherChannels.normalizedUrl, normalized.normalizedUrl), sql`${publisherChannels.id} <> ${channelId}`))
+        .limit(1);
+      if (duplicate) throw new StorageBoundaryError("Publisher channel already exists", { status: 409, code: "duplicate_publisher_channel" });
+    }
+    const [channel] = await db.update(publisherChannels).set({
+      ...stripPublisherChannelWarnings(normalized),
+      updatedAt: new Date(),
+    } as any).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).returning();
+    const auditLog = await this.createAuditLog({
+      userId: actorUserId,
+      clientId: profile.ownerClientId,
+      action: "publisher_channel_update",
+      entity: "publisher_channel",
+      entityId: channel.id,
+      details: safeStorageAuditDetails({ publisherId, channelId: channel.id, changedFields: Object.keys(input as Record<string, unknown>) }),
+    });
+    return { channel, auditLog };
+  }
+
+  async transitionPublisherChannelLifecycle(publisherId: number, channelId: number, status: string, actorUserId: number) {
+    if (!PUBLISHER_LIFECYCLE_SET.has(status)) {
+      throw new StorageBoundaryError("Invalid channel lifecycle status", { status: 400, code: "invalid_channel_status" });
+    }
+    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
+    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+    const [channel] = await db.update(publisherChannels).set({ lifecycleStatus: status, updatedAt: new Date() } as any)
+      .where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId)))
+      .returning();
+    if (!channel) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
+    const auditLog = await this.createAuditLog({
+      userId: actorUserId,
+      clientId: profile.ownerClientId,
+      action: "publisher_channel_lifecycle_change",
+      entity: "publisher_channel",
+      entityId: channel.id,
+      details: safeStorageAuditDetails({ publisherId, channelId: channel.id, newStatus: status }),
+    });
+    return { channel, auditLog };
+  }
+
+  async validatePublisherChannel(publisherId: number, channelId: number, validationStatus: string, actorUserId: number) {
+    if (!CHANNEL_VALIDATION_SET.has(validationStatus)) {
+      throw new StorageBoundaryError("Invalid channel validation status", { status: 400, code: "invalid_channel_validation_status" });
+    }
+    const profile = await this.getPublisherProfile(publisherId, { includePrivate: true });
+    if (!profile) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+    const [channel] = await db.update(publisherChannels).set({
+      validationStatus,
+      lastValidatedAt: new Date(),
+      updatedAt: new Date(),
+    } as any).where(and(eq(publisherChannels.id, channelId), eq(publisherChannels.publisherProfileId, publisherId))).returning();
+    if (!channel) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "publisher_channel_not_found" });
+    const auditLog = await this.createAuditLog({
+      userId: actorUserId,
+      clientId: profile.ownerClientId,
+      action: "publisher_channel_validation",
+      entity: "publisher_channel",
+      entityId: channel.id,
+      details: safeStorageAuditDetails({ publisherId, channelId: channel.id, validationStatus }),
+    });
+    return { channel, auditLog };
+  }
+
+  async getClientPublisherSelections(clientId: number) {
+    const rows = await db.select({
+      selection: clientPublisherSelections,
+      publisher: publisherProfiles,
+      channelCount: sql<number>`(
+        SELECT COUNT(*)::int
+          FROM publisher_channels pc
+         WHERE pc.publisher_profile_id = ${publisherProfiles.id}
+      )`,
+      sourceLinkCount: sql<number>`(
+        SELECT COUNT(*)::int
+          FROM sources s
+          JOIN publisher_channels pc ON pc.id = s.publisher_channel_id
+         WHERE pc.publisher_profile_id = ${publisherProfiles.id}
+           AND s.client_id = ${clientId}
+      )`,
+    })
+      .from(clientPublisherSelections)
+      .innerJoin(publisherProfiles, eq(clientPublisherSelections.publisherProfileId, publisherProfiles.id))
+      .where(and(
+        eq(clientPublisherSelections.clientId, clientId),
+        or(eq(publisherProfiles.scopeType, "global"), eq(publisherProfiles.ownerClientId, clientId)),
+      ))
+      .orderBy(asc(publisherProfiles.name));
+
+    return rows.map((row) => ({
+      ...row.selection,
+      publisher: row.publisher,
+      channelCount: Number(row.channelCount || 0),
+      sourceLinkCount: Number(row.sourceLinkCount || 0),
+    }));
+  }
+
+  async selectClientPublisherAtomic(clientId: number, input: unknown, actorUserId: number): Promise<ClientPublisherSelectionResult> {
+    let parsed;
+    try {
+      parsed = clientPublisherSelectionInputSchema.parse(input);
+    } catch (error) {
+      throw toStorageValidationError(error, "Invalid client publisher selection");
+    }
+
+    return db.transaction(async (tx) => {
+      const [client] = await tx.select({ id: clients.id }).from(clients).where(eq(clients.id, clientId)).limit(1);
+      if (!client) throw new StorageBoundaryError("Client not found", { status: 404, code: "client_not_found" });
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`nws360.client_publisher_selection.${clientId}.${parsed.publisherProfileId}`}))`);
+      const [publisher] = await tx.select().from(publisherProfiles).where(and(
+        eq(publisherProfiles.id, parsed.publisherProfileId),
+        or(eq(publisherProfiles.scopeType, "global"), eq(publisherProfiles.ownerClientId, clientId)),
+      )).limit(1);
+      if (!publisher) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+
+      const [duplicate] = await tx.select({ id: clientPublisherSelections.id }).from(clientPublisherSelections)
+        .where(and(eq(clientPublisherSelections.clientId, clientId), eq(clientPublisherSelections.publisherProfileId, publisher.id)))
+        .limit(1);
+      if (duplicate) {
+        throw new StorageBoundaryError("Client publisher selection already exists", {
+          status: 409,
+          code: "duplicate_client_publisher_selection",
+        });
+      }
+
+      const [selection] = await tx.insert(clientPublisherSelections).values({
+        clientId,
+        publisherProfileId: publisher.id,
+        status: parsed.status,
+        priority: parsed.priority,
+        notes: parsed.notes || null,
+        selectedBy: actorUserId,
+      } as InsertClientPublisherSelection).returning();
+
+      const [auditLog] = await tx.insert(adminAuditLogs).values({
+        userId: actorUserId,
+        clientId,
+        action: "client_publisher_selection",
+        entity: "client_publisher_selection",
+        entityId: selection.id,
+        details: safeStorageAuditDetails({
+          clientId,
+          publisherId: publisher.id,
+          selectionId: selection.id,
+          status: selection.status,
+          priority: selection.priority,
+        }),
+      }).returning();
+
+      return { selection, publisher, auditLog };
+    });
+  }
+
+  async updateClientPublisherSelection(clientId: number, selectionId: number, input: unknown, actorUserId: number): Promise<ClientPublisherSelectionResult> {
+    const [current] = await db
+      .select()
+      .from(clientPublisherSelections)
+      .where(and(eq(clientPublisherSelections.id, selectionId), eq(clientPublisherSelections.clientId, clientId)))
+      .limit(1);
+    if (!current) throw new StorageBoundaryError("Client publisher selection not found", { status: 404, code: "client_publisher_selection_not_found" });
+    let parsed;
+    try {
+      parsed = clientPublisherSelectionInputSchema.parse({
+        publisherProfileId: current.publisherProfileId,
+        status: (input as any)?.status ?? current.status,
+        priority: (input as any)?.priority ?? current.priority,
+        notes: Object.prototype.hasOwnProperty.call(input as any, "notes") ? (input as any).notes : current.notes,
+      });
+    } catch (error) {
+      throw toStorageValidationError(error, "Invalid client publisher selection");
+    }
+    const publisher = await this.getPublisherProfile(current.publisherProfileId, { clientId });
+    if (!publisher) throw new StorageBoundaryError("Publisher not found", { status: 404, code: "publisher_not_found" });
+    const [selection] = await db.update(clientPublisherSelections).set({
+      status: parsed.status,
+      priority: parsed.priority,
+      notes: parsed.notes || null,
+      updatedAt: new Date(),
+    } as any).where(and(eq(clientPublisherSelections.id, selectionId), eq(clientPublisherSelections.clientId, clientId))).returning();
+    const auditLog = await this.createAuditLog({
+      userId: actorUserId,
+      clientId,
+      action: "client_publisher_selection_status_change",
+      entity: "client_publisher_selection",
+      entityId: selection.id,
+      details: safeStorageAuditDetails({
+        clientId,
+        publisherId: publisher.id,
+        selectionId: selection.id,
+        previousStatus: current.status,
+        newStatus: selection.status,
+        priority: selection.priority,
+      }),
+    });
+    return { selection, publisher, auditLog };
+  }
+
+  async getClientPublisherReadinessCounts(clientId: number): Promise<ClientPublisherReadinessCounts> {
+    const [selectionCount] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(clientPublisherSelections)
+      .innerJoin(publisherProfiles, eq(clientPublisherSelections.publisherProfileId, publisherProfiles.id))
+      .where(and(
+        eq(clientPublisherSelections.clientId, clientId),
+        eq(clientPublisherSelections.status, "approved"),
+        or(eq(publisherProfiles.scopeType, "global"), eq(publisherProfiles.ownerClientId, clientId)),
+      ));
+
+    const [channelCount] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(clientPublisherSelections)
+      .innerJoin(publisherProfiles, eq(clientPublisherSelections.publisherProfileId, publisherProfiles.id))
+      .innerJoin(publisherChannels, eq(publisherChannels.publisherProfileId, publisherProfiles.id))
+      .where(and(
+        eq(clientPublisherSelections.clientId, clientId),
+        eq(clientPublisherSelections.status, "approved"),
+        or(eq(publisherProfiles.scopeType, "global"), eq(publisherProfiles.ownerClientId, clientId)),
+        or(eq(publisherChannels.lifecycleStatus, "active"), eq(publisherChannels.verificationStatus, "verified")),
+      ));
+
+    const [sourceAssignmentCount] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(sources)
+      .innerJoin(publisherChannels, eq(sources.publisherChannelId, publisherChannels.id))
+      .innerJoin(publisherProfiles, eq(publisherChannels.publisherProfileId, publisherProfiles.id))
+      .innerJoin(clientPublisherSelections, and(
+        eq(clientPublisherSelections.publisherProfileId, publisherProfiles.id),
+        eq(clientPublisherSelections.clientId, clientId),
+      ))
+      .where(and(
+        eq(sources.clientId, clientId),
+        eq(clientPublisherSelections.status, "approved"),
+        or(eq(publisherProfiles.scopeType, "global"), eq(publisherProfiles.ownerClientId, clientId)),
+      ));
+
+    return {
+      publisherProfilesConfigured: Number(selectionCount?.count || 0),
+      sourceChannelsConfigured: Number(channelCount?.count || 0),
+      sourceAssignmentsConfigured: Number(sourceAssignmentCount?.count || 0),
+    };
   }
 
   // === CLIENT SETTINGS ===

@@ -465,18 +465,18 @@ export default function ClientSetup() {
           <Card>
             <CardHeader>
               <CardTitle>Next Actions</CardTitle>
-              <CardDescription>Publisher setup is the next sprint stage.</CardDescription>
+              <CardDescription>Publisher setup prepares the catalog before workspace source assignment.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
               <Button className="w-full justify-start" variant="outline" onClick={() => setLocation("/users")}>
                 <UserPlus className="mr-2 h-4 w-4" />
                 Add Team Member
               </Button>
-              <Button className="w-full justify-start" variant="secondary" disabled>
+              <Button className="w-full justify-start" variant="secondary" onClick={() => setLocation(`/admin/clients/${clientId}/publishers`)}>
                 Continue to Publisher Setup
               </Button>
               <p className="text-xs text-muted-foreground">
-                Publisher profiles, channels, source assignments, and final monitoring activation are intentionally deferred.
+                Publisher selection does not create sources or activate monitoring.
               </p>
             </CardContent>
           </Card>

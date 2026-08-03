@@ -58,6 +58,10 @@ import WorkspaceRelevance from "@/pages/WorkspaceRelevance";
 import ClientEnrollmentWizard from "@/pages/ClientEnrollmentWizard";
 import ClientSetup from "@/pages/ClientSetup";
 import AdminWorkspaceRelevance from "@/pages/AdminWorkspaceRelevance";
+import PublisherCatalog from "@/pages/PublisherCatalog";
+import PublisherCreation from "@/pages/PublisherCreation";
+import PublisherDetail from "@/pages/PublisherDetail";
+import ClientPublisherSetup from "@/pages/ClientPublisherSetup";
 import { AIStagePage } from "@/components/analytics/AIStagePage";
 
 const sentimentPage = () => (
@@ -215,8 +219,20 @@ function Router() {
       <Route path="/admin/clients/:clientId/setup">
         <ProtectedPage component={ClientSetup} />
       </Route>
+      <Route path="/admin/clients/:clientId/publishers">
+        <ProtectedPage component={ClientPublisherSetup} />
+      </Route>
       <Route path="/admin/clients/:clientId/workspaces/:workspaceId/relevance">
         <ProtectedPage component={AdminWorkspaceRelevance} />
+      </Route>
+      <Route path="/admin/publishers/new">
+        <ProtectedPage component={PublisherCreation} />
+      </Route>
+      <Route path="/admin/publishers/:publisherId">
+        <ProtectedPage component={PublisherDetail} />
+      </Route>
+      <Route path="/admin/publishers">
+        <ProtectedPage component={PublisherCatalog} />
       </Route>
       <Route path="/admin/dashboard">
         <ProtectedPage component={AdminDashboard} />

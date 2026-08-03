@@ -4,7 +4,7 @@ import {
   FileText, List, Hash, Bookmark, Users,
   Activity, GitCompare, Zap, Brain, CreditCard,
   HelpCircle, Lightbulb, Plug, Monitor, UsersRound,
-  Home, Bell, Settings, ClipboardList, CheckSquare, BookOpen, SlidersHorizontal
+  Home, Bell, Settings, ClipboardList, CheckSquare, BookOpen, SlidersHorizontal, Building2
 } from "lucide-react";
 import { CAPS } from "@shared/schema";
 
@@ -126,6 +126,7 @@ export function buildPlatformAdminNavTree(t: any): NavGroup[] {
       items: [
         { key: "adminDashboard", label: t("nav.adminDashboard", "SaaS Dashboard"), href: "/admin", icon: LayoutDashboard, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
         { key: "clientEnrollment", label: t("nav.clientEnrollment", "Enroll Client"), href: "/admin/clients/new", icon: Users, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
+        { key: "publisherCatalog", label: t("nav.publisherCatalog", "Publisher Catalog"), href: "/admin/publishers", icon: Building2, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
         { key: "opsDashboard", label: t("nav.opsDashboard", "Queue & Jobs"), href: "/admin/ops", icon: Activity, caps: [CAPS.ADMIN_OPERATIONS] },
         { key: "sourceHealth", label: t("nav.sourceHealth", "Source Health"), href: "/sources/health", icon: Monitor, caps: [CAPS.SOURCE_HEALTH_VIEW] },
         { key: "productIntelligence", label: t("nav.productIntelligence", "Product Analytics"), href: "/admin/product-analytics", icon: Lightbulb, caps: [CAPS.ADMIN_PRODUCT_ANALYTICS] },
@@ -196,6 +197,7 @@ export const ROUTE_CAPS: RouteCapConfig[] = [
   { path: "/knowledge", caps: [CAPS.KNOWLEDGE_VIEW] },
   { path: "/settings", caps: [CAPS.SETTINGS_VIEW] },
   { path: "/admin/clients", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
+  { path: "/admin/publishers", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin/dashboard", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin/ops", caps: [CAPS.ADMIN_OPERATIONS], adminOnly: true },
@@ -224,6 +226,7 @@ export function canAccessRoute(
 export const ADMIN_ONLY_ROUTES = [
   "/admin",
   "/admin/clients",
+  "/admin/publishers",
   "/admin/dashboard",
   "/admin/ops",
   "/admin/product-analytics",

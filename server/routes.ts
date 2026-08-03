@@ -1304,9 +1304,28 @@ function sendAdminStorageError(res: Response, err: unknown, fallback = "Admin op
     if (constraint.includes("workspaces_client_normalized_name")) {
       return res.status(409).json({ message: "Workspace name already exists for this client", code: "duplicate_workspace_name" });
     }
+    if (constraint.includes("publisher_profiles_canonical_key")) {
+      return res.status(409).json({ message: "Publisher already exists", code: "duplicate_publisher" });
+    }
+    if (constraint.includes("publisher_channels_channel_key") || constraint.includes("publisher_channels_normalized_url")) {
+      return res.status(409).json({ message: "Publisher channel already exists", code: "duplicate_publisher_channel" });
+    }
+    if (constraint.includes("client_publisher_selections_client_publisher")) {
+      return res.status(409).json({ message: "Client publisher selection already exists", code: "duplicate_client_publisher_selection" });
+    }
+    if (constraint.includes("publisher_aliases_profile_alias_language")) {
+      return res.status(409).json({ message: "Publisher alias already exists", code: "duplicate_publisher_alias" });
+    }
     return res.status(409).json({ message: "Duplicate record", code: "duplicate_record" });
   }
   return res.status(500).json({ message: fallback });
+}
+
+function parsePositiveId(value: unknown): number | null {
+  const text = String(value ?? "");
+  if (!/^[1-9]\d*$/.test(text)) return null;
+  const id = Number(text);
+  return Number.isSafeInteger(id) ? id : null;
 }
 
 async function getClientOrNotFound(clientId: number, res: Response) {
@@ -1341,6 +1360,7 @@ async function buildClientReadiness(clientId: number) {
     storage.getClientSettings(clientId),
     storage.getWorkspaces(clientId),
   ]);
+  const publisherCounts = await storage.getClientPublisherReadinessCounts(clientId);
   const profileRows = await Promise.all(workspaceRows.map((workspace) => storage.getWorkspaceRelevanceProfile(workspace.id, clientId)));
   const relevanceProfilesConfigured = profileRows.filter(Boolean).length;
   const organizationConfigured = Boolean(client && settings);
@@ -1348,9 +1368,9 @@ async function buildClientReadiness(clientId: number) {
   const blockers = [
     workspaceRows.length === 0 ? "workspace_missing" : null,
     relevanceProfilesConfigured === 0 ? "relevance_profile_missing" : null,
-    "publisher_profiles_missing",
-    "source_channels_missing",
-    "source_assignments_missing",
+    publisherCounts.publisherProfilesConfigured === 0 ? "publisher_profiles_missing" : null,
+    publisherCounts.sourceChannelsConfigured === 0 ? "source_channels_missing" : null,
+    publisherCounts.sourceAssignmentsConfigured === 0 ? "source_assignments_missing" : null,
     activeWorkspaceCount === 0 ? "workspace_inactive" : null,
   ].filter((blocker): blocker is string => Boolean(blocker));
   return {
@@ -1358,9 +1378,7 @@ async function buildClientReadiness(clientId: number) {
     workspaceCount: workspaceRows.length,
     activeWorkspaceCount,
     relevanceProfilesConfigured,
-    publisherProfilesConfigured: 0,
-    sourceChannelsConfigured: 0,
-    sourceAssignmentsConfigured: 0,
+    ...publisherCounts,
     monitoringReady: false,
     blockers,
   };
@@ -4231,6 +4249,230 @@ export async function registerRoutes(
     await storage.restoreSource(id, clientId);
     await storage.createAuditLog({ userId: user.id, action: "restore", entity: "source", entityId: id, details: `Restored source #${id}` });
     res.json({ success: true });
+  });
+
+  // === ADMIN: PUBLISHER CATALOG ===
+  app.get("/api/admin/publishers", requireSystemAdmin(), async (req, res) => {
+    const parsedOwnerClientId = req.query.ownerClientId ? parsePositiveId(req.query.ownerClientId) : null;
+    if (req.query.ownerClientId && !parsedOwnerClientId) return res.status(400).json({ message: "Invalid owner client ID" });
+    const ownerClientId = parsedOwnerClientId || undefined;
+    const items = await storage.getPublisherProfiles({
+      search: typeof req.query.search === "string" ? req.query.search : undefined,
+      countryCode: typeof req.query.countryCode === "string" ? req.query.countryCode : undefined,
+      organizationType: typeof req.query.organizationType === "string" ? req.query.organizationType : undefined,
+      verificationStatus: typeof req.query.verificationStatus === "string" ? req.query.verificationStatus : undefined,
+      status: typeof req.query.status === "string" ? req.query.status : undefined,
+      scopeType: typeof req.query.scopeType === "string" ? req.query.scopeType : undefined,
+      ownerClientId,
+    });
+    res.json({ items, total: items.length });
+  });
+
+  app.post("/api/admin/publishers/preview", requireSystemAdmin(), async (req, res) => {
+    try {
+      res.json(await storage.previewPublisherProfile(req.body || {}));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher preview failed");
+    }
+  });
+
+  app.post("/api/admin/publishers", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    try {
+      const result = await storage.createPublisherProfileAtomic(req.body || {}, user.id);
+      res.status(201).json(result);
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher creation failed");
+    }
+  });
+
+  app.get("/api/admin/publishers/:publisherId", requireSystemAdmin(), async (req, res) => {
+    const publisherId = parsePositiveId(req.params.publisherId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    const detail = await storage.getPublisherProfileDetail(publisherId, { includePrivate: true });
+    if (!detail) return safeNotFound(res);
+    res.json(detail);
+  });
+
+  app.patch("/api/admin/publishers/:publisherId", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const publisherId = parsePositiveId(req.params.publisherId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    try {
+      res.json(await storage.updatePublisherProfile(publisherId, req.body || {}, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher update failed");
+    }
+  });
+
+  app.patch("/api/admin/publishers/:publisherId/lifecycle", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const publisherId = parsePositiveId(req.params.publisherId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    const status = String(req.body?.status || req.body?.lifecycleStatus || "");
+    try {
+      res.json(await storage.transitionPublisherLifecycle(publisherId, status, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher lifecycle update failed");
+    }
+  });
+
+  app.get("/api/admin/publishers/:publisherId/aliases", requireSystemAdmin(), async (req, res) => {
+    const publisherId = parsePositiveId(req.params.publisherId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    const profile = await storage.getPublisherProfile(publisherId, { includePrivate: true });
+    if (!profile) return safeNotFound(res);
+    const items = await storage.getPublisherAliases(publisherId);
+    res.json({ items, total: items.length });
+  });
+
+  app.post("/api/admin/publishers/:publisherId/aliases", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const publisherId = parsePositiveId(req.params.publisherId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    try {
+      const result = await storage.createPublisherAlias(publisherId, req.body || {}, user.id);
+      res.status(201).json(result);
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher alias creation failed");
+    }
+  });
+
+  app.patch("/api/admin/publishers/:publisherId/aliases/:aliasId", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const publisherId = parsePositiveId(req.params.publisherId);
+    const aliasId = parsePositiveId(req.params.aliasId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    if (!aliasId) return res.status(400).json({ message: "Invalid alias ID" });
+    try {
+      res.json(await storage.updatePublisherAlias(publisherId, aliasId, req.body || {}, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher alias update failed");
+    }
+  });
+
+  app.delete("/api/admin/publishers/:publisherId/aliases/:aliasId", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const publisherId = parsePositiveId(req.params.publisherId);
+    const aliasId = parsePositiveId(req.params.aliasId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    if (!aliasId) return res.status(400).json({ message: "Invalid alias ID" });
+    try {
+      await storage.archivePublisherAlias(publisherId, aliasId, user.id);
+      res.sendStatus(204);
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher alias archive failed");
+    }
+  });
+
+  app.get("/api/admin/publishers/:publisherId/channels", requireSystemAdmin(), async (req, res) => {
+    const publisherId = parsePositiveId(req.params.publisherId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    const profile = await storage.getPublisherProfile(publisherId, { includePrivate: true });
+    if (!profile) return safeNotFound(res);
+    const items = await storage.getPublisherChannels(publisherId);
+    res.json({ items, total: items.length });
+  });
+
+  app.post("/api/admin/publishers/:publisherId/channels/preview", requireSystemAdmin(), async (req, res) => {
+    const publisherId = parsePositiveId(req.params.publisherId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    try {
+      res.json(await storage.previewPublisherChannel(publisherId, req.body || {}));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher channel preview failed");
+    }
+  });
+
+  app.post("/api/admin/publishers/:publisherId/channels", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const publisherId = parsePositiveId(req.params.publisherId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    try {
+      const result = await storage.createPublisherChannel(publisherId, req.body || {}, user.id);
+      res.status(201).json(result);
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher channel creation failed");
+    }
+  });
+
+  app.patch("/api/admin/publishers/:publisherId/channels/:channelId", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const publisherId = parsePositiveId(req.params.publisherId);
+    const channelId = parsePositiveId(req.params.channelId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    if (!channelId) return res.status(400).json({ message: "Invalid channel ID" });
+    try {
+      res.json(await storage.updatePublisherChannel(publisherId, channelId, req.body || {}, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher channel update failed");
+    }
+  });
+
+  app.patch("/api/admin/publishers/:publisherId/channels/:channelId/lifecycle", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const publisherId = parsePositiveId(req.params.publisherId);
+    const channelId = parsePositiveId(req.params.channelId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    if (!channelId) return res.status(400).json({ message: "Invalid channel ID" });
+    const status = String(req.body?.status || req.body?.lifecycleStatus || "");
+    try {
+      res.json(await storage.transitionPublisherChannelLifecycle(publisherId, channelId, status, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher channel lifecycle update failed");
+    }
+  });
+
+  app.post("/api/admin/publishers/:publisherId/channels/:channelId/validate", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const publisherId = parsePositiveId(req.params.publisherId);
+    const channelId = parsePositiveId(req.params.channelId);
+    if (!publisherId) return res.status(400).json({ message: "Invalid publisher ID" });
+    if (!channelId) return res.status(400).json({ message: "Invalid channel ID" });
+    const validationStatus = String(req.body?.validationStatus || req.body?.status || "valid");
+    try {
+      res.json(await storage.validatePublisherChannel(publisherId, channelId, validationStatus, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Publisher channel validation failed");
+    }
+  });
+
+  app.get("/api/admin/clients/:clientId/publishers", requireSystemAdmin(), async (req, res) => {
+    const clientId = parsePositiveId(req.params.clientId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    const [selections, candidates, readiness] = await Promise.all([
+      storage.getClientPublisherSelections(client.id),
+      storage.getPublisherProfiles({ clientId: client.id }),
+      storage.getClientPublisherReadinessCounts(client.id),
+    ]);
+    res.json({ client, selections, candidates, readiness });
+  });
+
+  app.post("/api/admin/clients/:clientId/publishers", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = parsePositiveId(req.params.clientId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    try {
+      const result = await storage.selectClientPublisherAtomic(clientId, req.body || {}, user.id);
+      res.status(201).json(result);
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Client publisher selection failed");
+    }
+  });
+
+  app.patch("/api/admin/clients/:clientId/publishers/:selectionId", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = parsePositiveId(req.params.clientId);
+    const selectionId = parsePositiveId(req.params.selectionId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!selectionId) return res.status(400).json({ message: "Invalid selection ID" });
+    try {
+      res.json(await storage.updateClientPublisherSelection(clientId, selectionId, req.body || {}, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Client publisher selection update failed");
+    }
   });
 
   // === ADMIN: CLIENTS MANAGEMENT ===
