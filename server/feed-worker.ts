@@ -33,6 +33,7 @@ type FeedSource = {
   clientId?: number | null;
   country?: string | null;
   category?: string | null;
+  publisherChannelId?: number | null;
   maxArticlesPerFetch?: number | null;
   retentionDays?: number | null;
   collectorConfig?: WebsiteCollectorConfig | null;
@@ -732,6 +733,10 @@ async function getWorkspaceProfilesForSource(source: FeedSource): Promise<Worksp
   const clientId = source.clientId || null;
   if (!clientId) return [];
   try {
+    if (source.publisherChannelId) {
+      const assignmentProfiles = await storage.getWorkspaceProfilesForActiveSourceAssignments(source.id, clientId);
+      return assignmentProfiles.map(({ workspace, profile }) => workspaceRecordToProfile(workspace, profile));
+    }
     const workspaces = (await storage.getWorkspaces(clientId)).filter((workspace: any) => workspace.active !== false);
     if (workspaces.length > 0) {
       const profiles = await Promise.all(workspaces.map(async (workspace: any) => ({
@@ -895,6 +900,88 @@ function rejectedDedupeKey(sourceId: number, item: FeedItem): string {
     .digest("hex");
 }
 
+function appearanceTypeForSource(source: FeedSource): "original" | "rss" | "social" | "video" | "collector" {
+  if (source.type === "rss") return "rss";
+  if (source.type === "youtube") return "video";
+  if (source.type === "google_news") return "collector";
+  if (["facebook", "twitter", "instagram", "telegram"].includes(String(source.type || ""))) return "social";
+  return "original";
+}
+
+function collectorTypeForSource(source: FeedSource): "google_news" | "rss_app" | "direct" | "manual" | "other" | null {
+  if (source.type === "google_news") return "google_news";
+  if (source.collectorConfig?.feedUrl && ["facebook", "twitter", "instagram", "telegram", "youtube"].includes(String(source.type || ""))) return "rss_app";
+  if (source.type === "website" || source.type === "rss") return "direct";
+  return null;
+}
+
+function normalizeAppearanceUrl(value?: string | null): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    parsed.hash = "";
+    parsed.hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      if (key.toLowerCase().startsWith("utm_") || ["fbclid", "gclid"].includes(key.toLowerCase())) {
+        parsed.searchParams.delete(key);
+      }
+    }
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return raw.toLowerCase();
+  }
+}
+
+function linkedSourceAppearanceKey(source: FeedSource, item: FeedItem): string {
+  const identity = normalizeAppearanceUrl(item.url) || `${item.title || ""}:${item.publishedAt?.toISOString?.() || ""}`;
+  return createHash("sha256")
+    .update(`${source.clientId}:${source.publisherChannelId}:${identity}`)
+    .digest("hex");
+}
+
+function shouldRecordLinkedSourceAppearance(relevanceStatus: unknown): boolean {
+  const status = String(relevanceStatus || "");
+  return status !== "not_relevant" && status !== "needs_review";
+}
+
+async function recordLinkedSourceAppearance(source: FeedSource, articleId: number, item: FeedItem, isPrimary = false): Promise<void> {
+  const clientId = source.clientId;
+  if (!clientId || !source.publisherChannelId) return;
+  try {
+    await storage.createArticleAppearance({
+      clientId,
+      articleId,
+      sourceId: source.id,
+      publisherChannelId: source.publisherChannelId,
+      appearanceKey: linkedSourceAppearanceKey(source, item),
+      appearanceType: appearanceTypeForSource(source),
+      originalUrl: item.url || null,
+      normalizedOriginalUrl: normalizeAppearanceUrl(item.url) || null,
+      collectorUrl: source.url || null,
+      collectorType: collectorTypeForSource(source),
+      externalId: null,
+      headline: item.title || null,
+      caption: item.content ? truncate(item.content, 240) : null,
+      languageCode: "und",
+      publishedAt: item.publishedAt,
+      engagementMetadata: {
+        likes: item.engagementLikes ?? null,
+        comments: item.engagementComments ?? null,
+        shares: item.engagementShares ?? null,
+      },
+      metadata: {
+        subSource: item.subSource || null,
+        sourceType: source.type || null,
+      },
+      isPrimary,
+    } as any);
+  } catch (error: any) {
+    if (error?.code === "23505" || error?.code === "duplicate_record") return;
+    console.warn(`[Worker] Article appearance skipped for article=${articleId}: ${error?.message || error}`);
+  }
+}
+
 async function recordRejectedIngestionItem(
   source: FeedSource,
   item: FeedItem,
@@ -1004,6 +1091,9 @@ async function processItems(
         await storage.updateArticle(existing.id, updates);
       }
       await persistWorkspaceRelevance(existing.id, clientId, relevanceEvaluation.byWorkspace);
+      if (shouldRecordLinkedSourceAppearance(relevance.relevanceStatus)) {
+        await recordLinkedSourceAppearance(source, existing.id, item, false);
+      }
       continue;
     }
 
@@ -1046,6 +1136,9 @@ async function processItems(
           await storage.updateArticle(titleDup.id, updates);
         }
         await persistWorkspaceRelevance(titleDup.id, clientId, relevanceEvaluation.byWorkspace);
+        if (shouldRecordLinkedSourceAppearance(relevance.relevanceStatus)) {
+          await recordLinkedSourceAppearance(source, titleDup.id, item, false);
+        }
         continue;
       }
     }
@@ -1091,6 +1184,9 @@ async function processItems(
       const created = await storage.createArticle(article);
       newArticles++;
       await persistWorkspaceRelevance(created.id, clientId, relevanceEvaluation.byWorkspace);
+      if (shouldRecordLinkedSourceAppearance(relevance.relevanceStatus)) {
+        await recordLinkedSourceAppearance(source, created.id, item, true);
+      }
       await enqueueFullArticleExtraction(created.id, clientId, item.url, source.id);
     } catch (e) {
       console.error(`[Worker] STORE failed for article: ${item.url}`, e);

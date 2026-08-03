@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useRoute } from "wouter";
-import { ArrowLeft, CheckCircle2, Loader2, Plus, Settings, SlidersHorizontal, UserPlus, XCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2, Plus, RadioTower, Settings, SlidersHorizontal, UserPlus, XCircle } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,6 +58,9 @@ type ClientSetupData = {
     publisherProfilesConfigured: number;
     sourceChannelsConfigured: number;
     sourceAssignmentsConfigured: number;
+    sourceAssignmentTestsPassed: number;
+    sourceAssignmentTestsStale: number;
+    sourceAssignmentsBlocked: number;
     monitoringReady: boolean;
     blockers: string[];
   };
@@ -417,6 +420,10 @@ export default function ClientSetup() {
                             <SlidersHorizontal className="mr-2 h-4 w-4" />
                             Configure Relevance Rules
                           </Button>
+                          <Button size="sm" variant="outline" onClick={() => setLocation(`/admin/clients/${clientId}/workspaces/${workspace.id}/sources`)}>
+                            <RadioTower className="mr-2 h-4 w-4" />
+                            Configure Sources
+                          </Button>
                           <Button size="sm" variant="ghost" onClick={() => startEditWorkspace(workspace)}>
                             <Settings className="mr-2 h-4 w-4" />
                             Edit Workspace
@@ -450,6 +457,9 @@ export default function ClientSetup() {
               <ChecklistItem label="Publisher profiles configured" done={data.readiness.publisherProfilesConfigured > 0} />
               <ChecklistItem label="Source channels configured" done={data.readiness.sourceChannelsConfigured > 0} />
               <ChecklistItem label="Source assignments configured" done={data.readiness.sourceAssignmentsConfigured > 0} />
+              <ChecklistItem label={`Assignment tests passed: ${data.readiness.sourceAssignmentTestsPassed || 0}`} done={(data.readiness.sourceAssignmentTestsPassed || 0) > 0} />
+              <ChecklistItem label={`Stale assignment tests: ${data.readiness.sourceAssignmentTestsStale || 0}`} done={(data.readiness.sourceAssignmentTestsStale || 0) === 0} />
+              <ChecklistItem label={`Blocked assignments: ${data.readiness.sourceAssignmentsBlocked || 0}`} done={(data.readiness.sourceAssignmentsBlocked || 0) === 0} />
               <ChecklistItem label="Monitoring ready" done={data.readiness.monitoringReady} />
               {data.readiness.blockers.length > 0 && (
                 <div className="rounded-md border border-border bg-muted/30 p-3">
@@ -474,6 +484,15 @@ export default function ClientSetup() {
               </Button>
               <Button className="w-full justify-start" variant="secondary" onClick={() => setLocation(`/admin/clients/${clientId}/publishers`)}>
                 Continue to Publisher Setup
+              </Button>
+              <Button
+                className="w-full justify-start"
+                variant="outline"
+                disabled={data.workspaces.length === 0}
+                onClick={() => data.workspaces[0] && setLocation(`/admin/clients/${clientId}/workspaces/${data.workspaces[0].id}/sources`)}
+              >
+                <RadioTower className="mr-2 h-4 w-4" />
+                Continue to Source Setup
               </Button>
               <p className="text-xs text-muted-foreground">
                 Publisher selection does not create sources or activate monitoring.

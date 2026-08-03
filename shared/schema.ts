@@ -20,6 +20,14 @@ import {
   PUBLISHER_SCOPE_TYPES,
   PUBLISHER_VERIFICATION_STATUSES,
 } from "./publisher-catalog";
+import {
+  WORKSPACE_SOURCE_ASSIGNMENT_PRIORITIES,
+  WORKSPACE_SOURCE_ASSIGNMENT_RUN_STATUSES,
+  WORKSPACE_SOURCE_ASSIGNMENT_STATUSES,
+  WORKSPACE_SOURCE_ASSIGNMENT_TEST_STATUSES,
+  WORKSPACE_SOURCE_ASSIGNMENT_TEST_TYPES,
+  WORKSPACE_SOURCE_ROLES,
+} from "./workspace-source-assignments";
 
 export const ORGANIZATION_TYPES = [
   "embassy",
@@ -350,6 +358,7 @@ export const clientPublisherSelections = pgTable("client_publisher_selections", 
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
   uniqueIndex("client_publisher_selections_client_publisher_unique").on(table.clientId, table.publisherProfileId),
+  uniqueIndex("client_publisher_selections_id_client_unique").on(table.id, table.clientId),
   index("client_publisher_selections_client_status_idx").on(table.clientId, table.status),
   check("client_publisher_selections_status_ck", sql`
     ${table.status} IN ('candidate', 'approved', 'blocked', 'archived')
@@ -381,11 +390,13 @@ export const sources = pgTable("sources", {
   refreshPriority: text("refresh_priority").default("medium"),
   logoUrl: text("logo_url"),
   publisherChannelId: integer("publisher_channel_id").references(() => publisherChannels.id),
+  sourceIdentityKey: text("source_identity_key"),
   deletedAt: timestamp("deleted_at"),
   lastFetchedAt: timestamp("last_fetched_at"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   uniqueIndex("sources_id_client_unique").on(table.id, table.clientId),
+  uniqueIndex("sources_client_identity_unique").on(table.clientId, table.sourceIdentityKey),
   index("sources_publisher_channel_idx").on(table.publisherChannelId),
 ]);
 
@@ -1329,6 +1340,12 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Source = typeof sources.$inferSelect;
 export type InsertSource = z.infer<typeof insertSourceSchema>;
 
+export type WorkspaceSourceAssignment = typeof workspaceSourceAssignments.$inferSelect;
+export type InsertWorkspaceSourceAssignment = z.infer<typeof insertWorkspaceSourceAssignmentSchema>;
+
+export type WorkspaceSourceAssignmentTest = typeof workspaceSourceAssignmentTests.$inferSelect;
+export type InsertWorkspaceSourceAssignmentTest = z.infer<typeof insertWorkspaceSourceAssignmentTestSchema>;
+
 export type PublisherProfile = typeof publisherProfiles.$inferSelect;
 export type InsertPublisherProfile = z.infer<typeof insertPublisherProfileSchema>;
 
@@ -1554,6 +1571,153 @@ export const workspaceRelevanceProfiles = pgTable("workspace_relevance_profiles"
 ]);
 
 export const insertWorkspaceRelevanceProfileSchema = createInsertSchema(workspaceRelevanceProfiles).omit({ id: true, createdAt: true, updatedAt: true });
+
+// === WORKSPACE SOURCE ASSIGNMENTS ===
+export const workspaceSourceAssignments = pgTable("workspace_source_assignments", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  workspaceId: integer("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  clientPublisherSelectionId: integer("client_publisher_selection_id").notNull().references(() => clientPublisherSelections.id),
+  publisherProfileId: integer("publisher_profile_id").notNull().references(() => publisherProfiles.id),
+  publisherChannelId: integer("publisher_channel_id").notNull().references(() => publisherChannels.id),
+  sourceId: integer("source_id").notNull().references(() => sources.id),
+  assignmentKey: text("assignment_key").notNull(),
+  status: text("status").notNull().default("draft"),
+  enabled: boolean("enabled").notNull().default(false),
+  priority: text("priority").notNull().default("standard"),
+  sourceRole: text("source_role").notNull().default("primary"),
+  relevanceProfileVersion: integer("relevance_profile_version").notNull().default(1),
+  relevancePolicy: jsonb("relevance_policy").$type<Record<string, unknown>>().notNull().default({}),
+  minimumDirectMatchRate: integer("minimum_direct_match_rate").notNull().default(50),
+  maximumNoiseRate: integer("maximum_noise_rate").notNull().default(40),
+  latestTestRunId: integer("latest_test_run_id"),
+  testStatus: text("test_status").notNull().default("untested"),
+  testedAt: timestamp("tested_at"),
+  testedBy: integer("tested_by").references(() => users.id),
+  warningApprovedAt: timestamp("warning_approved_at"),
+  warningApprovedBy: integer("warning_approved_by").references(() => users.id),
+  warningApprovalReason: text("warning_approval_reason"),
+  notes: text("notes"),
+  createdBy: integer("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("workspace_source_assignments_key_unique").on(table.assignmentKey),
+  uniqueIndex("workspace_source_assignments_workspace_source_unique").on(table.workspaceId, table.sourceId),
+  uniqueIndex("workspace_source_assignments_workspace_channel_unique").on(table.workspaceId, table.publisherChannelId),
+  index("workspace_source_assignments_client_idx").on(table.clientId, table.status),
+  index("workspace_source_assignments_workspace_idx").on(table.workspaceId, table.status),
+  index("workspace_source_assignments_source_idx").on(table.sourceId, table.status),
+  index("workspace_source_assignments_channel_idx").on(table.publisherChannelId),
+  foreignKey({
+    columns: [table.workspaceId, table.clientId],
+    foreignColumns: [workspaces.id, workspaces.clientId],
+    name: "workspace_source_assignments_workspace_client_fk",
+  }).onDelete("cascade"),
+  foreignKey({
+    columns: [table.sourceId, table.clientId],
+    foreignColumns: [sources.id, sources.clientId],
+    name: "workspace_source_assignments_source_client_fk",
+  }),
+  foreignKey({
+    columns: [table.publisherChannelId, table.publisherProfileId],
+    foreignColumns: [publisherChannels.id, publisherChannels.publisherProfileId],
+    name: "workspace_source_assignments_channel_publisher_fk",
+  }),
+  foreignKey({
+    columns: [table.clientPublisherSelectionId, table.clientId],
+    foreignColumns: [clientPublisherSelections.id, clientPublisherSelections.clientId],
+    name: "workspace_source_assignments_selection_client_fk",
+  }),
+  check("workspace_source_assignments_status_ck", sql`
+    ${table.status} IN ('draft', 'testing', 'ready', 'active', 'paused', 'archived')
+  `),
+  check("workspace_source_assignments_test_status_ck", sql`
+    ${table.testStatus} IN ('untested', 'passed', 'warning', 'failed', 'stale')
+  `),
+  check("workspace_source_assignments_priority_ck", sql`
+    ${table.priority} IN ('critical', 'high', 'standard', 'low')
+  `),
+  check("workspace_source_assignments_source_role_ck", sql`
+    ${table.sourceRole} IN ('primary', 'official', 'regional', 'contextual', 'specialist', 'social', 'collector', 'other')
+  `),
+  check("workspace_source_assignments_rate_ck", sql`
+    ${table.minimumDirectMatchRate} BETWEEN 0 AND 100
+    AND ${table.maximumNoiseRate} BETWEEN 0 AND 100
+  `),
+  check("workspace_source_assignments_enabled_status_ck", sql`
+    (${table.status} = 'active' AND ${table.enabled} IS TRUE)
+    OR (${table.status} <> 'active' AND ${table.enabled} IS FALSE)
+  `),
+]);
+
+export const insertWorkspaceSourceAssignmentSchema = createInsertSchema(workspaceSourceAssignments).omit({ id: true, createdAt: true, updatedAt: true });
+
+export const workspaceSourceAssignmentTests = pgTable("workspace_source_assignment_tests", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  workspaceId: integer("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  assignmentId: integer("assignment_id").notNull().references(() => workspaceSourceAssignments.id, { onDelete: "cascade" }),
+  sourceId: integer("source_id").notNull().references(() => sources.id),
+  publisherChannelId: integer("publisher_channel_id").notNull().references(() => publisherChannels.id),
+  testType: text("test_type").notNull(),
+  status: text("status").notNull(),
+  relevanceProfileVersion: integer("relevance_profile_version").notNull().default(1),
+  connectivityResult: jsonb("connectivity_result").$type<Record<string, unknown>>().notNull().default({}),
+  sampleCount: integer("sample_count").notNull().default(0),
+  directScopeMatchCount: integer("direct_scope_match_count").notNull().default(0),
+  materialScopeImpactCount: integer("material_scope_impact_count").notNull().default(0),
+  contextualCount: integer("contextual_count").notNull().default(0),
+  notRelevantCount: integer("not_relevant_count").notNull().default(0),
+  needsReviewCount: integer("needs_review_count").notNull().default(0),
+  directMatchRate: integer("direct_match_rate").notNull().default(0),
+  relevantRate: integer("relevant_rate").notNull().default(0),
+  noiseRate: integer("noise_rate").notNull().default(0),
+  languageCounts: jsonb("language_counts").$type<Record<string, number>>().notNull().default({}),
+  categoryCounts: jsonb("category_counts").$type<Record<string, number>>().notNull().default({}),
+  safeSampleResults: jsonb("safe_sample_results").$type<Array<Record<string, unknown>>>().notNull().default([]),
+  errorCode: text("error_code"),
+  errorMessage: text("error_message"),
+  startedAt: timestamp("started_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+  testedBy: integer("tested_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("workspace_source_assignment_tests_assignment_idx").on(table.assignmentId, table.createdAt),
+  index("workspace_source_assignment_tests_workspace_idx").on(table.workspaceId, table.status),
+  index("workspace_source_assignment_tests_client_idx").on(table.clientId, table.testType),
+  foreignKey({
+    columns: [table.workspaceId, table.clientId],
+    foreignColumns: [workspaces.id, workspaces.clientId],
+    name: "workspace_source_assignment_tests_workspace_client_fk",
+  }).onDelete("cascade"),
+  foreignKey({
+    columns: [table.sourceId, table.clientId],
+    foreignColumns: [sources.id, sources.clientId],
+    name: "workspace_source_assignment_tests_source_client_fk",
+  }),
+  check("workspace_source_assignment_tests_type_ck", sql`
+    ${table.testType} IN ('connectivity', 'relevance', 'full')
+  `),
+  check("workspace_source_assignment_tests_status_ck", sql`
+    ${table.status} IN ('running', 'passed', 'warning', 'failed')
+  `),
+  check("workspace_source_assignment_tests_counts_ck", sql`
+    ${table.sampleCount} >= 0
+    AND ${table.directScopeMatchCount} >= 0
+    AND ${table.materialScopeImpactCount} >= 0
+    AND ${table.contextualCount} >= 0
+    AND ${table.notRelevantCount} >= 0
+    AND ${table.needsReviewCount} >= 0
+  `),
+  check("workspace_source_assignment_tests_rates_ck", sql`
+    ${table.directMatchRate} BETWEEN 0 AND 100
+    AND ${table.relevantRate} BETWEEN 0 AND 100
+    AND ${table.noiseRate} BETWEEN 0 AND 100
+  `),
+]);
+
+export const insertWorkspaceSourceAssignmentTestSchema = createInsertSchema(workspaceSourceAssignmentTests).omit({ id: true, createdAt: true });
 
 // === ARTICLE RELEVANCE BY MONITORING WORKSPACE ===
 export const articleWorkspaceRelevance = pgTable("article_workspace_relevance", {

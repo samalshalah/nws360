@@ -62,6 +62,7 @@ import PublisherCatalog from "@/pages/PublisherCatalog";
 import PublisherCreation from "@/pages/PublisherCreation";
 import PublisherDetail from "@/pages/PublisherDetail";
 import ClientPublisherSetup from "@/pages/ClientPublisherSetup";
+import WorkspaceSourceAssignments from "@/pages/WorkspaceSourceAssignments";
 import { AIStagePage } from "@/components/analytics/AIStagePage";
 
 const sentimentPage = () => (
@@ -224,6 +225,9 @@ function Router() {
       </Route>
       <Route path="/admin/clients/:clientId/workspaces/:workspaceId/relevance">
         <ProtectedPage component={AdminWorkspaceRelevance} />
+      </Route>
+      <Route path="/admin/clients/:clientId/workspaces/:workspaceId/sources">
+        <ProtectedPage component={WorkspaceSourceAssignments} />
       </Route>
       <Route path="/admin/publishers/new">
         <ProtectedPage component={PublisherCreation} />

@@ -1,12 +1,13 @@
 import { db } from "./db";
 import { isGenericAnalyticsTerm, normalizeAnalyticsValue } from "./analytics-noise";
 import { getArticleCategoryFilterCodes, getArticleCategoryLabel, mergeArticleCategoryRows, normalizeArticleCategoryCode } from "@shared/article-taxonomy";
-import { getDefaultRelevanceStatuses, isArticleRelevanceStatus, type ArticleRelevanceStatus } from "@shared/workspace-relevance";
+import { evaluateWorkspaceRelevance, getDefaultRelevanceStatuses, isArticleRelevanceStatus, type ArticleRelevanceStatus } from "@shared/workspace-relevance";
 import {
   users, sources, articles, savedFeedViews, keywords, bookmarks, sourceFetchLogs, rejectedIngestionItems,
   workspaceRelevanceProfiles, articleWorkspaceRelevance, workspaceRelevanceHistory,
   clients, clientSettings, clientKeywords, systemSettings, adminAuditLogs,
   publisherProfiles, publisherAliases, publisherChannels, clientPublisherSelections, articleAppearances,
+  workspaceSourceAssignments, workspaceSourceAssignmentTests,
   processingJobs, systemErrors, apiKeys, featureFlags, usageMetrics,
   storyClusters, articleAiAnalysis, dailyBriefs, detectedEvents, entityMentions, trendPredictions,
   subscriptions, onboardingState, notificationSettings, whiteLabelSettings, supportTickets,
@@ -35,6 +36,8 @@ import {
   type PublisherChannel, type InsertPublisherChannel,
   type ClientPublisherSelection, type InsertClientPublisherSelection,
   type ArticleAppearance, type InsertArticleAppearance,
+  type WorkspaceSourceAssignment, type InsertWorkspaceSourceAssignment,
+  type WorkspaceSourceAssignmentTest, type InsertWorkspaceSourceAssignmentTest,
   type FeatureFlag,
   type ArticleQueryParams,
   type StoryCluster, type InsertStoryCluster,
@@ -135,6 +138,22 @@ import {
   normalizePublisherProfile,
   previewPublisherDuplicates,
 } from "@shared/publisher-catalog";
+import {
+  buildOperationalSourceIdentityKey,
+  buildWorkspaceSourceAssignmentKey,
+  calculateAssignmentTestRates,
+  channelRequiresValidValidation,
+  evaluateAssignmentTestOutcome,
+  evaluateChannelProvisionability,
+  mapPublisherChannelTypeToSourceType,
+  summarizeAssignmentSample,
+  workspaceSourceAssignmentInputSchema,
+  workspaceSourceAssignmentRelevanceTestInputSchema,
+  workspaceSourceAssignmentStatusInputSchema,
+  workspaceSourceAssignmentUpdateSchema,
+  workspaceSourceAssignmentWarningApprovalSchema,
+  type AssignmentSampleResult,
+} from "@shared/workspace-source-assignments";
 import {
   validatePublisherChannel as performPublisherChannelValidation,
   type ChannelValidationStatus,
@@ -249,6 +268,78 @@ export type ClientPublisherReadinessCounts = {
   publisherProfilesConfigured: number;
   sourceChannelsConfigured: number;
   sourceAssignmentsConfigured: number;
+  sourceAssignmentTestsPassed: number;
+  sourceAssignmentTestsStale: number;
+  sourceAssignmentsBlocked: number;
+};
+
+export type WorkspaceSourceAssignmentDetail = WorkspaceSourceAssignment & {
+  source: Source | null;
+  publisher: PublisherProfile | null;
+  channel: PublisherChannel | null;
+  selection: ClientPublisherSelection | null;
+  latestTest: WorkspaceSourceAssignmentTest | null;
+};
+
+export type WorkspaceSourceAssignmentPreview = {
+  writes: false;
+  client: Client;
+  workspace: Workspace;
+  publisher: PublisherProfile;
+  channel: PublisherChannel;
+  approvedSelection: ClientPublisherSelection;
+  existingCompatibleSource: Source | null;
+  proposedOperationalSource: Partial<InsertSource> | null;
+  proposedAssignment: Partial<InsertWorkspaceSourceAssignment>;
+  validationWarnings: string[];
+  duplicateAssignmentWarning: string | null;
+  provisionability: ReturnType<typeof evaluateChannelProvisionability>;
+  requiredTestPlan: string[];
+  readinessImpact: {
+    currentSourceAssignmentsConfigured: number;
+    wouldCreateAssignment: boolean;
+    wouldCreateSource: boolean;
+    countsAfterTestRequired: boolean;
+  };
+  creationPlan: {
+    createSource: boolean;
+    createAssignment: boolean;
+    createAuditEvent: boolean;
+    activateIngestion: false;
+    insertArticles: false;
+  };
+};
+
+export type AtomicWorkspaceSourceAssignmentResult = {
+  source: Source;
+  assignment: WorkspaceSourceAssignment;
+  auditLog: AdminAuditLog;
+  reusedSource: boolean;
+};
+
+export type WorkspaceSourceProfileRecord = {
+  workspace: Workspace;
+  profile: WorkspaceRelevanceProfile | null;
+  assignment: WorkspaceSourceAssignment;
+};
+
+export type SourceAssignmentSummary = {
+  publisher: Pick<PublisherProfile, "id" | "name" | "scopeType" | "status"> | null;
+  channel: Pick<PublisherChannel, "id" | "name" | "channelType" | "verificationStatus" | "validationStatus" | "lifecycleStatus"> | null;
+  assignments: Array<{
+    id: number;
+    workspaceId: number;
+    workspaceName: string;
+    status: string;
+    enabled: boolean;
+    testStatus: string;
+    latestTestRunId: number | null;
+    relevanceProfileVersion: number;
+  }>;
+  assignedWorkspaces: string[];
+  assignmentStatuses: Record<string, number>;
+  latestTestStatus: string | null;
+  inactiveBecauseSetupIncomplete: boolean;
 };
 
 function safeStorageAuditDetails(value: unknown): string {
@@ -396,6 +487,229 @@ async function assertPublisherScopeChangeSafe(tx: any, current: PublisherProfile
       code: "publisher_scope_change_conflict",
     });
   }
+}
+
+function rateToPercent(value: number | null | undefined, fallback: number): number {
+  const numeric = Number(value ?? fallback);
+  if (!Number.isFinite(numeric)) return Math.round(fallback * 100);
+  return Math.round(Math.max(0, Math.min(1, numeric)) * 100);
+}
+
+function percentToRate(value: number | null | undefined, fallback: number): number {
+  const numeric = Number(value ?? Math.round(fallback * 100));
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(1, numeric / 100));
+}
+
+function cleanOptionalString(value: unknown): string | null {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text || null;
+}
+
+function sourceNameForChannel(publisher: PublisherProfile, channel: PublisherChannel): string {
+  const channelLabel = cleanOptionalString(channel.name) || cleanOptionalString(channel.channelType) || "source";
+  return `${publisher.name} - ${channelLabel}`.slice(0, 240);
+}
+
+function sourceUrlForChannel(channel: PublisherChannel, input: any): string {
+  return cleanOptionalString(input?.url) || cleanOptionalString(channel.url) || cleanOptionalString(channel.normalizedUrl) || "";
+}
+
+function sourceTypeForChannel(channel: PublisherChannel, input: any): string {
+  return cleanOptionalString(input?.type) || mapPublisherChannelTypeToSourceType(channel.channelType) || "";
+}
+
+function manualChannelOverride(channel: PublisherChannel): boolean {
+  const metadata = safeJsonMetadata(channel.metadata);
+  return metadata.manualValidationOverride === true || metadata.validationOverride === true;
+}
+
+function sourceConfigWithoutCredentials(value: unknown): Record<string, unknown> | null {
+  const metadata = safeJsonMetadata(value);
+  const blocked = new Set(["password", "token", "secret", "apiKey", "api_key", "authorization", "headers", "cookie", "cookies"]);
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(metadata)) {
+    if (blocked.has(key)) continue;
+    output[key] = item;
+  }
+  return Object.keys(output).length > 0 ? output : null;
+}
+
+function buildAssignmentSafeSourceValues(
+  clientId: number,
+  actorUserId: number,
+  publisher: PublisherProfile,
+  channel: PublisherChannel,
+  sourceInput: any,
+): InsertSource {
+  const url = sourceUrlForChannel(channel, sourceInput);
+  const type = sourceTypeForChannel(channel, sourceInput);
+  if (!url || !type) {
+    throw new StorageBoundaryError("Channel cannot be provisioned as an automated source", {
+      status: 409,
+      code: "channel_not_eligible",
+      details: { reason: "missing_source_url_or_type" },
+    });
+  }
+  return {
+    name: cleanOptionalString(sourceInput?.name) || sourceNameForChannel(publisher, channel),
+    url,
+    type,
+    active: false,
+    intervalMinutes: sourceInput?.intervalMinutes || 15,
+    maxArticlesPerFetch: sourceInput?.maxArticlesPerFetch || 10,
+    retentionDays: sourceInput?.retentionDays || 7,
+    userId: actorUserId,
+    clientId,
+    country: cleanOptionalString(sourceInput?.country || channel.countryCode),
+    category: cleanOptionalString(sourceInput?.category),
+    collectorConfig: sourceConfigWithoutCredentials(sourceInput?.collectorConfig) as any,
+    filterConfig: sourceConfigWithoutCredentials(sourceInput?.filterConfig) as any,
+    refreshPriority: cleanOptionalString(sourceInput?.refreshPriority) || "medium",
+    publisherChannelId: channel.id,
+    sourceIdentityKey: buildOperationalSourceIdentityKey(clientId, channel.id),
+  } as InsertSource;
+}
+
+function sourceCompatibilityWarnings(source: Source | null | undefined, channel: PublisherChannel): string[] {
+  const warnings: string[] = [];
+  if (!source) return warnings;
+  if (source.publisherChannelId !== channel.id) warnings.push("source_channel_mismatch");
+  if (source.active) warnings.push("existing_source_is_active");
+  return warnings;
+}
+
+function assignmentIsCurrent(assignment: WorkspaceSourceAssignment, profileVersion: number): boolean {
+  return assignment.relevanceProfileVersion === profileVersion && assignment.testStatus !== "stale";
+}
+
+function assignmentHasPassingTest(assignment: WorkspaceSourceAssignment, profileVersion: number): boolean {
+  if (!assignmentIsCurrent(assignment, profileVersion)) return false;
+  if (assignment.testStatus === "passed") return true;
+  return assignment.testStatus === "warning" && Boolean(assignment.warningApprovedAt && assignment.warningApprovalReason);
+}
+
+function mapRunStatusToAssignmentTestStatus(status: string): "passed" | "warning" | "failed" {
+  return status === "passed" ? "passed" : status === "warning" ? "warning" : "failed";
+}
+
+function normalizedUrlForAppearance(value: string | null | undefined): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    parsed.hash = "";
+    parsed.hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      if (key.toLowerCase().startsWith("utm_") || ["fbclid", "gclid"].includes(key.toLowerCase())) {
+        parsed.searchParams.delete(key);
+      }
+    }
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return raw.toLowerCase();
+  }
+}
+
+function buildArticleAppearanceKey(clientId: number, publisherChannelId: number, itemUrl: string | null | undefined, headline?: string | null): string {
+  const identity = normalizedUrlForAppearance(itemUrl) || String(headline || "").trim().toLowerCase();
+  return `appearance:${clientId}:${publisherChannelId}:${Buffer.from(identity).toString("base64url").slice(0, 160)}`;
+}
+
+async function loadWorkspaceSourceAssignmentEligibility(tx: any, clientId: number, workspaceId: number, publisherChannelId: number) {
+  const [client] = await tx.select().from(clients).where(eq(clients.id, clientId)).limit(1);
+  if (!client) throw new StorageBoundaryError("Client not found", { status: 404, code: "client_not_found" });
+
+  const [workspace] = await tx.select().from(workspaces).where(and(eq(workspaces.id, workspaceId), eq(workspaces.clientId, clientId))).limit(1);
+  if (!workspace) throw new StorageBoundaryError("Workspace not found", { status: 404, code: "workspace_not_found" });
+
+  const [channelRow] = await tx
+    .select({ channel: publisherChannels, publisher: publisherProfiles })
+    .from(publisherChannels)
+    .innerJoin(publisherProfiles, eq(publisherChannels.publisherProfileId, publisherProfiles.id))
+    .where(eq(publisherChannels.id, publisherChannelId))
+    .limit(1);
+  if (!channelRow) throw new StorageBoundaryError("Publisher channel not found", { status: 404, code: "channel_not_eligible" });
+
+  const { channel, publisher } = channelRow;
+  if (publisher.scopeType === "client_private" && publisher.ownerClientId !== clientId) {
+    throw new StorageBoundaryError("Publisher is not visible to this client", {
+      status: 404,
+      code: "source_assignment_publisher_mismatch",
+    });
+  }
+  if (publisher.status === "archived" || channel.lifecycleStatus === "archived") {
+    throw new StorageBoundaryError("Publisher channel is not eligible for assignment", {
+      status: 409,
+      code: "channel_not_eligible",
+      details: { publisherStatus: publisher.status, channelStatus: channel.lifecycleStatus },
+    });
+  }
+
+  const [selection] = await tx
+    .select()
+    .from(clientPublisherSelections)
+    .where(and(
+      eq(clientPublisherSelections.clientId, clientId),
+      eq(clientPublisherSelections.publisherProfileId, publisher.id),
+      eq(clientPublisherSelections.status, "approved"),
+    ))
+    .limit(1);
+  if (!selection) {
+    throw new StorageBoundaryError("Publisher is not approved for this client", {
+      status: 409,
+      code: "publisher_not_approved_for_client",
+    });
+  }
+
+  const profile = await tx
+    .select()
+    .from(workspaceRelevanceProfiles)
+    .where(eq(workspaceRelevanceProfiles.workspaceId, workspace.id))
+    .limit(1);
+
+  return {
+    client,
+    workspace,
+    publisher,
+    channel,
+    approvedSelection: selection,
+    relevanceProfile: profile[0] || null,
+  };
+}
+
+async function findCompatibleAssignmentSource(tx: any, clientId: number, channel: PublisherChannel, existingSourceId?: number | null): Promise<Source | null> {
+  if (existingSourceId) {
+    const [source] = await tx.select().from(sources).where(and(eq(sources.id, existingSourceId), eq(sources.clientId, clientId))).limit(1);
+    if (!source) throw new StorageBoundaryError("Source does not belong to this client", {
+      status: 404,
+      code: "source_assignment_client_mismatch",
+    });
+    if (source.publisherChannelId !== channel.id) {
+      throw new StorageBoundaryError("Source is linked to a different publisher channel", {
+        status: 409,
+        code: "source_assignment_channel_mismatch",
+      });
+    }
+    return source;
+  }
+
+  const identityKey = buildOperationalSourceIdentityKey(clientId, channel.id);
+  const [byIdentity] = await tx.select().from(sources).where(and(eq(sources.clientId, clientId), eq(sources.sourceIdentityKey, identityKey))).limit(1);
+  if (byIdentity) return byIdentity;
+  const [byChannel] = await tx.select().from(sources).where(and(eq(sources.clientId, clientId), eq(sources.publisherChannelId, channel.id))).limit(1);
+  return byChannel || null;
+}
+
+function mapAssignmentRow(row: any): WorkspaceSourceAssignmentDetail {
+  return {
+    ...row.assignment,
+    source: row.source || null,
+    publisher: row.publisher || null,
+    channel: row.channel || null,
+    selection: row.selection || null,
+    latestTest: row.latestTest || null,
+  };
 }
 
 function workspaceStatusUpdates(status: string, actorUserId: number, readiness: ClientReadinessSnapshot): Record<string, unknown> {
@@ -741,6 +1055,21 @@ export interface IStorage {
     needsReviewLast7d: number;
     lastFetchedAt: Date | null;
   }[]>;
+
+  // Workspace Source Assignments
+  getWorkspaceSourceAssignments(clientId: number, workspaceId: number): Promise<WorkspaceSourceAssignmentDetail[]>;
+  getWorkspaceSourceAssignment(clientId: number, workspaceId: number, assignmentId: number): Promise<WorkspaceSourceAssignmentDetail | undefined>;
+  getWorkspaceSourceAssignmentTests(clientId: number, workspaceId: number, assignmentId: number): Promise<WorkspaceSourceAssignmentTest[]>;
+  previewWorkspaceSourceAssignment(clientId: number, workspaceId: number, input: unknown): Promise<WorkspaceSourceAssignmentPreview>;
+  createWorkspaceSourceAssignmentAtomic(clientId: number, workspaceId: number, input: unknown, actorUserId: number): Promise<AtomicWorkspaceSourceAssignmentResult>;
+  updateWorkspaceSourceAssignment(clientId: number, workspaceId: number, assignmentId: number, input: unknown, actorUserId: number): Promise<WorkspaceSourceAssignment>;
+  transitionWorkspaceSourceAssignmentStatus(clientId: number, workspaceId: number, assignmentId: number, input: unknown, actorUserId: number): Promise<WorkspaceSourceAssignment>;
+  testWorkspaceSourceAssignmentConnectivity(clientId: number, workspaceId: number, assignmentId: number, actorUserId: number): Promise<{ assignment: WorkspaceSourceAssignment; testRun: WorkspaceSourceAssignmentTest }>;
+  testWorkspaceSourceAssignmentRelevance(clientId: number, workspaceId: number, assignmentId: number, input: unknown, actorUserId: number): Promise<{ assignment: WorkspaceSourceAssignment; testRun: WorkspaceSourceAssignmentTest }>;
+  testWorkspaceSourceAssignmentFull(clientId: number, workspaceId: number, assignmentId: number, input: unknown, actorUserId: number): Promise<{ assignment: WorkspaceSourceAssignment; testRun: WorkspaceSourceAssignmentTest }>;
+  approveWorkspaceSourceAssignmentWarning(clientId: number, workspaceId: number, assignmentId: number, input: unknown, actorUserId: number): Promise<WorkspaceSourceAssignment>;
+  getWorkspaceProfilesForActiveSourceAssignments(sourceId: number, clientId: number): Promise<WorkspaceSourceProfileRecord[]>;
+  getSourceAssignmentSummaries(clientId: number): Promise<Record<number, SourceAssignmentSummary>>;
 
   // Users management
   getUsers(parentId?: number): Promise<User[]>;
@@ -1692,6 +2021,13 @@ export class DatabaseStorage implements IStorage {
         },
       })
       .returning();
+    await db.update(workspaceSourceAssignments)
+      .set({ testStatus: "stale", updatedAt: new Date() } as any)
+      .where(and(
+        eq(workspaceSourceAssignments.workspaceId, data.workspaceId),
+        sql`${workspaceSourceAssignments.status} <> 'archived'`,
+        sql`${workspaceSourceAssignments.relevanceProfileVersion} <> ${profile.profileVersion}`,
+      ));
     return profile;
   }
 
@@ -4030,6 +4366,697 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
+  async getWorkspaceSourceAssignments(clientId: number, workspaceId: number): Promise<WorkspaceSourceAssignmentDetail[]> {
+    const rows = await db
+      .select({
+        assignment: workspaceSourceAssignments,
+        source: sources,
+        publisher: publisherProfiles,
+        channel: publisherChannels,
+        selection: clientPublisherSelections,
+        latestTest: workspaceSourceAssignmentTests,
+      })
+      .from(workspaceSourceAssignments)
+      .leftJoin(sources, eq(workspaceSourceAssignments.sourceId, sources.id))
+      .leftJoin(publisherProfiles, eq(workspaceSourceAssignments.publisherProfileId, publisherProfiles.id))
+      .leftJoin(publisherChannels, eq(workspaceSourceAssignments.publisherChannelId, publisherChannels.id))
+      .leftJoin(clientPublisherSelections, eq(workspaceSourceAssignments.clientPublisherSelectionId, clientPublisherSelections.id))
+      .leftJoin(workspaceSourceAssignmentTests, eq(workspaceSourceAssignments.latestTestRunId, workspaceSourceAssignmentTests.id))
+      .where(and(eq(workspaceSourceAssignments.clientId, clientId), eq(workspaceSourceAssignments.workspaceId, workspaceId)))
+      .orderBy(asc(workspaceSourceAssignments.status), asc(workspaceSourceAssignments.priority), asc(workspaceSourceAssignments.id));
+    return rows.map(mapAssignmentRow);
+  }
+
+  async getWorkspaceSourceAssignment(clientId: number, workspaceId: number, assignmentId: number): Promise<WorkspaceSourceAssignmentDetail | undefined> {
+    const rows = await db
+      .select({
+        assignment: workspaceSourceAssignments,
+        source: sources,
+        publisher: publisherProfiles,
+        channel: publisherChannels,
+        selection: clientPublisherSelections,
+        latestTest: workspaceSourceAssignmentTests,
+      })
+      .from(workspaceSourceAssignments)
+      .leftJoin(sources, eq(workspaceSourceAssignments.sourceId, sources.id))
+      .leftJoin(publisherProfiles, eq(workspaceSourceAssignments.publisherProfileId, publisherProfiles.id))
+      .leftJoin(publisherChannels, eq(workspaceSourceAssignments.publisherChannelId, publisherChannels.id))
+      .leftJoin(clientPublisherSelections, eq(workspaceSourceAssignments.clientPublisherSelectionId, clientPublisherSelections.id))
+      .leftJoin(workspaceSourceAssignmentTests, eq(workspaceSourceAssignments.latestTestRunId, workspaceSourceAssignmentTests.id))
+      .where(and(
+        eq(workspaceSourceAssignments.id, assignmentId),
+        eq(workspaceSourceAssignments.clientId, clientId),
+        eq(workspaceSourceAssignments.workspaceId, workspaceId),
+      ))
+      .limit(1);
+    return rows[0] ? mapAssignmentRow(rows[0]) : undefined;
+  }
+
+  async getWorkspaceSourceAssignmentTests(clientId: number, workspaceId: number, assignmentId: number): Promise<WorkspaceSourceAssignmentTest[]> {
+    return db
+      .select()
+      .from(workspaceSourceAssignmentTests)
+      .where(and(
+        eq(workspaceSourceAssignmentTests.clientId, clientId),
+        eq(workspaceSourceAssignmentTests.workspaceId, workspaceId),
+        eq(workspaceSourceAssignmentTests.assignmentId, assignmentId),
+      ))
+      .orderBy(desc(workspaceSourceAssignmentTests.createdAt));
+  }
+
+  async previewWorkspaceSourceAssignment(clientId: number, workspaceId: number, input: unknown): Promise<WorkspaceSourceAssignmentPreview> {
+    let parsed;
+    try {
+      parsed = workspaceSourceAssignmentInputSchema.parse(input || {});
+    } catch (error) {
+      throw toStorageValidationError(error, "Invalid workspace source assignment");
+    }
+
+    const base = await loadWorkspaceSourceAssignmentEligibility(db, clientId, workspaceId, parsed.publisherChannelId);
+    const sourceInput = parsed.source || {};
+    const existingCompatibleSource = await findCompatibleAssignmentSource(db, clientId, base.channel, parsed.existingSourceId);
+    const provisionability = evaluateChannelProvisionability({
+      channelType: base.channel.channelType,
+      url: base.channel.url,
+      normalizedUrl: base.channel.normalizedUrl,
+      validationStatus: base.channel.validationStatus,
+      verificationStatus: base.channel.verificationStatus,
+      lifecycleStatus: base.channel.lifecycleStatus,
+      sourceUrl: (sourceInput as any)?.url,
+      hasManualValidationOverride: manualChannelOverride(base.channel),
+    });
+    const proposedOperationalSource = existingCompatibleSource
+      ? null
+      : provisionability.provisionable
+        ? buildAssignmentSafeSourceValues(clientId, 0, base.publisher, base.channel, sourceInput)
+        : null;
+    const [duplicate] = await db
+      .select({ id: workspaceSourceAssignments.id, sourceId: workspaceSourceAssignments.sourceId, publisherChannelId: workspaceSourceAssignments.publisherChannelId })
+      .from(workspaceSourceAssignments)
+      .where(and(
+        eq(workspaceSourceAssignments.workspaceId, workspaceId),
+        or(
+          existingCompatibleSource
+            ? eq(workspaceSourceAssignments.sourceId, existingCompatibleSource.id)
+            : sql`FALSE`,
+          eq(workspaceSourceAssignments.publisherChannelId, base.channel.id),
+        ),
+      ))
+      .limit(1);
+    const readiness = await this.getClientPublisherReadinessCounts(clientId);
+    const warnings = [
+      ...sourceCompatibilityWarnings(existingCompatibleSource, base.channel),
+      ...(provisionability.provisionable ? [] : [provisionability.reason || "not_provisionable"]),
+    ];
+    return {
+      writes: false,
+      client: base.client,
+      workspace: base.workspace,
+      publisher: base.publisher,
+      channel: base.channel,
+      approvedSelection: base.approvedSelection,
+      existingCompatibleSource,
+      proposedOperationalSource,
+      proposedAssignment: {
+        clientId,
+        workspaceId,
+        clientPublisherSelectionId: base.approvedSelection.id,
+        publisherProfileId: base.publisher.id,
+        publisherChannelId: base.channel.id,
+        sourceId: existingCompatibleSource?.id || 0,
+        assignmentKey: existingCompatibleSource ? buildWorkspaceSourceAssignmentKey(workspaceId, existingCompatibleSource.id) : "pending_source",
+        status: "draft",
+        enabled: false,
+        priority: parsed.priority,
+        sourceRole: parsed.sourceRole,
+        relevanceProfileVersion: base.relevanceProfile?.profileVersion || 1,
+        relevancePolicy: parsed.relevancePolicy,
+        minimumDirectMatchRate: rateToPercent(parsed.minimumDirectMatchRate, 0.5),
+        maximumNoiseRate: rateToPercent(parsed.maximumNoiseRate, 0.4),
+        testStatus: "untested",
+        notes: cleanOptionalString(parsed.notes),
+      },
+      validationWarnings: Array.from(new Set(warnings.filter(Boolean))),
+      duplicateAssignmentWarning: duplicate ? "duplicate_workspace_source_assignment" : null,
+      provisionability,
+      requiredTestPlan: ["connectivity", "relevance"],
+      readinessImpact: {
+        currentSourceAssignmentsConfigured: readiness.sourceAssignmentsConfigured,
+        wouldCreateAssignment: !duplicate,
+        wouldCreateSource: !existingCompatibleSource && provisionability.provisionable,
+        countsAfterTestRequired: true,
+      },
+      creationPlan: {
+        createSource: !existingCompatibleSource && provisionability.provisionable,
+        createAssignment: !duplicate,
+        createAuditEvent: !duplicate,
+        activateIngestion: false,
+        insertArticles: false,
+      },
+    };
+  }
+
+  async createWorkspaceSourceAssignmentAtomic(clientId: number, workspaceId: number, input: unknown, actorUserId: number): Promise<AtomicWorkspaceSourceAssignmentResult> {
+    let parsed;
+    try {
+      parsed = workspaceSourceAssignmentInputSchema.parse(input || {});
+    } catch (error) {
+      throw toStorageValidationError(error, "Invalid workspace source assignment");
+    }
+    try {
+      return await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`nws360.workspace_source_assignment.${clientId}.${workspaceId}.${parsed.publisherChannelId}`}))`);
+        const base = await loadWorkspaceSourceAssignmentEligibility(tx, clientId, workspaceId, parsed.publisherChannelId);
+        const sourceInput = parsed.source || {};
+        let source = await findCompatibleAssignmentSource(tx, clientId, base.channel, parsed.existingSourceId);
+        let reusedSource = Boolean(source);
+        if (!source) {
+          const provisionability = evaluateChannelProvisionability({
+            channelType: base.channel.channelType,
+            url: base.channel.url,
+            normalizedUrl: base.channel.normalizedUrl,
+            validationStatus: base.channel.validationStatus,
+            verificationStatus: base.channel.verificationStatus,
+            lifecycleStatus: base.channel.lifecycleStatus,
+            sourceUrl: (sourceInput as any)?.url,
+            hasManualValidationOverride: manualChannelOverride(base.channel),
+          });
+          if (!provisionability.provisionable) {
+            throw new StorageBoundaryError("Publisher channel cannot be provisioned as an automated source", {
+              status: 409,
+              code: "channel_not_eligible",
+              details: provisionability,
+            });
+          }
+          const values = buildAssignmentSafeSourceValues(clientId, actorUserId, base.publisher, base.channel, sourceInput);
+          const [createdSource] = await tx.insert(sources).values(values).returning();
+          source = createdSource;
+          reusedSource = false;
+        }
+        if (source.clientId !== clientId) {
+          throw new StorageBoundaryError("Source does not belong to assignment client", {
+            status: 404,
+            code: "source_assignment_client_mismatch",
+          });
+        }
+        if (source.publisherChannelId !== base.channel.id) {
+          throw new StorageBoundaryError("Source is linked to a different publisher channel", {
+            status: 409,
+            code: "source_assignment_channel_mismatch",
+          });
+        }
+
+        const [duplicate] = await tx
+          .select({ id: workspaceSourceAssignments.id })
+          .from(workspaceSourceAssignments)
+          .where(or(
+            and(eq(workspaceSourceAssignments.workspaceId, workspaceId), eq(workspaceSourceAssignments.sourceId, source.id)),
+            and(eq(workspaceSourceAssignments.workspaceId, workspaceId), eq(workspaceSourceAssignments.publisherChannelId, base.channel.id)),
+          ))
+          .limit(1);
+        if (duplicate) {
+          throw new StorageBoundaryError("Workspace source assignment already exists", {
+            status: 409,
+            code: "duplicate_workspace_source_assignment",
+          });
+        }
+
+        const [assignment] = await tx.insert(workspaceSourceAssignments).values({
+          clientId,
+          workspaceId,
+          clientPublisherSelectionId: base.approvedSelection.id,
+          publisherProfileId: base.publisher.id,
+          publisherChannelId: base.channel.id,
+          sourceId: source.id,
+          assignmentKey: buildWorkspaceSourceAssignmentKey(workspaceId, source.id),
+          status: "draft",
+          enabled: false,
+          priority: parsed.priority,
+          sourceRole: parsed.sourceRole,
+          relevanceProfileVersion: base.relevanceProfile?.profileVersion || 1,
+          relevancePolicy: parsed.relevancePolicy,
+          minimumDirectMatchRate: rateToPercent(parsed.minimumDirectMatchRate, 0.5),
+          maximumNoiseRate: rateToPercent(parsed.maximumNoiseRate, 0.4),
+          testStatus: "untested",
+          notes: cleanOptionalString(parsed.notes),
+          createdBy: actorUserId,
+        } as InsertWorkspaceSourceAssignment).returning();
+
+        const auditLog = await createAuditLogInTransaction(tx, {
+          userId: actorUserId,
+          clientId,
+          action: reusedSource ? "workspace_source_existing_assignment" : "workspace_source_provision_assignment",
+          entity: "workspace_source_assignment",
+          entityId: assignment.id,
+          details: safeStorageAuditDetails({
+            workspaceId,
+            sourceId: source.id,
+            publisherId: base.publisher.id,
+            channelId: base.channel.id,
+            reusedSource,
+            sourceActive: source.active === true,
+            assignmentEnabled: assignment.enabled,
+          }),
+        });
+        return { source, assignment, auditLog, reusedSource };
+      });
+    } catch (error) {
+      const mapped = publisherConstraintError(error);
+      if (mapped) throw mapped;
+      const anyError = error as any;
+      if (anyError?.code === "23505" && String(anyError.constraint || "").includes("workspace_source_assignments")) {
+        throw new StorageBoundaryError("Workspace source assignment already exists", {
+          status: 409,
+          code: "duplicate_workspace_source_assignment",
+        });
+      }
+      if (anyError?.code === "23505" && String(anyError.constraint || "").includes("sources_client_identity")) {
+        throw new StorageBoundaryError("Operational source already exists for this client and publisher channel", {
+          status: 409,
+          code: "duplicate_operational_source_identity",
+        });
+      }
+      throw error;
+    }
+  }
+
+  async updateWorkspaceSourceAssignment(clientId: number, workspaceId: number, assignmentId: number, input: unknown, actorUserId: number): Promise<WorkspaceSourceAssignment> {
+    let parsed;
+    try {
+      parsed = workspaceSourceAssignmentUpdateSchema.parse(input || {});
+    } catch (error) {
+      throw toStorageValidationError(error, "Invalid workspace source assignment update");
+    }
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (parsed.priority !== undefined) updates.priority = parsed.priority;
+    if (parsed.sourceRole !== undefined) updates.sourceRole = parsed.sourceRole;
+    if (parsed.relevancePolicy !== undefined) updates.relevancePolicy = parsed.relevancePolicy;
+    if (parsed.minimumDirectMatchRate !== undefined) updates.minimumDirectMatchRate = rateToPercent(parsed.minimumDirectMatchRate, 0.5);
+    if (parsed.maximumNoiseRate !== undefined) updates.maximumNoiseRate = rateToPercent(parsed.maximumNoiseRate, 0.4);
+    if (parsed.notes !== undefined) updates.notes = cleanOptionalString(parsed.notes);
+    return db.transaction(async (tx) => {
+      const [assignment] = await tx.update(workspaceSourceAssignments)
+        .set(updates as any)
+        .where(and(
+          eq(workspaceSourceAssignments.id, assignmentId),
+          eq(workspaceSourceAssignments.clientId, clientId),
+          eq(workspaceSourceAssignments.workspaceId, workspaceId),
+        ))
+        .returning();
+      if (!assignment) throw new StorageBoundaryError("Workspace source assignment not found", { status: 404, code: "assignment_not_found" });
+      await createAuditLogInTransaction(tx, {
+        userId: actorUserId,
+        clientId,
+        action: "workspace_source_assignment_update",
+        entity: "workspace_source_assignment",
+        entityId: assignment.id,
+        details: safeStorageAuditDetails({ workspaceId, changedFields: Object.keys(parsed) }),
+      });
+      return assignment;
+    });
+  }
+
+  async transitionWorkspaceSourceAssignmentStatus(clientId: number, workspaceId: number, assignmentId: number, input: unknown, actorUserId: number): Promise<WorkspaceSourceAssignment> {
+    let parsed;
+    try {
+      parsed = workspaceSourceAssignmentStatusInputSchema.parse(input || {});
+    } catch (error) {
+      throw toStorageValidationError(error, "Invalid assignment status");
+    }
+    return db.transaction(async (tx) => {
+      const [row] = await tx.select({
+        assignment: workspaceSourceAssignments,
+        workspace: workspaces,
+        client: clients,
+        profile: workspaceRelevanceProfiles,
+      })
+        .from(workspaceSourceAssignments)
+        .innerJoin(workspaces, and(eq(workspaceSourceAssignments.workspaceId, workspaces.id), eq(workspaceSourceAssignments.clientId, workspaces.clientId)))
+        .innerJoin(clients, eq(workspaceSourceAssignments.clientId, clients.id))
+        .leftJoin(workspaceRelevanceProfiles, eq(workspaceSourceAssignments.workspaceId, workspaceRelevanceProfiles.workspaceId))
+        .where(and(eq(workspaceSourceAssignments.id, assignmentId), eq(workspaceSourceAssignments.clientId, clientId), eq(workspaceSourceAssignments.workspaceId, workspaceId)))
+        .limit(1);
+      if (!row) throw new StorageBoundaryError("Workspace source assignment not found", { status: 404, code: "assignment_not_found" });
+      const profileVersion = row.profile?.profileVersion || row.assignment.relevanceProfileVersion || 1;
+      const updates: Record<string, unknown> = { status: parsed.status, updatedAt: new Date() };
+      if (parsed.status === "active") {
+        if (row.client.active === false || row.client.lifecycleStatus !== "active") {
+          throw new StorageBoundaryError("Client must be active before assignment activation", { status: 409, code: "client_inactive" });
+        }
+        if (row.workspace.active === false || row.workspace.status !== "active") {
+          throw new StorageBoundaryError("Workspace must be active before assignment activation", { status: 409, code: "workspace_inactive" });
+        }
+        if (!assignmentHasPassingTest(row.assignment, profileVersion)) {
+          throw new StorageBoundaryError("Assignment requires a current passed test before activation", { status: 409, code: "source_assignment_tests_missing" });
+        }
+        updates.enabled = true;
+        await tx.update(sources).set({ active: true }).where(and(eq(sources.id, row.assignment.sourceId), eq(sources.clientId, clientId)));
+      } else {
+        updates.enabled = false;
+      }
+      if (parsed.status === "ready" && !assignmentHasPassingTest(row.assignment, profileVersion)) {
+        throw new StorageBoundaryError("Assignment requires a current passed or approved warning test before ready", { status: 409, code: row.assignment.testStatus === "stale" ? "source_assignment_tests_stale" : "source_assignment_tests_missing" });
+      }
+      const [assignment] = await tx.update(workspaceSourceAssignments)
+        .set(updates as any)
+        .where(and(eq(workspaceSourceAssignments.id, assignmentId), eq(workspaceSourceAssignments.clientId, clientId), eq(workspaceSourceAssignments.workspaceId, workspaceId)))
+        .returning();
+      if (!assignment) throw new StorageBoundaryError("Workspace source assignment not found", { status: 404, code: "assignment_not_found" });
+      await createAuditLogInTransaction(tx, {
+        userId: actorUserId,
+        clientId,
+        action: parsed.status === "active" ? "workspace_source_assignment_activate" : `workspace_source_assignment_${parsed.status}`,
+        entity: "workspace_source_assignment",
+        entityId: assignment.id,
+        details: safeStorageAuditDetails({ workspaceId, previousStatus: row.assignment.status, newStatus: assignment.status, enabled: assignment.enabled }),
+      });
+      return assignment;
+    });
+  }
+
+  async testWorkspaceSourceAssignmentConnectivity(clientId: number, workspaceId: number, assignmentId: number, actorUserId: number): Promise<{ assignment: WorkspaceSourceAssignment; testRun: WorkspaceSourceAssignmentTest }> {
+    return db.transaction(async (tx) => {
+      const [row] = await tx.select({ assignment: workspaceSourceAssignments, source: sources, channel: publisherChannels })
+        .from(workspaceSourceAssignments)
+        .innerJoin(sources, and(eq(workspaceSourceAssignments.sourceId, sources.id), eq(workspaceSourceAssignments.clientId, sources.clientId)))
+        .innerJoin(publisherChannels, eq(workspaceSourceAssignments.publisherChannelId, publisherChannels.id))
+        .where(and(eq(workspaceSourceAssignments.id, assignmentId), eq(workspaceSourceAssignments.clientId, clientId), eq(workspaceSourceAssignments.workspaceId, workspaceId)))
+        .limit(1);
+      if (!row) throw new StorageBoundaryError("Workspace source assignment not found", { status: 404, code: "assignment_not_found" });
+      const provisionability = evaluateChannelProvisionability({
+        channelType: row.channel.channelType,
+        url: row.channel.url,
+        normalizedUrl: row.channel.normalizedUrl,
+        validationStatus: row.channel.validationStatus,
+        verificationStatus: row.channel.verificationStatus,
+        lifecycleStatus: row.channel.lifecycleStatus,
+        sourceUrl: row.source.url,
+        hasManualValidationOverride: manualChannelOverride(row.channel),
+      });
+      const status = provisionability.provisionable ? "passed" : provisionability.manualOnly ? "warning" : "failed";
+      const [testRun] = await tx.insert(workspaceSourceAssignmentTests).values({
+        clientId,
+        workspaceId,
+        assignmentId,
+        sourceId: row.assignment.sourceId,
+        publisherChannelId: row.assignment.publisherChannelId,
+        testType: "connectivity",
+        status,
+        relevanceProfileVersion: row.assignment.relevanceProfileVersion,
+        connectivityResult: {
+          reachable: provisionability.provisionable,
+          reason: provisionability.reason,
+          requiredConfiguration: provisionability.requiredConfiguration,
+          articleInsertions: 0,
+          processingJobsCreated: 0,
+        },
+        sampleCount: 0,
+        errorCode: provisionability.provisionable ? null : provisionability.reason,
+        errorMessage: provisionability.provisionable ? null : provisionability.reason,
+        completedAt: new Date(),
+        testedBy: actorUserId,
+      } as InsertWorkspaceSourceAssignmentTest).returning();
+      const [assignment] = await tx.update(workspaceSourceAssignments).set({
+        status: row.assignment.status === "draft" ? "testing" : row.assignment.status,
+        testStatus: mapRunStatusToAssignmentTestStatus(status),
+        latestTestRunId: testRun.id,
+        testedAt: new Date(),
+        testedBy: actorUserId,
+        updatedAt: new Date(),
+      } as any).where(eq(workspaceSourceAssignments.id, assignmentId)).returning();
+      await createAuditLogInTransaction(tx, {
+        userId: actorUserId,
+        clientId,
+        action: "workspace_source_assignment_connectivity_test",
+        entity: "workspace_source_assignment",
+        entityId: assignment.id,
+        details: safeStorageAuditDetails({ workspaceId, testRunId: testRun.id, status, reason: provisionability.reason }),
+      });
+      return { assignment, testRun };
+    });
+  }
+
+  async testWorkspaceSourceAssignmentRelevance(clientId: number, workspaceId: number, assignmentId: number, input: unknown, actorUserId: number): Promise<{ assignment: WorkspaceSourceAssignment; testRun: WorkspaceSourceAssignmentTest }> {
+    let parsed;
+    try {
+      parsed = workspaceSourceAssignmentRelevanceTestInputSchema.parse(input || {});
+    } catch (error) {
+      throw toStorageValidationError(error, "Invalid relevance test request");
+    }
+    return db.transaction(async (tx) => {
+      const [row] = await tx.select({
+        assignment: workspaceSourceAssignments,
+        source: sources,
+        workspace: workspaces,
+        profile: workspaceRelevanceProfiles,
+      })
+        .from(workspaceSourceAssignments)
+        .innerJoin(sources, and(eq(workspaceSourceAssignments.sourceId, sources.id), eq(workspaceSourceAssignments.clientId, sources.clientId)))
+        .innerJoin(workspaces, and(eq(workspaceSourceAssignments.workspaceId, workspaces.id), eq(workspaceSourceAssignments.clientId, workspaces.clientId)))
+        .leftJoin(workspaceRelevanceProfiles, eq(workspaceSourceAssignments.workspaceId, workspaceRelevanceProfiles.workspaceId))
+        .where(and(eq(workspaceSourceAssignments.id, assignmentId), eq(workspaceSourceAssignments.clientId, clientId), eq(workspaceSourceAssignments.workspaceId, workspaceId)))
+        .limit(1);
+      if (!row) throw new StorageBoundaryError("Workspace source assignment not found", { status: 404, code: "assignment_not_found" });
+      const profile = row.profile || null;
+      const effectiveProfile = {
+        ...row.workspace,
+        ...(profile || {}),
+        id: row.workspace.id,
+        workspaceId: row.workspace.id,
+        clientId,
+        profileVersion: profile?.profileVersion || row.assignment.relevanceProfileVersion || 1,
+      };
+      const sampleResults: AssignmentSampleResult[] = parsed.samples.slice(0, 25).map((sample) => {
+        const relevance = evaluateWorkspaceRelevance({
+          title: sample.headline,
+          summary: sample.content || "",
+          content: sample.content || "",
+          url: sample.url || "",
+          language: sample.language || undefined,
+          sourceName: row.source.name,
+          sourceCategory: row.source.category,
+        }, effectiveProfile as any);
+        return summarizeAssignmentSample({
+          headline: sample.headline,
+          normalizedUrl: normalizedUrlForAppearance(sample.url),
+          publicationTime: sample.publishedAt || null,
+          language: sample.language || null,
+          relevanceClassification: relevance.relevanceStatus,
+          matchedSignals: relevance.relevanceMatchedSignals || [],
+          rejectionReason: relevance.relevanceStatus === "not_relevant" || relevance.relevanceStatus === "needs_review" ? relevance.relevanceReason : null,
+        });
+      });
+      const counts = {
+        sampleCount: sampleResults.length,
+        directScopeMatchCount: sampleResults.filter((item) => item.relevanceClassification === "direct_scope_match").length,
+        materialScopeImpactCount: sampleResults.filter((item) => item.relevanceClassification === "material_scope_impact").length,
+        contextualCount: sampleResults.filter((item) => item.relevanceClassification === "contextual").length,
+        notRelevantCount: sampleResults.filter((item) => item.relevanceClassification === "not_relevant").length,
+        needsReviewCount: sampleResults.filter((item) => item.relevanceClassification === "needs_review").length,
+      };
+      const rates = calculateAssignmentTestRates(counts);
+      const outcome = evaluateAssignmentTestOutcome({
+        ...counts,
+        minimumDirectMatchRate: percentToRate(row.assignment.minimumDirectMatchRate, 0.5),
+        maximumNoiseRate: percentToRate(row.assignment.maximumNoiseRate, 0.4),
+      });
+      const languageCounts = sampleResults.reduce<Record<string, number>>((acc, item) => {
+        const key = item.language || "und";
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {});
+      const categoryCounts = sampleResults.reduce<Record<string, number>>((acc, item) => {
+        acc[item.relevanceClassification] = (acc[item.relevanceClassification] || 0) + 1;
+        return acc;
+      }, {});
+      const [testRun] = await tx.insert(workspaceSourceAssignmentTests).values({
+        clientId,
+        workspaceId,
+        assignmentId,
+        sourceId: row.assignment.sourceId,
+        publisherChannelId: row.assignment.publisherChannelId,
+        testType: "relevance",
+        status: outcome.status,
+        relevanceProfileVersion: effectiveProfile.profileVersion,
+        connectivityResult: { articleInsertions: 0, appearancesCreated: 0, rejectedItemsCreated: 0, processingJobsCreated: 0 },
+        ...counts,
+        directMatchRate: rateToPercent(rates.directMatchRate, 0),
+        relevantRate: rateToPercent(rates.relevantRate, 0),
+        noiseRate: rateToPercent(rates.noiseRate, 0),
+        languageCounts,
+        categoryCounts,
+        safeSampleResults: sampleResults as any,
+        errorCode: outcome.status === "failed" ? outcome.reason : null,
+        errorMessage: outcome.reason,
+        completedAt: new Date(),
+        testedBy: actorUserId,
+      } as InsertWorkspaceSourceAssignmentTest).returning();
+      const [assignment] = await tx.update(workspaceSourceAssignments).set({
+        status: row.assignment.status === "draft" ? "testing" : row.assignment.status,
+        testStatus: mapRunStatusToAssignmentTestStatus(outcome.status),
+        relevanceProfileVersion: effectiveProfile.profileVersion,
+        latestTestRunId: testRun.id,
+        testedAt: new Date(),
+        testedBy: actorUserId,
+        warningApprovedAt: null,
+        warningApprovedBy: null,
+        warningApprovalReason: null,
+        updatedAt: new Date(),
+      } as any).where(eq(workspaceSourceAssignments.id, assignmentId)).returning();
+      await createAuditLogInTransaction(tx, {
+        userId: actorUserId,
+        clientId,
+        action: "workspace_source_assignment_relevance_test",
+        entity: "workspace_source_assignment",
+        entityId: assignment.id,
+        details: safeStorageAuditDetails({ workspaceId, testRunId: testRun.id, status: outcome.status, reason: outcome.reason, sampleCount: counts.sampleCount }),
+      });
+      return { assignment, testRun };
+    });
+  }
+
+  async testWorkspaceSourceAssignmentFull(clientId: number, workspaceId: number, assignmentId: number, input: unknown, actorUserId: number): Promise<{ assignment: WorkspaceSourceAssignment; testRun: WorkspaceSourceAssignmentTest }> {
+    const connectivity = await this.testWorkspaceSourceAssignmentConnectivity(clientId, workspaceId, assignmentId, actorUserId);
+    if (connectivity.testRun.status === "failed") return connectivity;
+    return this.testWorkspaceSourceAssignmentRelevance(clientId, workspaceId, assignmentId, input, actorUserId);
+  }
+
+  async approveWorkspaceSourceAssignmentWarning(clientId: number, workspaceId: number, assignmentId: number, input: unknown, actorUserId: number): Promise<WorkspaceSourceAssignment> {
+    let parsed;
+    try {
+      parsed = workspaceSourceAssignmentWarningApprovalSchema.parse(input || {});
+    } catch (error) {
+      throw toStorageValidationError(error, "Warning approval requires a reason");
+    }
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(workspaceSourceAssignments)
+        .where(and(eq(workspaceSourceAssignments.id, assignmentId), eq(workspaceSourceAssignments.clientId, clientId), eq(workspaceSourceAssignments.workspaceId, workspaceId)))
+        .limit(1);
+      if (!current) throw new StorageBoundaryError("Workspace source assignment not found", { status: 404, code: "assignment_not_found" });
+      if (current.testStatus !== "warning") {
+        throw new StorageBoundaryError("Only warning test results can be approved manually", { status: 409, code: "warning_approval_not_allowed" });
+      }
+      const [assignment] = await tx.update(workspaceSourceAssignments).set({
+        warningApprovedAt: new Date(),
+        warningApprovedBy: actorUserId,
+        warningApprovalReason: parsed.reason,
+        updatedAt: new Date(),
+      } as any).where(eq(workspaceSourceAssignments.id, assignmentId)).returning();
+      await createAuditLogInTransaction(tx, {
+        userId: actorUserId,
+        clientId,
+        action: "workspace_source_assignment_warning_approval",
+        entity: "workspace_source_assignment",
+        entityId: assignment.id,
+        details: safeStorageAuditDetails({ workspaceId, reason: parsed.reason.slice(0, 500), preservedTestStatus: current.testStatus }),
+      });
+      return assignment;
+    });
+  }
+
+  async getWorkspaceProfilesForActiveSourceAssignments(sourceId: number, clientId: number): Promise<WorkspaceSourceProfileRecord[]> {
+    const rows = await db
+      .select({
+        workspace: workspaces,
+        profile: workspaceRelevanceProfiles,
+        assignment: workspaceSourceAssignments,
+      })
+      .from(workspaceSourceAssignments)
+      .innerJoin(workspaces, and(eq(workspaceSourceAssignments.workspaceId, workspaces.id), eq(workspaceSourceAssignments.clientId, workspaces.clientId)))
+      .leftJoin(workspaceRelevanceProfiles, eq(workspaceSourceAssignments.workspaceId, workspaceRelevanceProfiles.workspaceId))
+      .where(and(
+        eq(workspaceSourceAssignments.sourceId, sourceId),
+        eq(workspaceSourceAssignments.clientId, clientId),
+        eq(workspaceSourceAssignments.status, "active"),
+        eq(workspaceSourceAssignments.enabled, true),
+        eq(workspaces.status, "active"),
+        eq(workspaces.active, true),
+      ));
+    return rows.map((row) => ({ workspace: row.workspace, profile: row.profile || null, assignment: row.assignment }));
+  }
+
+  async getSourceAssignmentSummaries(clientId: number): Promise<Record<number, SourceAssignmentSummary>> {
+    const rows = await db
+      .select({
+        source: sources,
+        publisher: publisherProfiles,
+        channel: publisherChannels,
+        workspace: workspaces,
+        assignment: workspaceSourceAssignments,
+        latestTest: workspaceSourceAssignmentTests,
+      })
+      .from(sources)
+      .leftJoin(publisherChannels, eq(sources.publisherChannelId, publisherChannels.id))
+      .leftJoin(publisherProfiles, eq(publisherChannels.publisherProfileId, publisherProfiles.id))
+      .leftJoin(workspaceSourceAssignments, and(
+        eq(workspaceSourceAssignments.sourceId, sources.id),
+        eq(workspaceSourceAssignments.clientId, sources.clientId),
+        sql`${workspaceSourceAssignments.status} <> 'archived'`,
+      ))
+      .leftJoin(workspaces, and(
+        eq(workspaceSourceAssignments.workspaceId, workspaces.id),
+        eq(workspaceSourceAssignments.clientId, workspaces.clientId),
+      ))
+      .leftJoin(workspaceSourceAssignmentTests, eq(workspaceSourceAssignments.latestTestRunId, workspaceSourceAssignmentTests.id))
+      .where(eq(sources.clientId, clientId))
+      .orderBy(asc(sources.id), asc(workspaceSourceAssignments.id));
+
+    const result: Record<number, SourceAssignmentSummary> = {};
+    for (const row of rows) {
+      const sourceId = row.source.id;
+      if (!result[sourceId]) {
+        result[sourceId] = {
+          publisher: row.publisher
+            ? {
+                id: row.publisher.id,
+                name: row.publisher.name,
+                scopeType: row.publisher.scopeType,
+                status: row.publisher.status,
+              }
+            : null,
+          channel: row.channel
+            ? {
+                id: row.channel.id,
+                name: row.channel.name,
+                channelType: row.channel.channelType,
+                verificationStatus: row.channel.verificationStatus,
+                validationStatus: row.channel.validationStatus,
+                lifecycleStatus: row.channel.lifecycleStatus,
+              }
+            : null,
+          assignments: [],
+          assignedWorkspaces: [],
+          assignmentStatuses: {},
+          latestTestStatus: null,
+          inactiveBecauseSetupIncomplete: row.source.publisherChannelId != null && row.source.active === false,
+        };
+      }
+      if (!row.assignment || !row.workspace) continue;
+      result[sourceId].assignments.push({
+        id: row.assignment.id,
+        workspaceId: row.workspace.id,
+        workspaceName: row.workspace.name,
+        status: row.assignment.status,
+        enabled: row.assignment.enabled,
+        testStatus: row.assignment.testStatus,
+        latestTestRunId: row.assignment.latestTestRunId,
+        relevanceProfileVersion: row.assignment.relevanceProfileVersion,
+      });
+      result[sourceId].assignedWorkspaces = Array.from(new Set([
+        ...result[sourceId].assignedWorkspaces,
+        row.workspace.name,
+      ]));
+      result[sourceId].assignmentStatuses[row.assignment.status] = (result[sourceId].assignmentStatuses[row.assignment.status] || 0) + 1;
+      if (row.latestTest?.status) {
+        result[sourceId].latestTestStatus = row.latestTest.status;
+      } else if (row.assignment.testStatus) {
+        result[sourceId].latestTestStatus = row.assignment.testStatus;
+      }
+      result[sourceId].inactiveBecauseSetupIncomplete = row.source.active === false && !row.assignment.enabled;
+    }
+    return result;
+  }
+
   async getClientPublisherReadinessCounts(clientId: number): Promise<ClientPublisherReadinessCounts> {
     const [selectionCount] = await db.select({ count: sql<number>`count(*)::int` })
       .from(clientPublisherSelections)
@@ -4048,13 +5075,65 @@ export class DatabaseStorage implements IStorage {
         eq(clientPublisherSelections.clientId, clientId),
         eq(clientPublisherSelections.status, "approved"),
         or(eq(publisherProfiles.scopeType, "global"), eq(publisherProfiles.ownerClientId, clientId)),
-        or(eq(publisherChannels.lifecycleStatus, "active"), eq(publisherChannels.verificationStatus, "verified")),
+        sql`${publisherProfiles.status} <> 'archived'`,
+        sql`${publisherChannels.lifecycleStatus} <> 'archived'`,
+      ));
+
+    const readyAssignmentCondition = and(
+      eq(workspaceSourceAssignments.clientId, clientId),
+      sql`${workspaceSourceAssignments.status} IN ('ready', 'active')`,
+      isNotNull(workspaceSourceAssignments.sourceId),
+      sql`(
+        ${workspaceSourceAssignments.testStatus} = 'passed'
+        OR (
+          ${workspaceSourceAssignments.testStatus} = 'warning'
+          AND ${workspaceSourceAssignments.warningApprovedAt} IS NOT NULL
+          AND ${workspaceSourceAssignments.warningApprovalReason} IS NOT NULL
+        )
+      )`,
+      sql`${workspaceSourceAssignments.relevanceProfileVersion} = COALESCE(${workspaceRelevanceProfiles.profileVersion}, ${workspaceSourceAssignments.relevanceProfileVersion})`,
+    );
+    const [assignmentCount] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(workspaceSourceAssignments)
+      .leftJoin(workspaceRelevanceProfiles, eq(workspaceSourceAssignments.workspaceId, workspaceRelevanceProfiles.workspaceId))
+      .where(readyAssignmentCondition);
+
+    const [passedCount] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(workspaceSourceAssignments)
+      .leftJoin(workspaceRelevanceProfiles, eq(workspaceSourceAssignments.workspaceId, workspaceRelevanceProfiles.workspaceId))
+      .where(and(
+        eq(workspaceSourceAssignments.clientId, clientId),
+        sql`${workspaceSourceAssignments.testStatus} IN ('passed', 'warning')`,
+        sql`${workspaceSourceAssignments.relevanceProfileVersion} = COALESCE(${workspaceRelevanceProfiles.profileVersion}, ${workspaceSourceAssignments.relevanceProfileVersion})`,
+      ));
+
+    const [staleCount] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(workspaceSourceAssignments)
+      .leftJoin(workspaceRelevanceProfiles, eq(workspaceSourceAssignments.workspaceId, workspaceRelevanceProfiles.workspaceId))
+      .where(and(
+        eq(workspaceSourceAssignments.clientId, clientId),
+        sql`${workspaceSourceAssignments.status} <> 'archived'`,
+        or(
+          eq(workspaceSourceAssignments.testStatus, "stale"),
+          sql`${workspaceSourceAssignments.relevanceProfileVersion} <> COALESCE(${workspaceRelevanceProfiles.profileVersion}, ${workspaceSourceAssignments.relevanceProfileVersion})`,
+        ),
+      ));
+
+    const [blockedCount] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(workspaceSourceAssignments)
+      .where(and(
+        eq(workspaceSourceAssignments.clientId, clientId),
+        sql`${workspaceSourceAssignments.status} <> 'archived'`,
+        sql`${workspaceSourceAssignments.testStatus} IN ('untested', 'failed', 'stale')`,
       ));
 
     return {
       publisherProfilesConfigured: Number(selectionCount?.count || 0),
       sourceChannelsConfigured: Number(channelCount?.count || 0),
-      sourceAssignmentsConfigured: 0,
+      sourceAssignmentsConfigured: Number(assignmentCount?.count || 0),
+      sourceAssignmentTestsPassed: Number(passedCount?.count || 0),
+      sourceAssignmentTestsStale: Number(staleCount?.count || 0),
+      sourceAssignmentsBlocked: Number(blockedCount?.count || 0),
     };
   }
 

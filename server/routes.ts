@@ -1368,12 +1368,17 @@ async function buildClientReadiness(clientId: number) {
   const relevanceProfilesConfigured = profileRows.filter(Boolean).length;
   const organizationConfigured = Boolean(client && settings);
   const activeWorkspaceCount = workspaceRows.filter((workspace: any) => workspace.active !== false && workspace.status === "active").length;
+  const activeClient = Boolean(client?.active !== false && client?.lifecycleStatus === "active");
   const blockers = [
+    !activeClient ? "client_inactive" : null,
     workspaceRows.length === 0 ? "workspace_missing" : null,
     relevanceProfilesConfigured === 0 ? "relevance_profile_missing" : null,
     publisherCounts.publisherProfilesConfigured === 0 ? "publisher_profiles_missing" : null,
     publisherCounts.sourceChannelsConfigured === 0 ? "source_channels_missing" : null,
     publisherCounts.sourceAssignmentsConfigured === 0 ? "source_assignments_missing" : null,
+    publisherCounts.sourceAssignmentTestsPassed === 0 ? "source_assignment_tests_missing" : null,
+    publisherCounts.sourceAssignmentTestsStale > 0 ? "source_assignment_tests_stale" : null,
+    publisherCounts.sourceAssignmentsBlocked > 0 ? "source_assignment_tests_failed" : null,
     activeWorkspaceCount === 0 ? "workspace_inactive" : null,
   ].filter((blocker): blocker is string => Boolean(blocker));
   return {
@@ -1382,7 +1387,7 @@ async function buildClientReadiness(clientId: number) {
     activeWorkspaceCount,
     relevanceProfilesConfigured,
     ...publisherCounts,
-    monitoringReady: false,
+    monitoringReady: organizationConfigured && activeClient && blockers.length === 0,
     blockers,
   };
 }
@@ -1914,8 +1919,14 @@ export async function registerRoutes(
     const user = req.user as any;
     const clientId = resolveClientId(user, req);
     if (!clientId) return res.json([]);
-    const sources = await storage.getSources(clientId || undefined);
-    res.json(sources);
+    const [sources, assignmentSummaries] = await Promise.all([
+      storage.getSources(clientId || undefined),
+      storage.getSourceAssignmentSummaries(clientId),
+    ]);
+    res.json(sources.map((source) => ({
+      ...source,
+      assignmentSummary: assignmentSummaries[source.id] || null,
+    })));
   });
 
   app.get("/feeds/:token.xml", apiLimiter, async (req, res) => {
@@ -4167,8 +4178,14 @@ export async function registerRoutes(
     const user = req.user as any;
     const clientId = requireTenantContext(user, req, res);
     if (!clientId) return;
-    const allSources = await storage.getSources(clientId || undefined);
-    res.json(allSources);
+    const [allSources, assignmentSummaries] = await Promise.all([
+      storage.getSources(clientId || undefined),
+      storage.getSourceAssignmentSummaries(clientId),
+    ]);
+    res.json(allSources.map((source) => ({
+      ...source,
+      assignmentSummary: assignmentSummaries[source.id] || null,
+    })));
   });
 
   app.get("/api/sources/article-counts", async (req, res) => {
@@ -4731,6 +4748,170 @@ export async function registerRoutes(
     const history = await storage.getWorkspaceRelevanceHistory(workspace.id, articleId, client.id);
     await storage.createAuditLog({ userId: user.id, clientId: client.id, action: "workspace_relevance_review", entity: "article", entityId: articleId, details: safeAuditDetails({ workspaceId: workspace.id, relevanceStatus: input.relevanceStatus, reopen: Boolean(input.reopen) }) });
     res.json({ relevance: updated, history });
+  });
+
+  app.get("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments", requireSystemAdmin(), async (req, res) => {
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    const client = await getClientOrNotFound(clientId, res);
+    if (!client) return;
+    const workspace = await getAdminWorkspaceOrNotFound(client.id, workspaceId, res);
+    if (!workspace) return;
+    const [assignments, publishers, sources, readiness, relevanceProfile] = await Promise.all([
+      storage.getWorkspaceSourceAssignments(client.id, workspace.id),
+      storage.getClientPublisherSelections(client.id),
+      storage.getSources(client.id),
+      buildClientReadiness(client.id),
+      storage.getWorkspaceRelevanceProfile(workspace.id, client.id),
+    ]);
+    const approvedPublishers = await Promise.all(publishers.map(async (selection: any) => ({
+      ...selection,
+      channels: (await storage.getPublisherChannels(selection.publisher.id)).filter((channel: any) => channel.lifecycleStatus !== "archived"),
+    })));
+    res.json({ client, workspace, relevanceProfile: relevanceProfile || null, assignments, approvedPublishers, operationalSources: sources, readiness });
+  });
+
+  app.post("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments/preview", requireSystemAdmin(), async (req, res) => {
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    try {
+      res.json(await storage.previewWorkspaceSourceAssignment(clientId, workspaceId, req.body || {}));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Workspace source assignment preview failed");
+    }
+  });
+
+  app.post("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    try {
+      const result = await storage.createWorkspaceSourceAssignmentAtomic(clientId, workspaceId, req.body || {}, user.id);
+      res.status(201).json(result);
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Workspace source assignment creation failed");
+    }
+  });
+
+  app.get("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments/:assignmentId", requireSystemAdmin(), async (req, res) => {
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    const assignmentId = parsePositiveId(req.params.assignmentId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!assignmentId) return res.status(400).json({ message: "Invalid assignment ID" });
+    const assignment = await storage.getWorkspaceSourceAssignment(clientId, workspaceId, assignmentId);
+    if (!assignment) return safeNotFound(res);
+    res.json(assignment);
+  });
+
+  app.patch("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments/:assignmentId", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    const assignmentId = parsePositiveId(req.params.assignmentId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!assignmentId) return res.status(400).json({ message: "Invalid assignment ID" });
+    try {
+      res.json(await storage.updateWorkspaceSourceAssignment(clientId, workspaceId, assignmentId, req.body || {}, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Workspace source assignment update failed");
+    }
+  });
+
+  app.patch("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments/:assignmentId/status", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    const assignmentId = parsePositiveId(req.params.assignmentId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!assignmentId) return res.status(400).json({ message: "Invalid assignment ID" });
+    try {
+      res.json(await storage.transitionWorkspaceSourceAssignmentStatus(clientId, workspaceId, assignmentId, req.body || {}, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Workspace source assignment status update failed");
+    }
+  });
+
+  app.post("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments/:assignmentId/test-connectivity", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    const assignmentId = parsePositiveId(req.params.assignmentId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!assignmentId) return res.status(400).json({ message: "Invalid assignment ID" });
+    try {
+      res.json(await storage.testWorkspaceSourceAssignmentConnectivity(clientId, workspaceId, assignmentId, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Workspace source assignment connectivity test failed");
+    }
+  });
+
+  app.post("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments/:assignmentId/test-relevance", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    const assignmentId = parsePositiveId(req.params.assignmentId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!assignmentId) return res.status(400).json({ message: "Invalid assignment ID" });
+    try {
+      res.json(await storage.testWorkspaceSourceAssignmentRelevance(clientId, workspaceId, assignmentId, req.body || {}, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Workspace source assignment relevance test failed");
+    }
+  });
+
+  app.post("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments/:assignmentId/test-full", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    const assignmentId = parsePositiveId(req.params.assignmentId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!assignmentId) return res.status(400).json({ message: "Invalid assignment ID" });
+    try {
+      res.json(await storage.testWorkspaceSourceAssignmentFull(clientId, workspaceId, assignmentId, req.body || {}, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Workspace source assignment full test failed");
+    }
+  });
+
+  app.post("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments/:assignmentId/approve-warning", requireSystemAdmin(), async (req, res) => {
+    const user = req.user as any;
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    const assignmentId = parsePositiveId(req.params.assignmentId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!assignmentId) return res.status(400).json({ message: "Invalid assignment ID" });
+    try {
+      res.json(await storage.approveWorkspaceSourceAssignmentWarning(clientId, workspaceId, assignmentId, req.body || {}, user.id));
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Workspace source assignment warning approval failed");
+    }
+  });
+
+  app.get("/api/admin/clients/:clientId/workspaces/:workspaceId/source-assignments/:assignmentId/tests", requireSystemAdmin(), async (req, res) => {
+    const clientId = parsePositiveId(req.params.clientId);
+    const workspaceId = parsePositiveId(req.params.workspaceId);
+    const assignmentId = parsePositiveId(req.params.assignmentId);
+    if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
+    if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
+    if (!assignmentId) return res.status(400).json({ message: "Invalid assignment ID" });
+    const assignment = await storage.getWorkspaceSourceAssignment(clientId, workspaceId, assignmentId);
+    if (!assignment) return safeNotFound(res);
+    const tests = await storage.getWorkspaceSourceAssignmentTests(clientId, workspaceId, assignmentId);
+    res.json({ items: tests, total: tests.length });
   });
 
   app.post("/api/admin/clients", requireSystemAdmin(), async (req, res) => {
