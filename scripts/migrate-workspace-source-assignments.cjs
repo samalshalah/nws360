@@ -499,19 +499,129 @@ async function columnDetailsFor(client, table) {
 }
 
 function normalizeIdentifier(value) {
-  return String(value || "")
+  let normalized = String(value || "")
+    .trim()
+    .replace(/\s+NULLS\s+(FIRST|LAST)\s*$/i, "")
+    .replace(/\s+(ASC|DESC)\s*$/i, "")
+    .replace(/\s+NULLS\s+(FIRST|LAST)\s*$/i, "")
+    .replace(/^"public"\./i, "")
     .replace(/^public\./i, "")
+    .trim();
+  if (normalized.startsWith('"') && normalized.endsWith('"') && normalized.length >= 2) {
+    normalized = normalized.slice(1, -1).replace(/""/g, '"');
+  }
+  return normalized
+    .replace(/\\"/g, '"')
     .replace(/"/g, "")
+    .replace(/[{}]/g, "")
     .trim()
     .toLowerCase();
 }
 
+function parsePostgresTextArray(value) {
+  const text = String(value || "").trim();
+  if (!text.startsWith("{") || !text.endsWith("}")) return null;
+  const inner = text.slice(1, -1);
+  if (!inner) return [];
+
+  const items = [];
+  let current = "";
+  let inQuotes = false;
+  let escaping = false;
+  let quoted = false;
+
+  const push = () => {
+    const item = !quoted && current.toUpperCase() === "NULL" ? "" : current;
+    items.push(item);
+    current = "";
+    quoted = false;
+  };
+
+  for (let index = 0; index < inner.length; index += 1) {
+    const char = inner[index];
+    if (inQuotes) {
+      if (escaping) {
+        current += char;
+        escaping = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaping = true;
+        continue;
+      }
+      if (char === '"') {
+        inQuotes = false;
+        continue;
+      }
+      current += char;
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+      quoted = true;
+      continue;
+    }
+    if (char === ",") {
+      push();
+      continue;
+    }
+    current += char;
+  }
+
+  if (escaping) current += "\\";
+  push();
+  return items;
+}
+
+function splitSqlColumnList(value) {
+  const text = String(value || "").trim();
+  if (!text) return [];
+  const items = [];
+  let current = "";
+  let inQuotes = false;
+  let parenDepth = 0;
+
+  const push = () => {
+    items.push(current);
+    current = "";
+  };
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '"' && inQuotes && text[index + 1] === '"') {
+      current += '""';
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      current += char;
+      continue;
+    }
+    if (!inQuotes && char === "(") parenDepth += 1;
+    if (!inQuotes && char === ")" && parenDepth > 0) parenDepth -= 1;
+    if (!inQuotes && parenDepth === 0 && char === ",") {
+      push();
+      continue;
+    }
+    current += char;
+  }
+  push();
+  return items;
+}
+
 function splitColumns(value) {
-  if (Array.isArray(value)) return value.map(normalizeIdentifier).filter(Boolean);
-  return String(value || "")
-    .split(",")
-    .map((item) => normalizeIdentifier(item.replace(/\s+(asc|desc|NULLS FIRST|NULLS LAST)$/i, "")))
-    .filter(Boolean);
+  let columns;
+  if (Array.isArray(value)) {
+    columns = value;
+  } else {
+    const text = String(value || "").trim();
+    columns = text.startsWith("{") && text.endsWith("}")
+      ? parsePostgresTextArray(text)
+      : splitSqlColumnList(text);
+  }
+  return (columns || []).map(normalizeIdentifier).filter(Boolean);
 }
 
 function normalizeSql(value) {
@@ -587,7 +697,12 @@ async function existingIndexDefinitions(client) {
       i.relname AS indexname,
       t.relname AS table_name,
       ix.indisunique AS is_unique,
-      COALESCE(array_agg(a.attname ORDER BY u.ordinality) FILTER (WHERE a.attname IS NOT NULL), ARRAY[]::text[]) AS columns,
+      to_jsonb(
+        COALESCE(
+          array_agg(a.attname ORDER BY u.ordinality) FILTER (WHERE a.attname IS NOT NULL),
+          ARRAY[]::text[]
+        )
+      ) AS columns,
       COALESCE(pg_get_expr(ix.indpred, ix.indrelid), '') AS predicate
     FROM pg_index ix
     JOIN pg_class i ON i.oid = ix.indexrelid
@@ -643,16 +758,16 @@ async function constraintCatalog(client) {
       CASE WHEN c.confrelid = 0 THEN NULL ELSE replace(c.confrelid::regclass::text, 'public.', '') END AS foreign_table,
       c.confdeltype,
       pg_get_constraintdef(c.oid, true) AS definition,
-      COALESCE((
+      to_jsonb(COALESCE((
         SELECT array_agg(a.attname ORDER BY u.ordinality)
         FROM unnest(c.conkey) WITH ORDINALITY AS u(attnum, ordinality)
         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum
-      ), ARRAY[]::text[]) AS columns,
-      COALESCE((
+      ), ARRAY[]::text[])) AS columns,
+      to_jsonb(COALESCE((
         SELECT array_agg(a.attname ORDER BY u.ordinality)
         FROM unnest(c.confkey) WITH ORDINALITY AS u(attnum, ordinality)
         JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = u.attnum
-      ), ARRAY[]::text[]) AS foreign_columns
+      ), ARRAY[]::text[])) AS foreign_columns
     FROM pg_constraint c
     WHERE c.connamespace='public'::regnamespace
   `);
@@ -1214,6 +1329,8 @@ module.exports = {
   SOURCE_ASSIGNMENT_COLUMNS,
   INDEXES,
   CONSTRAINTS,
+  parsePostgresTextArray,
+  splitColumns,
   allPlannedSql,
   classifyPlannedSql,
   inspect,

@@ -41,20 +41,30 @@ function fullColumns(table) {
   return new Set((migration.SOURCE_ASSIGNMENT_COLUMNS[table] || []).map(([name]) => name));
 }
 
-function parseFixtureIndex(indexname, indexdef) {
+function toPostgresTextArray(values) {
+  return `{${values.map((value) => `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
+}
+
+function catalogArray(values, mode) {
+  return mode === "postgres" ? toPostgresTextArray(values || []) : values || [];
+}
+
+function parseFixtureIndex(indexname, indexdef, arrayMode = "array") {
   const match = String(indexdef || "").match(/CREATE\s+(UNIQUE\s+)?INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+([a-z0-9_"]+)\s+ON\s+(?:public\.)?([a-z0-9_"]+)(?:\s+USING\s+\w+)?\s*\(([^)]+)\)(?:\s+WHERE\s+(.+))?/i);
   if (!match) return { indexname, table_name: "", is_unique: false, columns: [], predicate: "" };
+  const columns = match[4].split(",").map((item) => item.trim().replace(/"/g, ""));
   return {
     indexname,
     table_name: match[3].replace(/"/g, ""),
     is_unique: Boolean(match[1]),
-    columns: match[4].split(",").map((item) => item.trim().replace(/"/g, "")),
+    columns: catalogArray(columns, arrayMode),
     predicate: match[5] || "",
   };
 }
 
 class FakeClient {
-  constructor() {
+  constructor({ catalogArrayMode = "array" } = {}) {
+    this.catalogArrayMode = catalogArrayMode;
     this.queries = [];
     this.tables = new Map([
       ["users", { count: 1, columns: new Set(["id"]) }],
@@ -98,7 +108,7 @@ class FakeClient {
       return { rows: [...this.indexes.entries()].map(([indexname, indexdef]) => ({ indexname, indexdef })) };
     }
     if (sql.includes("FROM pg_index ix")) {
-      return { rows: [...this.indexes.entries()].map(([indexname, indexdef]) => parseFixtureIndex(indexname, indexdef)) };
+      return { rows: [...this.indexes.entries()].map(([indexname, indexdef]) => parseFixtureIndex(indexname, indexdef, this.catalogArrayMode)) };
     }
     if (sql.includes("FROM pg_constraint c")) {
       return {
@@ -109,8 +119,8 @@ class FakeClient {
           foreign_table: constraint.foreignTable || null,
           confdeltype: constraint.deleteBehavior || "a",
           definition: constraint.definition || "",
-          columns: constraint.columns || [],
-          foreign_columns: constraint.foreignColumns || [],
+          columns: catalogArray(constraint.columns || [], this.catalogArrayMode),
+          foreign_columns: catalogArray(constraint.foreignColumns || [], this.catalogArrayMode),
         })),
       };
     }
@@ -150,8 +160,8 @@ class FailingApplyClient extends FakeClient {
 }
 
 class FullAssignmentSchemaClient extends FakeClient {
-  constructor() {
-    super();
+  constructor(options) {
+    super(options);
     this.tables.set("workspace_relevance_profiles", {
       count: 0,
       columns: new Set(["id", "workspace_id", "client_id", "profile_version"]),
@@ -167,6 +177,33 @@ class FullAssignmentSchemaClient extends FakeClient {
     this.tables.set("workspace_source_assignment_tests", {
       count: 0,
       columns: fullColumns("workspace_source_assignment_tests"),
+    });
+  }
+}
+
+class CorrectConstraintCatalogClient extends FullAssignmentSchemaClient {
+  constructor(options) {
+    super(options);
+    this.constraints.set("workspace_source_assignments_pkey", {
+      type: "p",
+      table: "workspace_source_assignments",
+      columns: ["id"],
+      definition: "PRIMARY KEY (id)",
+    });
+    this.constraints.set("workspace_source_assignment_tests_pkey", {
+      type: "p",
+      table: "workspace_source_assignment_tests",
+      columns: ["id"],
+      definition: "PRIMARY KEY (id)",
+    });
+    this.constraints.set("workspace_source_assignments_workspace_client_fk", {
+      type: "f",
+      table: "workspace_source_assignments",
+      columns: ["workspace_id", "client_id"],
+      foreignTable: "workspaces",
+      foreignColumns: ["id", "client_id"],
+      deleteBehavior: "c",
+      definition: "FOREIGN KEY (workspace_id, client_id) REFERENCES workspaces(id, client_id) ON DELETE CASCADE",
     });
   }
 }
@@ -280,11 +317,59 @@ class MissingUnplannedSourceColumnClient extends FakeClient {
 }
 
 class EquivalentPrerequisiteIndexClient extends FakeClient {
-  constructor() {
-    super();
+  constructor(options) {
+    super(options);
     this.indexes.set(
       "workspaces_other_unique_name",
       "CREATE UNIQUE INDEX workspaces_other_unique_name ON public.workspaces USING btree (id, client_id)",
+    );
+  }
+}
+
+class ValidPrerequisiteIndexClient extends FakeClient {
+  constructor(options) {
+    super(options);
+    this.indexes.set(
+      "workspaces_id_client_unique",
+      "CREATE UNIQUE INDEX workspaces_id_client_unique ON public.workspaces USING btree (id, client_id)",
+    );
+    this.indexes.set(
+      "sources_id_client_unique",
+      "CREATE UNIQUE INDEX sources_id_client_unique ON public.sources USING btree (id, client_id)",
+    );
+    this.indexes.set(
+      "publisher_channels_id_profile_unique",
+      "CREATE UNIQUE INDEX publisher_channels_id_profile_unique ON public.publisher_channels USING btree (id, publisher_profile_id)",
+    );
+  }
+}
+
+class NonUniquePrerequisiteIndexClient extends FakeClient {
+  constructor(options) {
+    super(options);
+    this.indexes.set(
+      "workspaces_id_client_unique",
+      "CREATE INDEX workspaces_id_client_unique ON public.workspaces USING btree (id, client_id)",
+    );
+  }
+}
+
+class WrongColumnPrerequisiteIndexClient extends FakeClient {
+  constructor(options) {
+    super(options);
+    this.indexes.set(
+      "workspaces_id_client_unique",
+      "CREATE UNIQUE INDEX workspaces_id_client_unique ON public.workspaces USING btree (id)",
+    );
+  }
+}
+
+class WrongOrderPrerequisiteIndexClient extends FakeClient {
+  constructor(options) {
+    super(options);
+    this.indexes.set(
+      "workspaces_id_client_unique",
+      "CREATE UNIQUE INDEX workspaces_id_client_unique ON public.workspaces USING btree (client_id, id)",
     );
   }
 }
@@ -317,6 +402,25 @@ function assertIncludes(haystack, needle, label) {
 const plannedSql = migration.allPlannedSql();
 const joined = plannedSql.join("\n");
 const plannedClassification = migration.classifyPlannedSql(plannedSql);
+
+function assertNormalizedColumns(input, expected, label) {
+  const actual = migration.splitColumns(input);
+  assert.deepEqual(actual, expected, label);
+  assert.equal(actual.some((column) => /[{}]/.test(column)), false, `${label}: braces are stripped`);
+  assert.equal(actual.some((column) => /^".*"$/.test(column)), false, `${label}: wrapping quotes are stripped`);
+}
+
+assertNormalizedColumns(["id", "client_id"], ["id", "client_id"], "array columns are normalized");
+assertNormalizedColumns("{id,client_id}", ["id", "client_id"], "PostgreSQL text array is parsed");
+assertNormalizedColumns('{"id","client_id"}', ["id", "client_id"], "quoted PostgreSQL text array is parsed");
+assertNormalizedColumns("{}", [], "empty PostgreSQL text array is parsed");
+assertNormalizedColumns("id, client_id", ["id", "client_id"], "plain SQL column list is parsed");
+assertNormalizedColumns('"id", "client_id"', ["id", "client_id"], "quoted SQL column list is parsed");
+assertNormalizedColumns("{publisher_channel_id,publisher_profile_id}", ["publisher_channel_id", "publisher_profile_id"], "publisher channel text array is parsed");
+assert.deepEqual(migration.parsePostgresTextArray('{"quoted\\"id","name,with,comma"}'), ['quoted"id', "name,with,comma"], "PostgreSQL escaped quotes and commas are decoded before normalization");
+assertNormalizedColumns('{"quoted\\"id","name,with,comma"}', ["quotedid", "name,with,comma"], "escaped PostgreSQL values stay element-safe during normalization");
+assertNormalizedColumns('"id" DESC NULLS LAST, "client_id" ASC NULLS FIRST', ["id", "client_id"], "sort suffixes are removed from SQL column lists");
+
 assert.ok(plannedSql.length > 10, "migration has planned statements");
 assert.equal(plannedClassification.total, plannedSql.length, "classification total matches planned SQL length");
 assert.equal(plannedClassification.classifiedTotal, plannedSql.length, "all planned SQL is classified");
@@ -413,6 +517,49 @@ assertIncludes(migrationSource, "plannedPrerequisiteIndexes", "planned prerequis
     assert.equal(sourceIdentityPresent.integrityChecks.duplicateOperationalSourceIdentity.value, 0);
     assert.equal(sourceIdentityPresent.notApplicableChecks.some((item) => item.check === "duplicateOperationalSourceIdentity"), false, "present source identity scan is no longer skipped");
 
+    for (const catalogArrayMode of ["array", "postgres"]) {
+      const validPrerequisites = await migration.inspect(new ValidPrerequisiteIndexClient({ catalogArrayMode }));
+      assert.equal(validPrerequisites.prerequisiteUniqueProtections.workspaces_id_client_unique.status, "existing_equivalent", `${catalogArrayMode}: workspace/client index is accepted`);
+      assert.deepEqual(validPrerequisites.prerequisiteUniqueProtections.workspaces_id_client_unique.actualColumns, ["id", "client_id"], `${catalogArrayMode}: workspace/client columns are normalized`);
+      assert.equal(validPrerequisites.prerequisiteUniqueProtections.sources_id_client_unique.status, "existing_equivalent", `${catalogArrayMode}: source/client index is accepted`);
+      assert.deepEqual(validPrerequisites.prerequisiteUniqueProtections.sources_id_client_unique.actualColumns, ["id", "client_id"], `${catalogArrayMode}: source/client columns are normalized`);
+      assert.equal(validPrerequisites.prerequisiteUniqueProtections.publisher_channels_id_profile_unique.status, "existing_equivalent", `${catalogArrayMode}: publisher-channel/profile index is accepted`);
+      assert.deepEqual(validPrerequisites.prerequisiteUniqueProtections.publisher_channels_id_profile_unique.actualColumns, ["id", "publisher_profile_id"], `${catalogArrayMode}: publisher-channel/profile columns are normalized`);
+      assert.equal(validPrerequisites.malformedIndexes.some((item) => [
+        "workspaces_id_client_unique",
+        "sources_id_client_unique",
+        "publisher_channels_id_profile_unique",
+      ].includes(item.name)), false, `${catalogArrayMode}: valid prerequisite indexes are not malformed`);
+
+      const equivalentPrerequisite = await migration.inspect(new EquivalentPrerequisiteIndexClient({ catalogArrayMode }));
+      assert.equal(equivalentPrerequisite.prerequisiteUniqueProtections.workspaces_id_client_unique.status, "existing_equivalent", `${catalogArrayMode}: equivalent differently named unique index is accepted`);
+      assert.equal(equivalentPrerequisite.prerequisiteUniqueProtections.workspaces_id_client_unique.actualObjectName, "workspaces_other_unique_name");
+      assert.ok(equivalentPrerequisite.equivalentExistingIndexes.some((item) => item.expectedName === "workspaces_id_client_unique" && item.actualName === "workspaces_other_unique_name"), `${catalogArrayMode}: equivalent index is reported`);
+      assert.equal(equivalentPrerequisite.missingIndexes.includes("workspaces_id_client_unique"), false, `${catalogArrayMode}: equivalent index is not reported missing`);
+
+      const correctConstraints = await migration.inspect(new CorrectConstraintCatalogClient({ catalogArrayMode }));
+      assert.equal(correctConstraints.malformedPrimaryKeys.length, 0, `${catalogArrayMode}: PostgreSQL primary-key catalog arrays are parsed`);
+      assert.equal(correctConstraints.missingPrimaryKeys.some((item) => item.table === "workspace_source_assignments"), false, `${catalogArrayMode}: assignment primary key is present`);
+      assert.equal(correctConstraints.missingPrimaryKeys.some((item) => item.table === "workspace_source_assignment_tests"), false, `${catalogArrayMode}: assignment-test primary key is present`);
+      assert.equal(correctConstraints.malformedForeignKeys.some((item) => item.name === "workspace_source_assignments_workspace_client_fk"), false, `${catalogArrayMode}: FK source/target arrays are parsed`);
+      assert.equal(correctConstraints.missingForeignKeys.includes("workspace_source_assignments_workspace_client_fk"), false, `${catalogArrayMode}: parsed FK is not reported missing`);
+    }
+
+    const nonUniquePrerequisite = await migration.inspect(new NonUniquePrerequisiteIndexClient({ catalogArrayMode: "postgres" }));
+    assert.equal(nonUniquePrerequisite.applySafe, false, "same-name non-unique prerequisite index blocks apply");
+    assert.equal(nonUniquePrerequisite.prerequisiteUniqueProtections.workspaces_id_client_unique.status, "malformed");
+    assert.ok(nonUniquePrerequisite.malformedIndexes.some((item) => item.name === "workspaces_id_client_unique" && item.problems.includes("not_unique")), "non-unique prerequisite index is still malformed");
+
+    const wrongColumnPrerequisite = await migration.inspect(new WrongColumnPrerequisiteIndexClient({ catalogArrayMode: "postgres" }));
+    assert.equal(wrongColumnPrerequisite.applySafe, false, "same-name wrong-column prerequisite index blocks apply");
+    assert.equal(wrongColumnPrerequisite.prerequisiteUniqueProtections.workspaces_id_client_unique.status, "malformed");
+    assert.ok(wrongColumnPrerequisite.malformedIndexes.some((item) => item.name === "workspaces_id_client_unique" && item.problems.includes("wrong_columns_or_order")), "wrong-column prerequisite index is still malformed");
+
+    const wrongOrderPrerequisite = await migration.inspect(new WrongOrderPrerequisiteIndexClient({ catalogArrayMode: "postgres" }));
+    assert.equal(wrongOrderPrerequisite.applySafe, false, "same-name wrong-order prerequisite index blocks apply");
+    assert.equal(wrongOrderPrerequisite.prerequisiteUniqueProtections.workspaces_id_client_unique.status, "malformed");
+    assert.ok(wrongOrderPrerequisite.malformedIndexes.some((item) => item.name === "workspaces_id_client_unique" && item.actual.columns.join(",") === "client_id,id"), "wrong-order prerequisite index is still malformed");
+
     const throwingSourceIdentity = await migration.inspect(new ThrowingSourceIdentityCheckClient());
     assert.equal(throwingSourceIdentity.applySafe, false, "executable source identity scan failure blocks apply");
     assert.ok(throwingSourceIdentity.inspectionErrors.some((item) => item.check === "duplicateOperationalSourceIdentity" && item.errorCode === "XX001"));
@@ -421,12 +568,6 @@ assertIncludes(migrationSource, "plannedPrerequisiteIndexes", "planned prerequis
     const missingUnplanned = await migration.inspect(new MissingUnplannedSourceColumnClient());
     assert.equal(missingUnplanned.applySafe, false, "missing unplanned required column blocks apply");
     assert.ok(missingUnplanned.inspectionErrors.some((item) => item.errorCode === "MISSING_PREREQUISITE_SCHEMA" && item.safeMessage.includes("sources.client_id")));
-
-    const equivalentPrerequisite = await migration.inspect(new EquivalentPrerequisiteIndexClient());
-    assert.equal(equivalentPrerequisite.prerequisiteUniqueProtections.workspaces_id_client_unique.status, "existing_equivalent");
-    assert.equal(equivalentPrerequisite.prerequisiteUniqueProtections.workspaces_id_client_unique.actualObjectName, "workspaces_other_unique_name");
-    assert.ok(equivalentPrerequisite.equivalentExistingIndexes.some((item) => item.expectedName === "workspaces_id_client_unique" && item.actualName === "workspaces_other_unique_name"), "equivalent differently named unique index is accepted");
-    assert.equal(equivalentPrerequisite.missingIndexes.includes("workspaces_id_client_unique"), false, "equivalent index is not reported missing");
 
     const malformedPrerequisite = await migration.inspect(new MalformedPrerequisiteIndexClient());
     assert.equal(malformedPrerequisite.applySafe, false, "same-name malformed prerequisite index blocks apply");
