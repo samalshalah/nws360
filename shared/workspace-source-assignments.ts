@@ -102,15 +102,7 @@ export const workspaceSourceAssignmentWarningApprovalSchema = z.object({
   reason: z.string().trim().min(3).max(1000),
 });
 
-export const workspaceSourceAssignmentRelevanceTestInputSchema = z.object({
-  samples: z.array(z.object({
-    headline: z.string().trim().min(1).max(500),
-    url: z.string().trim().max(2000).optional().nullable(),
-    content: z.string().trim().max(2000).optional().nullable(),
-    language: z.string().trim().max(16).optional().nullable(),
-    publishedAt: z.string().trim().max(80).optional().nullable(),
-  })).max(25).optional().default([]),
-});
+export const workspaceSourceAssignmentTestInputSchema = z.object({}).strict();
 
 export function buildWorkspaceSourceAssignmentKey(workspaceId: number, sourceId: number): string {
   return `workspace:${workspaceId}:source:${sourceId}`;

@@ -359,6 +359,7 @@ export const clientPublisherSelections = pgTable("client_publisher_selections", 
 }, (table) => [
   uniqueIndex("client_publisher_selections_client_publisher_unique").on(table.clientId, table.publisherProfileId),
   uniqueIndex("client_publisher_selections_id_client_unique").on(table.id, table.clientId),
+  uniqueIndex("client_publisher_selections_id_client_publisher_unique").on(table.id, table.clientId, table.publisherProfileId),
   index("client_publisher_selections_client_status_idx").on(table.clientId, table.status),
   check("client_publisher_selections_status_ck", sql`
     ${table.status} IN ('candidate', 'approved', 'blocked', 'archived')
@@ -396,6 +397,7 @@ export const sources = pgTable("sources", {
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   uniqueIndex("sources_id_client_unique").on(table.id, table.clientId),
+  uniqueIndex("sources_id_client_channel_unique").on(table.id, table.clientId, table.publisherChannelId),
   uniqueIndex("sources_client_identity_unique").on(table.clientId, table.sourceIdentityKey),
   index("sources_publisher_channel_idx").on(table.publisherChannelId),
 ]);
@@ -1590,6 +1592,8 @@ export const workspaceSourceAssignments = pgTable("workspace_source_assignments"
   relevancePolicy: jsonb("relevance_policy").$type<Record<string, unknown>>().notNull().default({}),
   minimumDirectMatchRate: integer("minimum_direct_match_rate").notNull().default(50),
   maximumNoiseRate: integer("maximum_noise_rate").notNull().default(40),
+  sourceValidationIdentity: text("source_validation_identity"),
+  assignmentConfigIdentity: text("assignment_config_identity"),
   latestTestRunId: integer("latest_test_run_id"),
   testStatus: text("test_status").notNull().default("untested"),
   testedAt: timestamp("tested_at"),
@@ -1605,6 +1609,8 @@ export const workspaceSourceAssignments = pgTable("workspace_source_assignments"
   uniqueIndex("workspace_source_assignments_key_unique").on(table.assignmentKey),
   uniqueIndex("workspace_source_assignments_workspace_source_unique").on(table.workspaceId, table.sourceId),
   uniqueIndex("workspace_source_assignments_workspace_channel_unique").on(table.workspaceId, table.publisherChannelId),
+  uniqueIndex("workspace_source_assignments_id_client_workspace_unique").on(table.id, table.clientId, table.workspaceId),
+  uniqueIndex("workspace_source_assignments_id_source_unique").on(table.id, table.sourceId),
   index("workspace_source_assignments_client_idx").on(table.clientId, table.status),
   index("workspace_source_assignments_workspace_idx").on(table.workspaceId, table.status),
   index("workspace_source_assignments_source_idx").on(table.sourceId, table.status),
@@ -1615,9 +1621,9 @@ export const workspaceSourceAssignments = pgTable("workspace_source_assignments"
     name: "workspace_source_assignments_workspace_client_fk",
   }).onDelete("cascade"),
   foreignKey({
-    columns: [table.sourceId, table.clientId],
-    foreignColumns: [sources.id, sources.clientId],
-    name: "workspace_source_assignments_source_client_fk",
+    columns: [table.sourceId, table.clientId, table.publisherChannelId],
+    foreignColumns: [sources.id, sources.clientId, sources.publisherChannelId],
+    name: "workspace_source_assignments_source_client_channel_fk",
   }),
   foreignKey({
     columns: [table.publisherChannelId, table.publisherProfileId],
@@ -1625,9 +1631,9 @@ export const workspaceSourceAssignments = pgTable("workspace_source_assignments"
     name: "workspace_source_assignments_channel_publisher_fk",
   }),
   foreignKey({
-    columns: [table.clientPublisherSelectionId, table.clientId],
-    foreignColumns: [clientPublisherSelections.id, clientPublisherSelections.clientId],
-    name: "workspace_source_assignments_selection_client_fk",
+    columns: [table.clientPublisherSelectionId, table.clientId, table.publisherProfileId],
+    foreignColumns: [clientPublisherSelections.id, clientPublisherSelections.clientId, clientPublisherSelections.publisherProfileId],
+    name: "workspace_source_assignments_selection_client_publisher_fk",
   }),
   check("workspace_source_assignments_status_ck", sql`
     ${table.status} IN ('draft', 'testing', 'ready', 'active', 'paused', 'archived')
@@ -1663,6 +1669,8 @@ export const workspaceSourceAssignmentTests = pgTable("workspace_source_assignme
   testType: text("test_type").notNull(),
   status: text("status").notNull(),
   relevanceProfileVersion: integer("relevance_profile_version").notNull().default(1),
+  sourceValidationIdentity: text("source_validation_identity"),
+  assignmentConfigIdentity: text("assignment_config_identity"),
   connectivityResult: jsonb("connectivity_result").$type<Record<string, unknown>>().notNull().default({}),
   sampleCount: integer("sample_count").notNull().default(0),
   directScopeMatchCount: integer("direct_scope_match_count").notNull().default(0),
@@ -1686,16 +1694,27 @@ export const workspaceSourceAssignmentTests = pgTable("workspace_source_assignme
   index("workspace_source_assignment_tests_assignment_idx").on(table.assignmentId, table.createdAt),
   index("workspace_source_assignment_tests_workspace_idx").on(table.workspaceId, table.status),
   index("workspace_source_assignment_tests_client_idx").on(table.clientId, table.testType),
+  uniqueIndex("workspace_source_assignment_tests_id_assignment_unique").on(table.id, table.assignmentId),
   foreignKey({
     columns: [table.workspaceId, table.clientId],
     foreignColumns: [workspaces.id, workspaces.clientId],
     name: "workspace_source_assignment_tests_workspace_client_fk",
   }).onDelete("cascade"),
   foreignKey({
+    columns: [table.assignmentId, table.clientId, table.workspaceId],
+    foreignColumns: [workspaceSourceAssignments.id, workspaceSourceAssignments.clientId, workspaceSourceAssignments.workspaceId],
+    name: "workspace_source_assignment_tests_assignment_client_workspace_fk",
+  }).onDelete("cascade"),
+  foreignKey({
     columns: [table.sourceId, table.clientId],
     foreignColumns: [sources.id, sources.clientId],
     name: "workspace_source_assignment_tests_source_client_fk",
   }),
+  foreignKey({
+    columns: [table.assignmentId, table.sourceId],
+    foreignColumns: [workspaceSourceAssignments.id, workspaceSourceAssignments.sourceId],
+    name: "workspace_source_assignment_tests_assignment_source_fk",
+  }).onDelete("cascade"),
   check("workspace_source_assignment_tests_type_ck", sql`
     ${table.testType} IN ('connectivity', 'relevance', 'full')
   `),

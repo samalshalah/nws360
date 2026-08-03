@@ -37,6 +37,7 @@ export type PinnedHttpRequest = {
   approvedAddress: string;
   family?: 4 | 6;
   signal: AbortSignal;
+  accept?: string;
 };
 
 export type ChannelValidatorDeps = {
@@ -80,7 +81,7 @@ function validationError(message: string, code: string) {
   return Object.assign(new Error(message), { code });
 }
 
-function sanitizeUrlForEvidence(value: string): string {
+export function sanitizeUrlForEvidence(value: string): string {
   const parsed = new URL(value);
   parsed.username = "";
   parsed.password = "";
@@ -262,9 +263,9 @@ async function defaultRequestUrl(request: PinnedHttpRequest): Promise<ValidatorH
       headers: {
         Host: request.url.host,
         "User-Agent": "NWS360-PublisherChannelValidator/1.0",
-        Accept: request.url.pathname.toLowerCase().includes("rss") || request.url.pathname.toLowerCase().includes("feed")
+        Accept: request.accept || (request.url.pathname.toLowerCase().includes("rss") || request.url.pathname.toLowerCase().includes("feed")
           ? "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.5"
-          : "text/html, application/xhtml+xml, */*;q=0.5",
+          : "text/html, application/xhtml+xml, */*;q=0.5"),
       },
       servername: request.hostname,
       agent: false,
@@ -309,7 +310,7 @@ async function resolveApprovedAddress(url: URL, deps: Required<ChannelValidatorD
   return addresses[0];
 }
 
-async function fetchWithSafeRedirects(initialUrl: URL, deps: Required<ChannelValidatorDeps>, signal: AbortSignal) {
+async function fetchWithSafeRedirects(initialUrl: URL, deps: Required<ChannelValidatorDeps>, signal: AbortSignal, accept?: string) {
   let currentUrl = initialUrl;
   for (let redirectCount = 0; redirectCount <= deps.maxRedirects; redirectCount += 1) {
     const approved = await resolveApprovedAddress(currentUrl, deps, signal);
@@ -320,6 +321,7 @@ async function fetchWithSafeRedirects(initialUrl: URL, deps: Required<ChannelVal
         approvedAddress: approved.address,
         family: approved.family,
         signal,
+        accept,
       })),
       signal,
       "connection_timeout",
@@ -336,9 +338,13 @@ async function fetchWithSafeRedirects(initialUrl: URL, deps: Required<ChannelVal
   throw validationError("Validation redirect limit exceeded.", "redirect_limit_exceeded");
 }
 
-function errorResult(error: unknown, fallbackStatus: ChannelValidationStatus = "unreachable"): ChannelValidationResult {
+export function safeNetworkErrorCode(error: unknown): string {
   const anyError = error as any;
-  const code = typeof anyError?.code === "string" ? anyError.code : anyError?.name === "AbortError" ? "timeout" : "validation_error";
+  return typeof anyError?.code === "string" ? anyError.code : anyError?.name === "AbortError" ? "timeout" : "validation_error";
+}
+
+function errorResult(error: unknown, fallbackStatus: ChannelValidationStatus = "unreachable"): ChannelValidationResult {
+  const code = safeNetworkErrorCode(error);
   const invalid = code.startsWith("blocked")
     || code === "unsupported_protocol"
     || code === "url_credentials_not_allowed"
@@ -388,6 +394,48 @@ async function readResponseTextLimited(response: ValidatorHttpResponse, maxBytes
   }
 
   return "";
+}
+
+export type SafeTextFetchResult = {
+  text: string;
+  statusCode: number;
+  finalUrl: string;
+  redirectCount: number;
+  approvedAddressFamily: number;
+  contentType: string | null;
+  elapsedMs: number;
+};
+
+export async function fetchPublicUrlText(
+  value: string,
+  deps: ChannelValidatorDeps & { accept?: string } = {},
+): Promise<SafeTextFetchResult> {
+  const mergedDeps: Required<ChannelValidatorDeps> = {
+    resolveHost: deps.resolveHost || defaultResolveHost,
+    requestUrl: deps.requestUrl || defaultRequestUrl,
+    timeoutMs: deps.timeoutMs ?? 8000,
+    maxRedirects: deps.maxRedirects ?? 3,
+    maxBytes: deps.maxBytes ?? 256 * 1024,
+  };
+  const deadline = new ValidationDeadline(mergedDeps.timeoutMs);
+  const started = Date.now();
+  try {
+    const parsed = parseUrl(value);
+    if (!parsed) throw validationError("Invalid validation URL.", "invalid_url");
+    const { response, finalUrl, redirectCount, approvedAddress } = await fetchWithSafeRedirects(parsed, mergedDeps, deadline.signal, deps.accept);
+    const text = await readResponseTextLimited(response, mergedDeps.maxBytes, deadline.signal);
+    return {
+      text,
+      statusCode: response.status,
+      finalUrl: sanitizeUrlForEvidence(finalUrl.toString()),
+      redirectCount,
+      approvedAddressFamily: net.isIP(approvedAddress),
+      contentType: response.headers.get("content-type"),
+      elapsedMs: Date.now() - started,
+    };
+  } finally {
+    deadline.clear();
+  }
 }
 
 export async function validatePublisherChannel(

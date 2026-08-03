@@ -134,10 +134,7 @@ export default function WorkspaceSourceAssignments() {
 
   const runTest = useMutation({
     mutationFn: async ({ assignmentId, type }: { assignmentId: number; type: "test-connectivity" | "test-relevance" | "test-full" }) => {
-      const body = type === "test-relevance"
-        ? { samples: [{ headline: "Iraq government announces new public service program", content: "The government in Baghdad announced services affecting Iraq.", language: "en" }] }
-        : {};
-      const res = await apiRequest("POST", `${basePath}/${assignmentId}/${type}`, body);
+      const res = await apiRequest("POST", `${basePath}/${assignmentId}/${type}`, {});
       return res.json();
     },
     onSuccess: () => {
@@ -273,7 +270,11 @@ export default function WorkspaceSourceAssignments() {
             <CardContent className="space-y-3">
               {data.assignments.length === 0 ? (
                 <div className="rounded-md border border-dashed border-border py-8 text-center text-sm text-muted-foreground">No workspace source assignments yet.</div>
-              ) : data.assignments.map((assignment: any) => (
+              ) : data.assignments.map((assignment: any) => {
+                const latestTest = assignment.latestTest || null;
+                const connectivity = latestTest?.connectivityResult || {};
+                const safeSamples = Array.isArray(latestTest?.safeSampleResults) ? latestTest.safeSampleResults : [];
+                return (
                 <div key={assignment.id} className="rounded-md border border-border p-4">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div>
@@ -294,6 +295,10 @@ export default function WorkspaceSourceAssignments() {
                         <FlaskConical className="mr-2 h-4 w-4" />
                         Relevance
                       </Button>
+                      <Button size="sm" variant="outline" onClick={() => runTest.mutate({ assignmentId: assignment.id, type: "test-full" })}>
+                        <ShieldCheck className="mr-2 h-4 w-4" />
+                        Full
+                      </Button>
                     </div>
                   </div>
                   <div className="mt-4 grid gap-3 text-sm md:grid-cols-4">
@@ -302,8 +307,39 @@ export default function WorkspaceSourceAssignments() {
                     <Metric label="Profile version" value={assignment.relevanceProfileVersion} />
                     <Metric label="Latest test" value={assignment.latestTestRunId || "none"} />
                   </div>
+                  {latestTest && (
+                    <div className="mt-4 rounded-md border border-border/70 bg-muted/20 p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline">{latestTest.testType}</Badge>
+                        <Badge variant={latestTest.status === "passed" ? "default" : latestTest.status === "failed" ? "destructive" : "secondary"}>{latestTest.status}</Badge>
+                        <Badge variant="outline">sample {latestTest.sampleCount}</Badge>
+                        <Badge variant="outline">profile v{latestTest.relevanceProfileVersion}</Badge>
+                      </div>
+                      <div className="mt-3 grid gap-2 text-xs md:grid-cols-4">
+                        <Metric label="Actual source" value={connectivity.finalUrl || connectivity.requestedUrl || assignment.source?.url || "unknown"} />
+                        <Metric label="Collector" value={connectivity.collectorType || "unknown"} />
+                        <Metric label="HTTP" value={connectivity.statusCode ?? "n/a"} />
+                        <Metric label="Identity" value={(latestTest.sourceValidationIdentity || assignment.sourceValidationIdentity || "missing").slice(0, 12)} />
+                        <Metric label="Direct" value={latestTest.directScopeMatchCount ?? 0} />
+                        <Metric label="Contextual" value={latestTest.contextualCount ?? 0} />
+                        <Metric label="Rejected" value={latestTest.notRelevantCount ?? 0} />
+                        <Metric label="Needs review" value={latestTest.needsReviewCount ?? 0} />
+                      </div>
+                      {safeSamples.length > 0 && (
+                        <div className="mt-3 space-y-1">
+                          <div className="text-xs font-medium uppercase text-muted-foreground">Sample headlines</div>
+                          {safeSamples.slice(0, 4).map((sample: any, index: number) => (
+                            <div key={`${latestTest.id}-${index}`} className="line-clamp-1 text-xs text-muted-foreground">
+                              {sample.headline || sample.title || "Untitled"} · {labelize(sample.relevanceClassification)}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </CardContent>
           </Card>
         </div>

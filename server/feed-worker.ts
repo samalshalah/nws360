@@ -307,6 +307,7 @@ async function fetchRssArticles(source: FeedSource): Promise<number> {
     publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
     image: extractImageFromRssItem(item),
     imageTitle: extractImageTitleFromRssItem(item),
+    externalId: typeof (item as any).guid === "string" ? (item as any).guid : (item as any).guid?._ || null,
   }));
   mapped.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   return await processItems(source, mapped);
@@ -582,7 +583,7 @@ async function fetchGoogleNewsArticles(source: FeedSource): Promise<number> {
     itemsWithDates.sort((a, b) => b._parsedDate.getTime() - a._parsedDate.getTime());
 
     const rawItems = itemsWithDates.slice(0, candidateLimit);
-    const items: { title: string; url: string; content: string; publishedAt: Date; image?: string; imageTitle?: string; subSource?: string }[] = [];
+    const items: FeedItem[] = [];
     for (const item of rawItems) {
       const subSource = extractGoogleNewsSubSource(item);
       const rawTitle = stripHtml(item.title || "Untitled");
@@ -603,6 +604,7 @@ async function fetchGoogleNewsArticles(source: FeedSource): Promise<number> {
         image,
         imageTitle: extractImageTitleFromRssItem(item),
         subSource,
+        externalId: typeof (item as any).guid === "string" ? (item as any).guid : (item as any).guid?._ || null,
       });
     }
 
@@ -651,6 +653,7 @@ type FeedItem = {
   image?: string;
   imageTitle?: string;
   subSource?: string;
+  externalId?: string | null;
   engagementLikes?: number;
   engagementComments?: number;
   engagementShares?: number;
@@ -940,6 +943,15 @@ function linkedSourceAppearanceKey(source: FeedSource, item: FeedItem): string {
     .digest("hex");
 }
 
+function strictPublisherFingerprint(item: FeedItem): string | null {
+  const title = (item.title || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (title.length < 20 || !(item.publishedAt instanceof Date) || Number.isNaN(item.publishedAt.getTime())) return null;
+  const day = item.publishedAt.toISOString().slice(0, 10);
+  const content = (item.content || "").toLowerCase().replace(/\s+/g, " ").trim().slice(0, 220);
+  if (content.length < 40) return null;
+  return createHash("sha256").update(`${title}|${day}|${content}`).digest("hex");
+}
+
 function shouldRecordLinkedSourceAppearance(relevanceStatus: unknown): boolean {
   const status = String(relevanceStatus || "");
   return status !== "not_relevant" && status !== "needs_review";
@@ -960,7 +972,7 @@ async function recordLinkedSourceAppearance(source: FeedSource, articleId: numbe
       normalizedOriginalUrl: normalizeAppearanceUrl(item.url) || null,
       collectorUrl: source.url || null,
       collectorType: collectorTypeForSource(source),
-      externalId: null,
+      externalId: item.externalId || null,
       headline: item.title || null,
       caption: item.content ? truncate(item.content, 240) : null,
       languageCode: "und",
@@ -973,6 +985,7 @@ async function recordLinkedSourceAppearance(source: FeedSource, articleId: numbe
       metadata: {
         subSource: item.subSource || null,
         sourceType: source.type || null,
+        strictFingerprint: strictPublisherFingerprint(item),
       },
       isPrimary,
     } as any);
@@ -1071,7 +1084,15 @@ async function processItems(
       return { category, priority, province };
     };
 
-    const existing = await storage.getArticleByUrl(item.url, clientId);
+    const existing = source.publisherChannelId
+      ? await storage.findCanonicalArticleForPublisherAppearance({
+          clientId,
+          publisherChannelId: source.publisherChannelId,
+          originalUrl: item.url,
+          externalId: item.externalId || null,
+          strictFingerprint: strictPublisherFingerprint(item),
+        })
+      : await storage.getArticleByUrl(item.url, clientId);
     if (existing) {
       const classification = shouldClassify
         ? classifyItem(item.title || existing.title || "", item.content || existing.contentClean || existing.content || "")
@@ -1108,7 +1129,7 @@ async function processItems(
 
     const title = item.title || "Untitled";
 
-    if (title.length >= 10) {
+    if (!source.publisherChannelId && title.length >= 10) {
       const titleDup = await storage.getArticleByTitle(title, source.clientId ?? null);
       if (titleDup) {
         const platform = detectPlatform(item.url) || "web";

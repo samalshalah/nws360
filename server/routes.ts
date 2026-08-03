@@ -4864,6 +4864,9 @@ export async function registerRoutes(
     if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
     if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
     if (!assignmentId) return res.status(400).json({ message: "Invalid assignment ID" });
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "samples")) {
+      return res.status(400).json({ message: "Browser-supplied relevance samples are not allowed", code: "samples_not_allowed" });
+    }
     try {
       res.json(await storage.testWorkspaceSourceAssignmentRelevance(clientId, workspaceId, assignmentId, req.body || {}, user.id));
     } catch (err) {
@@ -4879,6 +4882,9 @@ export async function registerRoutes(
     if (!clientId) return res.status(400).json({ message: "Invalid client ID" });
     if (!workspaceId) return res.status(400).json({ message: "Invalid workspace ID" });
     if (!assignmentId) return res.status(400).json({ message: "Invalid assignment ID" });
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "samples")) {
+      return res.status(400).json({ message: "Browser-supplied relevance samples are not allowed", code: "samples_not_allowed" });
+    }
     try {
       res.json(await storage.testWorkspaceSourceAssignmentFull(clientId, workspaceId, assignmentId, req.body || {}, user.id));
     } catch (err) {

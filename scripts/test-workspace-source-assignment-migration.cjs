@@ -12,7 +12,7 @@ class FakeClient {
       ["workspace_relevance_profiles", { count: 0, columns: new Set(["id", "workspace_id", "client_id"]) }],
       ["publisher_profiles", { count: 0, columns: new Set(["id"]) }],
       ["publisher_channels", { count: 0, columns: new Set(["id", "publisher_profile_id"]) }],
-      ["client_publisher_selections", { count: 0, columns: new Set(["id", "client_id"]) }],
+      ["client_publisher_selections", { count: 0, columns: new Set(["id", "client_id", "publisher_profile_id"]) }],
       ["sources", { count: 0, columns: new Set(["id", "client_id", "publisher_channel_id"]) }],
       ["articles", { count: 0, columns: new Set(["id"]) }],
       ["article_appearances", { count: 0, columns: new Set(["id"]) }],
@@ -87,6 +87,10 @@ assertIncludes(joined, "CREATE TABLE IF NOT EXISTS workspace_source_assignment_t
 assertIncludes(joined, "ALTER TABLE sources ADD COLUMN IF NOT EXISTS source_identity_key text", "source identity column is added");
 assertIncludes(joined, "workspace_source_assignments_workspace_source_unique", "workspace/source uniqueness exists");
 assertIncludes(joined, "workspace_source_assignments_workspace_channel_unique", "workspace/channel uniqueness exists");
+assertIncludes(joined, "client_publisher_selections_id_client_publisher_unique", "client publisher composite uniqueness exists");
+assertIncludes(joined, "sources_id_client_channel_unique", "source client/channel composite uniqueness exists");
+assertIncludes(joined, "workspace_source_assignment_tests_id_assignment_unique", "test assignment composite uniqueness exists");
+assertIncludes(joined, "workspace_source_assignments_latest_test_assignment_fk", "latest test assignment FK exists");
 assertIncludes(joined, "sources_client_identity_unique", "client source identity uniqueness exists");
 assertIncludes(joined, "workspace_source_assignments_enabled_status_ck", "enabled/status check exists");
 assertIncludes(joined, "workspace_source_assignment_tests_rates_ck", "test run rate check exists");
@@ -104,8 +108,10 @@ const migrationSource = readFileSync("scripts/migrate-workspace-source-assignmen
 assertIncludes(migrationSource, "pg_advisory_xact_lock", "apply uses advisory migration lock");
 assertIncludes(migrationSource, "BEGIN", "apply starts transaction");
 assertIncludes(migrationSource, "ROLLBACK", "apply rolls back on failure");
-assertIncludes(migrationSource, "duplicateOperationalSourceIdentities", "duplicate source identities are inspected");
-assertIncludes(migrationSource, "sourceChannelMismatch", "source/channel mismatch is inspected");
+assertIncludes(migrationSource, "duplicateOperationalSourceIdentity", "duplicate source identities are inspected");
+assertIncludes(migrationSource, "assignmentSourceClientChannelMismatch", "source/channel mismatch is inspected");
+assertIncludes(migrationSource, "activeAssignmentWithoutCurrentTest", "active assignments require current relevance/full tests");
+assertIncludes(migrationSource, "latestTestWrongAssignment", "latest test assignment mismatch is inspected");
 assertIncludes(migrationSource, "missingForeignKeys", "missing foreign keys are reported");
 assertIncludes(migrationSource, "missingCheckConstraints", "missing checks are reported");
 assertIncludes(migrationSource, "partialSchemaRepairs", "empty partial-schema repair plan is reported");
