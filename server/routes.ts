@@ -27,7 +27,6 @@ import {
 import {
   normalizeClientEnrollment,
   stableEnrollmentJson,
-  validateWorkspaceScope,
   isDiplomaticOrganizationType,
   type NormalizedClientEnrollment,
 } from "@shared/client-enrollment";
@@ -4338,65 +4337,15 @@ export async function registerRoutes(
   app.post("/api/admin/clients/:clientId/workspaces", requireSystemAdmin(), async (req, res) => {
     const user = req.user as any;
     const clientId = Number(req.params.clientId);
-    const client = await getClientOrNotFound(clientId, res);
-    if (!client) return;
-    const profile = workspaceRelevanceProfileInputSchema.parse(req.body.relevanceProfile || {});
-    const normalizedWorkspace = {
-      name: String(req.body.name || "").trim(),
-      description: typeof req.body.description === "string" ? req.body.description.trim() || null : null,
-      purpose: req.body.purpose || "custom",
-      scopeMode: req.body.scopeMode || "hybrid",
-      globalScope: Boolean(req.body.globalScope),
-      primaryCountryCodes: Array.isArray(req.body.primaryCountryCodes) ? req.body.primaryCountryCodes : [],
-      secondaryCountryCodes: Array.isArray(req.body.secondaryCountryCodes) ? req.body.secondaryCountryCodes : [],
-      regionCodes: Array.isArray(req.body.regionCodes) ? req.body.regionCodes : [],
-      subnationalAreas: Array.isArray(req.body.subnationalAreas) ? req.body.subnationalAreas : [],
-      preferredLanguages: Array.isArray(req.body.preferredLanguages) ? req.body.preferredLanguages : [],
-      timezone: req.body.timezone || "UTC",
-      taxonomyTemplateCode: req.body.taxonomyTemplateCode || null,
-      relevanceProfileCode: req.body.relevanceProfileCode || null,
-      reportingTemplateCode: req.body.reportingTemplateCode || null,
-    };
-    const preview = normalizeClientEnrollment({
-      enrollmentKey: "workspace-preview-only",
-      organization: { name: client.name, organizationType: "media", defaultLanguage: client.defaultLanguage || "en", slug: client.slug || `client-${client.id}` },
-      organizationContext: { defaultLanguages: [client.defaultLanguage || "en"], defaultTimezone: normalizedWorkspace.timezone },
-      workspace: normalizedWorkspace,
-      relevanceProfile: profile,
-    });
-    const workspaceErrors = preview.normalized ? validateWorkspaceScope(preview.normalized.workspace, preview.normalized.relevanceProfile) : preview.errors;
-    if (!preview.normalized || workspaceErrors.length > 0) return res.status(400).json({ message: workspaceErrors[0] || "Invalid workspace" });
-    const existing = (await storage.getWorkspaces(client.id)).find((workspace: any) => workspace.normalizedName === preview.normalized!.workspace.normalizedName);
-    if (existing) return res.status(409).json({ message: "Workspace name already exists for this client" });
-    const workspace = await storage.createWorkspace({
-      ...preview.normalized.workspace,
-      clientId: client.id,
-      status: "draft",
-      active: false,
-      createdBy: user.id,
-    } as any);
-    await storage.upsertWorkspaceRelevanceProfile({
-      workspaceId: workspace.id,
-      topics: profile.topics ?? [],
-      subtopics: profile.subtopics ?? [],
-      industries: profile.industries ?? [],
-      entities: profile.entities ?? [],
-      organizations: profile.organizations ?? [],
-      people: profile.people ?? [],
-      projects: profile.projects ?? [],
-      events: profile.events ?? [],
-      multilingualAliases: profile.multilingualAliases ?? [],
-      inclusionTerms: profile.inclusionTerms ?? [],
-      exclusionTerms: profile.exclusionTerms ?? [],
-      impactTerms: profile.impactTerms ?? [],
-      contextualTerms: profile.contextualTerms ?? [],
-      minimumConfidence: profile.minimumConfidence ?? 60,
-      includeContextualByDefault: profile.includeContextualByDefault ?? false,
-      contextualLabel: profile.contextualLabel ?? "Strategic Context",
-      active: profile.active ?? true,
-    } as any, client.id);
-    await storage.createAuditLog({ userId: user.id, clientId: client.id, action: "workspace_create", entity: "workspace", entityId: workspace.id, details: safeAuditDetails({ status: "draft", active: false }) });
-    res.status(201).json(workspace);
+    if (!Number.isInteger(clientId) || clientId <= 0) return res.status(400).json({ message: "Invalid client ID" });
+    const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
+    const { relevanceProfile, ...workspaceInput } = body;
+    try {
+      const result = await storage.createWorkspaceSetupAtomic(clientId, workspaceInput, relevanceProfile || {}, user.id);
+      res.status(201).json(result.workspace);
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Workspace creation failed");
+    }
   });
 
   app.get("/api/admin/clients/:clientId/workspaces/:workspaceId", requireSystemAdmin(), async (req, res) => {

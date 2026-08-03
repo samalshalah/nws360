@@ -4,6 +4,7 @@ import {
   clientLifecycleUpdateSchema,
   normalizeClientSetupUpdate,
   normalizeClientEnrollment,
+  normalizeWorkspaceCreate,
   normalizeWorkspaceName,
   normalizeWorkspaceSetupUpdate,
   stableEnrollmentJson,
@@ -334,6 +335,138 @@ function updateWorkspacePatch(state: MemoryState, clientId: number, workspaceId:
 
 function legacyClientUpdate(_state: MemoryState, _clientId: number, _body: unknown) {
   return { status: 410, code: "legacy_client_update_retired" };
+}
+
+function additionalWorkspace(overrides: Record<string, any> = {}) {
+  return {
+    name: "Security Monitoring Desk",
+    description: "Additional workspace for focused security monitoring.",
+    purpose: "diplomatic_monitoring",
+    scopeMode: "single_country",
+    globalScope: false,
+    primaryCountryCodes: ["IQ"],
+    secondaryCountryCodes: [],
+    regionCodes: [],
+    subnationalAreas: [],
+    preferredLanguages: ["ar", "en"],
+    timezone: "Asia/Baghdad",
+    taxonomyTemplateCode: "iraq-security",
+    relevanceProfileCode: "iraq-security-profile",
+    reportingTemplateCode: "daily-brief",
+    ...overrides,
+  };
+}
+
+function additionalRelevanceProfile(overrides: Record<string, any> = {}) {
+  return {
+    topics: ["security"],
+    subtopics: [],
+    industries: [],
+    entities: ["Iraq"],
+    organizations: ["Ministry of Interior"],
+    people: [],
+    projects: [],
+    events: [],
+    multilingualAliases: [],
+    inclusionTerms: ["Baghdad", "security"],
+    exclusionTerms: [],
+    impactTerms: [],
+    contextualTerms: [],
+    minimumConfidence: 60,
+    includeContextualByDefault: false,
+    contextualLabel: "Context",
+    active: true,
+    ...overrides,
+  };
+}
+
+function createWorkspaceSetup(
+  state: MemoryState,
+  clientId: number,
+  workspaceInput: unknown,
+  relevanceProfileInput: unknown,
+  user: User,
+  options: { failAt?: "profile" | "audit" } = {},
+) {
+  assertCanEnroll(user);
+  const client = state.clients.find((item) => item.id === clientId);
+  if (!client) {
+    const error: any = new Error("Client not found");
+    error.status = 404;
+    error.code = "client_not_found";
+    throw error;
+  }
+  const normalized = normalizeWorkspaceCreate(workspaceInput, relevanceProfileInput);
+  if (state.workspaces.some((workspace) => workspace.clientId === clientId && workspace.normalizedName === normalized.workspace.normalizedName)) {
+    const error: any = new Error("Workspace name already exists for this client");
+    error.status = 409;
+    error.code = "duplicate_workspace_name";
+    throw error;
+  }
+
+  const before = clone(state);
+  try {
+    const workspaceId = Math.max(0, ...state.workspaces.map((workspace) => workspace.id || 0)) + 1;
+    const workspace = {
+      id: workspaceId,
+      clientId,
+      ...normalized.workspace,
+      status: "draft",
+      active: false,
+      activatedAt: null,
+      activatedBy: null,
+      createdBy: user.id,
+    };
+    state.workspaces.push(workspace);
+    if (options.failAt === "profile") throw new Error("simulated profile failure");
+
+    const relevanceProfile = {
+      id: Math.max(0, ...state.relevanceProfiles.map((profile) => profile.id || 0)) + 1,
+      workspaceId,
+      ...normalized.relevanceProfile,
+    };
+    state.relevanceProfiles.push(relevanceProfile);
+    if (options.failAt === "audit") throw new Error("simulated audit failure");
+
+    const auditLog = {
+      id: Math.max(0, ...state.auditLogs.map((audit) => audit.id || 0)) + 1,
+      userId: user.id,
+      clientId,
+      action: "workspace_create",
+      entity: "workspace",
+      entityId: workspaceId,
+    };
+    state.auditLogs.push(auditLog);
+    return { workspace, relevanceProfile, auditLog };
+  } catch (error) {
+    Object.assign(state, before);
+    throw error;
+  }
+}
+
+const workspaceCreateLocks = new Map<string, Promise<void>>();
+
+async function createWorkspaceConcurrentSafe(
+  state: MemoryState,
+  clientId: number,
+  workspaceInput: unknown,
+  relevanceProfileInput: unknown,
+  user: User,
+) {
+  const normalized = normalizeWorkspaceCreate(workspaceInput, relevanceProfileInput);
+  const key = `${clientId}:${normalized.workspace.normalizedName}`;
+  const previous = workspaceCreateLocks.get(key) || Promise.resolve();
+  let release!: () => void;
+  const current = previous.then(() => new Promise<void>((resolve) => { release = resolve; }));
+  workspaceCreateLocks.set(key, current);
+  await previous;
+  try {
+    await Promise.resolve();
+    return createWorkspaceSetup(state, clientId, workspaceInput, relevanceProfileInput, user);
+  } finally {
+    release();
+    if (workspaceCreateLocks.get(key) === current) workspaceCreateLocks.delete(key);
+  }
 }
 
 function workspaceNameAvailable(state: MemoryState, clientId: number, name: string) {
@@ -700,6 +833,97 @@ function testCrossClientWorkspacePatchSafe404() {
   assert.throws(() => updateWorkspacePatch(state, 999, 1, { name: "No Access" }), /Workspace not found/);
 }
 
+function testAdditionalWorkspaceCreationIsAtomicAndAudited() {
+  const state = emptyState();
+  const admin = platformAdmin();
+  const { clientId } = enroll(state, baseRequest(), admin);
+  const beforeAuditCount = state.auditLogs.length;
+  const result = createWorkspaceSetup(state, clientId, additionalWorkspace(), additionalRelevanceProfile(), admin);
+  assert.equal(state.workspaces.length, 2);
+  assert.equal(state.relevanceProfiles.length, 2);
+  assert.equal(state.auditLogs.length, beforeAuditCount + 1);
+  assert.equal(state.auditLogs.filter((audit) => audit.action === "workspace_create").length, 1);
+  assert.equal(result.workspace.status, "draft");
+  assert.equal(result.workspace.active, false);
+  assert.equal(result.workspace.activatedAt, null);
+  assert.equal(result.workspace.activatedBy, null);
+}
+
+function testAdditionalWorkspaceProfileFailureRollsBackWorkspace() {
+  const state = emptyState();
+  const admin = platformAdmin();
+  const { clientId } = enroll(state, baseRequest(), admin);
+  const before = clone(state);
+  assert.throws(() => createWorkspaceSetup(state, clientId, additionalWorkspace(), additionalRelevanceProfile(), admin, { failAt: "profile" }), /simulated profile failure/);
+  assert.deepEqual(state, before);
+}
+
+function testAdditionalWorkspaceAuditFailureRollsBackWorkspaceAndProfile() {
+  const state = emptyState();
+  const admin = platformAdmin();
+  const { clientId } = enroll(state, baseRequest(), admin);
+  const before = clone(state);
+  assert.throws(() => createWorkspaceSetup(state, clientId, additionalWorkspace(), additionalRelevanceProfile(), admin, { failAt: "audit" }), /simulated audit failure/);
+  assert.deepEqual(state, before);
+}
+
+function testAdditionalWorkspaceDuplicateNameReturnsSafeConflict() {
+  const state = emptyState();
+  const admin = platformAdmin();
+  const { clientId } = enroll(state, baseRequest(), admin);
+  createWorkspaceSetup(state, clientId, additionalWorkspace({ name: "Security Monitoring Desk" }), additionalRelevanceProfile(), admin);
+  assert.throws(
+    () => createWorkspaceSetup(state, clientId, additionalWorkspace({ name: " security   MONITORING desk " }), additionalRelevanceProfile(), admin),
+    (error: any) => error?.status === 409 && error?.code === "duplicate_workspace_name",
+  );
+}
+
+async function testConcurrentDuplicateWorkspaceCreationLeavesOneCompleteSetup() {
+  const state = emptyState();
+  const admin = platformAdmin();
+  const { clientId } = enroll(state, baseRequest(), admin);
+  const results = await Promise.allSettled([
+    createWorkspaceConcurrentSafe(state, clientId, additionalWorkspace(), additionalRelevanceProfile(), admin),
+    createWorkspaceConcurrentSafe(state, clientId, additionalWorkspace({ name: " security monitoring desk " }), additionalRelevanceProfile(), admin),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  const rejected = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
+  assert.equal(rejected.reason?.status, 409);
+  assert.equal(rejected.reason?.code, "duplicate_workspace_name");
+  assert.equal(state.workspaces.filter((workspace) => workspace.normalizedName === "security monitoring desk").length, 1);
+  assert.equal(state.relevanceProfiles.filter((profile) => profile.workspaceId === 2).length, 1);
+  assert.equal(state.auditLogs.filter((audit) => audit.action === "workspace_create").length, 1);
+}
+
+function testCrossClientWorkspaceNamesMayMatch() {
+  const state = emptyState();
+  const admin = platformAdmin();
+  const first = enroll(state, baseRequest(), admin);
+  const second = enroll(state, baseRequest({
+    enrollmentKey: "enroll-french-embassy-baghdad-1",
+    organization: { name: "French Embassy Baghdad", slug: "french-embassy-baghdad" },
+    organizationContext: { representedCountryCode: "FR" },
+  }), admin);
+  createWorkspaceSetup(state, first.clientId, additionalWorkspace({ name: "Security Monitoring Desk" }), additionalRelevanceProfile(), admin);
+  createWorkspaceSetup(state, second.clientId, additionalWorkspace({ name: "Security Monitoring Desk" }), additionalRelevanceProfile(), admin);
+  assert.equal(state.workspaces.filter((workspace) => workspace.normalizedName === "security monitoring desk").length, 2);
+}
+
+function testAdditionalWorkspaceCreationDoesNotCreateUnrelatedRecords() {
+  const state = emptyState();
+  const admin = platformAdmin();
+  const { clientId } = enroll(state, baseRequest(), admin);
+  const beforePlatformResetAudit = clone(state.platformResetAudit);
+  createWorkspaceSetup(state, clientId, additionalWorkspace(), additionalRelevanceProfile(), admin);
+  assert.equal(state.clients.length, 1);
+  assert.equal(state.tenantUsers.length, 0);
+  assert.equal(state.sources.length, 0);
+  assert.equal(state.articles.length, 0);
+  assert.equal(state.processingJobs.length, 0);
+  assert.equal(admin.clientId, null);
+  assert.deepEqual(state.platformResetAudit, beforePlatformResetAudit);
+}
+
 async function main() {
   testPreviewPerformsNoWrites();
   testSuccessfulEnrollmentCreatesExpectedRecordsOnly();
@@ -731,6 +955,13 @@ async function main() {
   testWorkspacePatchValidationAndAudit();
   testWorkspaceDuplicateAndStatusConsistency();
   testCrossClientWorkspacePatchSafe404();
+  testAdditionalWorkspaceCreationIsAtomicAndAudited();
+  testAdditionalWorkspaceProfileFailureRollsBackWorkspace();
+  testAdditionalWorkspaceAuditFailureRollsBackWorkspaceAndProfile();
+  testAdditionalWorkspaceDuplicateNameReturnsSafeConflict();
+  await testConcurrentDuplicateWorkspaceCreationLeavesOneCompleteSetup();
+  testCrossClientWorkspaceNamesMayMatch();
+  testAdditionalWorkspaceCreationDoesNotCreateUnrelatedRecords();
   console.log("client enrollment behavioral tests passed");
 }
 

@@ -116,6 +116,7 @@ import {
   ClientEnrollmentValidationError,
   clientLifecycleUpdateSchema,
   normalizeClientSetupUpdate,
+  normalizeWorkspaceCreate,
   normalizeWorkspaceName,
   normalizeWorkspaceSetupUpdate,
 } from "@shared/client-enrollment";
@@ -163,6 +164,12 @@ export type AtomicLifecycleTransitionResult = {
 
 export type AtomicWorkspaceUpdateResult = {
   workspace: Workspace;
+  auditLog: AdminAuditLog;
+};
+
+export type AtomicWorkspaceCreateResult = {
+  workspace: Workspace;
+  relevanceProfile: WorkspaceRelevanceProfile;
   auditLog: AdminAuditLog;
 };
 
@@ -823,6 +830,7 @@ export interface IStorage {
   getWorkspaces(clientId?: number): Promise<Workspace[]>;
   getWorkspace(id: number): Promise<Workspace | undefined>;
   createWorkspace(data: InsertWorkspace): Promise<Workspace>;
+  createWorkspaceSetupAtomic(clientId: number, workspaceInput: unknown, relevanceProfileInput: unknown, actorUserId: number): Promise<AtomicWorkspaceCreateResult>;
   updateWorkspace(id: number, data: Partial<InsertWorkspace>): Promise<Workspace | undefined>;
   updateWorkspaceSetupAtomic(clientId: number, workspaceId: number, input: unknown, actorUserId: number, readiness: ClientReadinessSnapshot): Promise<AtomicWorkspaceUpdateResult>;
   deleteWorkspace(id: number, clientId?: number): Promise<void>;
@@ -4020,6 +4028,69 @@ export class DatabaseStorage implements IStorage {
     };
     const [row] = await db.insert(workspaces).values(values as any).returning();
     return row;
+  }
+
+  async createWorkspaceSetupAtomic(clientId: number, workspaceInput: unknown, relevanceProfileInput: unknown, actorUserId: number): Promise<AtomicWorkspaceCreateResult> {
+    let normalized;
+    try {
+      normalized = normalizeWorkspaceCreate(workspaceInput, relevanceProfileInput);
+    } catch (error) {
+      if (error instanceof ClientEnrollmentValidationError) {
+        throw new StorageBoundaryError(error.message, { status: error.status, code: error.code, details: error.details });
+      }
+      throw error;
+    }
+
+    return db.transaction(async (tx) => {
+      const [client] = await tx.select().from(clients).where(eq(clients.id, clientId)).limit(1);
+      if (!client) {
+        throw new StorageBoundaryError("Client not found", { status: 404, code: "client_not_found" });
+      }
+
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`nws360.workspace.${clientId}.${normalized.workspace.normalizedName}`}))`);
+
+      const [duplicate] = await tx
+        .select()
+        .from(workspaces)
+        .where(and(eq(workspaces.clientId, clientId), eq(workspaces.normalizedName, normalized.workspace.normalizedName)))
+        .limit(1);
+      if (duplicate) {
+        throw new StorageBoundaryError("Workspace name already exists for this client", {
+          status: 409,
+          code: "duplicate_workspace_name",
+        });
+      }
+
+      const [workspace] = await tx.insert(workspaces).values({
+        ...normalized.workspace,
+        clientId,
+        status: "draft",
+        active: false,
+        activatedAt: null,
+        activatedBy: null,
+        createdBy: actorUserId,
+      } as any).returning();
+
+      const [relevanceProfile] = await tx.insert(workspaceRelevanceProfiles).values({
+        workspaceId: workspace.id,
+        ...normalized.relevanceProfile,
+      } as any).returning();
+
+      const [auditLog] = await tx.insert(adminAuditLogs).values({
+        userId: actorUserId,
+        clientId,
+        action: "workspace_create",
+        entity: "workspace",
+        entityId: workspace.id,
+        details: safeStorageAuditDetails({
+          status: "draft",
+          active: false,
+          normalizedName: workspace.normalizedName,
+        }),
+      }).returning();
+
+      return { workspace, relevanceProfile, auditLog };
+    });
   }
 
   async updateWorkspace(id: number, data: Partial<InsertWorkspace>): Promise<Workspace | undefined> {

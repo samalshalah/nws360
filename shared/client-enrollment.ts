@@ -31,6 +31,7 @@ const optionalUrlInput = z
   .union([z.string().trim().url().max(500), z.literal(""), z.null()])
   .optional()
   .transform((value) => String(value || "").trim() || null);
+const profileTermList = (max = 300) => z.array(z.string().trim().min(1).max(160)).max(max).optional().default([]);
 
 export function normalizeSlug(value: string | null | undefined): string {
   return String(value || "")
@@ -138,6 +139,51 @@ export const workspaceSetupUpdateSchema = z.object({
 }).strict();
 
 export type WorkspaceSetupUpdateInput = z.infer<typeof workspaceSetupUpdateSchema>;
+
+export const workspaceSetupCreateSchema = z.object({
+  name: z.string().trim().min(2).max(200),
+  description: optionalText(2000),
+  purpose: z.enum(WORKSPACE_PURPOSES).optional().default("custom"),
+  scopeMode: z.enum(WORKSPACE_SCOPE_MODES).optional().default("hybrid"),
+  globalScope: z.boolean().optional().default(false),
+  primaryCountryCodes: z.array(z.string().trim().max(80)).max(80).optional().default([]),
+  secondaryCountryCodes: z.array(z.string().trim().max(80)).max(80).optional().default([]),
+  regionCodes: z.array(z.string().trim().max(80)).max(80).optional().default([]),
+  subnationalAreas: stringList,
+  preferredLanguages: z.array(z.string().trim().min(2).max(20)).max(20).optional().default([]),
+  timezone: z.string().trim().min(2).max(80).optional().default("UTC"),
+  taxonomyTemplateCode: optionalText(120),
+  relevanceProfileCode: optionalText(120),
+  reportingTemplateCode: optionalText(120),
+}).strict();
+
+export type WorkspaceSetupCreateInput = z.infer<typeof workspaceSetupCreateSchema>;
+
+export const workspaceRelevanceProfileSetupSchema = z.object({
+  topics: profileTermList(200),
+  subtopics: profileTermList(200),
+  industries: profileTermList(200),
+  entities: profileTermList(300),
+  organizations: profileTermList(300),
+  people: profileTermList(300),
+  projects: profileTermList(300),
+  events: profileTermList(300),
+  multilingualAliases: z.union([
+    z.record(z.array(z.string().trim().min(1).max(160))),
+    z.array(z.string().trim().min(1).max(160)),
+    z.null(),
+  ]).optional().transform((value) => value ?? []),
+  inclusionTerms: profileTermList(300),
+  exclusionTerms: profileTermList(300),
+  impactTerms: profileTermList(300),
+  contextualTerms: profileTermList(300),
+  minimumConfidence: z.coerce.number().int().min(0).max(100).optional().default(60),
+  includeContextualByDefault: z.boolean().optional().default(false),
+  contextualLabel: z.string().trim().min(1).max(120).optional().default("Strategic Context"),
+  active: z.boolean().optional().default(true),
+}).strict();
+
+export type WorkspaceRelevanceProfileSetupInput = z.infer<typeof workspaceRelevanceProfileSetupSchema>;
 
 type ExistingClientSetup = {
   client: {
@@ -441,6 +487,98 @@ function workspaceProfileDefaults(profile?: Partial<ClientEnrollmentRequest["rel
     includeContextualByDefault: Boolean(profile?.includeContextualByDefault),
     contextualLabel: String(profile?.contextualLabel || "Strategic Context"),
     active: profile?.active !== false,
+  };
+}
+
+export function normalizeWorkspaceRelevanceProfileSetup(input: unknown): ClientEnrollmentRequest["relevanceProfile"] {
+  const parsed = workspaceRelevanceProfileSetupSchema.safeParse(input || {});
+  if (!parsed.success) {
+    throw new ClientEnrollmentValidationError("Invalid workspace relevance profile", {
+      details: parsed.error.issues.map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`),
+    });
+  }
+  const data = parsed.data;
+  return {
+    topics: normalizeTermList(data.topics),
+    subtopics: normalizeTermList(data.subtopics),
+    industries: normalizeTermList(data.industries),
+    entities: normalizeTermList(data.entities),
+    organizations: normalizeTermList(data.organizations),
+    people: normalizeTermList(data.people),
+    projects: normalizeTermList(data.projects),
+    events: normalizeTermList(data.events),
+    multilingualAliases: data.multilingualAliases || [],
+    inclusionTerms: normalizeTermList(data.inclusionTerms),
+    exclusionTerms: normalizeTermList(data.exclusionTerms),
+    impactTerms: normalizeTermList(data.impactTerms),
+    contextualTerms: normalizeTermList(data.contextualTerms),
+    minimumConfidence: Number(data.minimumConfidence ?? 60),
+    includeContextualByDefault: Boolean(data.includeContextualByDefault),
+    contextualLabel: String(data.contextualLabel || "Strategic Context"),
+    active: data.active !== false,
+  };
+}
+
+export function normalizeWorkspaceCreate(input: unknown, relevanceProfileInput: unknown) {
+  const parsed = workspaceSetupCreateSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ClientEnrollmentValidationError("Invalid workspace create", {
+      details: parsed.error.issues.map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`),
+    });
+  }
+
+  const data = parsed.data;
+  const profile = normalizeWorkspaceRelevanceProfileSetup(relevanceProfileInput);
+  const normalizedName = normalizeWorkspaceName(data.name);
+  const workspace: ClientEnrollmentRequest["workspace"] & {
+    normalizedName: string;
+    status: "draft";
+    active: false;
+    activatedAt: null;
+    activatedBy: null;
+  } = {
+    name: data.name.trim().replace(/\s+/g, " "),
+    description: data.description,
+    purpose: data.purpose,
+    scopeMode: data.scopeMode,
+    globalScope: Boolean(data.globalScope),
+    primaryCountryCodes: normalizeCountryCodes(data.primaryCountryCodes),
+    secondaryCountryCodes: normalizeCountryCodes(data.secondaryCountryCodes),
+    regionCodes: normalizeRegionCodes(data.regionCodes),
+    subnationalAreas: normalizeTermList(data.subnationalAreas),
+    preferredLanguages: normalizeLanguageList(data.preferredLanguages),
+    timezone: data.timezone,
+    taxonomyTemplateCode: data.taxonomyTemplateCode,
+    relevanceProfileCode: data.relevanceProfileCode,
+    reportingTemplateCode: data.reportingTemplateCode,
+    normalizedName,
+    status: "draft",
+    active: false,
+    activatedAt: null,
+    activatedBy: null,
+  };
+
+  if (workspace.scopeMode === "global") {
+    workspace.globalScope = true;
+    workspace.primaryCountryCodes = [];
+    workspace.secondaryCountryCodes = [];
+    workspace.regionCodes = [];
+    workspace.subnationalAreas = [];
+  }
+
+  const errors: string[] = [];
+  if (!workspace.normalizedName) errors.push("workspace name is required");
+  if (data.primaryCountryCodes.length > 0 && workspace.primaryCountryCodes.length !== data.primaryCountryCodes.length) errors.push("primary monitoring countries must be valid ISO country codes");
+  if (data.secondaryCountryCodes.length > 0 && workspace.secondaryCountryCodes.length !== data.secondaryCountryCodes.length) errors.push("secondary monitoring countries must be valid ISO country codes");
+  if (data.regionCodes.length > 0 && workspace.regionCodes.length !== data.regionCodes.length) errors.push("regions must be valid canonical region codes");
+  errors.push(...validateWorkspaceScope(workspace, profile));
+  if (errors.length > 0) {
+    throw new ClientEnrollmentValidationError("Invalid workspace create", { details: errors });
+  }
+
+  return {
+    workspace,
+    relevanceProfile: profile,
   };
 }
 
