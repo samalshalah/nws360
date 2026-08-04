@@ -168,26 +168,29 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     const dateRangeParam = params.get("dateRange");
     const sortParam = params.get("sort");
     const focusParam = params.get("focus");
-    const updates: Partial<typeof filters> = {};
-    if (searchParam) updates.search = searchParam;
-    if (sentimentParam) updates.sentiment = sentimentParam;
-    if (sourceIdParam) updates.sourceId = sourceIdParam;
-    if (sourceTypeParam) updates.sourceType = sourceTypeParam;
-    if (sourceCategoryParam) updates.sourceCategory = sourceCategoryParam;
-    if (categoryParam) updates.category = categoryParam;
-    if (priorityParam) updates.priority = priorityParam;
-    if (provinceParam) updates.province = provinceParam;
-    if (workflowStatusParam) updates.workflowStatus = workflowStatusParam;
-    if (manualTagParam) updates.manualTag = manualTagParam;
-    if (startDateParam) updates.startDate = startDateParam;
-    if (endDateParam) updates.endDate = endDateParam;
-    if (dateRangeParam) updates.dateRange = dateRangeParam;
-    if (sortParam) updates.sort = parseFeedSort(sortParam);
-    if (Object.keys(updates).length > 0) {
-      setFilters(prev => ({ ...prev, ...updates }));
-      if (updates.search) setSearchInput(updates.search);
-      resetScroll();
-    }
+    const nextFilters = {
+      search: searchParam || "",
+      sourceId: sourceIdParam || undefined,
+      sourceName: params.get("sourceName") || undefined,
+      sourceCategory: sourceCategoryParam || undefined,
+      sentiment: sentimentParam || undefined,
+      category: categoryParam || undefined,
+      priority: priorityParam || undefined,
+      province: provinceParam || undefined,
+      workflowStatus: workflowStatusParam || undefined,
+      manualTag: manualTagParam || undefined,
+      sourceType: sourceTypeParam || undefined,
+      startDate: startDateParam || undefined,
+      endDate: endDateParam || undefined,
+      dateRange: dateRangeParam || "all",
+      sort: parseFeedSort(sortParam),
+    };
+    setFilters(prev => {
+      const changed = Object.keys(nextFilters).some((key) => prev[key as keyof typeof prev] !== nextFilters[key as keyof typeof nextFilters]);
+      return changed ? nextFilters : prev;
+    });
+    setSearchInput(nextFilters.search);
+    resetScroll();
     if (focusParam === "search") {
       setTimeout(() => searchInputRef.current?.focus(), 100);
     }
@@ -632,16 +635,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
   };
 
   const clearBrowseNavigation = () => {
-    setActiveSavedViewId(undefined);
-    setFilters(prev => ({
-      ...prev,
-      category: undefined,
-      sourceCategory: undefined,
-      sourceId: undefined,
-      sourceName: undefined,
-      province: undefined,
-    }));
-    resetScroll();
+    clearFilters();
   };
 
   const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sourceCategory || filters.sentiment || filters.category || filters.priority || filters.province || filters.workflowStatus || filters.manualTag || filters.sourceType || filters.startDate || filters.endDate || filters.dateRange !== "all";
