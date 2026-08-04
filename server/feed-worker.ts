@@ -1167,8 +1167,6 @@ async function processItems(
       await recordRejectedIngestionItem(source, item, relevance, clientId);
       continue;
     }
-    const shouldClassify = isAcceptedForReporting(relevance);
-
     const classifyItem = (inputTitle: string, inputContent: string) => {
       const category = classifyArticleCategory({
         title: inputTitle,
@@ -1192,9 +1190,7 @@ async function processItems(
         })
       : await storage.getArticleByUrl(item.url, clientId);
     if (existing) {
-      const classification = shouldClassify
-        ? classifyItem(item.title || existing.title || "", item.content || existing.contentClean || existing.content || "")
-        : { category: "other", priority: "routine", province: null };
+      const classification = classifyItem(item.title || existing.title || "", item.content || existing.contentClean || existing.content || "");
       const updates: Record<string, any> = {};
       if (classification.category !== "other" && (!existing.category || existing.category === "general" || existing.category === "other")) {
         updates.category = classification.category;
@@ -1234,9 +1230,7 @@ async function processItems(
         const platform = detectPlatform(item.url) || "web";
         const existingCrossPosts = Array.isArray(titleDup.crossPosts) ? titleDup.crossPosts as { platform: string; url: string; sourceId: number }[] : [];
         const alreadyTracked = existingCrossPosts.some(cp => cp.url === item.url);
-        const classification = shouldClassify
-          ? classifyItem(title, item.content || titleDup.contentClean || titleDup.content || "")
-          : { category: "other", priority: "routine", province: null };
+        const classification = classifyItem(title, item.content || titleDup.contentClean || titleDup.content || "");
         const updates: Record<string, any> = {};
         if (!alreadyTracked) {
           updates.crossPosts = [...existingCrossPosts, { platform, url: item.url, sourceId: source.id }];
@@ -1268,9 +1262,7 @@ async function processItems(
     if (!contentRaw && !title) continue;
 
     const contentClean = cleanText(contentRaw);
-    const classification = shouldClassify
-      ? classifyItem(title, contentClean)
-      : { category: "other", priority: "routine", province: null };
+    const classification = classifyItem(title, contentClean);
 
     const article = {
       title,
