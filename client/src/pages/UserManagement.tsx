@@ -131,7 +131,7 @@ export default function UserManagement() {
 
   const updateRoleMutation = useMutation({
     mutationFn: async ({ id, role }: { id: number; role: string }) => {
-      await apiRequest("PATCH", `/api/users/${id}/role`, { role });
+      await apiRequest(isPlatformUsersRoute ? "PUT" : "PATCH", isPlatformUsersRoute ? `/api/admin/users/${id}` : `/api/users/${id}/role`, { role });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
@@ -145,7 +145,7 @@ export default function UserManagement() {
 
   const updateUserTypeMutation = useMutation({
     mutationFn: async ({ id, userType }: { id: number; userType: string }) => {
-      await apiRequest("PATCH", `/api/users/${id}/user-type`, { userType });
+      await apiRequest(isPlatformUsersRoute ? "PUT" : "PATCH", isPlatformUsersRoute ? `/api/admin/users/${id}` : `/api/users/${id}/user-type`, { userType });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
@@ -160,7 +160,7 @@ export default function UserManagement() {
 
   const deleteUserMutation = useMutation({
     mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/users/${id}`);
+      await apiRequest("DELETE", isPlatformUsersRoute ? `/api/admin/users/${id}` : `/api/users/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
@@ -174,7 +174,7 @@ export default function UserManagement() {
 
   const changePasswordMutation = useMutation({
     mutationFn: async ({ id, password }: { id: number; password: string }) => {
-      await apiRequest("PATCH", `/api/users/${id}/password`, { password });
+      await apiRequest(isPlatformUsersRoute ? "PUT" : "PATCH", isPlatformUsersRoute ? `/api/admin/users/${id}` : `/api/users/${id}/password`, { password });
     },
     onSuccess: () => {
       toast({ title: "Password updated successfully" });
@@ -208,6 +208,21 @@ export default function UserManagement() {
     return parent ? parent.username : "-";
   };
 
+  const updateClientAssignmentMutation = useMutation({
+    mutationFn: async ({ id, clientId }: { id: number; clientId: number }) => {
+      await apiRequest("PUT", `/api/admin/users/${id}`, { clientId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: [usersEndpoint] });
+      toast({ title: "Client assignment updated" });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: t("common.error"), description: error.message });
+    },
+  });
+
   const clientNameById = useMemo(() => {
     const names = new Map<number, string>();
     clients?.forEach((client) => names.set(client.id, client.name));
@@ -227,11 +242,31 @@ export default function UserManagement() {
     }
   };
 
+  const handleNewRoleChange = (role: string) => {
+    setNewRole(role);
+    if (role === SYSTEM_ROLES.SYSTEM_ADMIN) {
+      setNewClientId("");
+    } else if (isPlatformUsersRoute && clientFilter !== "all") {
+      setNewClientId(clientFilter);
+    }
+  };
+
+  const isTenantCreateRole = newRole !== SYSTEM_ROLES.SYSTEM_ADMIN;
+  const requiresClientAssignment = isPlatformUsersRoute && isTenantCreateRole;
+  const canSubmitCreateUser =
+    !!newUsername.trim() &&
+    !!newPassword.trim() &&
+    (!requiresClientAssignment || !!newClientId);
+
   const canInviteUsers = isPlatformUsersRoute || hasCap(CAPS.USERS_INVITE);
   const canEditUsers = hasCap(CAPS.USERS_EDIT);
   const canAssignRoles = hasCap(CAPS.USERS_ASSIGN_ROLES);
   const canDisableUsers = hasCap(CAPS.USERS_DISABLE);
   const canManageUser = (_u: any) => isAdmin || canEditUsers || canAssignRoles || canDisableUsers;
+  const canAssignClient = (u: any) => isPlatformUsersRoute && u.role !== SYSTEM_ROLES.SYSTEM_ADMIN;
+  const roleOptionsForUser = (u: any) => Object.entries(ROLE_LABELS).filter(([value]) => (
+    !(isPlatformUsersRoute && u.clientId && value === SYSTEM_ROLES.SYSTEM_ADMIN)
+  ));
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -344,7 +379,7 @@ export default function UserManagement() {
               {isAdmin && (
                 <div className="min-w-[140px] space-y-1">
                   <label className="text-sm text-muted-foreground">{t("userManagement.role")}</label>
-                  <Select value={newRole} onValueChange={setNewRole}>
+                  <Select value={newRole} onValueChange={handleNewRoleChange}>
                     <SelectTrigger data-testid="select-trigger-new-role">
                       <SelectValue placeholder={t("userManagement.selectRole")} />
                     </SelectTrigger>
@@ -372,16 +407,18 @@ export default function UserManagement() {
                   </SelectContent>
                 </Select>
               </div>
-              {isAdmin && clients && clients.length > 0 && (
+              {isAdmin && isTenantCreateRole && clients && clients.length > 0 && (
                 <div className="min-w-[160px] space-y-1">
-                  <label className="text-sm text-muted-foreground">Assign to Client</label>
+                  <label className="text-sm text-muted-foreground">Assign to Client{requiresClientAssignment ? " *" : ""}</label>
                   <Select value={newClientId} onValueChange={setNewClientId}>
                     <SelectTrigger data-testid="select-trigger-new-client">
                       <SelectValue placeholder="Select client" />
                     </SelectTrigger>
                     <SelectContent>
-                      {clients.filter(c => c.active).map(c => (
-                        <SelectItem key={c.id} value={String(c.id)} data-testid={`select-client-${c.id}`}>{c.name}</SelectItem>
+                      {clients.map(c => (
+                        <SelectItem key={c.id} value={String(c.id)} data-testid={`select-client-${c.id}`}>
+                          {c.name}{c.active === false ? " (inactive)" : ""}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -389,10 +426,15 @@ export default function UserManagement() {
               )}
             </div>
             <div className="flex items-center gap-3">
-              <Button type="submit" disabled={createUserMutation.isPending || !newUsername.trim() || !newPassword.trim()} data-testid="button-create-user">
+              <Button type="submit" disabled={createUserMutation.isPending || !canSubmitCreateUser} data-testid="button-create-user">
                 <UserPlus className="w-4 h-4 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
                 {createUserMutation.isPending ? t("userManagement.creating") : t("userManagement.createUser")}
               </Button>
+              {requiresClientAssignment && !newClientId && (
+                <span className="text-xs text-destructive" data-testid="text-client-required">
+                  Select a client for this user.
+                </span>
+              )}
               {newUserType && (
                 <span className="text-xs text-muted-foreground" data-testid="text-usertype-description">
                   {USER_TYPE_DESCRIPTIONS[newUserType]}
@@ -458,7 +500,7 @@ export default function UserManagement() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            {canEditUsers && canManage && !isCurrentUser ? (
+                            {(canEditUsers || isPlatformUsersRoute) && canManage && !isCurrentUser ? (
                               <Select
                                 value={u.userType || "reader"}
                                 onValueChange={(val) => updateUserTypeMutation.mutate({ id: u.id, userType: val })}
@@ -487,7 +529,31 @@ export default function UserManagement() {
                           )}
                           {isPlatformUsersRoute && (
                             <TableCell className="text-sm text-muted-foreground" data-testid={`text-client-${u.id}`}>
-                              {getClientName(u.clientId)}
+                              {canAssignClient(u) && clients && clients.length > 0 && !isCurrentUser ? (
+                                <Select
+                                  value={u.clientId ? String(u.clientId) : "unassigned"}
+                                  onValueChange={(value) => {
+                                    if (value !== "unassigned") {
+                                      updateClientAssignmentMutation.mutate({ id: u.id, clientId: Number(value) });
+                                    }
+                                  }}
+                                  disabled={updateClientAssignmentMutation.isPending}
+                                >
+                                  <SelectTrigger className="h-8 min-w-44 text-xs" data-testid={`select-user-client-${u.id}`}>
+                                    <SelectValue placeholder="Assign client" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="unassigned" disabled>Assign client</SelectItem>
+                                    {clients.map((client) => (
+                                      <SelectItem key={client.id} value={String(client.id)} data-testid={`select-user-client-${u.id}-${client.id}`}>
+                                        {client.name}{client.active === false ? " (inactive)" : ""}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                getClientName(u.clientId)
+                              )}
                             </TableCell>
                           )}
                           {isPlatformUsersRoute && (
@@ -503,7 +569,7 @@ export default function UserManagement() {
                           <TableCell className="text-right rtl:text-left">
                             {isCurrentUser ? null : canManage ? (
                               <div className="flex items-center gap-2 justify-end rtl:justify-start flex-wrap">
-                                {canAssignRoles && (
+                                {(canAssignRoles || isPlatformUsersRoute) && u.role !== SYSTEM_ROLES.SYSTEM_ADMIN && (
                                   <Select
                                     value={u.role}
                                     onValueChange={(val) => updateRoleMutation.mutate({ id: u.id, role: val })}
@@ -512,7 +578,7 @@ export default function UserManagement() {
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                                      {roleOptionsForUser(u).map(([value, label]) => (
                                         <SelectItem key={value} value={value}>{label}</SelectItem>
                                       ))}
                                     </SelectContent>
@@ -529,7 +595,7 @@ export default function UserManagement() {
                                     Password
                                   </Button>
                                 )}
-                                {canDisableUsers && (
+                                {(canDisableUsers || isPlatformUsersRoute) && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -582,7 +648,34 @@ export default function UserManagement() {
                         </div>
                         {isPlatformUsersRoute && (
                           <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                            <span>Client: {getClientName(u.clientId)}</span>
+                            <div>
+                              <span>Client:</span>
+                              {canAssignClient(u) && clients && clients.length > 0 && !isCurrentUser ? (
+                                <Select
+                                  value={u.clientId ? String(u.clientId) : "unassigned"}
+                                  onValueChange={(value) => {
+                                    if (value !== "unassigned") {
+                                      updateClientAssignmentMutation.mutate({ id: u.id, clientId: Number(value) });
+                                    }
+                                  }}
+                                  disabled={updateClientAssignmentMutation.isPending}
+                                >
+                                  <SelectTrigger className="mt-1 h-8 text-xs" data-testid={`select-user-client-mobile-${u.id}`}>
+                                    <SelectValue placeholder="Assign client" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="unassigned" disabled>Assign client</SelectItem>
+                                    {clients.map((client) => (
+                                      <SelectItem key={client.id} value={String(client.id)}>
+                                        {client.name}{client.active === false ? " (inactive)" : ""}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <span className="ml-1">{getClientName(u.clientId)}</span>
+                              )}
+                            </div>
                             <span>Status: {u.disabled ? "Disabled" : "Enabled"}</span>
                           </div>
                         )}
@@ -592,7 +685,7 @@ export default function UserManagement() {
                         {!isCurrentUser && canManage && (
                           <div className="space-y-2">
                             <div className="flex items-center gap-2 flex-wrap">
-                              {canEditUsers && (
+                              {(canEditUsers || isPlatformUsersRoute) && (
                                 <Select
                                   value={u.userType || "reader"}
                                   onValueChange={(val) => updateUserTypeMutation.mutate({ id: u.id, userType: val })}
@@ -619,7 +712,7 @@ export default function UserManagement() {
                                   Password
                                 </Button>
                               )}
-                              {canDisableUsers && (
+                              {(canDisableUsers || isPlatformUsersRoute) && (
                                 <Button
                                   variant="outline"
                                   size="sm"

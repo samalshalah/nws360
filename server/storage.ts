@@ -2006,7 +2006,7 @@ export interface IStorage {
   getActiveSources(): Promise<Source[]>;
 
   // User management extensions
-  updateUser(id: number, updates: Partial<{ role: string; userScope: string; clientId: number | null; disabled: boolean; password: string }>): Promise<User | undefined>;
+  updateUser(id: number, updates: Partial<{ role: string; userScope: string; userType: string; clientId: number | null; disabled: boolean; password: string }>): Promise<User | undefined>;
 
   // System health (enhanced)
   getSystemHealth(): Promise<{
@@ -6509,7 +6509,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // === USER MANAGEMENT EXTENSIONS ===
-  async updateUser(id: number, updates: Partial<{ role: string; userScope: string; clientId: number | null; disabled: boolean; password: string }>): Promise<User | undefined> {
+  async updateUser(id: number, updates: Partial<{ role: string; userScope: string; userType: string; clientId: number | null; disabled: boolean; password: string }>): Promise<User | undefined> {
     let safeUpdates: typeof updates = updates;
     if (Object.prototype.hasOwnProperty.call(updates, "userScope") || Object.prototype.hasOwnProperty.call(updates, "clientId")) {
       const existing = await this.getUser(id);

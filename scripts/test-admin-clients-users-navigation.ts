@@ -80,6 +80,15 @@ assertIncludes(userManagement, 'new URLSearchParams(search).get("clientId")', "U
 assertIncludes(userManagement, 'setNewClientId(routeClientId)', "UserManagement should preselect route clientId in create-user form");
 assertIncludes(userManagement, '`/api/admin/users${clientFilter !== "all" ? `?clientId=${clientFilter}` : ""}`', "UserManagement should query filtered admin users endpoint");
 assertIncludes(userManagement, 'isPlatformUsersRoute ? "/api/admin/users" : "/api/users"', "UserManagement should create via admin users endpoint in platform route");
+assertIncludes(userManagement, 'const requiresClientAssignment = isPlatformUsersRoute && isTenantCreateRole;', "Platform tenant-user creation should require a client assignment");
+assertIncludes(userManagement, 'disabled={createUserMutation.isPending || !canSubmitCreateUser}', "Create button should stay disabled until required client is selected");
+assertIncludes(userManagement, 'Select a client for this user.', "Users page should explain missing client assignment");
+assertIncludes(userManagement, 'isPlatformUsersRoute ? `/api/admin/users/${id}` : `/api/users/${id}/role`', "Platform role edits should use admin endpoint");
+assertIncludes(userManagement, 'isPlatformUsersRoute ? `/api/admin/users/${id}` : `/api/users/${id}/user-type`', "Platform user-type edits should use admin endpoint");
+assertIncludes(userManagement, 'isPlatformUsersRoute ? `/api/admin/users/${id}` : `/api/users/${id}/password`', "Platform password resets should use admin endpoint");
+assertIncludes(userManagement, 'isPlatformUsersRoute ? `/api/admin/users/${id}` : `/api/users/${id}`', "Platform deletes should use admin endpoint");
+assertIncludes(userManagement, 'updateClientAssignmentMutation.mutate({ id: u.id, clientId: Number(value) });', "Users page should update client assignment from the list");
+assertIncludes(userManagement, 'data-testid={`select-user-client-${u.id}`}', "Users table should expose a client assignment selector");
 assertIncludes(userManagement, 'Users & Access', "UserManagement should expose platform Users & Access label");
 assertIncludes(userManagement, 'Assigned Client', "UserManagement should show assigned client column");
 assertIncludes(userManagement, 'userScope', "UserManagement should show user scope");
@@ -89,6 +98,12 @@ assertIncludes(routes, 'app.get("/api/admin/users"', "Admin users endpoint shoul
 assertIncludes(routes, 'req.query.clientId', "Admin users endpoint should inspect clientId query");
 assertIncludes(routes, 'await storage.getUsersByClientId(requestedClientId)', "Admin users endpoint should filter tenant users by client");
 assertIncludes(routes, 'await storage.getUsers()', "Admin users endpoint should list all users for platform admin");
+assertIncludes(routes, 'getAdminManagedUserOrNotFound', "Admin user updates should use admin-scoped user lookup");
+assertIncludes(routes, 'const validRoles = Object.values(SYSTEM_ROLES);', "Admin update should accept all defined system roles");
+assertIncludes(routes, 'allowedFields.userScope = "tenant";', "Client assignment should set tenant user scope");
+assertIncludes(routes, 'allowedFields.clientId = requestedClientId;', "Client assignment should update clientId");
+assertIncludes(routes, 'Platform administrators cannot be assigned to a client', "Admin update should reject platform admins with client assignments");
+assert.ok(!routes.includes("Platform users cannot be assigned to a tenant from platform mode"), "Platform admin must be able to assign tenant users to clients");
 
 // Fallbacks avoid undefined/NaN values in visible UI.
 assertIncludes(adminClients, 'Number.isFinite(value)', "Clients page should guard numeric metric formatting");

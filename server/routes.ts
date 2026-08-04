@@ -1095,6 +1095,16 @@ async function getScopedUserOrNotFound(targetUserId: number, currentUser: any, r
   return targetUser;
 }
 
+async function getAdminManagedUserOrNotFound(targetUserId: number, res: any) {
+  const targetUser = await storage.getUser(targetUserId);
+  if (!targetUser) {
+    safeNotFound(res);
+    return null;
+  }
+
+  return targetUser;
+}
+
 function requireTenantContext(user: any, req: any, res: any): number | null {
   const clientId = resolveClientId(user, req);
   if (!clientId) {
@@ -5253,7 +5263,6 @@ export async function registerRoutes(
   // === ADMIN: USERS MANAGEMENT ===
   app.get("/api/admin/users", async (req, res) => {
     if (!requireAdmin(req, res)) return;
-    const adminUser = req.user as any;
     const requestedClientId = req.query.clientId !== undefined && req.query.clientId !== ""
       ? Number(req.query.clientId)
       : null;
@@ -5266,10 +5275,7 @@ export async function registerRoutes(
       const tenantUsers = await storage.getUsersByClientId(requestedClientId);
       return res.json(tenantUsers.map(toPublicUser));
     }
-    const selectedClientId = resolveClientId(adminUser, req);
-    const allUsers = selectedClientId
-      ? await storage.getUsersByClientId(selectedClientId)
-      : await storage.getUsers();
+    const allUsers = await storage.getUsers();
     const safeUsers = allUsers.map(toPublicUser);
     res.json(safeUsers);
   });
@@ -5279,15 +5285,11 @@ export async function registerRoutes(
     const adminUser = req.user as any;
     const { username, password, role, clientId, userType: bodyUserType } = req.body;
     if (!username || !password) return res.status(400).json({ message: "Username and password required" });
-    const selectedClientId = resolveClientId(adminUser, req);
     const requestedClientId = clientId !== undefined && clientId !== null && clientId !== "" ? Number(clientId) : null;
-    if (requestedClientId !== null && Number.isNaN(requestedClientId)) {
+    if (requestedClientId !== null && (!Number.isInteger(requestedClientId) || requestedClientId <= 0)) {
       return res.status(400).json({ message: "Invalid client ID" });
     }
-    if (selectedClientId && requestedClientId !== null && requestedClientId !== selectedClientId) {
-      return res.status(403).json({ message: "Cannot create user outside selected tenant" });
-    }
-    const resolvedClientId = selectedClientId || requestedClientId;
+    const resolvedClientId = requestedClientId;
     if (resolvedClientId) {
       const client = await storage.getClient(resolvedClientId);
       if (!client) return safeNotFound(res);
@@ -5336,23 +5338,49 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid user ID" });
     if (id === adminUser.id) return res.status(400).json({ message: "Cannot modify your own account via admin" });
-    const targetUser = await getScopedUserOrNotFound(id, adminUser, req, res);
+    const targetUser = await getAdminManagedUserOrNotFound(id, res);
     if (!targetUser) return;
     const allowedFields: Record<string, any> = {};
-    if (req.body.role && ["admin", "client", "viewer"].includes(req.body.role)) allowedFields.role = req.body.role;
-    const selectedClientId = resolveClientId(adminUser, req);
+    const validRoles = Object.values(SYSTEM_ROLES);
+    const requestedRole = typeof req.body.role === "string" ? req.body.role : undefined;
+    if (requestedRole !== undefined) {
+      if (!validRoles.includes(requestedRole)) return res.status(400).json({ message: "Invalid role" });
+      allowedFields.role = requestedRole;
+    }
+    const validUserTypes = ["reader", "analyst", "editor", "monitor", "executive", "integrations_manager"];
+    if (req.body.userType !== undefined) {
+      if (typeof req.body.userType !== "string" || !validUserTypes.includes(req.body.userType)) {
+        return res.status(400).json({ message: "Invalid user type" });
+      }
+      allowedFields.userType = req.body.userType;
+    }
+    const hasClientIdInput = req.body.clientId !== undefined;
+    let requestedClientId: number | null = targetUser.clientId ?? null;
     if (req.body.clientId !== undefined) {
-      const requestedClientId = req.body.clientId !== null ? Number(req.body.clientId) : null;
-      if (requestedClientId !== null && Number.isNaN(requestedClientId)) {
+      requestedClientId = req.body.clientId !== null && req.body.clientId !== "" ? Number(req.body.clientId) : null;
+      if (requestedClientId !== null && (!Number.isInteger(requestedClientId) || requestedClientId <= 0)) {
         return res.status(400).json({ message: "Invalid client ID" });
       }
-      if (!selectedClientId && requestedClientId !== null) {
-        return res.status(400).json({ message: "Platform users cannot be assigned to a tenant from platform mode" });
+      if (requestedClientId !== null) {
+        const client = await storage.getClient(requestedClientId);
+        if (!client) return safeNotFound(res);
       }
-      if (selectedClientId && requestedClientId !== selectedClientId) {
-        return res.status(403).json({ message: "Cannot move user outside selected tenant" });
+    }
+    if (requestedRole !== undefined || hasClientIdInput) {
+      const finalRole = requestedRole ?? targetUser.role;
+      if (finalRole === SYSTEM_ROLES.SYSTEM_ADMIN) {
+        if (requestedClientId !== null) {
+          return res.status(400).json({ message: "Platform administrators cannot be assigned to a client" });
+        }
+        allowedFields.userScope = "platform";
+        allowedFields.clientId = null;
+      } else {
+        if (requestedClientId === null) {
+          return res.status(400).json({ message: "Client users require a client assignment" });
+        }
+        allowedFields.userScope = "tenant";
+        allowedFields.clientId = requestedClientId;
       }
-      allowedFields.clientId = requestedClientId;
     }
     if (typeof req.body.disabled === "boolean") allowedFields.disabled = req.body.disabled;
     if (req.body.password && typeof req.body.password === "string" && req.body.password.length >= 4) {
@@ -5373,7 +5401,7 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid user ID" });
     if (id === adminUser.id) return res.status(400).json({ message: "Cannot delete yourself" });
-    const targetUser = await getScopedUserOrNotFound(id, adminUser, req, res);
+    const targetUser = await getAdminManagedUserOrNotFound(id, res);
     if (!targetUser) return;
     await storage.deleteUser(id);
     await storage.createAuditLog({ userId: adminUser.id, action: "delete", entity: "user", entityId: id, details: `Deleted user #${id}` });
