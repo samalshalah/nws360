@@ -120,7 +120,7 @@ export function buildTenantNavTree(t: any): NavGroup[] {
       items: [
         { key: "workspaceRelevance", label: t("nav.workspaceSettings", "Workspace Settings"), href: "/workspace/relevance", icon: SlidersHorizontal, caps: [CAPS.SETTINGS_VIEW] },
       ],
-      collapsible: true,
+      collapsible: false,
     },
   ];
 }
