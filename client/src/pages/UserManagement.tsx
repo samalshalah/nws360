@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -64,19 +65,38 @@ export default function UserManagement() {
   const { t } = useTranslation();
   const { user: currentUser } = useAuth();
   const { hasCap, isAdmin } = usePermissions();
+  const [location, setLocation] = useLocation();
+  const search = useSearch();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const isPlatformUsersRoute = isAdmin && location.startsWith("/admin/users");
+  const routeClientId = useMemo(() => {
+    const value = new URLSearchParams(search).get("clientId");
+    return value && /^\d+$/.test(value) ? value : "";
+  }, [search]);
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<string>(SYSTEM_ROLES.CLIENT_USER);
   const [newUserType, setNewUserType] = useState("reader");
   const [newClientId, setNewClientId] = useState("");
+  const [clientFilter, setClientFilter] = useState(routeClientId || "all");
   const [passwordResetUser, setPasswordResetUser] = useState<{ id: number; username: string } | null>(null);
   const [resetPassword, setResetPassword] = useState("");
 
+  useEffect(() => {
+    setClientFilter(routeClientId || "all");
+    if (routeClientId) {
+      setNewClientId(routeClientId);
+    }
+  }, [routeClientId]);
+
+  const usersEndpoint = isPlatformUsersRoute
+    ? `/api/admin/users${clientFilter !== "all" ? `?clientId=${clientFilter}` : ""}`
+    : "/api/users";
+
   const { data: users, isLoading } = useQuery<any[]>({
-    queryKey: ["/api/users"],
+    queryKey: [usersEndpoint],
   });
 
   const { data: clients } = useQuery<{ id: number; name: string; active: boolean }[]>({
@@ -90,16 +110,19 @@ export default function UserManagement() {
 
   const createUserMutation = useMutation({
     mutationFn: async (data: { username: string; password: string; role: string; userType: string; clientId?: string }) => {
-      const res = await apiRequest("POST", "/api/users", data);
+      const res = await apiRequest("POST", isPlatformUsersRoute ? "/api/admin/users" : "/api/users", data);
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: [usersEndpoint] });
       toast({ title: t("userManagement.userCreated") });
       setNewUsername("");
       setNewPassword("");
       setNewRole(SYSTEM_ROLES.CLIENT_USER);
       setNewUserType("reader");
+      setNewClientId(isPlatformUsersRoute && clientFilter !== "all" ? clientFilter : "");
     },
     onError: (error) => {
       toast({ variant: "destructive", title: t("common.error"), description: error.message });
@@ -112,6 +135,8 @@ export default function UserManagement() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: [usersEndpoint] });
     },
     onError: (error) => {
       toast({ variant: "destructive", title: t("common.error"), description: error.message });
@@ -124,6 +149,8 @@ export default function UserManagement() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: [usersEndpoint] });
       toast({ title: "User type updated" });
     },
     onError: (error) => {
@@ -137,6 +164,8 @@ export default function UserManagement() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: [usersEndpoint] });
     },
     onError: (error) => {
       toast({ variant: "destructive", title: t("common.error"), description: error.message });
@@ -179,7 +208,26 @@ export default function UserManagement() {
     return parent ? parent.username : "-";
   };
 
-  const canInviteUsers = hasCap(CAPS.USERS_INVITE);
+  const clientNameById = useMemo(() => {
+    const names = new Map<number, string>();
+    clients?.forEach((client) => names.set(client.id, client.name));
+    return names;
+  }, [clients]);
+
+  const getClientName = (clientId: number | null | undefined) => {
+    if (!clientId) return "Platform";
+    return clientNameById.get(clientId) || `Client ${clientId}`;
+  };
+
+  const handleClientFilterChange = (value: string) => {
+    setClientFilter(value);
+    if (isPlatformUsersRoute) {
+      setLocation(value === "all" ? "/admin/users" : `/admin/users?clientId=${value}`);
+      if (value !== "all") setNewClientId(value);
+    }
+  };
+
+  const canInviteUsers = isPlatformUsersRoute || hasCap(CAPS.USERS_INVITE);
   const canEditUsers = hasCap(CAPS.USERS_EDIT);
   const canAssignRoles = hasCap(CAPS.USERS_ASSIGN_ROLES);
   const canDisableUsers = hasCap(CAPS.USERS_DISABLE);
@@ -189,10 +237,42 @@ export default function UserManagement() {
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-user-management-title">
-          {t("userManagement.title")}
+          {isPlatformUsersRoute ? "Users & Access" : t("userManagement.title")}
         </h1>
-        <p className="text-muted-foreground">{t("userManagement.subtitle")}</p>
+        <p className="text-muted-foreground">
+          {isPlatformUsersRoute
+            ? "Manage platform users and client-assigned tenant users."
+            : t("userManagement.subtitle")}
+        </p>
       </div>
+
+      {isPlatformUsersRoute && (
+        <Card className="border-border/50" data-testid="card-admin-users-filters">
+          <CardContent className="flex flex-col gap-3 py-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <p className="text-sm font-medium">User scope</p>
+              <p className="text-xs text-muted-foreground">
+                Filter tenant users by client, or show all platform and tenant accounts.
+              </p>
+            </div>
+            <div className="w-full md:w-72">
+              <Select value={clientFilter} onValueChange={handleClientFilterChange}>
+                <SelectTrigger data-testid="select-admin-users-client-filter">
+                  <SelectValue placeholder="Filter by client" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All users</SelectItem>
+                  {clients?.map((client) => (
+                    <SelectItem key={client.id} value={String(client.id)} data-testid={`select-admin-users-client-${client.id}`}>
+                      {client.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {usage && usage.seats && (
         <Card className="border-border/50 shadow-md" data-testid="card-seat-usage">
@@ -350,6 +430,9 @@ export default function UserManagement() {
                       <TableHead>{t("userManagement.username")}</TableHead>
                       <TableHead>{t("userManagement.role")}</TableHead>
                       <TableHead>Type</TableHead>
+                      {isPlatformUsersRoute && <TableHead>Scope</TableHead>}
+                      {isPlatformUsersRoute && <TableHead>Assigned Client</TableHead>}
+                      {isPlatformUsersRoute && <TableHead>Status</TableHead>}
                       <TableHead>{t("userManagement.joined")}</TableHead>
                       <TableHead className="text-right rtl:text-left">{t("userManagement.actions")}</TableHead>
                     </TableRow>
@@ -395,6 +478,25 @@ export default function UserManagement() {
                               </span>
                             )}
                           </TableCell>
+                          {isPlatformUsersRoute && (
+                            <TableCell>
+                              <Badge variant={u.userScope === "platform" ? "default" : "secondary"} data-testid={`badge-scope-${u.id}`}>
+                                {u.userScope || "tenant"}
+                              </Badge>
+                            </TableCell>
+                          )}
+                          {isPlatformUsersRoute && (
+                            <TableCell className="text-sm text-muted-foreground" data-testid={`text-client-${u.id}`}>
+                              {getClientName(u.clientId)}
+                            </TableCell>
+                          )}
+                          {isPlatformUsersRoute && (
+                            <TableCell>
+                              <Badge variant={u.disabled ? "outline" : "secondary"} data-testid={`badge-status-${u.id}`}>
+                                {u.disabled ? "Disabled" : "Enabled"}
+                              </Badge>
+                            </TableCell>
+                          )}
                           <TableCell className="text-muted-foreground text-sm">
                             {u.createdAt ? formatDistanceToNow(new Date(u.createdAt), { addSuffix: true }) : "-"}
                           </TableCell>
@@ -471,8 +573,19 @@ export default function UserManagement() {
                               <Briefcase className="w-3 h-3 mr-1" />
                               {USER_TYPE_LABELS[u.userType || "reader"] || "Reader"}
                             </Badge>
+                            {isPlatformUsersRoute && (
+                              <Badge variant={u.userScope === "platform" ? "default" : "secondary"}>
+                                {u.userScope || "tenant"}
+                              </Badge>
+                            )}
                           </div>
                         </div>
+                        {isPlatformUsersRoute && (
+                          <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                            <span>Client: {getClientName(u.clientId)}</span>
+                            <span>Status: {u.disabled ? "Disabled" : "Enabled"}</span>
+                          </div>
+                        )}
                         <div className="text-xs text-muted-foreground">
                           {t("userManagement.joined")}: {u.createdAt ? formatDistanceToNow(new Date(u.createdAt), { addSuffix: true }) : "-"}
                         </div>

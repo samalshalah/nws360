@@ -1340,6 +1340,7 @@ function OperationsSummary() {
   const { data: health } = useQuery<SystemHealth>({ queryKey: ["/api/admin/system-health"] });
   const { data: queueStats } = useQuery<QueueStats>({ queryKey: ["/api/admin/queue-stats"] });
   const { data: clients } = useQuery<Client[]>({ queryKey: ["/api/admin/clients"] });
+  const { data: adminUsers } = useQuery<any[]>({ queryKey: ["/api/admin/users"] });
   const { data: aiUsage } = useQuery<any>({ queryKey: ["/api/admin/ai-usage-summary"] });
 
   const hasErrors = (health?.failedSourcesCount ?? 0) > 0;
@@ -1350,12 +1351,22 @@ function OperationsSummary() {
 
   const summaryCards = [
     {
-      label: "Tenants",
+      label: "Clients",
       value: clients?.length ?? 0,
       sub: `${clients?.filter(c => c.active).length ?? 0} active`,
       color: "text-blue-500 dark:text-blue-400",
       bg: "bg-blue-500/10",
       icon: Users,
+      href: "/admin/clients",
+    },
+    {
+      label: "Users",
+      value: adminUsers?.length ?? 0,
+      sub: `${adminUsers?.filter((u: any) => u.userScope !== "platform").length ?? 0} tenant users`,
+      color: "text-green-500 dark:text-green-400",
+      bg: "bg-green-500/10",
+      icon: Shield,
+      href: "/admin/users",
     },
     {
       label: "Queue",
@@ -1364,14 +1375,7 @@ function OperationsSummary() {
       color: "text-amber-500 dark:text-amber-400",
       bg: "bg-amber-500/10",
       icon: Activity,
-    },
-    {
-      label: "Completed",
-      value: queueStats?.completed ?? 0,
-      sub: `${queueStats?.failed ?? 0} failed`,
-      color: (queueStats?.failed ?? 0) > 0 ? "text-red-500 dark:text-red-400" : "text-green-500 dark:text-green-400",
-      bg: (queueStats?.failed ?? 0) > 0 ? "bg-red-500/10" : "bg-green-500/10",
-      icon: (queueStats?.failed ?? 0) > 0 ? AlertTriangle : CheckCircle,
+      href: "/admin/ops",
     },
     {
       label: "Workers",
@@ -1380,11 +1384,13 @@ function OperationsSummary() {
       color: workerOk ? "text-green-500 dark:text-green-400" : "text-amber-500 dark:text-amber-400",
       bg: workerOk ? "bg-green-500/10" : "bg-amber-500/10",
       icon: workerOk ? CheckCircle : Clock,
+      href: "/sources/health",
     },
   ];
 
   const quickActions = [
-    { label: "Manage Tenants", href: "/users", icon: Users },
+    { label: "Clients", href: "/admin/clients", icon: Users },
+    { label: "Users & Access", href: "/admin/users", icon: Shield },
     { label: "Queue Monitor", href: "/admin/ops", icon: Activity },
     { label: "Source Health", href: "/sources/health", icon: Server },
     { label: "Audit Logs", href: "/admin/dashboard", icon: Clock, tab: "logs" },
@@ -1394,7 +1400,12 @@ function OperationsSummary() {
     <div className="space-y-4">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {summaryCards.map((card) => (
-          <Card key={card.label}>
+          <Card
+            key={card.label}
+            className="cursor-pointer transition-colors hover:border-primary/50"
+            onClick={() => setLocation(card.href)}
+            data-testid={`card-ops-${card.label.toLowerCase().replace(/\s+/g, '-')}`}
+          >
             <CardContent className="p-4">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">

@@ -3,7 +3,7 @@ import {
   FileBarChart, TrendingUp, Search, MessageSquare, Shield,
   FileText, List, Hash, Bookmark, Users,
   Activity, GitCompare, Zap, Brain, CreditCard,
-  HelpCircle, Lightbulb, Plug, Monitor, UsersRound,
+  HelpCircle, Lightbulb, Plug, Monitor, UsersRound, UserCog,
   Home, Bell, Settings, ClipboardList, CheckSquare, BookOpen, SlidersHorizontal, Building2
 } from "lucide-react";
 import { CAPS } from "@shared/schema";
@@ -124,13 +124,15 @@ export function buildPlatformAdminNavTree(t: any): NavGroup[] {
       icon: LayoutDashboard,
       adminOnly: true,
       items: [
-        { key: "adminDashboard", label: t("nav.adminDashboard", "SaaS Dashboard"), href: "/admin", icon: LayoutDashboard, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
+        { key: "adminDashboard", label: t("nav.adminDashboard", "Overview"), href: "/admin", icon: LayoutDashboard, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
+        { key: "clients", label: t("nav.clients", "Clients"), href: "/admin/clients", icon: Building2, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
+        { key: "adminUsers", label: t("nav.usersAccess", "Users & Access"), href: "/admin/users", icon: UserCog, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
         { key: "clientEnrollment", label: t("nav.clientEnrollment", "Enroll Client"), href: "/admin/clients/new", icon: Users, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
         { key: "publisherCatalog", label: t("nav.publisherCatalog", "Publisher Catalog"), href: "/admin/publishers", icon: Building2, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
-        { key: "opsDashboard", label: t("nav.opsDashboard", "Queue & Jobs"), href: "/admin/ops", icon: Activity, caps: [CAPS.ADMIN_OPERATIONS] },
         { key: "sourceHealth", label: t("nav.sourceHealth", "Source Health"), href: "/sources/health", icon: Monitor, caps: [CAPS.SOURCE_HEALTH_VIEW] },
-        { key: "productIntelligence", label: t("nav.productIntelligence", "Product Analytics"), href: "/admin/product-analytics", icon: Lightbulb, caps: [CAPS.ADMIN_PRODUCT_ANALYTICS] },
+        { key: "opsDashboard", label: t("nav.opsDashboard", "Queue & Jobs"), href: "/admin/ops", icon: Activity, caps: [CAPS.ADMIN_OPERATIONS] },
         { key: "integrationMonitor", label: t("nav.integrationMonitor", "Integration Monitor"), href: "/admin/integrations", icon: Plug, caps: [CAPS.INTEGRATION_MONITOR_VIEW] },
+        { key: "productIntelligence", label: t("nav.productIntelligence", "Product Analytics"), href: "/admin/product-analytics", icon: Lightbulb, caps: [CAPS.ADMIN_PRODUCT_ANALYTICS] },
       ],
       collapsible: false,
     },
@@ -196,6 +198,7 @@ export const ROUTE_CAPS: RouteCapConfig[] = [
   { path: "/workspace/relevance", caps: [CAPS.SETTINGS_VIEW] },
   { path: "/knowledge", caps: [CAPS.KNOWLEDGE_VIEW] },
   { path: "/settings", caps: [CAPS.SETTINGS_VIEW] },
+  { path: "/admin/users", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin/clients", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin/publishers", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
@@ -225,6 +228,7 @@ export function canAccessRoute(
 
 export const ADMIN_ONLY_ROUTES = [
   "/admin",
+  "/admin/users",
   "/admin/clients",
   "/admin/publishers",
   "/admin/dashboard",

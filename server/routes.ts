@@ -5254,7 +5254,22 @@ export async function registerRoutes(
   app.get("/api/admin/users", async (req, res) => {
     if (!requireAdmin(req, res)) return;
     const adminUser = req.user as any;
-    const allUsers = await getUsersForTenantScope(adminUser, req, true);
+    const requestedClientId = req.query.clientId !== undefined && req.query.clientId !== ""
+      ? Number(req.query.clientId)
+      : null;
+    if (requestedClientId !== null && (!Number.isInteger(requestedClientId) || requestedClientId <= 0)) {
+      return res.status(400).json({ message: "Invalid client ID" });
+    }
+    if (requestedClientId !== null) {
+      const client = await storage.getClient(requestedClientId);
+      if (!client) return safeNotFound(res);
+      const tenantUsers = await storage.getUsersByClientId(requestedClientId);
+      return res.json(tenantUsers.map(toPublicUser));
+    }
+    const selectedClientId = resolveClientId(adminUser, req);
+    const allUsers = selectedClientId
+      ? await storage.getUsersByClientId(selectedClientId)
+      : await storage.getUsers();
     const safeUsers = allUsers.map(toPublicUser);
     res.json(safeUsers);
   });
@@ -5262,19 +5277,20 @@ export async function registerRoutes(
   app.post("/api/admin/users", async (req, res) => {
     if (!requireAdmin(req, res)) return;
     const adminUser = req.user as any;
-    const { username, password, role, clientId } = req.body;
+    const { username, password, role, clientId, userType: bodyUserType } = req.body;
     if (!username || !password) return res.status(400).json({ message: "Username and password required" });
     const selectedClientId = resolveClientId(adminUser, req);
     const requestedClientId = clientId !== undefined && clientId !== null && clientId !== "" ? Number(clientId) : null;
     if (requestedClientId !== null && Number.isNaN(requestedClientId)) {
       return res.status(400).json({ message: "Invalid client ID" });
     }
-    if (!selectedClientId && requestedClientId !== null) {
-      return res.status(400).json({ message: "Select a tenant before creating tenant staff. Platform mode can only create admin staff." });
-    }
-    const resolvedClientId = selectedClientId || null;
-    if (selectedClientId && resolvedClientId !== selectedClientId) {
+    if (selectedClientId && requestedClientId !== null && requestedClientId !== selectedClientId) {
       return res.status(403).json({ message: "Cannot create user outside selected tenant" });
+    }
+    const resolvedClientId = selectedClientId || requestedClientId;
+    if (resolvedClientId) {
+      const client = await storage.getClient(resolvedClientId);
+      if (!client) return safeNotFound(res);
     }
     if (resolvedClientId) {
       const sub = await storage.getSubscription(resolvedClientId);
@@ -5286,12 +5302,12 @@ export async function registerRoutes(
       }
     }
     const validRoles = Object.values(SYSTEM_ROLES);
-    const resolvedRole = selectedClientId ? (role || SYSTEM_ROLES.CLIENT_USER) : SYSTEM_ROLES.SYSTEM_ADMIN;
+    const resolvedRole = resolvedClientId ? (role || SYSTEM_ROLES.CLIENT_USER) : SYSTEM_ROLES.SYSTEM_ADMIN;
     if (!validRoles.includes(resolvedRole)) return res.status(400).json({ message: "Invalid role" });
-    if (!selectedClientId && resolvedRole !== SYSTEM_ROLES.SYSTEM_ADMIN) {
+    if (!resolvedClientId && resolvedRole !== SYSTEM_ROLES.SYSTEM_ADMIN) {
       return res.status(400).json({ message: "Platform user must be an admin" });
     }
-    if (selectedClientId && resolvedRole === SYSTEM_ROLES.SYSTEM_ADMIN) {
+    if (resolvedClientId && resolvedRole === SYSTEM_ROLES.SYSTEM_ADMIN) {
       return res.status(400).json({ message: "Tenant staff cannot use platform admin role" });
     }
     const existingUser = await storage.getUserByUsername(username);
@@ -5299,13 +5315,16 @@ export async function registerRoutes(
     const salt = randomBytes(16).toString("hex");
     const buf = (await scryptAsync(password, salt, 64)) as Buffer;
     const hashedPassword = `${salt}:${buf.toString("hex")}`;
+    const validUserTypes = ["reader", "analyst", "editor", "monitor", "executive", "integrations_manager"];
+    const resolvedUserType = bodyUserType && validUserTypes.includes(bodyUserType) ? bodyUserType : "reader";
     const newUser = await storage.createUser({
       username: sanitizeInput(username),
       password: hashedPassword,
       role: resolvedRole,
-      userScope: selectedClientId ? "tenant" : "platform",
+      userScope: resolvedClientId ? "tenant" : "platform",
       parentId: adminUser.id,
       clientId: resolvedClientId,
+      userType: resolvedUserType,
     });
     await storage.createAuditLog({ userId: adminUser.id, action: "create", entity: "user", entityId: newUser.id, details: `Created user: ${newUser.username} (${newUser.role})` });
     res.status(201).json(toPublicUser(newUser));

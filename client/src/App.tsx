@@ -56,6 +56,7 @@ import ClientAlerts from "@/pages/ClientAlerts";
 import WorkQueue from "@/pages/WorkQueue";
 import WorkspaceRelevance from "@/pages/WorkspaceRelevance";
 import ClientEnrollmentWizard from "@/pages/ClientEnrollmentWizard";
+import AdminClients from "@/pages/AdminClients";
 import ClientSetup from "@/pages/ClientSetup";
 import AdminWorkspaceRelevance from "@/pages/AdminWorkspaceRelevance";
 import PublisherCatalog from "@/pages/PublisherCatalog";
@@ -216,6 +217,12 @@ function Router() {
       </Route>
       <Route path="/admin/clients/new">
         <ProtectedPage component={ClientEnrollmentWizard} />
+      </Route>
+      <Route path="/admin/clients">
+        <ProtectedPage component={AdminClients} />
+      </Route>
+      <Route path="/admin/users">
+        <ProtectedPage component={UserManagement} />
       </Route>
       <Route path="/admin/clients/:clientId/setup">
         <ProtectedPage component={ClientSetup} />
