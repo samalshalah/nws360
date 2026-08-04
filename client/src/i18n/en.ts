@@ -22,6 +22,7 @@ export default {
   nav: {
     dashboard: "Home",
     newsFeed: "News Feed",
+    officialSources: "Official Sources",
     analytics: "Analysis",
     sources: "Sources",
     addSource: "Add Source",

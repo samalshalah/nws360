@@ -4,7 +4,7 @@ import {
   FileText, List, Hash, Bookmark, Users,
   Activity, GitCompare, Zap, Brain, CreditCard,
   HelpCircle, Lightbulb, Plug, Monitor, UsersRound, UserCog,
-  Home, Bell, Settings, ClipboardList, CheckSquare, BookOpen, SlidersHorizontal, Building2
+  Home, Bell, Settings, ClipboardList, CheckSquare, BookOpen, SlidersHorizontal, Building2, Landmark
 } from "lucide-react";
 import { CAPS } from "@shared/schema";
 
@@ -42,6 +42,7 @@ export function buildTenantNavTree(t: any): NavGroup[] {
       items: [
         { key: "dashboard", label: t("nav.dashboard", "Home"), href: "/dashboard", icon: Home, caps: [CAPS.FEED_VIEW] },
         { key: "feed", label: t("nav.latestNews", "News Feed"), href: "/feed", icon: Newspaper, caps: [CAPS.FEED_VIEW] },
+        { key: "officialSources", label: t("nav.officialSources", "Official Sources"), href: "/official-sources", icon: Landmark, caps: [CAPS.SOURCES_VIEW] },
       ],
       collapsible: false,
     },
@@ -168,6 +169,7 @@ export function filterNavByCaps(
 export const ROUTE_CAPS: RouteCapConfig[] = [
   { path: "/dashboard", caps: [CAPS.FEED_VIEW] },
   { path: "/feed", caps: [CAPS.FEED_VIEW] },
+  { path: "/official-sources", caps: [CAPS.SOURCES_VIEW] },
   { path: "/reports/basket", caps: [CAPS.ARTICLE_VIEW] },
   { path: "/briefings", caps: [CAPS.COLLAB_VIEW] },
   { path: "/alerts", caps: [CAPS.ALERTS_VIEW] },

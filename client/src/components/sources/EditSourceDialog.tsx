@@ -345,7 +345,7 @@ export function EditSourceDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="general">General</SelectItem>
-                  {SOURCE_CATEGORIES.map((category) => (
+                  {SOURCE_CATEGORIES.filter((category) => category.code !== "general").map((category) => (
                     <SelectItem key={category.code} value={category.code}>{category.label}</SelectItem>
                   ))}
                 </SelectContent>

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, FileUp, Loader2, Upload } from "lucide-react";
 import { api } from "@shared/routes";
-import { SOURCE_CATEGORIES } from "@shared/source-categories";
+import { OFFICIAL_SOURCE_CATEGORIES, SOURCE_CATEGORIES } from "@shared/source-categories";
 import { classifyFeedImportRow, normalizeSourceImportKey, type ClassifiedFeedImportRow, type FeedImportInputRow } from "@shared/source-import";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -155,6 +155,8 @@ export function FeedImportDialog({
   const [active, setActive] = useState(false);
   const [fetchAfterImport, setFetchAfterImport] = useState(false);
   const [category, setCategory] = useState("general");
+  const [officialSource, setOfficialSource] = useState(false);
+  const [officialCategory, setOfficialCategory] = useState("official_government");
   const [intervalMinutes, setIntervalMinutes] = useState(30);
   const [maxArticlesPerFetch, setMaxArticlesPerFetch] = useState(10);
   const [retentionDays, setRetentionDays] = useState(7);
@@ -175,6 +177,8 @@ export function FeedImportDialog({
     setActive(false);
     setFetchAfterImport(false);
     setCategory("general");
+    setOfficialSource(false);
+    setOfficialCategory("official_government");
     setIntervalMinutes(30);
     setMaxArticlesPerFetch(10);
     setRetentionDays(7);
@@ -209,7 +213,7 @@ export function FeedImportDialog({
           intervalMinutes,
           maxArticlesPerFetch,
           retentionDays,
-          category: category === "general" ? null : category,
+          category: officialSource ? officialCategory : category === "general" ? null : category,
         }),
       });
       const result = await response.json().catch(() => ({} as ImportResult));
@@ -276,11 +280,11 @@ export function FeedImportDialog({
           <div className="grid gap-4 sm:grid-cols-4">
             <div className="space-y-2">
               <Label>Category</Label>
-              <Select value={category} onValueChange={setCategory}>
+              <Select value={category} onValueChange={setCategory} disabled={officialSource}>
                 <SelectTrigger data-testid="select-import-category"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="general">General</SelectItem>
-                  {SOURCE_CATEGORIES.map(item => (
+                  {SOURCE_CATEGORIES.filter(item => item.code !== "general" && !item.code.startsWith("official_")).map(item => (
                     <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>
                   ))}
                 </SelectContent>
@@ -304,6 +308,33 @@ export function FeedImportDialog({
             <div className="space-y-2">
               <Label htmlFor="import-retention">Lifespan days</Label>
               <Input id="import-retention" type="number" min={1} max={30} value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))} />
+            </div>
+          </div>
+
+          <div className="grid gap-4 rounded-md border p-4 md:grid-cols-[1fr_260px]">
+            <label className="flex items-start gap-3">
+              <Checkbox
+                checked={officialSource}
+                onCheckedChange={(checked) => setOfficialSource(checked === true)}
+                data-testid="checkbox-import-official-source"
+              />
+              <span className="space-y-1">
+                <span className="block text-sm font-medium">Add to Official Sources</span>
+                <span className="block text-xs text-muted-foreground">
+                  Use this for ministries, government organizations, parliament, judiciary, Central Bank, security bodies, and UN or international organization channels.
+                </span>
+              </span>
+            </label>
+            <div className="space-y-2">
+              <Label>Official type</Label>
+              <Select value={officialCategory} onValueChange={setOfficialCategory} disabled={!officialSource}>
+                <SelectTrigger data-testid="select-import-official-category"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {OFFICIAL_SOURCE_CATEGORIES.map(item => (
+                    <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

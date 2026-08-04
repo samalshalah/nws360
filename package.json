@@ -49,6 +49,7 @@
     "test:zero-state-periodic-jobs": "tsx scripts/test-zero-state-periodic-jobs.ts",
     "test:lifecycle-activation-readiness": "tsx scripts/test-lifecycle-activation-readiness.ts",
     "data:backfill-categories": "tsx scripts/backfill-article-categories.ts",
+    "data:backfill-official-sources": "tsx scripts/backfill-official-source-categories.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

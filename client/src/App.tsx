@@ -16,6 +16,7 @@ import { UniversalShell } from "@/components/layout/UniversalShell";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Feed from "@/pages/Feed";
+import OfficialSources from "@/pages/OfficialSources";
 import Analytics from "@/pages/Analytics";
 import ContentVolume from "@/pages/analytics/ContentVolume";
 import TrendingTopics from "@/pages/analytics/TrendingTopics";
@@ -147,6 +148,9 @@ function Router() {
       </Route>
       <Route path="/feed">
         <ProtectedPage component={Feed} />
+      </Route>
+      <Route path="/official-sources">
+        <ProtectedPage component={OfficialSources} />
       </Route>
       <Route path="/reports/basket">
         <ProtectedPage component={ReportBasket} />
