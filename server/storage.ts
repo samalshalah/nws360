@@ -2,6 +2,7 @@ import { db } from "./db";
 import { createHash } from "node:crypto";
 import { isGenericAnalyticsTerm, normalizeAnalyticsValue } from "./analytics-noise";
 import { getArticleCategoryFilterCodes, getArticleCategoryLabel, mergeArticleCategoryRows, normalizeArticleCategoryCode } from "@shared/article-taxonomy";
+import { maybeNormalizeSourceFetchMetrics } from "@shared/source-fetch-metrics";
 import { evaluateWorkspaceRelevance, getDefaultRelevanceStatuses, isArticleRelevanceStatus, type ArticleRelevanceStatus } from "@shared/workspace-relevance";
 import {
   users, sources, articles, savedFeedViews, keywords, bookmarks, sourceFetchLogs, rejectedIngestionItems,
@@ -433,6 +434,10 @@ export type OperationalSourceSettingsPreview = {
     rawItemCount: number;
     acceptedItemCount: number;
     filteredOutCount: number;
+    retentionDays?: number | null;
+    retentionCutoff?: string | null;
+    retentionEligibleSampleCount?: number;
+    retentionRejectedSampleCount?: number;
   };
   safeSamples: AssignmentSampleResult[];
   relevanceCounts: ReturnType<typeof countAssignmentSamples>;
@@ -1265,6 +1270,10 @@ function buildOperationalSettingsPreview(
         rawItemCount: inspection.safeSourceFacts.rawItemCount,
         acceptedItemCount: inspection.safeSourceFacts.itemCount,
         filteredOutCount: inspection.safeSourceFacts.filteredOutCount,
+        retentionDays: inspection.safeSourceFacts.retentionDays ?? null,
+        retentionCutoff: inspection.safeSourceFacts.retentionCutoff ?? null,
+        retentionEligibleSampleCount: inspection.safeSourceFacts.retentionEligibleSampleCount ?? 0,
+        retentionRejectedSampleCount: inspection.safeSourceFacts.retentionRejectedSampleCount ?? 0,
       },
       safeSamples: sampleResults.slice(0, 10),
       relevanceCounts: counts,
@@ -1727,6 +1736,7 @@ export interface IStorage {
     sourceName: string;
     lastStatus: string;
     lastError: string | null;
+    lastMetrics: SourceFetchLog["metrics"];
     successRate: number;
     totalFetches: number;
     rejectedLast7d: number;
@@ -2970,7 +2980,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createFetchLog(log: InsertSourceFetchLog): Promise<SourceFetchLog> {
-    const [entry] = await db.insert(sourceFetchLogs).values(log).returning();
+    const [entry] = await db.insert(sourceFetchLogs).values({
+      ...log,
+      metrics: maybeNormalizeSourceFetchMetrics(log.metrics),
+    }).returning();
     return entry;
   }
 
@@ -3015,10 +3028,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getFetchLogs(sourceId: number, limit = 20): Promise<SourceFetchLog[]> {
-    return await db.select().from(sourceFetchLogs)
+    const rows = await db.select().from(sourceFetchLogs)
       .where(eq(sourceFetchLogs.sourceId, sourceId))
       .orderBy(desc(sourceFetchLogs.fetchedAt))
       .limit(limit);
+    return rows.map(row => ({
+      ...row,
+      metrics: maybeNormalizeSourceFetchMetrics(row.metrics),
+    }));
   }
 
   async getConsecutiveFailureCount(sourceId: number): Promise<number> {
@@ -3064,6 +3081,7 @@ export class DatabaseStorage implements IStorage {
       retryCount: sourceFetchLogs.retryCount,
       durationMs: sourceFetchLogs.durationMs,
       pipelineStep: sourceFetchLogs.pipelineStep,
+      metrics: sourceFetchLogs.metrics,
       fetchedAt: sourceFetchLogs.fetchedAt,
       sourceName: sources.name,
     })
@@ -3075,7 +3093,11 @@ export class DatabaseStorage implements IStorage {
       .offset(offset);
 
     return {
-      items: rows.map(r => ({ ...r, sourceName: r.sourceName || "Unknown" })),
+      items: rows.map(r => ({
+        ...r,
+        metrics: maybeNormalizeSourceFetchMetrics(r.metrics),
+        sourceName: r.sourceName || "Unknown",
+      })),
       total: countResult?.count || 0,
     };
   }
@@ -3095,6 +3117,7 @@ export class DatabaseStorage implements IStorage {
           'unknown'
         ) as "lastStatus",
         (SELECT error_message FROM source_fetch_logs WHERE source_id = s.id ORDER BY fetched_at DESC LIMIT 1) as "lastError",
+        (SELECT metrics FROM source_fetch_logs WHERE source_id = s.id ORDER BY fetched_at DESC LIMIT 1) as "lastMetrics",
         COALESCE(
           (SELECT COUNT(*)::int FROM source_fetch_logs WHERE source_id = s.id),
           0
@@ -3125,6 +3148,7 @@ export class DatabaseStorage implements IStorage {
       sourceName: String(r.sourceName),
       lastStatus: String(r.lastStatus),
       lastError: r.lastError ? String(r.lastError) : null,
+      lastMetrics: maybeNormalizeSourceFetchMetrics(r.lastMetrics),
       successRate: Number(r.successRate),
       totalFetches: Number(r.totalFetches),
       rejectedLast7d: Number(r.rejectedLast7d || 0),

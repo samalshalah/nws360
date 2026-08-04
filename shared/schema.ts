@@ -4,6 +4,7 @@ import { z } from "zod";
 import { relations, sql } from "drizzle-orm";
 import type { WebsiteCollectorConfig } from "./source-collector";
 import type { SourceFilterConfig } from "./source-filter";
+import type { SourceFetchMetrics } from "./source-fetch-metrics";
 import { normalizeUserScopeClientAssignment } from "./user-scope";
 import {
   ARTICLE_APPEARANCE_TYPES,
@@ -596,6 +597,7 @@ export const sourceFetchLogs = pgTable("source_fetch_logs", {
   retryCount: integer("retry_count").default(0),
   durationMs: integer("duration_ms"),
   pipelineStep: text("pipeline_step"),
+  metrics: jsonb("metrics").$type<SourceFetchMetrics | null>(),
   fetchedAt: timestamp("fetched_at").defaultNow(),
 });
 

@@ -42,6 +42,10 @@ export type OperationalSourceInspectionResult = {
     rawItemCount: number;
     itemCount: number;
     filteredOutCount: number;
+    retentionDays?: number | null;
+    retentionCutoff?: string | null;
+    retentionEligibleSampleCount?: number;
+    retentionRejectedSampleCount?: number;
     redirectCount?: number | null;
     timingMs?: number | null;
     contentType?: string | null;
@@ -84,6 +88,8 @@ const DEFAULT_STRICT_FETCH_BYTES = 256 * 1024;
 const HTML_INSPECTION_MAX_BYTES = 1024 * 1024;
 const MAX_JSON_LD_SCRIPT_BYTES = 96 * 1024;
 const MAX_JSON_LD_TOTAL_BYTES = 192 * 1024;
+const DEFAULT_RETENTION_DAYS = 7;
+const MAX_RETENTION_DAYS = 365;
 const SOCIAL_SOURCE_TYPES = new Set(["facebook", "twitter", "x", "instagram", "telegram", "youtube", "tiktok", "linkedin"]);
 const MANUAL_CHANNEL_TYPES = new Set(["television", "radio", "podcast", "other"]);
 
@@ -163,6 +169,28 @@ function parseDate(value: unknown): Date {
   const date = value instanceof Date ? value : new Date(String(value || ""));
   if (!Number.isNaN(date.getTime()) && date.getTime() < Date.now() + 7 * 24 * 60 * 60 * 1000) return date;
   return new Date();
+}
+
+function normalizeRetentionDays(value: number | null | undefined): number {
+  if (!Number.isFinite(value || NaN)) return DEFAULT_RETENTION_DAYS;
+  return Math.min(MAX_RETENTION_DAYS, Math.max(1, Math.round(value as number)));
+}
+
+function retentionEvidence(items: OperationalSourceSampleItem[], source: Source) {
+  const retentionDays = normalizeRetentionDays(source.retentionDays);
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+  const retentionEligibleSampleCount = items.filter((item) => (
+    item.publishedAt instanceof Date
+    && !Number.isNaN(item.publishedAt.getTime())
+    && item.publishedAt.getTime() <= Date.now() + 24 * 60 * 60 * 1000
+    && item.publishedAt.getTime() >= cutoff.getTime()
+  )).length;
+  return {
+    retentionDays,
+    retentionCutoff: cutoff.toISOString(),
+    retentionEligibleSampleCount,
+    retentionRejectedSampleCount: Math.max(0, items.length - retentionEligibleSampleCount),
+  };
 }
 
 function imageFromRss(item: any, baseUrl: string): string | null {
@@ -572,6 +600,10 @@ function summarizeFailure(source: Source, channel: PublisherChannel | null | und
       rawItemCount: 0,
       itemCount: 0,
       filteredOutCount: 0,
+      retentionDays: normalizeRetentionDays(source.retentionDays),
+      retentionCutoff: new Date(Date.now() - normalizeRetentionDays(source.retentionDays) * 24 * 60 * 60 * 1000).toISOString(),
+      retentionEligibleSampleCount: 0,
+      retentionRejectedSampleCount: 0,
       bytesRead: null,
       responseTruncated: null,
       declaredContentLength: null,
@@ -663,6 +695,7 @@ export async function inspectOperationalSourceSample(
 
     rawItems.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
     const { accepted, filteredOutCount } = applySourceFilter(rawItems, source, limit);
+    const retention = retentionEvidence(rawItems, source);
     return {
       success: true,
       collectorType: chosen.type,
@@ -680,6 +713,7 @@ export async function inspectOperationalSourceSample(
         rawItemCount: rawItems.length,
         itemCount: accepted.length,
         filteredOutCount,
+        ...retention,
         redirectCount: fetched.redirectCount,
         timingMs: fetched.elapsedMs,
         contentType: fetched.contentType,

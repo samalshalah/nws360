@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Activity, AlertTriangle, Clock, Info } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
+import type { SourceFetchMetrics } from "@shared/source-fetch-metrics";
 
 function CardInfo({ description }: { description: string }) {
   return (
@@ -34,6 +35,28 @@ interface SourceHealthData {
   successRate: number;
   totalFetches: number;
   lastFetchedAt: string | null;
+  lastMetrics?: SourceFetchMetrics | null;
+}
+
+const ZERO_INSERT_MESSAGES: Record<string, string> = {
+  no_raw_items: "No items were fetched from the source.",
+  parser_produced_no_items: "The source responded, but no article items were parsed.",
+  validation_rejected_all: "All parsed items failed basic validation.",
+  retention_rejected_all: "All items were older than the source retention window.",
+  source_filter_rejected_all: "All items were removed by source filters.",
+  duplicates_skipped_all: "All eligible items were already present.",
+  persistence_skipped_all: "Items reached insertion but no article was stored.",
+  mixed_rejections: "Items were dropped across multiple ingestion gates.",
+  unknown: "No inserted articles; the exact drop point is unknown.",
+};
+
+function metricValue(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "n/a";
+}
+
+function zeroInsertMessage(metrics: SourceFetchMetrics | null | undefined): string | null {
+  if (!metrics || metrics.articleInsertions > 0) return null;
+  return ZERO_INSERT_MESSAGES[metrics.zeroInsertReason] || ZERO_INSERT_MESSAGES.unknown;
 }
 
 function StatusBadge({ status, t }: { status: string; t: (key: string) => string }) {
@@ -200,6 +223,30 @@ export default function SourceHealth() {
                         {source.totalFetches}
                       </span>
                     </div>
+
+                    {source.lastMetrics && (
+                      <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2 text-xs">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-muted-foreground">Inserted</span>
+                          <span className="font-medium" data-testid={`text-metrics-inserted-${source.sourceId}`}>
+                            {source.lastMetrics.articleInsertions}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground">
+                          <span>Raw {metricValue(source.lastMetrics.rawItemCount)}</span>
+                          <span>Eligible {metricValue(source.lastMetrics.eligibleItemCount)}</span>
+                          <span>Retention {metricValue(source.lastMetrics.retentionRejectedCount)}</span>
+                          <span>Filters {metricValue(source.lastMetrics.sourceFilterRejectedCount)}</span>
+                          <span>Duplicates {metricValue(source.lastMetrics.duplicateSkippedCount)}</span>
+                          <span>Jobs {source.lastMetrics.processingJobsCreated}</span>
+                        </div>
+                        {zeroInsertMessage(source.lastMetrics) && (
+                          <p className="text-muted-foreground" data-testid={`text-zero-insert-reason-${source.sourceId}`}>
+                            {zeroInsertMessage(source.lastMetrics)}
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">{t("admin.lastFetched")}</span>

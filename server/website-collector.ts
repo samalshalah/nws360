@@ -22,6 +22,10 @@ export interface CollectedWebsiteArticle {
 export interface WebsiteCollectionResult {
   method: "rss" | "selectors" | "structured" | "website";
   articles: CollectedWebsiteArticle[];
+  rawItemCount?: number;
+  parsedItemCount?: number;
+  normalizedItemCount?: number;
+  invalidItemCount?: number;
   feedUrl?: string;
   rendered: boolean;
   warnings: string[];
@@ -545,10 +549,17 @@ function feedImageTitle(item: any): string | undefined {
   return match?.[1] ? cleanText(match[1]) : undefined;
 }
 
-async function parseFeed(feedUrl: string, limit: number): Promise<CollectedWebsiteArticle[]> {
+async function parseFeed(feedUrl: string, limit: number): Promise<{
+  articles: CollectedWebsiteArticle[];
+  rawItemCount: number;
+  parsedItemCount: number;
+  normalizedItemCount: number;
+  invalidItemCount: number;
+}> {
   const { html: xml, finalUrl } = await fetchText(feedUrl, "application/rss+xml,application/atom+xml,application/xml,text/xml,*/*", 12_000);
   const feed = await parser.parseString(xml);
-  const articles = (feed.items || []).map((item) => {
+  const rawItems = feed.items || [];
+  const mapped = rawItems.map((item) => {
     const url = normalizeUrl(item.link || item.guid || "", finalUrl) || "";
     const title = cleanText(item.title || "Untitled");
     const content = cleanText((item as any).contentEncoded || item.content || item.contentSnippet || item.summary || title);
@@ -560,18 +571,32 @@ async function parseFeed(feedUrl: string, limit: number): Promise<CollectedWebsi
       image: feedImage(item, finalUrl),
       imageTitle: feedImageTitle(item),
     };
-  }).filter((item) => item.url && item.title.length >= 5);
+  });
+  const articles = mapped.filter((item) => item.url && item.title.length >= 5);
   articles.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
-  return deduplicate(articles).slice(0, limit);
+  return {
+    articles: deduplicate(articles).slice(0, limit),
+    rawItemCount: rawItems.length,
+    parsedItemCount: mapped.length,
+    normalizedItemCount: articles.length,
+    invalidItemCount: Math.max(0, mapped.length - articles.length),
+  };
 }
 
-async function discoverWorkingFeed(candidates: string[], limit: number): Promise<{ feedUrl: string; articles: CollectedWebsiteArticle[] } | null> {
+async function discoverWorkingFeed(candidates: string[], limit: number): Promise<{
+  feedUrl: string;
+  articles: CollectedWebsiteArticle[];
+  rawItemCount: number;
+  parsedItemCount: number;
+  normalizedItemCount: number;
+  invalidItemCount: number;
+} | null> {
   for (let index = 0; index < candidates.length; index += 4) {
     const batch = candidates.slice(index, index + 4);
     const results = await Promise.all(batch.map(async (feedUrl) => {
       try {
-        const articles = await parseFeed(feedUrl, limit);
-        return articles.length > 0 ? { feedUrl, articles } : null;
+        const result = await parseFeed(feedUrl, limit);
+        return result.articles.length > 0 ? { feedUrl, ...result } : null;
       } catch {
         return null;
       }
@@ -599,6 +624,10 @@ export async function collectWebsite(
       return {
         method: "rss",
         articles: feed.articles.slice(0, limit),
+        rawItemCount: feed.rawItemCount,
+        parsedItemCount: feed.parsedItemCount,
+        normalizedItemCount: feed.normalizedItemCount,
+        invalidItemCount: feed.invalidItemCount,
         feedUrl: feed.feedUrl,
         rendered: false,
         warnings,
@@ -625,7 +654,16 @@ export async function collectWebsite(
     ? "selectors"
     : combined.some((article) => structuredUrls.has(article.url)) ? "structured" : extracted.method;
   combined.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
-  return { method, articles: combined.slice(0, limit), rendered: false, warnings };
+  return {
+    method,
+    articles: combined.slice(0, limit),
+    rawItemCount: structured.length + extracted.articles.length,
+    parsedItemCount: structured.length + extracted.articles.length,
+    normalizedItemCount: combined.length,
+    invalidItemCount: 0,
+    rendered: false,
+    warnings,
+  };
 }
 
 export async function inspectArticleImage(url: string): Promise<string | undefined> {

@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { enqueueAIJob, awaitJobResult } from "./ai/ai-gateway";
 import { fetchTwitterFeed, fetchYouTubeFeed, fetchFacebookFeed, fetchInstagramFeed, fetchTelegramFeed, fetchSocialRssFeed } from "./web-scraper";
 import { enqueueJob, registerJobHandler, openaiLimiter } from "./processing-queue";
+import type { InsertSourceFetchLog } from "@shared/schema";
 import { getGoogleNewsEdition } from "@shared/google-news-regions";
 import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, CLIENT_BILATERAL_CATEGORY_CODE, getArticleCategoryLabel, type EmbassyProfile } from "@shared/article-taxonomy";
 import { classifyArticleCategory, classifyArticlePriority, classifyIraqProvince } from "@shared/article-classifier";
@@ -23,6 +24,13 @@ import {
   normalizeSourceFilterConfig,
   type SourceFilterConfig,
 } from "@shared/source-filter";
+import {
+  dateToUtcIso,
+  maybeNormalizeSourceFetchMetrics,
+  normalizeSourceFetchMetrics,
+  type SourceFetchMetrics,
+  type SourceFetchMetricsInput,
+} from "@shared/source-fetch-metrics";
 import { collectWebsite, extractArticleContent, inspectArticleImage } from "./website-collector";
 
 type FeedSource = {
@@ -40,6 +48,13 @@ type FeedSource = {
   filterConfig?: SourceFilterConfig | null;
 };
 
+type FetchResult = {
+  newArticles: number;
+  metrics: SourceFetchMetrics | null;
+};
+
+type FetchMetricsSeed = Partial<SourceFetchMetricsInput>;
+
 const parser = new RssParser({
   timeout: 15000,
   headers: {
@@ -55,6 +70,55 @@ const parser = new RssParser({
     ],
   },
 });
+
+function countFeedItems(items: unknown[] | null | undefined): FetchMetricsSeed {
+  const count = Array.isArray(items) ? items.length : 0;
+  return {
+    rawItemCount: count,
+    parsedItemCount: count,
+    normalizedItemCount: count,
+    invalidItemCount: 0,
+  };
+}
+
+function emptyFetchResult(reasonSeed: FetchMetricsSeed = {}): FetchResult {
+  return {
+    newArticles: 0,
+    metrics: normalizeSourceFetchMetrics({
+      ...reasonSeed,
+      articleInsertions: 0,
+      appearanceInsertions: 0,
+      processingJobsCreated: 0,
+    }),
+  };
+}
+
+function finalizeFetchMetrics(metrics: SourceFetchMetricsInput): SourceFetchMetrics | null {
+  try {
+    return normalizeSourceFetchMetrics(metrics);
+  } catch (error) {
+    console.warn(`[Worker] Ingestion metrics normalization failed: ${error instanceof Error ? error.message : error}`);
+    return maybeNormalizeSourceFetchMetrics({
+      version: 1,
+      articleInsertions: metrics.articleInsertions ?? 0,
+      appearanceInsertions: metrics.appearanceInsertions ?? 0,
+      processingJobsCreated: metrics.processingJobsCreated ?? 0,
+    });
+  }
+}
+
+async function createFetchLogWithOptionalMetrics(log: InsertSourceFetchLog): Promise<void> {
+  try {
+    await storage.createFetchLog(log);
+  } catch (error) {
+    if (log.metrics) {
+      console.warn(`[Worker] Fetch-log metrics write failed for source=${log.sourceId}; retrying without metrics: ${error instanceof Error ? error.message : error}`);
+      await storage.createFetchLog({ ...log, metrics: null });
+      return;
+    }
+    throw error;
+  }
+}
 
 function stripHtml(html: string): string {
   return html
@@ -285,7 +349,7 @@ async function discoverRssFeed(url: string): Promise<string | null> {
   return null;
 }
 
-async function fetchRssArticles(source: FeedSource): Promise<number> {
+async function fetchRssArticles(source: FeedSource): Promise<FetchResult> {
   let feedUrl = normalizeUrl(source.url);
 
   if (!feedUrl.match(/\.(xml|rss|atom)$/i) && !feedUrl.includes("/feed") && !feedUrl.includes("/rss")) {
@@ -300,7 +364,8 @@ async function fetchRssArticles(source: FeedSource): Promise<number> {
 
   console.log(`[Worker] Fetching RSS: ${feedUrl} for source: ${source.name}`);
   const feed = await parser.parseURL(feedUrl);
-  const mapped = (feed.items || []).map(item => ({
+  const feedItems = feed.items || [];
+  const mapped = feedItems.map(item => ({
     title: stripHtml(item.title || "Untitled"),
     url: item.link || "",
     content: stripHtml(item.contentEncoded || item.content || item.contentSnippet || item.summary || ""),
@@ -310,10 +375,10 @@ async function fetchRssArticles(source: FeedSource): Promise<number> {
     externalId: typeof (item as any).guid === "string" ? (item as any).guid : (item as any).guid?._ || null,
   }));
   mapped.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
-  return await processItems(source, mapped);
+  return await processItems(source, mapped, countFeedItems(feedItems));
 }
 
-async function fetchWebsiteArticles(source: FeedSource): Promise<number> {
+async function fetchWebsiteArticles(source: FeedSource): Promise<FetchResult> {
   const limit = source.maxArticlesPerFetch || 10;
   const hasFilters = Boolean(source.filterConfig?.whitelist.enabled || source.filterConfig?.blacklist.enabled);
   const candidateLimit = hasFilters ? Math.min(limit * 3, 50) : limit;
@@ -334,7 +399,12 @@ async function fetchWebsiteArticles(source: FeedSource): Promise<number> {
       },
     }, source.clientId || undefined);
   }
-  return await processItems(source, result.articles);
+  return await processItems(source, result.articles, {
+    rawItemCount: result.rawItemCount ?? result.articles.length,
+    parsedItemCount: result.parsedItemCount ?? result.articles.length,
+    normalizedItemCount: result.normalizedItemCount ?? result.articles.length,
+    invalidItemCount: result.invalidItemCount ?? 0,
+  });
 }
 
 function getConfiguredSocialFeedUrl(source: FeedSource): string | null {
@@ -362,11 +432,11 @@ async function processConfiguredSocialFeedOrFallback(
   source: FeedSource,
   label: string,
   fallback: () => Promise<FeedItem[]>,
-): Promise<number> {
+): Promise<FetchResult> {
   const configuredItems = await fetchConfiguredSocialFeed(source, label);
   if (configuredItems !== null) {
     if (hasItemsWithinSourceRetention(source, configuredItems)) {
-      return await processItems(source, configuredItems);
+      return await processItems(source, configuredItems, countFeedItems(configuredItems));
     }
     console.log(`[Worker] Configured ${label} RSS feed has no items inside retention window for ${source.name}; trying platform fallback`);
   }
@@ -374,34 +444,34 @@ async function processConfiguredSocialFeedOrFallback(
   const fallbackItems = await fallback();
   fallbackItems.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${fallbackItems.length} ${label} posts from platform fallback for ${source.name}`);
-  return await processItems(source, fallbackItems);
+  return await processItems(source, fallbackItems, countFeedItems(fallbackItems));
 }
 
-async function fetchTwitterArticles(source: FeedSource): Promise<number> {
+async function fetchTwitterArticles(source: FeedSource): Promise<FetchResult> {
   console.log(`[Worker] Fetching Twitter/X: ${source.url} for source: ${source.name}`);
   return await processConfiguredSocialFeedOrFallback(source, "Twitter/X", () => fetchTwitterFeed(source.url));
 }
 
-async function fetchYouTubeArticles(source: FeedSource): Promise<number> {
+async function fetchYouTubeArticles(source: FeedSource): Promise<FetchResult> {
   console.log(`[Worker] Fetching YouTube: ${source.url} for source: ${source.name}`);
   return await processConfiguredSocialFeedOrFallback(source, "YouTube", () => fetchYouTubeFeed(source.url));
 }
 
-async function fetchFacebookArticles(source: FeedSource): Promise<number> {
+async function fetchFacebookArticles(source: FeedSource): Promise<FetchResult> {
   console.log(`[Worker] Fetching Facebook: ${source.url} for source: ${source.name}`);
   const feedUrl = source.collectorConfig?.feedUrl?.trim();
   const posts = await fetchFacebookFeed(feedUrl || source.url, { originalUrl: source.url, sourceName: source.name });
   posts.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${posts.length} Facebook posts from ${source.name}`);
-  return await processItems(source, posts);
+  return await processItems(source, posts, countFeedItems(posts));
 }
 
-async function fetchInstagramArticles(source: FeedSource): Promise<number> {
+async function fetchInstagramArticles(source: FeedSource): Promise<FetchResult> {
   console.log(`[Worker] Fetching Instagram: ${source.url} for source: ${source.name}`);
   return await processConfiguredSocialFeedOrFallback(source, "Instagram", () => fetchInstagramFeed(source.url));
 }
 
-async function fetchTelegramArticles(source: FeedSource): Promise<number> {
+async function fetchTelegramArticles(source: FeedSource): Promise<FetchResult> {
   console.log(`[Worker] Fetching Telegram: ${source.url} for source: ${source.name}`);
   return await processConfiguredSocialFeedOrFallback(source, "Telegram", () => fetchTelegramFeed(source.url));
 }
@@ -553,7 +623,7 @@ function buildGoogleNewsSearchUrl(keyword: string, country?: string | null, rece
   return `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=${encodeURIComponent(edition.locale)}&gl=${edition.code}&ceid=${edition.code}:${edition.language}`;
 }
 
-async function fetchGoogleNewsArticles(source: FeedSource): Promise<number> {
+async function fetchGoogleNewsArticles(source: FeedSource): Promise<FetchResult> {
   const limit = source.maxArticlesPerFetch || 10;
   const hasFilters = Boolean(source.filterConfig?.whitelist.enabled || source.filterConfig?.blacklist.enabled);
   const candidateLimit = hasFilters ? Math.min(limit * 3, 50) : limit;
@@ -609,10 +679,19 @@ async function fetchGoogleNewsArticles(source: FeedSource): Promise<number> {
     }
 
     console.log(`[Worker] Google News: got ${items.length} articles for "${keyword}", newest: ${items[0]?.publishedAt?.toISOString() || 'none'}`);
-    return await processItems(source, items);
+    return await processItems(source, items, {
+      rawItemCount: allItems.length,
+      parsedItemCount: rawItems.length,
+      normalizedItemCount: items.length,
+      invalidItemCount: Math.max(0, rawItems.length - items.length),
+    });
   } catch (e) {
     console.error(`[Worker] Google News fetch failed for "${keyword}":`, e);
-    return 0;
+    return emptyFetchResult({
+      rawItemCount: null,
+      parsedItemCount: null,
+      normalizedItemCount: null,
+    });
   }
 }
 
@@ -957,9 +1036,9 @@ function shouldRecordLinkedSourceAppearance(relevanceStatus: unknown): boolean {
   return status !== "not_relevant" && status !== "needs_review";
 }
 
-async function recordLinkedSourceAppearance(source: FeedSource, articleId: number, item: FeedItem, isPrimary = false): Promise<void> {
+async function recordLinkedSourceAppearance(source: FeedSource, articleId: number, item: FeedItem, isPrimary = false): Promise<boolean> {
   const clientId = source.clientId;
-  if (!clientId || !source.publisherChannelId) return;
+  if (!clientId || !source.publisherChannelId) return false;
   try {
     await storage.createArticleAppearance({
       clientId,
@@ -989,9 +1068,11 @@ async function recordLinkedSourceAppearance(source: FeedSource, articleId: numbe
       },
       isPrimary,
     } as any);
+    return true;
   } catch (error: any) {
-    if (error?.code === "23505" || error?.code === "duplicate_record") return;
+    if (error?.code === "23505" || error?.code === "duplicate_record") return false;
     console.warn(`[Worker] Article appearance skipped for article=${articleId}: ${error?.message || error}`);
+    return false;
   }
 }
 
@@ -1021,9 +1102,14 @@ async function recordRejectedIngestionItem(
 
 async function processItems(
   source: FeedSource,
-  items: FeedItem[]
-): Promise<number> {
+  items: FeedItem[],
+  metricsSeed: FetchMetricsSeed = {},
+): Promise<FetchResult> {
   let newArticles = 0;
+  let appearanceInsertions = 0;
+  let processingJobsCreated = 0;
+  let duplicateSkippedCount = 0;
+  let insertionAttemptCount = 0;
 
   items.sort((a, b) => {
     const dateA = a.publishedAt instanceof Date ? a.publishedAt.getTime() : 0;
@@ -1032,6 +1118,12 @@ async function processItems(
   });
 
   const retentionDays = normalizeRetentionDays(source.retentionDays);
+  const validPublicationTimes = items
+    .map((item) => item.publishedAt instanceof Date ? item.publishedAt : null)
+    .filter((value): value is Date => Boolean(value && !Number.isNaN(value.getTime())));
+  const publicationTimestamps = validPublicationTimes.map((value) => value.getTime());
+  const missingPublicationTimeCount = items.length - validPublicationTimes.length;
+  const invalidItemCount = (metricsSeed.invalidItemCount ?? 0) + items.filter((item) => !item.url).length;
   const retentionFilteredItems = items.filter((item) => isWithinRetentionWindow(item.publishedAt, retentionDays));
   const oldByRetentionCount = items.length - retentionFilteredItems.length;
   if (oldByRetentionCount > 0) console.log(`[Worker] ${source.name}: rejected ${oldByRetentionCount} article(s) outside ${retentionDays}d retention`);
@@ -1047,8 +1139,11 @@ async function processItems(
   if (rejectedCount > 0) console.log(`[Worker] ${source.name}: feed filters rejected ${rejectedCount} article(s)`);
   const embassyProfile = await getEmbassyProfileForClient(source.clientId);
   const workspaceProfiles = await getWorkspaceProfilesForSource(source);
+  const candidateItems = filteredItems.slice(0, source.maxArticlesPerFetch || 10);
+  const clientIdAvailable = Boolean(source.clientId);
+  const eligibleItemCount = candidateItems.filter((item) => item.url && clientIdAvailable).length;
 
-  for (const rawItem of filteredItems.slice(0, source.maxArticlesPerFetch || 10)) {
+  for (const rawItem of candidateItems) {
     let item = rawItem;
     if (!item.url) continue;
 
@@ -1113,8 +1208,9 @@ async function processItems(
       }
       await persistWorkspaceRelevance(existing.id, clientId, relevanceEvaluation.byWorkspace);
       if (shouldRecordLinkedSourceAppearance(relevance.relevanceStatus)) {
-        await recordLinkedSourceAppearance(source, existing.id, item, false);
+        if (await recordLinkedSourceAppearance(source, existing.id, item, false)) appearanceInsertions++;
       }
+      duplicateSkippedCount++;
       continue;
     }
 
@@ -1158,8 +1254,9 @@ async function processItems(
         }
         await persistWorkspaceRelevance(titleDup.id, clientId, relevanceEvaluation.byWorkspace);
         if (shouldRecordLinkedSourceAppearance(relevance.relevanceStatus)) {
-          await recordLinkedSourceAppearance(source, titleDup.id, item, false);
+          if (await recordLinkedSourceAppearance(source, titleDup.id, item, false)) appearanceInsertions++;
         }
+        duplicateSkippedCount++;
         continue;
       }
     }
@@ -1202,19 +1299,46 @@ async function processItems(
     };
 
     try {
+      insertionAttemptCount++;
       const created = await storage.createArticle(article);
       newArticles++;
       await persistWorkspaceRelevance(created.id, clientId, relevanceEvaluation.byWorkspace);
       if (shouldRecordLinkedSourceAppearance(relevance.relevanceStatus)) {
-        await recordLinkedSourceAppearance(source, created.id, item, true);
+        if (await recordLinkedSourceAppearance(source, created.id, item, true)) appearanceInsertions++;
       }
-      await enqueueFullArticleExtraction(created.id, clientId, item.url, source.id);
+      if (await enqueueFullArticleExtraction(created.id, clientId, item.url, source.id)) processingJobsCreated++;
     } catch (e) {
       console.error(`[Worker] STORE failed for article: ${item.url}`, e);
     }
   }
 
-  return newArticles;
+  return {
+    newArticles,
+    metrics: finalizeFetchMetrics({
+      version: 1,
+      rawItemCount: metricsSeed.rawItemCount ?? items.length,
+      parsedItemCount: metricsSeed.parsedItemCount ?? items.length,
+      normalizedItemCount: metricsSeed.normalizedItemCount ?? items.length,
+      invalidItemCount,
+      missingPublicationTimeCount,
+      retentionRejectedCount: oldByRetentionCount + oldFacebookCount,
+      sourceFilterRejectedCount: rejectedCount,
+      eligibleItemCount,
+      duplicateSkippedCount,
+      insertionAttemptCount,
+      articleInsertions: newArticles,
+      appearanceInsertions,
+      processingJobsCreated,
+      retentionDays,
+      retentionCutoff: dateToUtcIso(new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000)),
+      oldestParsedPublicationTime: publicationTimestamps.length
+        ? dateToUtcIso(new Date(Math.min(...publicationTimestamps)))
+        : null,
+      newestParsedPublicationTime: publicationTimestamps.length
+        ? dateToUtcIso(new Date(Math.max(...publicationTimestamps)))
+        : null,
+    }),
+  };
 }
 
 async function enqueueFullArticleExtraction(
@@ -1222,9 +1346,9 @@ async function enqueueFullArticleExtraction(
   clientId: number,
   url: string,
   sourceId: number,
-): Promise<void> {
+): Promise<boolean> {
   const platform = detectPlatform(url);
-  if (platform && platform !== "google_news") return;
+  if (platform && platform !== "google_news") return false;
 
   try {
     await enqueueJob(
@@ -1232,8 +1356,10 @@ async function enqueueFullArticleExtraction(
       { articleId, clientId, sourceId, url },
       { priority: FULL_ARTICLE_JOB_PRIORITY, maxAttempts: 2 },
     );
+    return true;
   } catch (e: any) {
     console.warn(`[Worker] Full article extraction job not queued for article=${articleId}: ${e?.message || e}`);
+    return false;
   }
 }
 
@@ -1436,7 +1562,7 @@ export function registerArticleAnalysisHandler() {
 const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 2000;
 
-async function fetchWithRetry(source: any): Promise<{ newArticles: number; retries: number }> {
+async function fetchWithRetry(source: any): Promise<{ newArticles: number; retries: number; metrics: SourceFetchMetrics | null }> {
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     if (attempt > 0) {
@@ -1445,19 +1571,19 @@ async function fetchWithRetry(source: any): Promise<{ newArticles: number; retri
       await new Promise(r => setTimeout(r, delay));
     }
     try {
-      let newArticles: number;
+      let fetchResult: FetchResult;
       switch (source.type) {
-        case "rss": newArticles = await fetchRssArticles(source); break;
-        case "website": newArticles = await fetchWebsiteArticles(source); break;
-        case "twitter": newArticles = await fetchTwitterArticles(source); break;
-        case "youtube": newArticles = await fetchYouTubeArticles(source); break;
-        case "facebook": newArticles = await fetchFacebookArticles(source); break;
-        case "instagram": newArticles = await fetchInstagramArticles(source); break;
-        case "telegram": newArticles = await fetchTelegramArticles(source); break;
-        case "google_news": newArticles = await fetchGoogleNewsArticles(source); break;
-        default: newArticles = await fetchRssArticles(source);
+        case "rss": fetchResult = await fetchRssArticles(source); break;
+        case "website": fetchResult = await fetchWebsiteArticles(source); break;
+        case "twitter": fetchResult = await fetchTwitterArticles(source); break;
+        case "youtube": fetchResult = await fetchYouTubeArticles(source); break;
+        case "facebook": fetchResult = await fetchFacebookArticles(source); break;
+        case "instagram": fetchResult = await fetchInstagramArticles(source); break;
+        case "telegram": fetchResult = await fetchTelegramArticles(source); break;
+        case "google_news": fetchResult = await fetchGoogleNewsArticles(source); break;
+        default: fetchResult = await fetchRssArticles(source);
       }
-      return { newArticles, retries: attempt };
+      return { ...fetchResult, retries: attempt };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       console.warn(`[Worker] ${source.name}: attempt ${attempt + 1} failed - ${lastError.message}`);
@@ -1480,20 +1606,21 @@ export async function fetchSourceFeed(sourceId: number): Promise<number> {
     const durationMs = Date.now() - startTime;
 
     await storage.updateSourceLastFetched(source.id);
-    await storage.createFetchLog({
+    await createFetchLogWithOptionalMetrics({
       sourceId: source.id,
       status: "success",
       articlesFound: result.newArticles,
       retryCount: result.retries,
       durationMs,
       pipelineStep: "complete",
+      metrics: result.metrics,
     });
     console.log(`[Worker] COMPLETE | source=${source.name} | articles=${result.newArticles} | retries=${result.retries} | duration=${durationMs}ms`);
     return result.newArticles;
   } catch (err) {
     const durationMs = Date.now() - startTime;
     const errorMsg = err instanceof Error ? err.message : String(err);
-    await storage.createFetchLog({
+    await createFetchLogWithOptionalMetrics({
       sourceId: source.id,
       status: "error",
       articlesFound: 0,
@@ -1501,6 +1628,12 @@ export async function fetchSourceFeed(sourceId: number): Promise<number> {
       retryCount: MAX_RETRIES,
       durationMs,
       pipelineStep: "fetch",
+      metrics: finalizeFetchMetrics({
+        version: 1,
+        articleInsertions: 0,
+        appearanceInsertions: 0,
+        processingJobsCreated: 0,
+      }),
     });
 
     try {
