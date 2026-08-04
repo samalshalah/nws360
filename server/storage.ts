@@ -240,12 +240,12 @@ export type AtomicClientSetupResult = {
 export type AtomicLifecycleTransitionResult = {
   client: Client;
   affectedWorkspaceIds: number[];
-  auditLog: AdminAuditLog;
+  auditLog: AdminAuditLog | null;
 };
 
 export type AtomicWorkspaceUpdateResult = {
   workspace: Workspace;
-  auditLog: AdminAuditLog;
+  auditLog: AdminAuditLog | null;
 };
 
 export type AtomicWorkspaceCreateResult = {
@@ -1372,6 +1372,20 @@ function workspaceActivationBlockers(readiness: ClientReadinessSnapshot): string
     ...readinessTechnicalBlockers(readiness),
     ...lifecycleBlockers.filter((blocker) => blocker === "client_inactive"),
   ];
+}
+
+function clientActiveForLifecycleStatus(status: string): boolean {
+  return status === "setup" || status === "active";
+}
+
+function workspaceActiveForStatus(status: string): boolean {
+  return status === "active";
+}
+
+function workspaceLifecycleFieldsConsistent(workspace: Pick<Workspace, "status" | "active" | "activatedAt" | "activatedBy">, status: string): boolean {
+  if (workspace.active !== workspaceActiveForStatus(status)) return false;
+  if (status === "draft") return workspace.activatedAt == null && workspace.activatedBy == null;
+  return true;
 }
 
 function workspaceStatusUpdates(status: string, actorUserId: number, readiness: ClientReadinessSnapshot): Record<string, unknown> {
@@ -4145,6 +4159,11 @@ export class DatabaseStorage implements IStorage {
       }
 
       const requestedStatus = parsed.data.lifecycleStatus;
+      const requestedActive = clientActiveForLifecycleStatus(requestedStatus);
+      if (currentClient.lifecycleStatus === requestedStatus && currentClient.active === requestedActive) {
+        return { client: currentClient, affectedWorkspaceIds: [], auditLog: null };
+      }
+
       if (requestedStatus === "active") {
         const blockers = clientActivationBlockers(readiness);
         if (blockers.length > 0) {
@@ -4187,10 +4206,9 @@ export class DatabaseStorage implements IStorage {
         }
       }
 
-      const active = requestedStatus === "setup" || requestedStatus === "active";
       const [client] = await tx
         .update(clients)
-        .set({ lifecycleStatus: requestedStatus, active, updatedAt: new Date() } as any)
+        .set({ lifecycleStatus: requestedStatus, active: requestedActive, updatedAt: new Date() } as any)
         .where(eq(clients.id, clientId))
         .returning();
 
@@ -5612,6 +5630,22 @@ export class DatabaseStorage implements IStorage {
         .limit(1);
       if (!row) throw new StorageBoundaryError("Workspace source assignment not found", { status: 404, code: "assignment_not_found" });
       const profileVersion = row.profile?.profileVersion || row.assignment.relevanceProfileVersion || 1;
+      const requestedEnabled = parsed.status === "active";
+      if (row.assignment.status === parsed.status && Boolean(row.assignment.enabled) === requestedEnabled) {
+        if (parsed.status === "active") {
+          if (row.client.active === false || row.client.lifecycleStatus !== "active") {
+            throw new StorageBoundaryError("Client must be active before assignment activation", { status: 409, code: "client_inactive" });
+          }
+          if (row.workspace.active === false || row.workspace.status !== "active") {
+            throw new StorageBoundaryError("Workspace must be active before assignment activation", { status: 409, code: "workspace_inactive" });
+          }
+          await assertAssignmentHasCurrentRelevanceTest(tx, row.assignment, profileVersion, row.source, row.channel);
+        }
+        if (parsed.status === "ready") {
+          await assertAssignmentHasCurrentRelevanceTest(tx, row.assignment, profileVersion, row.source, row.channel);
+        }
+        return row.assignment;
+      }
       const updates: Record<string, unknown> = { status: parsed.status, updatedAt: new Date() };
       if (parsed.status === "active") {
         if (row.client.active === false || row.client.lifecycleStatus !== "active") {
@@ -7468,6 +7502,16 @@ export class DatabaseStorage implements IStorage {
       }
 
       const proposedStatus = normalized.proposed.status || currentWorkspace.status || "draft";
+      const normalizedUpdateKeys = Object.keys(normalized.updates);
+      if (
+        normalizedUpdateKeys.length === 1 &&
+        normalizedUpdateKeys[0] === "status" &&
+        String(proposedStatus) === currentWorkspace.status &&
+        workspaceLifecycleFieldsConsistent(currentWorkspace, String(proposedStatus))
+      ) {
+        return { workspace: currentWorkspace, auditLog: null };
+      }
+
       const updates = {
         ...normalized.updates,
         ...("status" in normalized.updates ? workspaceStatusUpdates(String(proposedStatus), actorUserId, readiness) : {}),

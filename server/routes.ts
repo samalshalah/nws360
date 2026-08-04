@@ -1423,6 +1423,10 @@ function buildTechnicalBlockers(input: {
   ].filter((blocker): blocker is string => Boolean(blocker));
 }
 
+function uniqueBlockers(blockers: string[]) {
+  return Array.from(new Set(blockers));
+}
+
 async function buildClientReadiness(clientId: number) {
   const [client, settings, workspaceRows] = await Promise.all([
     storage.getClient(clientId),
@@ -1435,12 +1439,25 @@ async function buildClientReadiness(clientId: number) {
   const organizationConfigured = Boolean(client && settings);
   const activeWorkspaceCount = workspaceRows.filter((workspace: any) => workspace.active !== false && workspace.status === "active").length;
   const activeClient = Boolean(client?.active !== false && client?.lifecycleStatus === "active");
-  const technicalBlockers = buildTechnicalBlockers({
-    organizationConfigured,
-    workspaceCount: workspaceRows.length,
-    relevanceProfilesConfigured,
-    ...publisherCounts,
-  });
+  const workspaceActivationReadiness = await Promise.all(workspaceRows.map((workspace) => buildWorkspaceActivationReadiness(clientId, workspace.id)));
+  const technicallyReadyWorkspaceCount = workspaceActivationReadiness.filter((item) => item.technicalReady).length;
+  const baseTechnicalBlockers = [
+    !organizationConfigured ? "organization_missing" : null,
+    workspaceRows.length === 0 ? "workspace_missing" : null,
+    publisherCounts.publisherProfilesConfigured === 0 ? "publisher_profiles_missing" : null,
+    publisherCounts.sourceChannelsConfigured === 0 ? "source_channels_missing" : null,
+  ].filter((blocker): blocker is string => Boolean(blocker));
+  const workspaceTechnicalBlockers = workspaceRows.length > 0 && technicallyReadyWorkspaceCount === 0
+    ? uniqueBlockers(workspaceActivationReadiness.flatMap((item) => item.technicalBlockers))
+      .filter((blocker) => !baseTechnicalBlockers.includes(blocker) && blocker !== "organization_missing" && blocker !== "workspace_missing")
+    : [];
+  const technicalBlockers = uniqueBlockers([
+    ...baseTechnicalBlockers,
+    ...workspaceTechnicalBlockers,
+    ...(workspaceRows.length > 0 && technicallyReadyWorkspaceCount === 0 && workspaceTechnicalBlockers.length === 0
+      ? ["workspace_activation_not_ready"]
+      : []),
+  ]);
   const lifecycleBlockers = [
     !activeClient ? "client_inactive" : null,
     workspaceRows.length > 0 && activeWorkspaceCount === 0 ? "workspace_inactive" : null,
@@ -1458,6 +1475,8 @@ async function buildClientReadiness(clientId: number) {
     workspaceCount: workspaceRows.length,
     activeWorkspaceCount,
     relevanceProfilesConfigured,
+    technicallyReadyWorkspaceCount,
+    clientActivationPolicy: "at_least_one_technically_ready_workspace",
     ...publisherCounts,
     technicalReady,
     lifecycleReady,
@@ -1474,13 +1493,14 @@ async function buildClientReadiness(clientId: number) {
 }
 
 async function buildWorkspaceActivationReadiness(clientId: number, workspaceId: number) {
-  const [client, settings, workspace, profile, assignments] = await Promise.all([
+  const [client, settings, workspaceRow, profile, assignments] = await Promise.all([
     storage.getClient(clientId),
     storage.getClientSettings(clientId),
     storage.getWorkspace(workspaceId),
     storage.getWorkspaceRelevanceProfile(workspaceId, clientId),
     storage.getWorkspaceSourceAssignments(clientId, workspaceId),
   ]);
+  const workspace = workspaceRow?.clientId === clientId ? workspaceRow : null;
   const publisherCounts = await storage.getClientPublisherReadinessCounts(clientId);
   const activeClient = Boolean(client?.active !== false && client?.lifecycleStatus === "active");
   const profileVersion = profile?.profileVersion || 1;

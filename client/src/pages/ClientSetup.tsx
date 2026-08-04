@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ORGANIZATION_TYPES } from "@shared/client-enrollment";
@@ -125,6 +126,8 @@ export default function ClientSetup() {
   const clientId = Number(params?.clientId);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { isAdmin, isPlatformScope } = usePermissions();
+  const canManageLifecycle = isAdmin && isPlatformScope;
   const [editingOrg, setEditingOrg] = useState(false);
   const [showWorkspaceForm, setShowWorkspaceForm] = useState(false);
   const [editingWorkspaceId, setEditingWorkspaceId] = useState<number | null>(null);
@@ -274,6 +277,14 @@ export default function ClientSetup() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/setup`] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/clients"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/workspaces`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/sources"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/source-summaries`] });
+      for (const workspace of data?.workspaces || []) {
+        queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/workspaces/${workspace.id}`] });
+        queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/workspaces/${workspace.id}/source-assignments`] });
+        queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/workspaces/${workspace.id}/sources`] });
+      }
       toast({ title: "Client activated", description: "Workspaces and source assignments remain inactive until activated separately." });
     },
     onError: (error) => {
@@ -288,6 +299,12 @@ export default function ClientSetup() {
     },
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/setup`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/workspaces`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/workspaces/${variables.workspaceId}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/workspaces/${variables.workspaceId}/source-assignments`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/workspaces/${variables.workspaceId}/sources`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/sources"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/source-summaries`] });
       toast({
         title: variables.status === "active" ? "Workspace activated" : "Workspace paused",
         description: "Source assignments remain controlled from source setup.",
@@ -333,7 +350,7 @@ export default function ClientSetup() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {!clientLifecycleActive && (
+          {canManageLifecycle && !clientLifecycleActive && (
             <Button
               onClick={() => activateClient.mutate()}
               disabled={activateClient.isPending || data.readiness.clientActivationReady === false}
@@ -493,7 +510,7 @@ export default function ClientSetup() {
                             <RadioTower className="mr-2 h-4 w-4" />
                             Configure Sources
                           </Button>
-                          {workspace.active ? (
+                          {canManageLifecycle && workspace.active ? (
                             <Button
                               size="sm"
                               variant="outline"
@@ -503,7 +520,7 @@ export default function ClientSetup() {
                               {changeWorkspaceStatus.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                               Pause Workspace
                             </Button>
-                          ) : (
+                          ) : canManageLifecycle ? (
                             <Button
                               size="sm"
                               onClick={() => changeWorkspaceStatus.mutate({ workspaceId: workspace.id, status: "active" })}
@@ -513,7 +530,7 @@ export default function ClientSetup() {
                               <CheckCircle2 className="mr-2 h-4 w-4" />
                               Activate Workspace
                             </Button>
-                          )}
+                          ) : null}
                           <Button size="sm" variant="ghost" onClick={() => startEditWorkspace(workspace)}>
                             <Settings className="mr-2 h-4 w-4" />
                             Edit Workspace
