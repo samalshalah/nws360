@@ -109,7 +109,12 @@ async function runIngestionObservabilityMigration(client, options = {}) {
   try {
     await client.query(ADVISORY_LOCK_SQL);
     output.statementsExecuted.push(ADVISORY_LOCK_SQL);
-    if (before.missingColumns.includes(METRICS_COLUMN)) {
+    const locked = await inspectIngestionObservability(client);
+    output.lockedInspection = locked;
+    if (!locked.sourceFetchLogsExists || locked.compatibilityIssues.length > 0) {
+      throw new Error(`locked_schema_not_apply_safe:${locked.compatibilityIssues.join(",") || "source_fetch_logs_missing"}`);
+    }
+    if (locked.missingColumns.includes(METRICS_COLUMN)) {
       await client.query(ADD_METRICS_COLUMN_SQL);
       output.statementsExecuted.push(ADD_METRICS_COLUMN_SQL);
       output.writes = true;

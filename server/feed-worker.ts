@@ -739,10 +739,10 @@ type FeedItem = {
   fullContentExtracted?: boolean;
 };
 
-function isRecentFacebookArticleDate(value: Date | null | undefined): value is Date {
+function isRecentFacebookArticleDate(value: Date | null | undefined, nowMs = Date.now()): value is Date {
   if (!value || Number.isNaN(value.getTime())) return false;
   const timestamp = value.getTime();
-  const now = Date.now();
+  const now = nowMs;
   return timestamp <= now + 24 * 60 * 60 * 1000 && timestamp >= now - FACEBOOK_MAX_ARTICLE_AGE_MS;
 }
 
@@ -751,10 +751,10 @@ function normalizeRetentionDays(value: number | null | undefined): number {
   return Math.min(MAX_SOURCE_RETENTION_DAYS, Math.max(1, Math.round(value as number)));
 }
 
-function isWithinRetentionWindow(value: Date | null | undefined, retentionDays: number): value is Date {
+function isWithinRetentionWindow(value: Date | null | undefined, retentionDays: number, nowMs = Date.now()): value is Date {
   if (!value || Number.isNaN(value.getTime())) return false;
   const timestamp = value.getTime();
-  const now = Date.now();
+  const now = nowMs;
   return timestamp <= now + 24 * 60 * 60 * 1000 && timestamp >= now - retentionDays * 24 * 60 * 60 * 1000;
 }
 
@@ -1110,6 +1110,7 @@ async function processItems(
   let processingJobsCreated = 0;
   let duplicateSkippedCount = 0;
   let insertionAttemptCount = 0;
+  const nowMs = Date.now();
 
   items.sort((a, b) => {
     const dateA = a.publishedAt instanceof Date ? a.publishedAt.getTime() : 0;
@@ -1123,13 +1124,15 @@ async function processItems(
     .filter((value): value is Date => Boolean(value && !Number.isNaN(value.getTime())));
   const publicationTimestamps = validPublicationTimes.map((value) => value.getTime());
   const missingPublicationTimeCount = items.length - validPublicationTimes.length;
-  const invalidItemCount = (metricsSeed.invalidItemCount ?? 0) + items.filter((item) => !item.url).length;
-  const retentionFilteredItems = items.filter((item) => isWithinRetentionWindow(item.publishedAt, retentionDays));
+  const itemsMissingUrlCount = items.filter((item) => !item.url).length;
+  const invalidItemCount = (metricsSeed.invalidItemCount ?? 0) + itemsMissingUrlCount;
+  const normalizedItemCount = Math.max(0, (metricsSeed.normalizedItemCount ?? items.length) - itemsMissingUrlCount);
+  const retentionFilteredItems = items.filter((item) => isWithinRetentionWindow(item.publishedAt, retentionDays, nowMs));
   const oldByRetentionCount = items.length - retentionFilteredItems.length;
   if (oldByRetentionCount > 0) console.log(`[Worker] ${source.name}: rejected ${oldByRetentionCount} article(s) outside ${retentionDays}d retention`);
 
   const recencyFilteredItems = source.type === "facebook"
-    ? retentionFilteredItems.filter((item) => isRecentFacebookArticleDate(item.publishedAt))
+    ? retentionFilteredItems.filter((item) => isRecentFacebookArticleDate(item.publishedAt, nowMs))
     : retentionFilteredItems;
   const oldFacebookCount = retentionFilteredItems.length - recencyFilteredItems.length;
   if (oldFacebookCount > 0) console.log(`[Worker] ${source.name}: rejected ${oldFacebookCount} old Facebook article(s)`);
@@ -1318,7 +1321,7 @@ async function processItems(
       version: 1,
       rawItemCount: metricsSeed.rawItemCount ?? items.length,
       parsedItemCount: metricsSeed.parsedItemCount ?? items.length,
-      normalizedItemCount: metricsSeed.normalizedItemCount ?? items.length,
+      normalizedItemCount,
       invalidItemCount,
       missingPublicationTimeCount,
       retentionRejectedCount: oldByRetentionCount + oldFacebookCount,
@@ -1330,7 +1333,7 @@ async function processItems(
       appearanceInsertions,
       processingJobsCreated,
       retentionDays,
-      retentionCutoff: dateToUtcIso(new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000)),
+      retentionCutoff: dateToUtcIso(new Date(nowMs - retentionDays * 24 * 60 * 60 * 1000)),
       oldestParsedPublicationTime: publicationTimestamps.length
         ? dateToUtcIso(new Date(Math.min(...publicationTimestamps)))
         : null,

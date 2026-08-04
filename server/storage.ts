@@ -1675,6 +1675,62 @@ export function safeNotFound(res: any): any {
   return res.status(404).json({ message: "Not found" });
 }
 
+function prepareFetchLogInsert(log: InsertSourceFetchLog): Record<string, any> {
+  const prepared = { ...log } as Record<string, any>;
+  const metrics = maybeNormalizeSourceFetchMetrics(log.metrics);
+  if (metrics) {
+    prepared.metrics = metrics;
+  } else {
+    delete prepared.metrics;
+  }
+  return prepared;
+}
+
+function isMissingFetchMetricsColumn(error: unknown): boolean {
+  const err = error as { code?: string; message?: string; routine?: string };
+  return err?.code === "42703"
+    && /metrics/i.test(String(err.message || ""))
+    && (!err.routine || /errorMissingColumn|MissingColumn/i.test(err.routine));
+}
+
+async function createFetchLogWithoutMetricsColumn(log: InsertSourceFetchLog): Promise<SourceFetchLog> {
+  const result = await db.execute(sql`
+    INSERT INTO source_fetch_logs (
+      source_id,
+      status,
+      articles_found,
+      error_message,
+      retry_count,
+      duration_ms,
+      pipeline_step
+    )
+    VALUES (
+      ${log.sourceId},
+      ${log.status},
+      ${log.articlesFound ?? 0},
+      ${log.errorMessage ?? null},
+      ${log.retryCount ?? 0},
+      ${log.durationMs ?? null},
+      ${log.pipelineStep ?? null}
+    )
+    RETURNING
+      id,
+      source_id AS "sourceId",
+      status,
+      articles_found AS "articlesFound",
+      error_message AS "errorMessage",
+      retry_count AS "retryCount",
+      duration_ms AS "durationMs",
+      pipeline_step AS "pipelineStep",
+      fetched_at AS "fetchedAt"
+  `);
+  const row = result.rows[0] as any;
+  return {
+    ...row,
+    metrics: null,
+  } as SourceFetchLog;
+}
+
 export interface IStorage {
   // Users
   getUser(id: number): Promise<User | undefined>;
@@ -2980,11 +3036,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createFetchLog(log: InsertSourceFetchLog): Promise<SourceFetchLog> {
-    const [entry] = await db.insert(sourceFetchLogs).values({
-      ...log,
-      metrics: maybeNormalizeSourceFetchMetrics(log.metrics),
-    }).returning();
-    return entry;
+    const prepared = prepareFetchLogInsert(log);
+    try {
+      const [entry] = await db.insert(sourceFetchLogs).values(prepared as any).returning();
+      return {
+        ...entry,
+        metrics: maybeNormalizeSourceFetchMetrics(entry.metrics),
+      };
+    } catch (error) {
+      if (isMissingFetchMetricsColumn(error)) {
+        return createFetchLogWithoutMetricsColumn(prepared as InsertSourceFetchLog);
+      }
+      throw error;
+    }
   }
 
   async createRejectedIngestionItem(item: InsertRejectedIngestionItem): Promise<RejectedIngestionItem> {

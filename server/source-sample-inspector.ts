@@ -176,13 +176,13 @@ function normalizeRetentionDays(value: number | null | undefined): number {
   return Math.min(MAX_RETENTION_DAYS, Math.max(1, Math.round(value as number)));
 }
 
-function retentionEvidence(items: OperationalSourceSampleItem[], source: Source) {
+function retentionEvidence(items: OperationalSourceSampleItem[], source: Source, nowMs = Date.now()) {
   const retentionDays = normalizeRetentionDays(source.retentionDays);
-  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+  const cutoff = new Date(nowMs - retentionDays * 24 * 60 * 60 * 1000);
   const retentionEligibleSampleCount = items.filter((item) => (
     item.publishedAt instanceof Date
     && !Number.isNaN(item.publishedAt.getTime())
-    && item.publishedAt.getTime() <= Date.now() + 24 * 60 * 60 * 1000
+    && item.publishedAt.getTime() <= nowMs + 24 * 60 * 60 * 1000
     && item.publishedAt.getTime() >= cutoff.getTime()
   )).length;
   return {
@@ -583,6 +583,7 @@ function chooseCollector(source: Source, channel?: PublisherChannel | null): { t
 
 function summarizeFailure(source: Source, channel: PublisherChannel | null | undefined, collectorType: OperationalSourceInspectionResult["collectorType"], identity: string, reason: string, error?: unknown): OperationalSourceInspectionResult {
   const errorCode = error ? safeNetworkErrorCode(error) : reason;
+  const retention = retentionEvidence([], source);
   return {
     success: false,
     collectorType,
@@ -600,10 +601,7 @@ function summarizeFailure(source: Source, channel: PublisherChannel | null | und
       rawItemCount: 0,
       itemCount: 0,
       filteredOutCount: 0,
-      retentionDays: normalizeRetentionDays(source.retentionDays),
-      retentionCutoff: new Date(Date.now() - normalizeRetentionDays(source.retentionDays) * 24 * 60 * 60 * 1000).toISOString(),
-      retentionEligibleSampleCount: 0,
-      retentionRejectedSampleCount: 0,
+      ...retention,
       bytesRead: null,
       responseTruncated: null,
       declaredContentLength: null,
@@ -632,6 +630,7 @@ export async function inspectOperationalSourceSample(
   options: { limit?: number } & OperationalSourceInspectionDeps = {},
 ): Promise<OperationalSourceInspectionResult> {
   const limit = Math.min(25, Math.max(1, options.limit || 25));
+  const nowMs = Date.now();
   const identity = sourceValidationIdentity(source, channel || null);
   const chosen = chooseCollector(source, channel);
   if (!chosen.url) return summarizeFailure(source, channel, chosen.type, identity, chosen.reason || "source_url_required");
@@ -695,7 +694,7 @@ export async function inspectOperationalSourceSample(
 
     rawItems.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
     const { accepted, filteredOutCount } = applySourceFilter(rawItems, source, limit);
-    const retention = retentionEvidence(rawItems, source);
+    const retention = retentionEvidence(rawItems, source, nowMs);
     return {
       success: true,
       collectorType: chosen.type,

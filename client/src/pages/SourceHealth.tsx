@@ -56,6 +56,13 @@ function metricValue(value: number | null | undefined): string {
 
 function zeroInsertMessage(metrics: SourceFetchMetrics | null | undefined): string | null {
   if (!metrics || metrics.articleInsertions > 0) return null;
+  if (
+    metrics.zeroInsertReason === "retention_rejected_all"
+    && typeof metrics.retentionRejectedCount === "number"
+    && typeof metrics.retentionDays === "number"
+  ) {
+    return `${metrics.retentionRejectedCount} item${metrics.retentionRejectedCount === 1 ? "" : "s"} were older than the ${metrics.retentionDays}-day retention window.`;
+  }
   return ZERO_INSERT_MESSAGES[metrics.zeroInsertReason] || ZERO_INSERT_MESSAGES.unknown;
 }
 

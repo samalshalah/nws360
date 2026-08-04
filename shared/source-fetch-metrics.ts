@@ -53,6 +53,14 @@ function subtractKnown(value: number | null, ...subtract: Array<number | null | 
   return Math.max(0, value - total);
 }
 
+function postValidationCount(metrics: SourceFetchMetricsInput): number | null {
+  const normalizedItemCount = knownCount(metrics.normalizedItemCount);
+  if (normalizedItemCount != null) return normalizedItemCount;
+  const parsedItemCount = knownCount(metrics.parsedItemCount);
+  if (parsedItemCount != null) return subtractKnown(parsedItemCount, metrics.invalidItemCount);
+  return null;
+}
+
 export function deriveZeroInsertReason(metrics: SourceFetchMetricsInput): ZeroInsertReason {
   const articleInsertions = knownCount(metrics.articleInsertions) ?? 0;
   if (articleInsertions > 0) return "not_zero";
@@ -67,12 +75,11 @@ export function deriveZeroInsertReason(metrics: SourceFetchMetricsInput): ZeroIn
 
   const normalizedItemCount = knownCount(metrics.normalizedItemCount);
   const invalidItemCount = knownCount(metrics.invalidItemCount);
-  if (normalizedItemCount != null && normalizedItemCount > 0 && invalidItemCount === normalizedItemCount) {
+  if (parsedItemCount != null && parsedItemCount > 0 && normalizedItemCount === 0 && invalidItemCount === parsedItemCount) {
     return "validation_rejected_all";
   }
 
-  const validationBase = normalizedItemCount ?? parsedItemCount ?? rawItemCount;
-  const afterValidation = subtractKnown(validationBase, invalidItemCount);
+  const afterValidation = postValidationCount(metrics);
   const retentionRejectedCount = knownCount(metrics.retentionRejectedCount);
   if (afterValidation != null && afterValidation > 0 && retentionRejectedCount === afterValidation) {
     return "retention_rejected_all";
@@ -135,8 +142,7 @@ const sourceFetchMetricsInputSchema = z.object({
     });
   }
   if (value.zeroInsertReason === "retention_rejected_all") {
-    const base = value.normalizedItemCount ?? value.parsedItemCount ?? value.rawItemCount;
-    const afterValidation = subtractKnown(base ?? null, value.invalidItemCount);
+    const afterValidation = postValidationCount(value);
     if (!afterValidation || value.retentionRejectedCount !== afterValidation || value.articleInsertions !== 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

@@ -57,7 +57,7 @@ assertReason(fixtureMetrics({
 assertReason(fixtureMetrics({
   rawItemCount: 4,
   parsedItemCount: 4,
-  normalizedItemCount: 4,
+  normalizedItemCount: 0,
   invalidItemCount: 4,
   eligibleItemCount: 0,
   insertionAttemptCount: 0,
@@ -105,6 +105,51 @@ assertReason(fixtureMetrics({
   appearanceInsertions: 0,
   processingJobsCreated: 0,
 }), "persistence_skipped_all");
+
+assertReason(fixtureMetrics({
+  rawItemCount: 6,
+  parsedItemCount: 6,
+  normalizedItemCount: 4,
+  invalidItemCount: 2,
+  retentionRejectedCount: 2,
+  sourceFilterRejectedCount: 1,
+  eligibleItemCount: 1,
+  duplicateSkippedCount: 0,
+  insertionAttemptCount: 0,
+  articleInsertions: 0,
+  appearanceInsertions: 0,
+  processingJobsCreated: 0,
+}), "mixed_rejections");
+
+assertReason(fixtureMetrics({
+  rawItemCount: 6,
+  parsedItemCount: null,
+  normalizedItemCount: null,
+  invalidItemCount: null,
+  retentionRejectedCount: 6,
+  sourceFilterRejectedCount: 0,
+  eligibleItemCount: null,
+  duplicateSkippedCount: 0,
+  insertionAttemptCount: 0,
+  articleInsertions: 0,
+  appearanceInsertions: 0,
+  processingJobsCreated: 0,
+}), "mixed_rejections");
+
+assertReason(fixtureMetrics({
+  rawItemCount: null,
+  parsedItemCount: null,
+  normalizedItemCount: null,
+  invalidItemCount: null,
+  retentionRejectedCount: null,
+  sourceFilterRejectedCount: null,
+  eligibleItemCount: null,
+  duplicateSkippedCount: null,
+  insertionAttemptCount: null,
+  articleInsertions: 0,
+  appearanceInsertions: 0,
+  processingJobsCreated: 0,
+}), "unknown");
 
 assertReason(fixtureMetrics({
   rawItemCount: 6,
@@ -182,11 +227,18 @@ const workerSource = readFileSync("server/feed-worker.ts", "utf8");
 assert.match(workerSource, /articlesFound:\s*result\.newArticles/);
 assert.match(workerSource, /metrics:\s*result\.metrics/);
 assert.match(workerSource, /createFetchLogWithOptionalMetrics/);
+assert.match(workerSource, /const nowMs = Date\.now\(\)/);
+assert.match(workerSource, /isWithinRetentionWindow\(item\.publishedAt, retentionDays, nowMs\)/);
 assert.match(workerSource, /retentionRejectedCount:\s*oldByRetentionCount \+ oldFacebookCount/);
 assert.match(workerSource, /duplicateSkippedCount\+\+/);
 
 const storageSource = readFileSync("server/storage.ts", "utf8");
 assert.match(storageSource, /maybeNormalizeSourceFetchMetrics\(log\.metrics\)/);
+assert.match(storageSource, /createFetchLogWithoutMetricsColumn/);
+assert.match(storageSource, /isMissingFetchMetricsColumn/);
 assert.match(storageSource, /lastMetrics/);
+
+const uiSource = readFileSync("client/src/pages/SourceHealth.tsx", "utf8");
+assert.match(uiSource, /were older than the \$\{metrics\.retentionDays\}-day retention window/);
 
 console.log("ingestion observability tests passed");
