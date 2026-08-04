@@ -77,6 +77,20 @@ function gridColumnClass(columns: GridColumnCount) {
   }[columns];
 }
 
+function GridDensityIcon({ columns }: { columns: GridColumnCount }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="grid h-4 w-6 gap-0.5"
+      style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+    >
+      {Array.from({ length: columns }).map((_, index) => (
+        <span key={index} className="rounded-[1px] bg-current opacity-80" />
+      ))}
+    </span>
+  );
+}
+
 export default function Feed() {
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
@@ -1129,15 +1143,40 @@ export default function Feed() {
             {searchBar}
           </div>
           <div className="hidden shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5 md:flex">
-            <Button
-              size="icon"
-              variant={layout === "grid" ? "default" : "ghost"}
-              onClick={() => { setLayout("grid"); localStorage.setItem("feed-layout-v2", "grid"); }}
-              data-testid="button-layout-grid"
-              title="Grid view"
-            >
-              <LayoutGrid className="w-4 h-4" />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="icon"
+                  variant={layout === "grid" ? "default" : "ghost"}
+                  data-testid="button-layout-grid"
+                  title="Grid view"
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-auto min-w-0 p-1" data-testid="grid-density-menu">
+                {GRID_COLUMN_OPTIONS.map((columns) => (
+                  <DropdownMenuItem
+                    key={columns}
+                    className={cn(
+                      "flex h-9 w-11 cursor-pointer items-center justify-center rounded-md p-0",
+                      gridColumns === columns && layout === "grid" && "bg-accent text-accent-foreground"
+                    )}
+                    onSelect={() => {
+                      setLayout("grid");
+                      setGridColumns(columns);
+                      localStorage.setItem("feed-layout-v2", "grid");
+                      localStorage.setItem("feed-grid-columns-v1", String(columns));
+                    }}
+                    data-testid={`menu-grid-columns-${columns}`}
+                    title={`${columns} cards per row`}
+                    aria-label={`${columns} cards per row`}
+                  >
+                    <GridDensityIcon columns={columns} />
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               size="icon"
               variant={layout === "list" ? "default" : "ghost"}
@@ -1148,26 +1187,6 @@ export default function Feed() {
               <List className="w-4 h-4" />
             </Button>
           </div>
-          {layout === "grid" && (
-            <div className="hidden shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5 md:flex" data-testid="grid-density-control">
-              {GRID_COLUMN_OPTIONS.map((columns) => (
-                <Button
-                  key={columns}
-                  size="sm"
-                  variant={gridColumns === columns ? "default" : "ghost"}
-                  className="h-8 w-8 px-0 text-xs tabular-nums"
-                  onClick={() => {
-                    setGridColumns(columns);
-                    localStorage.setItem("feed-grid-columns-v1", String(columns));
-                  }}
-                  data-testid={`button-grid-columns-${columns}`}
-                  title={`${columns} cards per row`}
-                >
-                  {columns}
-                </Button>
-              ))}
-            </div>
-          )}
           <div className="flex shrink-0 items-center gap-1.5">
             <div className="md:hidden flex items-center gap-1">
               <Button
