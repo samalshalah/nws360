@@ -43,6 +43,7 @@
     "test:ingestion-observability": "tsx scripts/test-ingestion-observability.ts && node scripts/test-ingestion-observability-migration.cjs",
     "test:source-health-schema-compatibility": "tsx scripts/test-source-health-schema-compatibility.ts",
     "test:admin-clients-users-navigation": "tsx scripts/test-admin-clients-users-navigation.ts",
+    "test:client-source-delete": "tsx scripts/test-client-source-delete.ts",
     "test:iraq-taxonomy-migration": "node scripts/test-iraq-taxonomy-migration.cjs",
     "test:reset-platform": "node scripts/test-reset-platform.cjs && tsx scripts/test-user-scope-validation.ts",
     "test:zero-state-periodic-jobs": "tsx scripts/test-zero-state-periodic-jobs.ts",

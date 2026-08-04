@@ -2086,7 +2086,7 @@ export async function registerRoutes(
       storage.getSources(clientId || undefined),
       storage.getSourceAssignmentSummaries(clientId),
     ]);
-    res.json(sources.map((source) => ({
+    res.json(sources.filter((source) => !source.deletedAt).map((source) => ({
       ...source,
       assignmentSummary: assignmentSummaries[source.id] || null,
     })));
@@ -2515,7 +2515,8 @@ export async function registerRoutes(
     if (!existingSource) {
       return safeNotFound(res);
     }
-    await storage.deleteSource(id, clientId);
+    await storage.softDeleteSource(id, clientId);
+    await storage.createAuditLog({ userId: user.id, action: "soft_delete", entity: "source", entityId: id, details: `Soft-deleted source #${id}` });
     runAnalyticsComputation().catch(e => console.error("[Analytics] Post-source-delete recomputation error:", e));
     res.sendStatus(204);
   });

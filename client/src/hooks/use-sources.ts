@@ -231,7 +231,10 @@ export function useDeleteSource() {
     mutationFn: async (id: number) => {
       const url = buildUrl(api.sources.delete.path, { id });
       const res = await fetch(url, { method: api.sources.delete.method });
-      if (!res.ok) throw new Error("Failed to delete source");
+      if (!res.ok) {
+        const error = await res.json().catch(() => null);
+        throw new Error(error?.message || "Failed to delete source");
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.sources.list.path] });

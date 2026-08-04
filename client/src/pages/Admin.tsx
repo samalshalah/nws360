@@ -1276,18 +1276,20 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                             >
                               <RefreshCw className={`w-4 h-4 ${isFetchingOne && groupSources.some(s => fetchingSourceId === s.id) ? "animate-spin" : ""}`} />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive"
-                              onClick={() => {
-                                groupSources.forEach(s => deleteSource(s.id));
-                              }}
-                              disabled={isDeleting}
-                              data-testid={`button-delete-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
+                            {hasCap(CAPS.SOURCES_DELETE) && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive"
+                                onClick={() => {
+                                  groupSources.forEach(s => deleteSource(s.id));
+                                }}
+                                disabled={isDeleting}
+                                data-testid={`button-delete-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1391,16 +1393,18 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                                 >
                                   <RefreshCw className={`w-4 h-4 ${isFetchingOne && fetchingSourceId === source.id ? "animate-spin" : ""}`} />
                                 </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="text-destructive"
-                                  onClick={() => deleteSource(source.id)}
-                                  disabled={isDeleting}
-                                  data-testid={`button-delete-source-${source.id}`}
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
+                                {hasCap(CAPS.SOURCES_DELETE) && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="text-destructive"
+                                    onClick={() => deleteSource(source.id)}
+                                    disabled={isDeleting}
+                                    data-testid={`button-delete-source-${source.id}`}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                )}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -1563,16 +1567,18 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                       >
                         <RefreshCw className={`w-4 h-4 ${isFetchingOne && groupSources.some(s => fetchingSourceId === s.id) ? "animate-spin" : ""}`} />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-destructive"
-                        onClick={() => groupSources.forEach(s => deleteSource(s.id))}
-                        disabled={isDeleting}
-                        data-testid={`button-delete-group-mobile-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      {hasCap(CAPS.SOURCES_DELETE) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive"
+                          onClick={() => groupSources.forEach(s => deleteSource(s.id))}
+                          disabled={isDeleting}
+                          data-testid={`button-delete-group-mobile-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 );
