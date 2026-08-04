@@ -32,6 +32,7 @@ const optionalUrlInput = z
   .optional()
   .transform((value) => String(value || "").trim() || null);
 const profileTermList = (max = 300) => z.array(z.string().trim().min(1).max(160)).max(max).optional().default([]);
+const tokenBudgetInput = z.coerce.number().int().min(0).max(50_000_000);
 
 export function normalizeSlug(value: string | null | undefined): string {
   return String(value || "")
@@ -108,6 +109,15 @@ export const clientSetupUpdateSchema = z.object({
   websiteUrl: optionalUrlInput,
   contactName: z.string().trim().max(200).nullable().optional().transform((value) => String(value || "").trim() || null),
   contactEmail: optionalEmailInput,
+  aiEnabled: z.boolean().optional(),
+  dailyTokenBudget: tokenBudgetInput.optional(),
+  dailyJobLimit: z.coerce.number().int().min(0).max(100_000).optional(),
+  autoTranslationEnabled: z.boolean().optional(),
+  aiTokenBudgets: z.object({
+    analysis: tokenBudgetInput.optional().default(0),
+    translation: tokenBudgetInput.optional().default(0),
+    summaries: tokenBudgetInput.optional().default(0),
+  }).optional(),
 }).strict();
 
 export type ClientSetupUpdateInput = z.infer<typeof clientSetupUpdateSchema>;
@@ -183,6 +193,9 @@ type ExistingClientSetup = {
     slug?: string | null;
     organizationType: string;
     defaultLanguage?: string | null;
+    aiEnabled?: boolean | null;
+    dailyTokenBudget?: number | null;
+    dailyJobLimit?: number | null;
   };
   settings?: {
     representedCountryCode?: string | null;
@@ -193,6 +206,12 @@ type ExistingClientSetup = {
     websiteUrl?: string | null;
     contactName?: string | null;
     contactEmail?: string | null;
+    autoTranslationEnabled?: boolean | null;
+    aiTokenBudgets?: {
+      analysis?: number;
+      translation?: number;
+      summaries?: number;
+    } | null;
     homeCountryCode?: string | null;
     homeCountryName?: string | null;
   } | null;
@@ -282,6 +301,9 @@ export function normalizeClientSetupUpdate(input: unknown, current: ExistingClie
   if (has("slug")) clientUpdates.slug = slug;
   if (has("organizationType")) clientUpdates.organizationType = data.organizationType;
   if (has("defaultLanguage")) clientUpdates.defaultLanguage = data.defaultLanguage!.trim().toLowerCase();
+  if (has("aiEnabled")) clientUpdates.aiEnabled = data.aiEnabled === true;
+  if (has("dailyTokenBudget")) clientUpdates.dailyTokenBudget = data.dailyTokenBudget;
+  if (has("dailyJobLimit")) clientUpdates.dailyJobLimit = data.dailyJobLimit;
 
   const settingsUpdates: Record<string, unknown> = {};
   if (representedInput !== undefined) settingsUpdates.representedCountryCode = representedInput;
@@ -292,6 +314,14 @@ export function normalizeClientSetupUpdate(input: unknown, current: ExistingClie
   if (has("websiteUrl")) settingsUpdates.websiteUrl = data.websiteUrl;
   if (has("contactName")) settingsUpdates.contactName = data.contactName;
   if (has("contactEmail")) settingsUpdates.contactEmail = data.contactEmail;
+  if (has("autoTranslationEnabled")) settingsUpdates.autoTranslationEnabled = data.autoTranslationEnabled === true;
+  if (has("aiTokenBudgets")) {
+    settingsUpdates.aiTokenBudgets = {
+      analysis: data.aiTokenBudgets?.analysis ?? 0,
+      translation: data.aiTokenBudgets?.translation ?? 0,
+      summaries: data.aiTokenBudgets?.summaries ?? 0,
+    };
+  }
 
   if (representedInput !== undefined || has("organizationType")) {
     const legacyCountry = isDiplomaticOrganizationType(organizationType) ? representedCountryCode : null;
@@ -313,6 +343,11 @@ export function normalizeClientSetupUpdate(input: unknown, current: ExistingClie
     websiteUrl: current.settings?.websiteUrl || null,
     contactName: current.settings?.contactName || null,
     contactEmail: current.settings?.contactEmail || null,
+    aiEnabled: current.client.aiEnabled ?? false,
+    dailyTokenBudget: current.client.dailyTokenBudget ?? 0,
+    dailyJobLimit: current.client.dailyJobLimit ?? 0,
+    autoTranslationEnabled: current.settings?.autoTranslationEnabled ?? false,
+    aiTokenBudgets: current.settings?.aiTokenBudgets ?? null,
     homeCountryCode: current.settings?.homeCountryCode || null,
     homeCountryName: current.settings?.homeCountryName || null,
   };

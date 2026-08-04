@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { useLocation, useRoute } from "wouter";
-import { ArrowLeft, CheckCircle2, Loader2, Plus, RadioTower, Settings, SlidersHorizontal, UserPlus, XCircle } from "lucide-react";
+import { ArrowLeft, Bot, CheckCircle2, Languages, Loader2, Plus, RadioTower, Settings, SlidersHorizontal, UserPlus, XCircle } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
@@ -59,6 +61,25 @@ type ClientSetupData = {
     websiteUrl?: string | null;
     contactName?: string | null;
     contactEmail?: string | null;
+  } | null;
+  aiConfig: {
+    aiEnabled: boolean;
+    dailyTokenBudget: number;
+    dailyJobLimit: number;
+    autoTranslationEnabled: boolean;
+    defaultTargetLanguage: string;
+    aiTokenBudgets: {
+      analysis: number;
+      translation: number;
+      summaries: number;
+    };
+    todayUsage: {
+      totalTokens: number;
+      jobCount: number;
+      analysisTokens: number;
+      translationTokens: number;
+      summariesTokens: number;
+    };
   } | null;
   workspaces: Array<{
     id: number;
@@ -146,6 +167,15 @@ export default function ClientSetup() {
     contactEmail: "",
   });
   const [workspaceForm, setWorkspaceForm] = useState({ ...defaultWorkspaceForm });
+  const [aiForm, setAiForm] = useState({
+    aiEnabled: false,
+    autoTranslationEnabled: false,
+    dailyTokenBudget: "0",
+    dailyJobLimit: "0",
+    analysisBudget: "0",
+    translationBudget: "0",
+    summariesBudget: "0",
+  });
 
   const { data, isLoading } = useQuery<ClientSetupData>({
     queryKey: [`/api/admin/clients/${clientId}/setup`],
@@ -171,6 +201,15 @@ export default function ClientSetup() {
       websiteUrl: data.organizationProfile?.websiteUrl || "",
       contactName: data.organizationProfile?.contactName || "",
       contactEmail: data.organizationProfile?.contactEmail || "",
+    });
+    setAiForm({
+      aiEnabled: data.aiConfig?.aiEnabled ?? false,
+      autoTranslationEnabled: data.aiConfig?.autoTranslationEnabled ?? false,
+      dailyTokenBudget: String(data.aiConfig?.dailyTokenBudget ?? 0),
+      dailyJobLimit: String(data.aiConfig?.dailyJobLimit ?? 0),
+      analysisBudget: String(data.aiConfig?.aiTokenBudgets.analysis ?? 0),
+      translationBudget: String(data.aiConfig?.aiTokenBudgets.translation ?? 0),
+      summariesBudget: String(data.aiConfig?.aiTokenBudgets.summaries ?? 0),
     });
   }, [data]);
 
@@ -200,6 +239,32 @@ export default function ClientSetup() {
     },
     onError: (error) => {
       toast({ variant: "destructive", title: "Save failed", description: error instanceof Error ? error.message : "Please try again." });
+    },
+  });
+
+  const saveAiConfig = useMutation({
+    mutationFn: async () => {
+      const numberValue = (value: string) => Math.max(0, Math.round(Number(value) || 0));
+      const res = await apiRequest("PATCH", `/api/admin/clients/${clientId}/setup`, {
+        aiEnabled: aiForm.aiEnabled,
+        autoTranslationEnabled: aiForm.aiEnabled && aiForm.autoTranslationEnabled,
+        dailyTokenBudget: numberValue(aiForm.dailyTokenBudget),
+        dailyJobLimit: numberValue(aiForm.dailyJobLimit),
+        aiTokenBudgets: {
+          analysis: numberValue(aiForm.analysisBudget),
+          translation: numberValue(aiForm.translationBudget),
+          summaries: numberValue(aiForm.summariesBudget),
+        },
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/setup`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/clients"] });
+      toast({ title: "AI controls saved" });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "AI controls failed", description: error instanceof Error ? error.message : "Please try again." });
     },
   });
 
@@ -574,6 +639,66 @@ export default function ClientSetup() {
         <div className="space-y-5">
           <Card>
             <CardHeader>
+              <CardTitle>AI Services</CardTitle>
+              <CardDescription>Control translation and token budgets for this client.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <ToggleRow
+                  icon={<Bot className="h-4 w-4" />}
+                  label="Activate AI"
+                  description="Allow analysis, translation, and summaries for this client."
+                  checked={aiForm.aiEnabled}
+                  onCheckedChange={(checked) => setAiForm((current) => ({ ...current, aiEnabled: checked }))}
+                />
+                <ToggleRow
+                  icon={<Languages className="h-4 w-4" />}
+                  label="Auto translation"
+                  description="Translate newly imported non-English articles into English."
+                  checked={aiForm.aiEnabled && aiForm.autoTranslationEnabled}
+                  disabled={!aiForm.aiEnabled}
+                  onCheckedChange={(checked) => setAiForm((current) => ({ ...current, autoTranslationEnabled: checked }))}
+                />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <NumberField label="Daily token budget" value={aiForm.dailyTokenBudget} onChange={(value) => setAiForm((current) => ({ ...current, dailyTokenBudget: value }))} />
+                <NumberField label="Daily job limit" value={aiForm.dailyJobLimit} onChange={(value) => setAiForm((current) => ({ ...current, dailyJobLimit: value }))} />
+              </div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <BudgetField
+                  label="Analysis tokens"
+                  value={aiForm.analysisBudget}
+                  used={data.aiConfig?.todayUsage.analysisTokens ?? 0}
+                  onChange={(value) => setAiForm((current) => ({ ...current, analysisBudget: value }))}
+                />
+                <BudgetField
+                  label="Translation tokens"
+                  value={aiForm.translationBudget}
+                  used={data.aiConfig?.todayUsage.translationTokens ?? 0}
+                  onChange={(value) => setAiForm((current) => ({ ...current, translationBudget: value }))}
+                />
+                <BudgetField
+                  label="Summary tokens"
+                  value={aiForm.summariesBudget}
+                  used={data.aiConfig?.todayUsage.summariesTokens ?? 0}
+                  onChange={(value) => setAiForm((current) => ({ ...current, summariesBudget: value }))}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-md border border-border p-3 text-sm">
+                <div>
+                  <div className="font-medium">{data.aiConfig?.todayUsage.totalTokens ?? 0} tokens used today</div>
+                  <div className="text-xs text-muted-foreground">{data.aiConfig?.todayUsage.jobCount ?? 0} AI jobs completed today. Use 0 for an unlimited category inside the global daily cap.</div>
+                </div>
+                <Button onClick={() => saveAiConfig.mutate()} disabled={saveAiConfig.isPending}>
+                  {saveAiConfig.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save AI Controls
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Readiness Checklist</CardTitle>
               <CardDescription>Monitoring remains inactive until publisher and source setup exists.</CardDescription>
             </CardHeader>
@@ -674,6 +799,40 @@ function TextField({ label, value, onChange }: { label: string; value: string; o
     <div className="space-y-2">
       <Label>{label}</Label>
       <Input value={value} onChange={(event) => onChange(event.target.value)} />
+    </div>
+  );
+}
+
+function NumberField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <Input type="number" min={0} step={1} value={value} onChange={(event) => onChange(event.target.value)} />
+    </div>
+  );
+}
+
+function BudgetField({ label, value, used, onChange }: { label: string; value: string; used: number; onChange: (value: string) => void }) {
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <Input type="number" min={0} step={1} value={value} onChange={(event) => onChange(event.target.value)} />
+      <div className="text-xs text-muted-foreground">{used} used today</div>
+    </div>
+  );
+}
+
+function ToggleRow({ icon, label, description, checked, disabled, onCheckedChange }: { icon: ReactNode; label: string; description: string; checked: boolean; disabled?: boolean; onCheckedChange: (checked: boolean) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="mt-0.5 text-muted-foreground">{icon}</div>
+        <div>
+          <div className="text-sm font-medium">{label}</div>
+          <div className="text-xs text-muted-foreground">{description}</div>
+        </div>
+      </div>
+      <Switch checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
     </div>
   );
 }

@@ -8,7 +8,7 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
 });
 
-export type InsightType = "summary" | "brief" | "prediction" | "classification" | "qa";
+export type InsightType = "summary" | "brief" | "prediction" | "classification" | "qa" | "translation";
 
 export interface AIJobPayload {
   systemPrompt: string;
@@ -46,9 +46,20 @@ export interface AiBudgetStatus {
   dailyJobLimit: number;
   todayTokens: number;
   todayJobs: number;
+  category?: "analysis" | "translation" | "summaries";
+  categoryTokenBudget?: number;
+  categoryTodayTokens?: number;
+  categoryRemainingTokens?: number;
 }
 
-export async function checkClientAiBudget(clientId: number): Promise<AiBudgetStatus> {
+function aiBudgetCategory(type?: InsightType): "analysis" | "translation" | "summaries" | undefined {
+  if (type === "translation") return "translation";
+  if (type === "summary" || type === "brief") return "summaries";
+  if (type === "classification" || type === "prediction" || type === "qa") return "analysis";
+  return undefined;
+}
+
+export async function checkClientAiBudget(clientId: number, type?: InsightType): Promise<AiBudgetStatus> {
   const client = await storage.getClient(clientId);
   if (!client) return { allowed: false, reason: "Client not found", remainingTokens: 0, remainingJobs: 0, dailyTokenBudget: 0, dailyJobLimit: 0, todayTokens: 0, todayJobs: 0 };
   if (!client.aiEnabled) return { allowed: false, reason: `AI disabled for client ${client.name} (id=${clientId})`, remainingTokens: 0, remainingJobs: 0, dailyTokenBudget: 0, dailyJobLimit: 0, todayTokens: 0, todayJobs: 0 };
@@ -71,7 +82,40 @@ export async function checkClientAiBudget(clientId: number): Promise<AiBudgetSta
     return { allowed: false, reason: `Daily token budget exhausted: ${usage.totalTokens}/${dailyTokenBudget}`, remainingTokens: 0, remainingJobs, dailyTokenBudget, dailyJobLimit, todayTokens: usage.totalTokens, todayJobs: usage.jobCount };
   }
 
-  return { allowed: true, remainingTokens, remainingJobs, dailyTokenBudget, dailyJobLimit, todayTokens: usage.totalTokens, todayJobs: usage.jobCount };
+  const category = aiBudgetCategory(type);
+  if (category) {
+    const settings = await storage.getClientSettings(clientId);
+    const categoryBudget = Number((settings?.aiTokenBudgets as any)?.[category] ?? 0);
+    if (categoryBudget > 0) {
+      const categoryTypes: Record<string, InsightType[]> = {
+        analysis: ["classification", "prediction", "qa"],
+        translation: ["translation"],
+        summaries: ["summary", "brief"],
+      };
+      const categoryUsageRows = await Promise.all(categoryTypes[category].map((usageType) => storage.getDailyAiUsage(clientId, usageType)));
+      const categoryTodayTokens = categoryUsageRows.reduce((sum, row) => sum + row.totalTokens, 0);
+      const categoryRemainingTokens = Math.max(0, categoryBudget - categoryTodayTokens);
+      if (categoryTodayTokens >= categoryBudget) {
+        return {
+          allowed: false,
+          reason: `Daily ${category} token budget exhausted: ${categoryTodayTokens}/${categoryBudget}`,
+          remainingTokens,
+          remainingJobs,
+          dailyTokenBudget,
+          dailyJobLimit,
+          todayTokens: usage.totalTokens,
+          todayJobs: usage.jobCount,
+          category,
+          categoryTokenBudget: categoryBudget,
+          categoryTodayTokens,
+          categoryRemainingTokens: 0,
+        };
+      }
+      return { allowed: true, remainingTokens, remainingJobs, dailyTokenBudget, dailyJobLimit, todayTokens: usage.totalTokens, todayJobs: usage.jobCount, category, categoryTokenBudget: categoryBudget, categoryTodayTokens, categoryRemainingTokens };
+    }
+  }
+
+  return { allowed: true, remainingTokens, remainingJobs, dailyTokenBudget, dailyJobLimit, todayTokens: usage.totalTokens, todayJobs: usage.jobCount, category };
 }
 
 export async function createInsightJob(
@@ -80,7 +124,7 @@ export async function createInsightJob(
   jobPayload?: AIJobPayload,
   maxTokens?: number,
 ): Promise<InsightJob> {
-  const budgetCheck = await checkClientAiBudget(clientId);
+  const budgetCheck = await checkClientAiBudget(clientId, type);
   if (!budgetCheck.allowed) {
     console.warn(`[AI Gateway] Job rejected for client ${clientId}: ${budgetCheck.reason}`);
     throw new Error(`[AI Gateway] Budget rejected: ${budgetCheck.reason}`);

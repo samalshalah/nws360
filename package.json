@@ -22,6 +22,7 @@
     "db:migrate:publisher-catalog": "node scripts/migrate-publisher-catalog.cjs",
     "db:migrate:workspace-source-assignments": "node scripts/migrate-workspace-source-assignments.cjs",
     "db:migrate:ingestion-observability": "node scripts/migrate-ingestion-observability.cjs",
+    "db:migrate:ai-token-budgets": "node scripts/migrate-ai-token-budgets.cjs",
     "reclassify:iraq-taxonomy": "node scripts/reclassify-iraq-taxonomy.cjs",
     "reset:platform": "node scripts/reset-platform.cjs",
     "cleanup:zero-state-jobs": "node scripts/cleanup-zero-state-jobs.cjs",

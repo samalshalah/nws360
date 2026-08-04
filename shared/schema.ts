@@ -117,6 +117,11 @@ export const clientSettings = pgTable("client_settings", {
   defaultMaxArticlesPerFetch: integer("default_max_articles_per_fetch").default(10),
   autoTranslationEnabled: boolean("auto_translation_enabled").default(false),
   defaultTargetLanguage: text("default_target_language").default("en"),
+  aiTokenBudgets: jsonb("ai_token_budgets").$type<{
+    analysis?: number;
+    translation?: number;
+    summaries?: number;
+  }>(),
   reportExportFormat: text("report_export_format").notNull().default("txt"),
   reportIncludeSummaries: boolean("report_include_summaries").default(true),
   homeCountryCode: text("home_country_code"),

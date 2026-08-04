@@ -710,6 +710,48 @@ function cleanText(raw: string): string {
     .trim();
 }
 
+function detectLikelyLanguage(text: string): string {
+  const value = String(text || "");
+  const arabicChars = value.match(/[\u0600-\u06FF]/g)?.length || 0;
+  if (arabicChars >= 3) return "ar";
+  return "en";
+}
+
+async function maybeQueueAutoTranslation(article: { id: number; clientId?: number | null; title?: string | null; content?: string | null; summary?: string | null; language?: string | null }) {
+  const clientId = article.clientId || undefined;
+  if (!clientId) return false;
+  const [client, settings] = await Promise.all([
+    storage.getClient(clientId),
+    storage.getClientSettings(clientId),
+  ]);
+  if (!client?.aiEnabled || !settings?.autoTranslationEnabled) return false;
+
+  const targetLanguage = "en";
+  const detectedLanguage = detectLikelyLanguage(`${article.title || ""}\n${article.content || ""}\n${article.summary || ""}`);
+  const storedLanguage = String(article.language || detectedLanguage || "en").split("-")[0].toLowerCase();
+  const effectiveLanguage = storedLanguage === "en" && detectedLanguage !== "en" ? detectedLanguage : storedLanguage;
+  if (effectiveLanguage === targetLanguage) return false;
+
+  const existing = await storage.getArticleTranslation(article.id, targetLanguage, clientId);
+  if (!existing) {
+    await storage.createArticleTranslation({
+      articleId: article.id,
+      targetLanguage,
+      status: "pending",
+      translatedTitle: null,
+      translatedContent: null,
+      translatedSummary: null,
+      clientId,
+    });
+  } else if (existing.status === "failed") {
+    await storage.updateArticleTranslation(existing.id, { status: "pending" }, clientId);
+  } else if (existing.status !== "pending") {
+    return false;
+  }
+  await enqueueJob("TRANSLATE_ARTICLE", { articleId: article.id, targetLanguage }, { maxAttempts: 2 });
+  return true;
+}
+
 function detectPlatform(url: string): string | null {
   if (!url) return null;
   const u = url.toLowerCase();
@@ -1305,6 +1347,7 @@ async function processItems(
       const created = await storage.createArticle(article);
       newArticles++;
       await persistWorkspaceRelevance(created.id, clientId, relevanceEvaluation.byWorkspace);
+      if (await maybeQueueAutoTranslation(created)) processingJobsCreated++;
       if (shouldRecordLinkedSourceAppearance(relevance.relevanceStatus)) {
         if (await recordLinkedSourceAppearance(source, created.id, item, true)) appearanceInsertions++;
       }
@@ -1531,7 +1574,7 @@ async function handleTranslateArticle(payload: { articleId: number; targetLangua
   try {
     const textToTranslate = `Title: ${article.title}\n\nContent: ${(article.content || "").substring(0, 3000)}${article.summary ? `\n\nSummary: ${article.summary}` : ""}`;
 
-    const job = await enqueueAIJob(effectiveClientId, "summary", {
+    const job = await enqueueAIJob(effectiveClientId, "translation", {
       systemPrompt: `You are a professional news translator. Translate the following news article to ${targetLangName}. Return JSON with: "title" (translated title), "content" (translated content), "summary" (translated summary). Respond ONLY with valid JSON.`,
       userContent: textToTranslate,
       responseFormat: { type: "json_object" },

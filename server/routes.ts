@@ -1555,11 +1555,18 @@ async function buildWorkspaceActivationReadiness(clientId: number, workspaceId: 
 }
 
 async function buildClientSetupPayload(clientId: number) {
-  const [client, settings, workspaceRows, readiness] = await Promise.all([
+  const [client, settings, workspaceRows, readiness, todayAiUsage] = await Promise.all([
     storage.getClient(clientId),
     storage.getClientSettings(clientId),
     storage.getWorkspaces(clientId),
     buildClientReadiness(clientId),
+    storage.getDailyAiUsage(clientId),
+  ]);
+  const [analysisUsage, translationUsage, summaryUsage, briefUsage] = await Promise.all([
+    storage.getDailyAiUsage(clientId, "classification"),
+    storage.getDailyAiUsage(clientId, "translation"),
+    storage.getDailyAiUsage(clientId, "summary"),
+    storage.getDailyAiUsage(clientId, "brief"),
   ]);
   const workspacesWithProfiles = await Promise.all(workspaceRows.map(async (workspace) => ({
     ...workspace,
@@ -1569,6 +1576,25 @@ async function buildClientSetupPayload(clientId: number) {
   return {
     client,
     organizationProfile: settings || null,
+    aiConfig: client ? {
+      aiEnabled: client.aiEnabled ?? false,
+      dailyTokenBudget: client.dailyTokenBudget ?? 0,
+      dailyJobLimit: client.dailyJobLimit ?? 0,
+      autoTranslationEnabled: settings?.autoTranslationEnabled ?? false,
+      defaultTargetLanguage: "en",
+      aiTokenBudgets: {
+        analysis: Number((settings?.aiTokenBudgets as any)?.analysis ?? 0),
+        translation: Number((settings?.aiTokenBudgets as any)?.translation ?? 0),
+        summaries: Number((settings?.aiTokenBudgets as any)?.summaries ?? 0),
+      },
+      todayUsage: {
+        totalTokens: todayAiUsage.totalTokens,
+        jobCount: todayAiUsage.jobCount,
+        analysisTokens: analysisUsage.totalTokens,
+        translationTokens: translationUsage.totalTokens,
+        summariesTokens: summaryUsage.totalTokens + briefUsage.totalTokens,
+      },
+    } : null,
     workspaces: workspacesWithProfiles,
     readiness,
   };

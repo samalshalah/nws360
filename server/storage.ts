@@ -2424,7 +2424,7 @@ export interface IStorage {
   recoverZombieRunningJobs(): Promise<number>;
   getJobCountsByStatus(): Promise<Record<string, number>>;
   createAiUsageLog(data: InsertAiUsageLog): Promise<AiUsageLog>;
-  getDailyAiUsage(clientId: number): Promise<{ totalTokens: number; jobCount: number }>;
+  getDailyAiUsage(clientId: number, type?: string): Promise<{ totalTokens: number; jobCount: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -8740,19 +8740,21 @@ export class DatabaseStorage implements IStorage {
     return log;
   }
 
-  async getDailyAiUsage(clientId: number): Promise<{ totalTokens: number; jobCount: number }> {
+  async getDailyAiUsage(clientId: number, type?: string): Promise<{ totalTokens: number; jobCount: number }> {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
+    const conditions = [
+      eq(aiUsageLog.clientId, clientId),
+      gte(aiUsageLog.createdAt, todayStart),
+    ];
+    if (type) conditions.push(eq(aiUsageLog.type, type));
 
     const result = await db.select({
       totalTokens: sql<number>`COALESCE(SUM(${aiUsageLog.totalTokens}), 0)`,
       jobCount: sql<number>`COUNT(*)`,
     })
       .from(aiUsageLog)
-      .where(and(
-        eq(aiUsageLog.clientId, clientId),
-        gte(aiUsageLog.createdAt, todayStart),
-      ));
+      .where(and(...conditions));
 
     return {
       totalTokens: Number(result[0]?.totalTokens ?? 0),
