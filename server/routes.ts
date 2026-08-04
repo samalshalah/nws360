@@ -4288,10 +4288,15 @@ export async function registerRoutes(
 
   // === SOURCE HEALTH ===
   app.get("/api/source-health", requireCapability(CAPS.SOURCE_HEALTH_VIEW), async (req, res) => {
-    const user = req.user as any;
-    const scopedSourceIds = await getUserSourceIds(user, req);
-    const health = await storage.getSourceHealth(scopedSourceIds);
-    res.json(health);
+    try {
+      const user = req.user as any;
+      const scopedSourceIds = await getUserSourceIds(user, req);
+      const health = await storage.getSourceHealth(scopedSourceIds);
+      res.json(health);
+    } catch (error) {
+      console.error("[SourceHealth] Failed to load source health:", error);
+      res.status(500).json({ message: "Source health unavailable" });
+    }
   });
 
   app.get("/api/source-health/:sourceId/logs", async (req, res) => {

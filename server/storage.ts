@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { isGenericAnalyticsTerm, normalizeAnalyticsValue } from "./analytics-noise";
 import { getArticleCategoryFilterCodes, getArticleCategoryLabel, mergeArticleCategoryRows, normalizeArticleCategoryCode } from "@shared/article-taxonomy";
 import { maybeNormalizeSourceFetchMetrics } from "@shared/source-fetch-metrics";
+import { normalizeSourceHealthRejectedHistory } from "@shared/source-health";
 import { evaluateWorkspaceRelevance, getDefaultRelevanceStatuses, isArticleRelevanceStatus, type ArticleRelevanceStatus } from "@shared/workspace-relevance";
 import {
   users, sources, articles, savedFeedViews, keywords, bookmarks, sourceFetchLogs, rejectedIngestionItems,
@@ -1731,6 +1732,11 @@ async function createFetchLogWithoutMetricsColumn(log: InsertSourceFetchLog): Pr
   } as SourceFetchLog;
 }
 
+async function rejectedIngestionHistoryAvailable(): Promise<boolean> {
+  const result = await db.execute(sql`SELECT to_regclass('public.rejected_ingestion_items') AS name`);
+  return Boolean((result.rows[0] as any)?.name);
+}
+
 export interface IStorage {
   // Users
   getUser(id: number): Promise<User | undefined>;
@@ -1795,9 +1801,11 @@ export interface IStorage {
     lastMetrics: SourceFetchLog["metrics"];
     successRate: number;
     totalFetches: number;
-    rejectedLast7d: number;
-    notRelevantLast7d: number;
-    needsReviewLast7d: number;
+    rejectedItemHistoryAvailable: boolean;
+    rejectedItemCount: number | null;
+    rejectedLast7d: number | null;
+    notRelevantLast7d: number | null;
+    needsReviewLast7d: number | null;
     lastFetchedAt: Date | null;
   }[]>;
 
@@ -3170,7 +3178,27 @@ export class DatabaseStorage implements IStorage {
     if (sourceIds !== undefined && sourceIds.length === 0) {
       return [];
     }
+    const rejectedHistoryAvailable = await rejectedIngestionHistoryAvailable();
     const sourceIdFilter = sourceIds ? sql`AND s.id IN (${sqlNumberList(sourceIds)})` : sql``;
+    const rejectedItemHistoryAvailableSelect = rejectedHistoryAvailable ? sql`true` : sql`false`;
+    const rejectedItemCountSelect = rejectedHistoryAvailable
+      ? sql`COALESCE(
+          (SELECT COUNT(*)::int FROM rejected_ingestion_items WHERE source_id = s.id AND evaluated_at >= NOW() - INTERVAL '7 days'),
+          0
+        )`
+      : sql`NULL::int`;
+    const notRelevantLast7dSelect = rejectedHistoryAvailable
+      ? sql`COALESCE(
+          (SELECT COUNT(*)::int FROM rejected_ingestion_items WHERE source_id = s.id AND rejection_status = 'not_relevant' AND evaluated_at >= NOW() - INTERVAL '7 days'),
+          0
+        )`
+      : sql`NULL::int`;
+    const needsReviewLast7dSelect = rejectedHistoryAvailable
+      ? sql`COALESCE(
+          (SELECT COUNT(*)::int FROM rejected_ingestion_items WHERE source_id = s.id AND rejection_status = 'needs_review' AND evaluated_at >= NOW() - INTERVAL '7 days'),
+          0
+        )`
+      : sql`NULL::int`;
     const rows = await db.execute(sql`
       SELECT
         s.id as "sourceId",
@@ -3191,35 +3219,29 @@ export class DatabaseStorage implements IStorage {
            FROM source_fetch_logs WHERE source_id = s.id),
           0
         ) as "successRate",
-        COALESCE(
-          (SELECT COUNT(*)::int FROM rejected_ingestion_items WHERE source_id = s.id AND evaluated_at >= NOW() - INTERVAL '7 days'),
-          0
-        ) as "rejectedLast7d",
-        COALESCE(
-          (SELECT COUNT(*)::int FROM rejected_ingestion_items WHERE source_id = s.id AND rejection_status = 'not_relevant' AND evaluated_at >= NOW() - INTERVAL '7 days'),
-          0
-        ) as "notRelevantLast7d",
-        COALESCE(
-          (SELECT COUNT(*)::int FROM rejected_ingestion_items WHERE source_id = s.id AND rejection_status = 'needs_review' AND evaluated_at >= NOW() - INTERVAL '7 days'),
-          0
-        ) as "needsReviewLast7d"
+        ${rejectedItemHistoryAvailableSelect} as "rejectedItemHistoryAvailable",
+        ${rejectedItemCountSelect} as "rejectedItemCount",
+        ${rejectedItemCountSelect} as "rejectedLast7d",
+        ${notRelevantLast7dSelect} as "notRelevantLast7d",
+        ${needsReviewLast7dSelect} as "needsReviewLast7d"
       FROM sources s
       WHERE 1=1 ${sourceIdFilter}
       ORDER BY s.name ASC
     `);
-    return (rows.rows as any[]).map(r => ({
-      sourceId: Number(r.sourceId),
-      sourceName: String(r.sourceName),
-      lastStatus: String(r.lastStatus),
-      lastError: r.lastError ? String(r.lastError) : null,
-      lastMetrics: maybeNormalizeSourceFetchMetrics(r.lastMetrics),
-      successRate: Number(r.successRate),
-      totalFetches: Number(r.totalFetches),
-      rejectedLast7d: Number(r.rejectedLast7d || 0),
-      notRelevantLast7d: Number(r.notRelevantLast7d || 0),
-      needsReviewLast7d: Number(r.needsReviewLast7d || 0),
-      lastFetchedAt: r.lastFetchedAt ? new Date(r.lastFetchedAt) : null,
-    }));
+    return (rows.rows as any[]).map(r => {
+      const rejectedHistory = normalizeSourceHealthRejectedHistory(r);
+      return {
+        sourceId: Number(r.sourceId),
+        sourceName: String(r.sourceName),
+        lastStatus: String(r.lastStatus),
+        lastError: r.lastError ? String(r.lastError) : null,
+        lastMetrics: maybeNormalizeSourceFetchMetrics(r.lastMetrics),
+        successRate: Number(r.successRate),
+        totalFetches: Number(r.totalFetches),
+        ...rejectedHistory,
+        lastFetchedAt: r.lastFetchedAt ? new Date(r.lastFetchedAt) : null,
+      };
+    });
   }
 
   async getUsers(parentId?: number): Promise<User[]> {

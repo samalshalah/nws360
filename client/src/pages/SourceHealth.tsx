@@ -11,6 +11,7 @@ import { Activity, AlertTriangle, Clock, Info } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
 import type { SourceFetchMetrics } from "@shared/source-fetch-metrics";
+import { sourceHealthZeroInsertMessage } from "@shared/source-health";
 
 function CardInfo({ description }: { description: string }) {
   return (
@@ -35,35 +36,13 @@ interface SourceHealthData {
   successRate: number;
   totalFetches: number;
   lastFetchedAt: string | null;
+  rejectedItemHistoryAvailable?: boolean;
+  rejectedItemCount?: number | null;
   lastMetrics?: SourceFetchMetrics | null;
 }
 
-const ZERO_INSERT_MESSAGES: Record<string, string> = {
-  no_raw_items: "No items were fetched from the source.",
-  parser_produced_no_items: "The source responded, but no article items were parsed.",
-  validation_rejected_all: "All parsed items failed basic validation.",
-  retention_rejected_all: "All items were older than the source retention window.",
-  source_filter_rejected_all: "All items were removed by source filters.",
-  duplicates_skipped_all: "All eligible items were already present.",
-  persistence_skipped_all: "Items reached insertion but no article was stored.",
-  mixed_rejections: "Items were dropped across multiple ingestion gates.",
-  unknown: "No inserted articles; the exact drop point is unknown.",
-};
-
 function metricValue(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : "n/a";
-}
-
-function zeroInsertMessage(metrics: SourceFetchMetrics | null | undefined): string | null {
-  if (!metrics || metrics.articleInsertions > 0) return null;
-  if (
-    metrics.zeroInsertReason === "retention_rejected_all"
-    && typeof metrics.retentionRejectedCount === "number"
-    && typeof metrics.retentionDays === "number"
-  ) {
-    return `${metrics.retentionRejectedCount} item${metrics.retentionRejectedCount === 1 ? "" : "s"} were older than the ${metrics.retentionDays}-day retention window.`;
-  }
-  return ZERO_INSERT_MESSAGES[metrics.zeroInsertReason] || ZERO_INSERT_MESSAGES.unknown;
 }
 
 function StatusBadge({ status, t }: { status: string; t: (key: string) => string }) {
@@ -231,6 +210,19 @@ export default function SourceHealth() {
                       </span>
                     </div>
 
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Rejected history</span>
+                      <span className="font-medium" data-testid={`text-rejected-history-${source.sourceId}`}>
+                        {source.rejectedItemHistoryAvailable ? metricValue(source.rejectedItemCount) : "n/a"}
+                      </span>
+                    </div>
+
+                    {!source.rejectedItemHistoryAvailable && (
+                      <p className="text-xs text-muted-foreground" data-testid={`text-rejected-history-unavailable-${source.sourceId}`}>
+                        Rejected-item history unavailable
+                      </p>
+                    )}
+
                     {source.lastMetrics && (
                       <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2 text-xs">
                         <div className="flex items-center justify-between gap-3">
@@ -247,9 +239,9 @@ export default function SourceHealth() {
                           <span>Duplicates {metricValue(source.lastMetrics.duplicateSkippedCount)}</span>
                           <span>Jobs {source.lastMetrics.processingJobsCreated}</span>
                         </div>
-                        {zeroInsertMessage(source.lastMetrics) && (
+                        {sourceHealthZeroInsertMessage(source.lastMetrics) && (
                           <p className="text-muted-foreground" data-testid={`text-zero-insert-reason-${source.sourceId}`}>
-                            {zeroInsertMessage(source.lastMetrics)}
+                            {sourceHealthZeroInsertMessage(source.lastMetrics)}
                           </p>
                         )}
                       </div>

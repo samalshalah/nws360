@@ -239,6 +239,8 @@ assert.match(storageSource, /isMissingFetchMetricsColumn/);
 assert.match(storageSource, /lastMetrics/);
 
 const uiSource = readFileSync("client/src/pages/SourceHealth.tsx", "utf8");
-assert.match(uiSource, /were older than the \$\{metrics\.retentionDays\}-day retention window/);
+const sourceHealthSharedSource = readFileSync("shared/source-health.ts", "utf8");
+assert.match(uiSource, /sourceHealthZeroInsertMessage\(source\.lastMetrics\)/);
+assert.match(sourceHealthSharedSource, /were older than the \$\{retentionDays\}-day retention window/);
 
 console.log("ingestion observability tests passed");
