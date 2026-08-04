@@ -44,6 +44,15 @@ export type WorkspaceSourcePublisherEligibilitySummary = {
 };
 
 export type WorkspaceSourceAssignmentReadinessDto = {
+  technicalReady: boolean;
+  lifecycleReady: boolean;
+  monitoringReady: boolean;
+  technicalBlockers: string[];
+  lifecycleBlockers: string[];
+  clientActivationReady?: boolean;
+  clientActivationBlockers?: string[];
+  workspaceActivationReady?: boolean;
+  workspaceActivationBlockers?: string[];
   sourceAssignmentsConfigured: number;
   sourceAssignmentTestsPassed: number;
   sourceAssignmentTestsStale: number;
@@ -152,6 +161,15 @@ export function normalizeApprovedPublisherEntry(value: unknown): WorkspaceSource
 function normalizeReadiness(value: unknown): WorkspaceSourceAssignmentReadinessDto {
   const input = isRecord(value) ? value : {};
   return {
+    technicalReady: Boolean(input.technicalReady),
+    lifecycleReady: Boolean(input.lifecycleReady),
+    monitoringReady: Boolean(input.monitoringReady),
+    technicalBlockers: Array.isArray(input.technicalBlockers) ? input.technicalBlockers.map(String) : [],
+    lifecycleBlockers: Array.isArray(input.lifecycleBlockers) ? input.lifecycleBlockers.map(String) : [],
+    clientActivationReady: input.clientActivationReady == null ? undefined : Boolean(input.clientActivationReady),
+    clientActivationBlockers: Array.isArray(input.clientActivationBlockers) ? input.clientActivationBlockers.map(String) : undefined,
+    workspaceActivationReady: input.workspaceActivationReady == null ? undefined : Boolean(input.workspaceActivationReady),
+    workspaceActivationBlockers: Array.isArray(input.workspaceActivationBlockers) ? input.workspaceActivationBlockers.map(String) : undefined,
     sourceAssignmentsConfigured: finiteNumber(input.sourceAssignmentsConfigured) ?? 0,
     sourceAssignmentTestsPassed: finiteNumber(input.sourceAssignmentTestsPassed) ?? 0,
     sourceAssignmentTestsStale: finiteNumber(input.sourceAssignmentTestsStale) ?? 0,

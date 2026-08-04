@@ -14,6 +14,31 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ORGANIZATION_TYPES } from "@shared/client-enrollment";
 import { WORKSPACE_PURPOSES, WORKSPACE_SCOPE_MODES } from "@shared/workspace-relevance";
 
+type ClientSetupReadiness = {
+  organizationConfigured: boolean;
+  workspaceCount: number;
+  activeWorkspaceCount: number;
+  relevanceProfilesConfigured: number;
+  publisherProfilesConfigured: number;
+  sourceChannelsConfigured: number;
+  sourceAssignmentsConfigured: number;
+  sourceAssignmentTestsPassed: number;
+  sourceAssignmentTestsStale: number;
+  sourceAssignmentsBlocked: number;
+  technicalReady: boolean;
+  lifecycleReady: boolean;
+  monitoringReady: boolean;
+  technicalBlockers: string[];
+  lifecycleBlockers: string[];
+  clientActivationReady?: boolean;
+  clientActivationBlockers?: string[];
+  workspaceActivationReady?: boolean;
+  workspaceActivationBlockers?: string[];
+  canActivateClient?: boolean;
+  canActivateWorkspace?: boolean;
+  blockers: string[];
+};
+
 type ClientSetupData = {
   client: {
     id: number;
@@ -49,21 +74,9 @@ type ClientSetupData = {
     status?: string | null;
     active?: boolean | null;
     relevanceProfile?: unknown | null;
+    activationEligibility?: ClientSetupReadiness | null;
   }>;
-  readiness: {
-    organizationConfigured: boolean;
-    workspaceCount: number;
-    activeWorkspaceCount: number;
-    relevanceProfilesConfigured: number;
-    publisherProfilesConfigured: number;
-    sourceChannelsConfigured: number;
-    sourceAssignmentsConfigured: number;
-    sourceAssignmentTestsPassed: number;
-    sourceAssignmentTestsStale: number;
-    sourceAssignmentsBlocked: number;
-    monitoringReady: boolean;
-    blockers: string[];
-  };
+  readiness: ClientSetupReadiness;
 };
 
 const defaultWorkspaceForm = {
@@ -250,6 +263,41 @@ export default function ClientSetup() {
     },
   });
 
+  const activateClient = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/admin/clients/${clientId}/lifecycle`, {
+        lifecycleStatus: "active",
+        reason: "Activated from client setup after technical readiness passed.",
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/setup`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/clients"] });
+      toast({ title: "Client activated", description: "Workspaces and source assignments remain inactive until activated separately." });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Client activation failed", description: error instanceof Error ? error.message : "Review technical blockers." });
+    },
+  });
+
+  const changeWorkspaceStatus = useMutation({
+    mutationFn: async ({ workspaceId, status }: { workspaceId: number; status: "active" | "paused" }) => {
+      const res = await apiRequest("PATCH", `/api/admin/clients/${clientId}/workspaces/${workspaceId}`, { status });
+      return res.json();
+    },
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/setup`] });
+      toast({
+        title: variables.status === "active" ? "Workspace activated" : "Workspace paused",
+        description: "Source assignments remain controlled from source setup.",
+      });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Workspace lifecycle failed", description: error instanceof Error ? error.message : "Review activation blockers." });
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -266,6 +314,8 @@ export default function ClientSetup() {
     );
   }
 
+  const clientLifecycleActive = data.client.lifecycleStatus === "active" && data.client.active !== false;
+
   return (
     <div className="space-y-5 animate-in fade-in duration-300">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -276,13 +326,23 @@ export default function ClientSetup() {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-2xl font-semibold tracking-tight">{data.client.name}</h1>
-              <Badge variant={data.client.active ? "default" : "destructive"}>{data.client.lifecycleStatus || "setup"}</Badge>
+              <Badge variant={clientLifecycleActive ? "default" : "secondary"}>{data.client.lifecycleStatus || "setup"}</Badge>
               <Badge variant="outline">Monitoring inactive</Badge>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">Client setup, draft workspaces, readiness, and next setup actions.</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {!clientLifecycleActive && (
+            <Button
+              onClick={() => activateClient.mutate()}
+              disabled={activateClient.isPending || data.readiness.clientActivationReady === false}
+            >
+              {activateClient.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Activate Client
+            </Button>
+          )}
           <Button variant="outline" onClick={() => setEditingOrg((current) => !current)}>
             <Settings className="mr-2 h-4 w-4" />
             Edit Organization
@@ -404,7 +464,16 @@ export default function ClientSetup() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {data.workspaces.map((workspace) => (
+                  {data.workspaces.map((workspace) => {
+                    const activation = workspace.activationEligibility || data.readiness;
+                    const workspaceLifecyclePending = activation.lifecycleBlockers?.filter((blocker) => blocker !== "workspace_inactive") || [];
+                    const canActivateWorkspace = activation.canActivateWorkspace ?? (
+                      Boolean(data.client?.active)
+                      && data.client?.lifecycleStatus === "active"
+                      && activation.workspaceActivationReady !== false
+                      && workspace.active !== true
+                    );
+                    return (
                     <div key={workspace.id} className="rounded-md border border-border p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div>
@@ -424,6 +493,27 @@ export default function ClientSetup() {
                             <RadioTower className="mr-2 h-4 w-4" />
                             Configure Sources
                           </Button>
+                          {workspace.active ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => changeWorkspaceStatus.mutate({ workspaceId: workspace.id, status: "paused" })}
+                              disabled={changeWorkspaceStatus.isPending}
+                            >
+                              {changeWorkspaceStatus.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Pause Workspace
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              onClick={() => changeWorkspaceStatus.mutate({ workspaceId: workspace.id, status: "active" })}
+                              disabled={changeWorkspaceStatus.isPending || !canActivateWorkspace}
+                            >
+                              {changeWorkspaceStatus.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              <CheckCircle2 className="mr-2 h-4 w-4" />
+                              Activate Workspace
+                            </Button>
+                          )}
                           <Button size="sm" variant="ghost" onClick={() => startEditWorkspace(workspace)}>
                             <Settings className="mr-2 h-4 w-4" />
                             Edit Workspace
@@ -436,8 +526,19 @@ export default function ClientSetup() {
                         <Info label="Countries" value={list(workspace.primaryCountryCodes)} />
                         <Info label="Languages" value={list(workspace.preferredLanguages)} />
                       </div>
+                      {(activation.technicalBlockers?.length > 0 || workspaceLifecyclePending.length > 0) && (
+                        <div className="mt-4 rounded-md border border-border bg-muted/30 p-3">
+                          <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Activation blockers</div>
+                          <div className="flex flex-wrap gap-1">
+                            {[...(activation.technicalBlockers || []), ...workspaceLifecyclePending].map((blocker) => (
+                              <Badge key={`${workspace.id}-${blocker}`} variant="outline">{blocker}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -460,13 +561,32 @@ export default function ClientSetup() {
               <ChecklistItem label={`Assignment tests passed: ${data.readiness.sourceAssignmentTestsPassed || 0}`} done={(data.readiness.sourceAssignmentTestsPassed || 0) > 0} />
               <ChecklistItem label={`Stale assignment tests: ${data.readiness.sourceAssignmentTestsStale || 0}`} done={(data.readiness.sourceAssignmentTestsStale || 0) === 0} />
               <ChecklistItem label={`Blocked assignments: ${data.readiness.sourceAssignmentsBlocked || 0}`} done={(data.readiness.sourceAssignmentsBlocked || 0) === 0} />
+              <ChecklistItem label="Technical ready" done={data.readiness.technicalReady} />
+              <ChecklistItem label="Lifecycle ready" done={data.readiness.lifecycleReady} />
               <ChecklistItem label="Monitoring ready" done={data.readiness.monitoringReady} />
-              {data.readiness.blockers.length > 0 && (
+              {(data.readiness.technicalBlockers?.length > 0 || data.readiness.lifecycleBlockers?.length > 0) && (
                 <div className="rounded-md border border-border bg-muted/30 p-3">
-                  <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Blockers</div>
-                  <div className="flex flex-wrap gap-1">
-                    {data.readiness.blockers.map((blocker) => <Badge key={blocker} variant="outline">{blocker}</Badge>)}
-                  </div>
+                  {data.readiness.technicalBlockers?.length > 0 && (
+                    <>
+                      <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Technical blockers</div>
+                      <div className="mb-3 flex flex-wrap gap-1">
+                        {data.readiness.technicalBlockers.map((blocker) => <Badge key={blocker} variant="outline">{blocker}</Badge>)}
+                      </div>
+                    </>
+                  )}
+                  {data.readiness.lifecycleBlockers?.length > 0 && (
+                    <>
+                      <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Lifecycle pending</div>
+                      <div className="flex flex-wrap gap-1">
+                        {data.readiness.lifecycleBlockers.map((blocker) => <Badge key={blocker} variant="secondary">{blocker}</Badge>)}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              {data.readiness.technicalReady && !data.readiness.lifecycleReady && (
+                <div className="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  All source assignments are configured and passed. Activate the client, then activate the workspace.
                 </div>
               )}
             </CardContent>

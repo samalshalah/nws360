@@ -261,14 +261,31 @@ function updateClientSetup(state: MemoryState, clientId: number, input: unknown,
   }
 }
 
-function transitionLifecycle(state: MemoryState, clientId: number, input: unknown, readiness = { monitoringReady: false, blockers: ["publisher_profiles_missing"] }) {
+type TestReadinessSnapshot = {
+  monitoringReady?: boolean;
+  technicalReady?: boolean;
+  lifecycleReady?: boolean;
+  technicalBlockers?: string[];
+  lifecycleBlockers?: string[];
+  blockers?: string[];
+  clientActivationBlockers?: string[];
+  workspaceActivationBlockers?: string[];
+};
+
+function technicalBlockers(readiness: TestReadinessSnapshot) {
+  return readiness.technicalBlockers ?? (readiness.blockers || []).filter((blocker) => blocker !== "client_inactive" && blocker !== "workspace_inactive");
+}
+
+function transitionLifecycle(state: MemoryState, clientId: number, input: unknown, readiness: TestReadinessSnapshot = { technicalReady: false, technicalBlockers: ["publisher_profiles_missing"] }) {
   const parsed = clientLifecycleUpdateSchema.parse(input);
   const client = state.clients.find((item) => item.id === clientId);
   if (!client) throw new Error("Client not found");
-  if (parsed.lifecycleStatus === "active" && !readiness.monitoringReady) {
+  const activationBlockers = readiness.clientActivationBlockers ?? technicalBlockers(readiness);
+  if (parsed.lifecycleStatus === "active" && activationBlockers.length > 0) {
     const error: any = new Error("Client cannot become active before publisher and source setup is complete");
     error.status = 409;
-    error.code = "readiness_blocked";
+    error.code = "client_activation_not_ready";
+    error.details = activationBlockers;
     throw error;
   }
   const affectedWorkspaceIds: number[] = [];
@@ -295,7 +312,7 @@ function transitionLifecycle(state: MemoryState, clientId: number, input: unknow
   return { client, affectedWorkspaceIds };
 }
 
-function updateWorkspacePatch(state: MemoryState, clientId: number, workspaceId: number, input: unknown, readiness = { monitoringReady: false, blockers: ["publisher_profiles_missing"] }) {
+function updateWorkspacePatch(state: MemoryState, clientId: number, workspaceId: number, input: unknown, readiness: TestReadinessSnapshot = { technicalReady: false, technicalBlockers: ["publisher_profiles_missing"] }) {
   const workspace = state.workspaces.find((item) => item.id === workspaceId && item.clientId === clientId);
   if (!workspace) {
     const error: any = new Error("Workspace not found");
@@ -316,9 +333,15 @@ function updateWorkspacePatch(state: MemoryState, clientId: number, workspaceId:
       throw error;
     }
   }
-  if (normalized.proposed.status === "active" && input && typeof input === "object" && "status" in input && !readiness.monitoringReady) {
+  const activationBlockers = readiness.workspaceActivationBlockers ?? [
+    ...technicalBlockers(readiness),
+    ...((readiness.lifecycleBlockers || readiness.blockers || []).filter((blocker) => blocker === "client_inactive")),
+  ];
+  if (normalized.proposed.status === "active" && input && typeof input === "object" && "status" in input && activationBlockers.length > 0) {
     const error: any = new Error("Workspace cannot activate before publisher and source setup is complete");
     error.status = 409;
+    error.code = "workspace_activation_not_ready";
+    error.details = activationBlockers;
     throw error;
   }
   Object.assign(workspace, normalized.updates);
@@ -326,6 +349,10 @@ function updateWorkspacePatch(state: MemoryState, clientId: number, workspaceId:
     Object.assign(workspace, { active: false, activatedAt: null, activatedBy: null });
   } else if (normalized.proposed.status === "ready" && input && typeof input === "object" && "status" in input) {
     workspace.active = false;
+  } else if (normalized.proposed.status === "active" && input && typeof input === "object" && "status" in input) {
+    workspace.active = true;
+    workspace.activatedAt = new Date().toISOString();
+    workspace.activatedBy = 2;
   } else if ((normalized.proposed.status === "paused" || normalized.proposed.status === "archived") && input && typeof input === "object" && "status" in input) {
     workspace.active = false;
   }
@@ -790,6 +817,19 @@ function testLifecycleTransitions() {
   assert.equal(state.clients[0].lifecycleStatus, "setup");
   assert.equal(state.clients[0].active, true);
   assert.throws(() => transitionLifecycle(state, clientId, { lifecycleStatus: "active" }), /publisher and source setup/);
+  transitionLifecycle(state, clientId, { lifecycleStatus: "active" }, {
+    technicalReady: true,
+    lifecycleReady: false,
+    monitoringReady: false,
+    technicalBlockers: [],
+    lifecycleBlockers: ["workspace_inactive"],
+    clientActivationBlockers: [],
+  });
+  assert.equal(state.clients[0].lifecycleStatus, "active");
+  assert.equal(state.workspaces[0].active, false, "client activation does not activate workspace");
+  assert.equal(state.sources.length, 0, "client activation does not create or activate sources");
+  assert.equal(state.articles.length, 0, "client activation does not ingest articles");
+  assert.equal(state.processingJobs.length, 0, "client activation does not enqueue jobs");
 }
 
 function testWorkspacePatchValidationAndAudit() {
@@ -825,6 +865,27 @@ function testWorkspaceDuplicateAndStatusConsistency() {
   assert.equal(draft.activatedAt, null);
   assert.equal(draft.activatedBy, null);
   assert.throws(() => updateWorkspacePatch(state, clientId, workspaceId!, { status: "active" }), /Workspace cannot activate/);
+  assert.throws(() => updateWorkspacePatch(state, clientId, workspaceId!, { status: "active" }, {
+    technicalReady: true,
+    technicalBlockers: [],
+    lifecycleBlockers: ["client_inactive"],
+    workspaceActivationBlockers: ["client_inactive"],
+  }), /Workspace cannot activate/);
+  transitionLifecycle(state, clientId, { lifecycleStatus: "active" }, {
+    technicalReady: true,
+    technicalBlockers: [],
+    clientActivationBlockers: [],
+  });
+  const active = updateWorkspacePatch(state, clientId, workspaceId!, { status: "active" }, {
+    technicalReady: true,
+    technicalBlockers: [],
+    lifecycleBlockers: ["workspace_inactive"],
+    workspaceActivationBlockers: [],
+  });
+  assert.equal(active.active, true);
+  assert.equal(state.sources.length, 0, "workspace activation does not create sources");
+  assert.equal(state.articles.length, 0, "workspace activation does not ingest articles");
+  assert.equal(state.processingJobs.length, 0, "workspace activation does not enqueue jobs");
 }
 
 function testCrossClientWorkspacePatchSafe404() {

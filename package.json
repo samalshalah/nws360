@@ -42,6 +42,7 @@
     "test:iraq-taxonomy-migration": "node scripts/test-iraq-taxonomy-migration.cjs",
     "test:reset-platform": "node scripts/test-reset-platform.cjs && tsx scripts/test-user-scope-validation.ts",
     "test:zero-state-periodic-jobs": "tsx scripts/test-zero-state-periodic-jobs.ts",
+    "test:lifecycle-activation-readiness": "tsx scripts/test-lifecycle-activation-readiness.ts",
     "data:backfill-categories": "tsx scripts/backfill-article-categories.ts",
     "db:push": "drizzle-kit push"
   },

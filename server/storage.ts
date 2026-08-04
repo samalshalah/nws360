@@ -218,8 +218,16 @@ export type WorkspaceAnalyticsScope = {
 };
 
 export type ClientReadinessSnapshot = {
+  technicalReady?: boolean;
+  lifecycleReady?: boolean;
   monitoringReady: boolean;
+  technicalBlockers?: string[];
+  lifecycleBlockers?: string[];
   blockers?: string[];
+  clientActivationReady?: boolean;
+  clientActivationBlockers?: string[];
+  workspaceActivationReady?: boolean;
+  workspaceActivationBlockers?: string[];
 };
 
 export type AtomicClientSetupResult = {
@@ -1347,6 +1355,25 @@ async function assertAssignmentHasCurrentRelevanceTest(
   return testRun;
 }
 
+function readinessTechnicalBlockers(readiness: ClientReadinessSnapshot): string[] {
+  if (Array.isArray(readiness.technicalBlockers)) return readiness.technicalBlockers;
+  return (readiness.blockers || []).filter((blocker) => blocker !== "client_inactive" && blocker !== "workspace_inactive");
+}
+
+function clientActivationBlockers(readiness: ClientReadinessSnapshot): string[] {
+  if (Array.isArray(readiness.clientActivationBlockers)) return readiness.clientActivationBlockers;
+  return readinessTechnicalBlockers(readiness);
+}
+
+function workspaceActivationBlockers(readiness: ClientReadinessSnapshot): string[] {
+  if (Array.isArray(readiness.workspaceActivationBlockers)) return readiness.workspaceActivationBlockers;
+  const lifecycleBlockers = Array.isArray(readiness.lifecycleBlockers) ? readiness.lifecycleBlockers : readiness.blockers || [];
+  return [
+    ...readinessTechnicalBlockers(readiness),
+    ...lifecycleBlockers.filter((blocker) => blocker === "client_inactive"),
+  ];
+}
+
 function workspaceStatusUpdates(status: string, actorUserId: number, readiness: ClientReadinessSnapshot): Record<string, unknown> {
   switch (status) {
     case "draft":
@@ -1354,12 +1381,15 @@ function workspaceStatusUpdates(status: string, actorUserId: number, readiness: 
     case "ready":
       return { status, active: false };
     case "active":
-      if (!readiness.monitoringReady) {
-        throw new StorageBoundaryError("Workspace cannot activate before publisher and source setup is complete", {
-          status: 409,
-          code: "readiness_blocked",
-          details: readiness.blockers || [],
-        });
+      {
+        const blockers = workspaceActivationBlockers(readiness);
+        if (blockers.length > 0) {
+          throw new StorageBoundaryError("Workspace cannot activate before publisher and source setup is complete", {
+            status: 409,
+            code: "workspace_activation_not_ready",
+            details: blockers,
+          });
+        }
       }
       return { status, active: true, activatedAt: new Date(), activatedBy: actorUserId };
     case "paused":
@@ -4115,12 +4145,15 @@ export class DatabaseStorage implements IStorage {
       }
 
       const requestedStatus = parsed.data.lifecycleStatus;
-      if (requestedStatus === "active" && !readiness.monitoringReady) {
-        throw new StorageBoundaryError("Client cannot become active before publisher and source setup is complete", {
-          status: 409,
-          code: "readiness_blocked",
-          details: readiness.blockers || [],
-        });
+      if (requestedStatus === "active") {
+        const blockers = clientActivationBlockers(readiness);
+        if (blockers.length > 0) {
+          throw new StorageBoundaryError("Client cannot become active before publisher and source setup is complete", {
+            status: 409,
+            code: "client_activation_not_ready",
+            details: blockers,
+          });
+        }
       }
 
       const workspaceRows = await tx.select().from(workspaces).where(eq(workspaces.clientId, clientId));

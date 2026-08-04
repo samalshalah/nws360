@@ -368,9 +368,24 @@ export default function WorkspaceSourceAssignments() {
               <Metric label="Passed tests" value={data.readiness.sourceAssignmentTestsPassed} />
               <Metric label="Stale tests" value={data.readiness.sourceAssignmentTestsStale} />
               <Metric label="Blocked assignments" value={data.readiness.sourceAssignmentsBlocked} />
-              <div className="flex flex-wrap gap-1">
-                {data.readiness.blockers.map((blocker) => <Badge key={blocker} variant="outline">{blocker}</Badge>)}
-              </div>
+              <Metric label="Technical ready" value={data.readiness.technicalReady ? "yes" : "no"} />
+              <Metric label="Lifecycle ready" value={data.readiness.lifecycleReady ? "yes" : "no"} />
+              {data.readiness.technicalBlockers.length > 0 && (
+                <div>
+                  <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Technical blockers</div>
+                  <div className="flex flex-wrap gap-1">
+                    {data.readiness.technicalBlockers.map((blocker) => <Badge key={blocker} variant="outline">{blocker}</Badge>)}
+                  </div>
+                </div>
+              )}
+              {data.readiness.lifecycleBlockers.length > 0 && (
+                <div>
+                  <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Lifecycle pending</div>
+                  <div className="flex flex-wrap gap-1">
+                    {data.readiness.lifecycleBlockers.map((blocker) => <Badge key={blocker} variant="secondary">{blocker}</Badge>)}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 

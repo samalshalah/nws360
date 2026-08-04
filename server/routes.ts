@@ -1358,6 +1358,71 @@ async function getAdminWorkspaceOrNotFound(clientId: number, workspaceId: number
   return workspace;
 }
 
+function currentAssignmentIdentityMatches(assignment: any, profileVersion: number): boolean {
+  const latestTest = assignment?.latestTest || null;
+  if (!latestTest) return false;
+  return latestTest.sourceValidationIdentity === assignment.sourceValidationIdentity
+    && latestTest.assignmentConfigIdentity === assignment.assignmentConfigIdentity
+    && latestTest.relevanceProfileVersion === profileVersion
+    && assignment.relevanceProfileVersion === profileVersion;
+}
+
+function summarizeWorkspaceAssignmentReadiness(assignments: any[], profileVersion: number) {
+  const activeAssignments = assignments.filter((assignment) => assignment.status !== "archived");
+  const hasApprovedWarning = (assignment: any) => Boolean(assignment.warningApprovedAt && assignment.warningApprovalReason);
+  const hasPassingResult = (assignment: any) => (
+    assignment.testStatus === "passed"
+    || (assignment.testStatus === "warning" && hasApprovedWarning(assignment))
+  );
+  const currentAssignments = activeAssignments.filter((assignment) => currentAssignmentIdentityMatches(assignment, profileVersion));
+  const sourceAssignmentsConfigured = currentAssignments.filter((assignment) => (
+    ["ready", "active"].includes(String(assignment.status))
+    && assignment.sourceId
+    && hasPassingResult(assignment)
+  )).length;
+  const sourceAssignmentTestsPassed = currentAssignments.filter((assignment) => (
+    assignment.testStatus === "passed" || assignment.testStatus === "warning"
+  )).length;
+  const sourceAssignmentTestsStale = activeAssignments.filter((assignment) => (
+    assignment.testStatus === "stale" || (assignment.latestTestRunId && !currentAssignmentIdentityMatches(assignment, profileVersion))
+  )).length;
+  const sourceAssignmentsBlocked = activeAssignments.filter((assignment) => (
+    ["untested", "failed", "stale"].includes(String(assignment.testStatus))
+    || (assignment.latestTestRunId && !currentAssignmentIdentityMatches(assignment, profileVersion))
+    || (assignment.testStatus === "warning" && !hasApprovedWarning(assignment))
+  )).length;
+  return {
+    sourceAssignmentsConfigured,
+    sourceAssignmentTestsPassed,
+    sourceAssignmentTestsStale,
+    sourceAssignmentsBlocked,
+  };
+}
+
+function buildTechnicalBlockers(input: {
+  organizationConfigured: boolean;
+  workspaceCount: number;
+  relevanceProfilesConfigured: number;
+  publisherProfilesConfigured: number;
+  sourceChannelsConfigured: number;
+  sourceAssignmentsConfigured: number;
+  sourceAssignmentTestsPassed: number;
+  sourceAssignmentTestsStale: number;
+  sourceAssignmentsBlocked: number;
+}) {
+  return [
+    !input.organizationConfigured ? "organization_missing" : null,
+    input.workspaceCount === 0 ? "workspace_missing" : null,
+    input.relevanceProfilesConfigured === 0 ? "relevance_profile_missing" : null,
+    input.publisherProfilesConfigured === 0 ? "publisher_profiles_missing" : null,
+    input.sourceChannelsConfigured === 0 ? "source_channels_missing" : null,
+    input.sourceAssignmentsConfigured === 0 ? "source_assignments_missing" : null,
+    input.sourceAssignmentTestsPassed === 0 ? "source_assignment_tests_missing" : null,
+    input.sourceAssignmentTestsStale > 0 ? "source_assignment_tests_stale" : null,
+    input.sourceAssignmentsBlocked > 0 ? "source_assignment_tests_failed" : null,
+  ].filter((blocker): blocker is string => Boolean(blocker));
+}
+
 async function buildClientReadiness(clientId: number) {
   const [client, settings, workspaceRows] = await Promise.all([
     storage.getClient(clientId),
@@ -1370,26 +1435,92 @@ async function buildClientReadiness(clientId: number) {
   const organizationConfigured = Boolean(client && settings);
   const activeWorkspaceCount = workspaceRows.filter((workspace: any) => workspace.active !== false && workspace.status === "active").length;
   const activeClient = Boolean(client?.active !== false && client?.lifecycleStatus === "active");
-  const blockers = [
+  const technicalBlockers = buildTechnicalBlockers({
+    organizationConfigured,
+    workspaceCount: workspaceRows.length,
+    relevanceProfilesConfigured,
+    ...publisherCounts,
+  });
+  const lifecycleBlockers = [
     !activeClient ? "client_inactive" : null,
-    workspaceRows.length === 0 ? "workspace_missing" : null,
-    relevanceProfilesConfigured === 0 ? "relevance_profile_missing" : null,
-    publisherCounts.publisherProfilesConfigured === 0 ? "publisher_profiles_missing" : null,
-    publisherCounts.sourceChannelsConfigured === 0 ? "source_channels_missing" : null,
-    publisherCounts.sourceAssignmentsConfigured === 0 ? "source_assignments_missing" : null,
-    publisherCounts.sourceAssignmentTestsPassed === 0 ? "source_assignment_tests_missing" : null,
-    publisherCounts.sourceAssignmentTestsStale > 0 ? "source_assignment_tests_stale" : null,
-    publisherCounts.sourceAssignmentsBlocked > 0 ? "source_assignment_tests_failed" : null,
-    activeWorkspaceCount === 0 ? "workspace_inactive" : null,
+    workspaceRows.length > 0 && activeWorkspaceCount === 0 ? "workspace_inactive" : null,
   ].filter((blocker): blocker is string => Boolean(blocker));
+  const technicalReady = technicalBlockers.length === 0;
+  const lifecycleReady = activeClient && activeWorkspaceCount > 0;
+  const blockers = [...technicalBlockers, ...lifecycleBlockers];
+  const clientActivationBlockers = technicalBlockers;
+  const workspaceActivationBlockers = [
+    ...technicalBlockers,
+    ...lifecycleBlockers.filter((blocker) => blocker === "client_inactive"),
+  ];
   return {
     organizationConfigured,
     workspaceCount: workspaceRows.length,
     activeWorkspaceCount,
     relevanceProfilesConfigured,
     ...publisherCounts,
-    monitoringReady: organizationConfigured && activeClient && blockers.length === 0,
+    technicalReady,
+    lifecycleReady,
+    monitoringReady: technicalReady && lifecycleReady,
+    technicalBlockers,
+    lifecycleBlockers,
+    clientActivationReady: clientActivationBlockers.length === 0,
+    clientActivationBlockers,
+    canActivateClient: clientActivationBlockers.length === 0 && !activeClient,
+    workspaceActivationReady: workspaceActivationBlockers.length === 0,
+    workspaceActivationBlockers,
     blockers,
+  };
+}
+
+async function buildWorkspaceActivationReadiness(clientId: number, workspaceId: number) {
+  const [client, settings, workspace, profile, assignments] = await Promise.all([
+    storage.getClient(clientId),
+    storage.getClientSettings(clientId),
+    storage.getWorkspace(workspaceId),
+    storage.getWorkspaceRelevanceProfile(workspaceId, clientId),
+    storage.getWorkspaceSourceAssignments(clientId, workspaceId),
+  ]);
+  const publisherCounts = await storage.getClientPublisherReadinessCounts(clientId);
+  const activeClient = Boolean(client?.active !== false && client?.lifecycleStatus === "active");
+  const profileVersion = profile?.profileVersion || 1;
+  const assignmentCounts = summarizeWorkspaceAssignmentReadiness(assignments, profileVersion);
+  const technicalBlockers = buildTechnicalBlockers({
+    organizationConfigured: Boolean(client && settings),
+    workspaceCount: workspace ? 1 : 0,
+    relevanceProfilesConfigured: profile ? 1 : 0,
+    publisherProfilesConfigured: publisherCounts.publisherProfilesConfigured,
+    sourceChannelsConfigured: publisherCounts.sourceChannelsConfigured,
+    ...assignmentCounts,
+  });
+  const lifecycleBlockers = [
+    !activeClient ? "client_inactive" : null,
+    workspace && (workspace.active === false || workspace.status !== "active") ? "workspace_inactive" : null,
+  ].filter((blocker): blocker is string => Boolean(blocker));
+  const workspaceActivationBlockers = [
+    ...technicalBlockers,
+    ...lifecycleBlockers.filter((blocker) => blocker === "client_inactive"),
+  ];
+  return {
+    organizationConfigured: Boolean(client && settings),
+    workspaceCount: workspace ? 1 : 0,
+    activeWorkspaceCount: workspace && workspace.active !== false && workspace.status === "active" ? 1 : 0,
+    relevanceProfilesConfigured: profile ? 1 : 0,
+    publisherProfilesConfigured: publisherCounts.publisherProfilesConfigured,
+    sourceChannelsConfigured: publisherCounts.sourceChannelsConfigured,
+    ...assignmentCounts,
+    technicalReady: technicalBlockers.length === 0,
+    lifecycleReady: activeClient && Boolean(workspace && workspace.active !== false && workspace.status === "active"),
+    monitoringReady: technicalBlockers.length === 0 && activeClient && Boolean(workspace && workspace.active !== false && workspace.status === "active"),
+    technicalBlockers,
+    lifecycleBlockers,
+    clientActivationReady: false,
+    clientActivationBlockers: ["workspace_lifecycle_endpoint_required"],
+    canActivateClient: false,
+    workspaceActivationReady: workspaceActivationBlockers.length === 0,
+    workspaceActivationBlockers,
+    canActivateWorkspace: workspaceActivationBlockers.length === 0 && Boolean(workspace && (workspace.active === false || workspace.status !== "active")),
+    blockers: [...technicalBlockers, ...lifecycleBlockers],
   };
 }
 
@@ -1403,6 +1534,7 @@ async function buildClientSetupPayload(clientId: number) {
   const workspacesWithProfiles = await Promise.all(workspaceRows.map(async (workspace) => ({
     ...workspace,
     relevanceProfile: await storage.getWorkspaceRelevanceProfile(workspace.id, clientId) || null,
+    activationEligibility: await buildWorkspaceActivationReadiness(clientId, workspace.id),
   })));
   return {
     client,
@@ -4673,8 +4805,11 @@ export async function registerRoutes(
     if (!Number.isInteger(clientId) || clientId <= 0) return res.status(400).json({ message: "Invalid client ID" });
     if (!Number.isInteger(workspaceId) || workspaceId <= 0) return res.status(400).json({ message: "Invalid workspace ID" });
     try {
-      const readiness = await buildClientReadiness(clientId);
-      const result = await storage.updateWorkspaceSetupAtomic(clientId, workspaceId, req.body || {}, user.id, readiness);
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      const readiness = "status" in body
+        ? await buildWorkspaceActivationReadiness(clientId, workspaceId)
+        : await buildClientReadiness(clientId);
+      const result = await storage.updateWorkspaceSetupAtomic(clientId, workspaceId, body, user.id, readiness);
       res.json(result.workspace);
     } catch (err) {
       return sendAdminStorageError(res, err, "Workspace update failed");
