@@ -195,6 +195,13 @@ export default function ClientEnrollmentWizard() {
     return countries || regions || "Not selected";
   }, [form.workspace.globalScope, form.workspace.primaryCountryCodes, form.workspace.regionCodes, form.workspace.scopeMode]);
 
+  const englishOnlyForm = (): EnrollmentForm => ({
+    ...form,
+    organization: { ...form.organization, defaultLanguage: "en" },
+    organizationContext: { ...form.organizationContext, defaultLanguages: ["en"] },
+    workspace: { ...form.workspace, preferredLanguages: ["en"] },
+  });
+
   const setOrganizationField = (key: keyof EnrollmentForm["organization"], value: string) => {
     setForm((current) => {
       const organization = { ...current.organization, [key]: value };
@@ -237,7 +244,7 @@ export default function ClientEnrollmentWizard() {
   const runPreview = async () => {
     setIsPreviewing(true);
     try {
-      const res = await apiRequest("POST", "/api/admin/client-enrollments/preview", form);
+      const res = await apiRequest("POST", "/api/admin/client-enrollments/preview", englishOnlyForm());
       const data = await res.json();
       setPreview(data);
       return data as PreviewResult;
@@ -267,7 +274,7 @@ export default function ClientEnrollmentWizard() {
         setStep(4);
         return;
       }
-      const res = await apiRequest("POST", "/api/admin/client-enrollments", form);
+      const res = await apiRequest("POST", "/api/admin/client-enrollments", englishOnlyForm());
       const data = await res.json();
       const clientId = data?.client?.id;
       toast({ title: data?.idempotent ? "Enrollment already exists" : "Client enrolled" });
@@ -330,7 +337,10 @@ export default function ClientEnrollmentWizard() {
                 </SelectContent>
               </Select>
             </div>
-            <TextField label="Default language" value={form.organization.defaultLanguage} onChange={(value) => setOrganizationField("defaultLanguage", value)} />
+            <div className="space-y-2">
+              <Label>Default language</Label>
+              <Input value="English" disabled data-testid="input-default-language-english-only" />
+            </div>
             <TextField label="Website" value={form.organization.websiteUrl} onChange={(value) => setOrganizationField("websiteUrl", value)} />
             <TextField label="Contact name" value={form.organization.contactName} onChange={(value) => setOrganizationField("contactName", value)} />
             <TextField label="Contact email" value={form.organization.contactEmail} onChange={(value) => setOrganizationField("contactEmail", value)} />
@@ -357,7 +367,10 @@ export default function ClientEnrollmentWizard() {
               </>
             )}
             <TextField label="Organization timezone" value={form.organizationContext.defaultTimezone} onChange={(value) => setContextField("defaultTimezone", value)} />
-            <ListField label="Preferred organization languages" value={form.organizationContext.defaultLanguages} onChange={(values) => setContextField("defaultLanguages", values)} />
+            <div className="space-y-2">
+              <Label>Preferred organization languages</Label>
+              <Input value="English" disabled data-testid="input-organization-languages-english-only" />
+            </div>
           </CardContent>
         </Card>
       )}
@@ -397,7 +410,10 @@ export default function ClientEnrollmentWizard() {
             <ListField label="Secondary monitoring countries" value={form.workspace.secondaryCountryCodes} onChange={(values) => setWorkspaceField("secondaryCountryCodes", values.map((item) => item.toUpperCase()))} />
             <ListField label="Regions" value={form.workspace.regionCodes} onChange={(values) => setWorkspaceField("regionCodes", values)} placeholder="mena, europe" />
             <ListField label="Subnational areas" value={form.workspace.subnationalAreas} onChange={(values) => setWorkspaceField("subnationalAreas", values)} />
-            <ListField label="Preferred monitoring languages" value={form.workspace.preferredLanguages} onChange={(values) => setWorkspaceField("preferredLanguages", values)} />
+            <div className="space-y-2">
+              <Label>Preferred monitoring languages</Label>
+              <Input value="English" disabled data-testid="input-workspace-languages-english-only" />
+            </div>
             <div className="flex items-center justify-between rounded-md border border-border p-3 md:col-span-2">
               <div>
                 <div className="text-sm font-medium">Global workspace</div>
@@ -470,7 +486,7 @@ export default function ClientEnrollmentWizard() {
                 ["Host country", form.organizationContext.hostCountryCode || "Not set"],
                 ["Headquarters country", form.organizationContext.headquartersCountryCode || "Not set"],
                 ["Timezone", form.organizationContext.defaultTimezone],
-                ["Languages", form.organizationContext.defaultLanguages.join(", ") || "Not set"],
+                ["Languages", "English"],
               ]} />
               <SummaryBlock title="Workspace" rows={[
                 ["Name", form.workspace.name || "Not set"],

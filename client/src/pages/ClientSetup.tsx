@@ -162,12 +162,12 @@ export default function ClientSetup() {
       name: data.client.name || "",
       slug: data.client.slug || "",
       organizationType: data.client.organizationType || "media",
-      defaultLanguage: data.client.defaultLanguage || "en",
+      defaultLanguage: "en",
       representedCountryCode: data.organizationProfile?.representedCountryCode || "",
       hostCountryCode: data.organizationProfile?.hostCountryCode || "",
       headquartersCountryCode: data.organizationProfile?.headquartersCountryCode || "",
       defaultTimezone: data.organizationProfile?.defaultTimezone || "UTC",
-      defaultLanguages: (data.organizationProfile?.defaultLanguages || [data.client.defaultLanguage || "en"]).join(", "),
+      defaultLanguages: "en",
       websiteUrl: data.organizationProfile?.websiteUrl || "",
       contactName: data.organizationProfile?.contactName || "",
       contactEmail: data.organizationProfile?.contactEmail || "",
@@ -180,12 +180,12 @@ export default function ClientSetup() {
         name: orgForm.name,
         slug: orgForm.slug,
         organizationType: orgForm.organizationType,
-        defaultLanguage: orgForm.defaultLanguage,
+        defaultLanguage: "en",
         representedCountryCode: orgForm.representedCountryCode || null,
         hostCountryCode: orgForm.hostCountryCode || null,
         headquartersCountryCode: orgForm.headquartersCountryCode || null,
         defaultTimezone: orgForm.defaultTimezone || null,
-        defaultLanguages: parseList(orgForm.defaultLanguages),
+        defaultLanguages: ["en"],
         websiteUrl: orgForm.websiteUrl || null,
         contactName: orgForm.contactName || null,
         contactEmail: orgForm.contactEmail || null,
@@ -226,7 +226,7 @@ export default function ClientSetup() {
       secondaryCountryCodes: (workspace.secondaryCountryCodes || []).join(", "),
       regionCodes: (workspace.regionCodes || []).join(", "),
       subnationalAreas: (workspace.subnationalAreas || []).join(", "),
-      preferredLanguages: (workspace.preferredLanguages || []).join(", ") || "en",
+      preferredLanguages: "en",
       timezone: workspace.timezone || "UTC",
       relevanceProfile: { ...defaultWorkspaceForm.relevanceProfile },
     });
@@ -245,7 +245,7 @@ export default function ClientSetup() {
         secondaryCountryCodes: parseList(workspaceForm.secondaryCountryCodes).map((item) => item.toUpperCase()),
         regionCodes: parseList(workspaceForm.regionCodes),
         subnationalAreas: parseList(workspaceForm.subnationalAreas),
-        preferredLanguages: parseList(workspaceForm.preferredLanguages),
+        preferredLanguages: ["en"],
         timezone: workspaceForm.timezone || "UTC",
       };
       if (!editingWorkspaceId) payload.relevanceProfile = workspaceForm.relevanceProfile;
@@ -392,12 +392,18 @@ export default function ClientSetup() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <TextField label="Default language" value={orgForm.defaultLanguage} onChange={(value) => setOrgForm((current) => ({ ...current, defaultLanguage: value }))} />
+                  <div className="space-y-2">
+                    <Label>Default language</Label>
+                    <Input value="English" disabled data-testid="input-client-setup-default-language-english-only" />
+                  </div>
                   <TextField label="Default timezone" value={orgForm.defaultTimezone} onChange={(value) => setOrgForm((current) => ({ ...current, defaultTimezone: value }))} />
                   <TextField label="Represented country" value={orgForm.representedCountryCode} onChange={(value) => setOrgForm((current) => ({ ...current, representedCountryCode: value.toUpperCase() }))} />
                   <TextField label="Host country" value={orgForm.hostCountryCode} onChange={(value) => setOrgForm((current) => ({ ...current, hostCountryCode: value.toUpperCase() }))} />
                   <TextField label="Headquarters country" value={orgForm.headquartersCountryCode} onChange={(value) => setOrgForm((current) => ({ ...current, headquartersCountryCode: value.toUpperCase() }))} />
-                  <TextField label="Preferred languages" value={orgForm.defaultLanguages} onChange={(value) => setOrgForm((current) => ({ ...current, defaultLanguages: value }))} />
+                  <div className="space-y-2">
+                    <Label>Preferred languages</Label>
+                    <Input value="English" disabled data-testid="input-client-setup-languages-english-only" />
+                  </div>
                   <TextField label="Website" value={orgForm.websiteUrl} onChange={(value) => setOrgForm((current) => ({ ...current, websiteUrl: value }))} />
                   <TextField label="Contact name" value={orgForm.contactName} onChange={(value) => setOrgForm((current) => ({ ...current, contactName: value }))} />
                   <TextField label="Contact email" value={orgForm.contactEmail} onChange={(value) => setOrgForm((current) => ({ ...current, contactEmail: value }))} />
@@ -413,12 +419,12 @@ export default function ClientSetup() {
                 <div className="grid gap-4 md:grid-cols-3">
                   <Info label="Type" value={labelize(data.client.organizationType)} />
                   <Info label="Slug" value={data.client.slug || "Not set"} />
-                  <Info label="Default language" value={data.client.defaultLanguage || "en"} />
+                  <Info label="Default language" value="English" />
                   <Info label="Represented country" value={data.organizationProfile?.representedCountryCode || "Not set"} />
                   <Info label="Host country" value={data.organizationProfile?.hostCountryCode || "Not set"} />
                   <Info label="Headquarters country" value={data.organizationProfile?.headquartersCountryCode || "Not set"} />
                   <Info label="Timezone" value={data.organizationProfile?.defaultTimezone || "UTC"} />
-                  <Info label="Languages" value={list(data.organizationProfile?.defaultLanguages)} />
+                  <Info label="Languages" value="English" />
                   <Info label="Contact" value={data.organizationProfile?.contactEmail || data.organizationProfile?.contactName || "Not set"} />
                 </div>
               )}
@@ -462,7 +468,10 @@ export default function ClientSetup() {
                     </div>
                     <TextField label="Primary countries" value={workspaceForm.primaryCountryCodes} onChange={(value) => setWorkspaceForm((current) => ({ ...current, primaryCountryCodes: value }))} />
                     <TextField label="Regions" value={workspaceForm.regionCodes} onChange={(value) => setWorkspaceForm((current) => ({ ...current, regionCodes: value }))} />
-                    <TextField label="Preferred languages" value={workspaceForm.preferredLanguages} onChange={(value) => setWorkspaceForm((current) => ({ ...current, preferredLanguages: value }))} />
+                    <div className="space-y-2">
+                      <Label>Preferred languages</Label>
+                      <Input value="English" disabled data-testid="input-workspace-preferred-languages-english-only" />
+                    </div>
                     <TextareaField label="Description" value={workspaceForm.description} onChange={(value) => setWorkspaceForm((current) => ({ ...current, description: value }))} />
                     <div className="flex gap-2 md:col-span-2">
                       <Button onClick={() => saveWorkspace.mutate()} disabled={saveWorkspace.isPending}>
@@ -541,7 +550,7 @@ export default function ClientSetup() {
                         <Info label="Purpose" value={labelize(workspace.purpose)} />
                         <Info label="Scope" value={labelize(workspace.scopeMode)} />
                         <Info label="Countries" value={list(workspace.primaryCountryCodes)} />
-                        <Info label="Languages" value={list(workspace.preferredLanguages)} />
+                        <Info label="Languages" value="English" />
                       </div>
                       {(activation.technicalBlockers?.length > 0 || workspaceLifecyclePending.length > 0) && (
                         <div className="mt-4 rounded-md border border-border bg-muted/30 p-3">

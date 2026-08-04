@@ -90,7 +90,7 @@ const SYSTEM_SETTING_DEFAULTS: Record<string, string> = {
   feedRefreshMinutes: "5",
   rawArticleRetentionDays: "30",
   analyticsRetentionMonths: "12",
-  defaultTargetLanguages: "en,ar",
+  defaultTargetLanguages: "en",
   autoTranslationEnabled: "true",
   keywordSpikeThreshold: "150",
   sentimentShiftSensitivity: "30",
@@ -120,7 +120,7 @@ const CLIENT_SETTING_DEFAULTS = {
 } as const;
 
 const clientSettingsInputSchema = z.object({
-  defaultLanguage: z.string().trim().min(2).max(12).optional(),
+  defaultLanguage: z.string().trim().min(2).max(12).optional().transform(() => "en"),
   feedLiveUpdateEnabled: z.boolean().optional(),
   feedLiveUpdateIntervalSeconds: z.coerce.number().int().min(15).max(300).optional(),
   feedLiveUpdateMode: z.enum(["notify", "auto_load"]).optional(),
@@ -129,7 +129,7 @@ const clientSettingsInputSchema = z.object({
   defaultSourceIntervalMinutes: z.coerce.number().int().min(5).max(1440).optional(),
   defaultMaxArticlesPerFetch: z.coerce.number().int().min(1).max(100).optional(),
   autoTranslationEnabled: z.boolean().optional(),
-  defaultTargetLanguage: z.string().trim().min(2).max(12).optional(),
+  defaultTargetLanguage: z.string().trim().min(2).max(12).optional().transform(() => "en"),
   reportExportFormat: z.enum(["txt", "csv"]).optional(),
   reportIncludeSummaries: z.boolean().optional(),
   homeCountryCode: z.string().trim().min(1).max(12).nullable().optional(),
@@ -142,7 +142,7 @@ const clientSettingsInputSchema = z.object({
   hostCountryCode: z.string().trim().min(1).max(12).nullable().optional(),
   headquartersCountryCode: z.string().trim().min(1).max(12).nullable().optional(),
   defaultTimezone: z.string().trim().min(2).max(80).nullable().optional(),
-  defaultLanguages: z.array(z.string().trim().min(2).max(20)).max(20).optional(),
+  defaultLanguages: z.array(z.string().trim().min(2).max(20)).max(20).optional().transform(() => ["en"]),
   websiteUrl: z.string().trim().max(500).nullable().optional(),
   contactName: z.string().trim().max(200).nullable().optional(),
   contactEmail: z.string().trim().email().max(254).nullable().optional(),

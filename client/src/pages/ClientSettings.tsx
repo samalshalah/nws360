@@ -43,10 +43,6 @@ type ClientSettingsPayload = {
 
 const LANGUAGE_OPTIONS = [
   { value: "en", label: "English" },
-  { value: "ar", label: "Arabic" },
-  { value: "fr", label: "French" },
-  { value: "es", label: "Spanish" },
-  { value: "tr", label: "Turkish" },
 ];
 
 function numberValue(value: number, min: number, max: number) {
@@ -93,7 +89,7 @@ export default function ClientSettings() {
   });
 
   useEffect(() => {
-    if (data) setForm(data);
+    if (data) setForm({ ...data, defaultLanguage: "en", defaultTargetLanguage: "en" });
   }, [data]);
 
   const dirty = useMemo(() => JSON.stringify(data || null) !== JSON.stringify(form || null), [data, form]);
@@ -106,7 +102,7 @@ export default function ClientSettings() {
     mutationFn: async () => {
       if (!form) throw new Error("Settings are not loaded");
       const res = await apiRequest("PUT", "/api/client/settings", {
-        defaultLanguage: form.defaultLanguage,
+        defaultLanguage: "en",
         feedLiveUpdateEnabled: form.feedLiveUpdateEnabled,
         feedLiveUpdateIntervalSeconds: numberValue(form.feedLiveUpdateIntervalSeconds, 15, 300),
         feedLiveUpdateMode: form.feedLiveUpdateMode,
@@ -115,7 +111,7 @@ export default function ClientSettings() {
         defaultSourceIntervalMinutes: numberValue(form.defaultSourceIntervalMinutes, 5, 1440),
         defaultMaxArticlesPerFetch: numberValue(form.defaultMaxArticlesPerFetch, 1, 100),
         autoTranslationEnabled: form.autoTranslationEnabled,
-        defaultTargetLanguage: form.defaultTargetLanguage,
+        defaultTargetLanguage: "en",
         reportExportFormat: form.reportExportFormat,
         reportIncludeSummaries: form.reportIncludeSummaries,
         homeCountryCode: nullableText(form.homeCountryCode),

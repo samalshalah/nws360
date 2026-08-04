@@ -53,15 +53,7 @@ export function normalizeWorkspaceName(value: string | null | undefined): string
 }
 
 export function normalizeLanguageList(values: string[] | null | undefined): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const value of values || []) {
-    const cleaned = String(value || "").trim().toLowerCase();
-    if (!cleaned || seen.has(cleaned)) continue;
-    seen.add(cleaned);
-    result.push(cleaned);
-  }
-  return result;
+  return ["en"];
 }
 
 export function normalizeTermList(values: string[] | null | undefined): string[] {
@@ -107,12 +99,12 @@ export const clientSetupUpdateSchema = z.object({
   name: z.string().trim().min(2).max(200).optional(),
   slug: z.string().trim().min(2).max(100).optional(),
   organizationType: z.enum(ORGANIZATION_TYPES).optional(),
-  defaultLanguage: z.string().trim().min(2).max(20).optional(),
+  defaultLanguage: z.string().trim().min(2).max(20).optional().transform(() => "en"),
   representedCountryCode: optionalCountryInput,
   hostCountryCode: optionalCountryInput,
   headquartersCountryCode: optionalCountryInput,
   defaultTimezone: z.string().trim().min(2).max(80).nullable().optional(),
-  defaultLanguages: z.array(z.string().trim().min(2).max(20)).max(20).optional(),
+  defaultLanguages: z.array(z.string().trim().min(2).max(20)).max(20).optional().transform(() => ["en"]),
   websiteUrl: optionalUrlInput,
   contactName: z.string().trim().max(200).nullable().optional().transform((value) => String(value || "").trim() || null),
   contactEmail: optionalEmailInput,
@@ -130,7 +122,7 @@ export const workspaceSetupUpdateSchema = z.object({
   secondaryCountryCodes: z.array(z.string().trim().max(80)).max(80).optional(),
   regionCodes: z.array(z.string().trim().max(80)).max(80).optional(),
   subnationalAreas: stringList.optional(),
-  preferredLanguages: z.array(z.string().trim().min(2).max(20)).max(20).optional(),
+  preferredLanguages: z.array(z.string().trim().min(2).max(20)).max(20).optional().transform(() => ["en"]),
   timezone: z.string().trim().min(2).max(80).optional(),
   taxonomyTemplateCode: optionalText(120),
   relevanceProfileCode: optionalText(120),
@@ -345,7 +337,7 @@ export const clientEnrollmentSchema = z.object({
     name: z.string().trim().min(2).max(200),
     slug: z.string().trim().min(2).max(100).optional().nullable(),
     organizationType: z.enum(ORGANIZATION_TYPES).default("media"),
-    defaultLanguage: z.string().trim().min(2).max(20).default("en"),
+    defaultLanguage: z.string().trim().min(2).max(20).default("en").transform(() => "en"),
     websiteUrl: optionalText(500),
     contactName: optionalText(200),
     contactEmail: z.string().trim().email().max(254).optional().nullable().or(z.literal("")).transform((value) => String(value || "").trim() || null),
@@ -355,7 +347,7 @@ export const clientEnrollmentSchema = z.object({
     hostCountryCode: z.string().trim().max(80).optional().nullable(),
     headquartersCountryCode: z.string().trim().max(80).optional().nullable(),
     defaultTimezone: z.string().trim().min(2).max(80).default("UTC"),
-    defaultLanguages: z.array(z.string().trim().min(2).max(20)).max(20).default(["en"]),
+    defaultLanguages: z.array(z.string().trim().min(2).max(20)).max(20).default(["en"]).transform(() => ["en"]),
   }),
   workspace: z.object({
     name: z.string().trim().min(2).max(200),
@@ -367,7 +359,7 @@ export const clientEnrollmentSchema = z.object({
     secondaryCountryCodes: z.array(z.string().trim().max(80)).max(80).optional().default([]),
     regionCodes: z.array(z.string().trim().max(80)).max(80).optional().default([]),
     subnationalAreas: stringList,
-    preferredLanguages: z.array(z.string().trim().min(2).max(20)).max(20).optional().default([]),
+    preferredLanguages: z.array(z.string().trim().min(2).max(20)).max(20).optional().default(["en"]).transform(() => ["en"]),
     timezone: z.string().trim().min(2).max(80).default("UTC"),
     taxonomyTemplateCode: optionalText(120),
     relevanceProfileCode: optionalText(120),
