@@ -19,6 +19,7 @@ export function useArticles(params?: ArticleQueryParams) {
         if (params.workflowStatus) searchParams.set("workflowStatus", params.workflowStatus);
         if (params.manualTag) searchParams.set("manualTag", params.manualTag);
         if (params.sourceType) searchParams.set("sourceType", params.sourceType);
+        if (params.sourceCategory) searchParams.set("sourceCategory", params.sourceCategory);
         if (params.officialSources) searchParams.set("officialSources", "true");
         if (params.sourceName) searchParams.set("sourceName", params.sourceName);
         if (params.sort) searchParams.set("sort", params.sort);

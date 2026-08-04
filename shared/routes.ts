@@ -111,6 +111,7 @@ export const api = {
         sourceId: z.coerce.number().optional(),
         sourceName: z.string().optional(),
         sourceType: z.string().optional(),
+        sourceCategory: z.string().optional(),
         officialSources: z.string().optional(),
         category: z.string().optional(),
         priority: z.string().optional(),

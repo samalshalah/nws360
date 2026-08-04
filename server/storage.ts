@@ -2648,6 +2648,10 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(sources.type, params.sourceType));
       needsSourceJoin = true;
     }
+    if (params?.sourceCategory) {
+      conditions.push(eq(sources.category, params.sourceCategory));
+      needsSourceJoin = true;
+    }
     if (params?.officialSources) {
       conditions.push(inArray(sources.category, OFFICIAL_SOURCE_CATEGORY_CODES));
       needsSourceJoin = true;

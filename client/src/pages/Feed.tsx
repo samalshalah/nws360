@@ -21,6 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { CAPS } from "@shared/schema";
 import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, ARTICLE_WORKFLOW_STATUSES, IRAQ_PROVINCES, getArticleCategoryLabel, type EmbassyProfile } from "@shared/article-taxonomy";
+import { OFFICIAL_SOURCE_CATEGORY_CODES, OFFICIAL_SOURCE_CATEGORIES, getSourceCategoryLabel } from "@shared/source-categories";
 import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
 import { useLocation, useSearch } from "wouter";
 import { cn } from "@/lib/utils";
@@ -132,6 +133,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
       search: params.get("search") || "",
       sourceId: undefined as string | undefined,
       sourceName: undefined as string | undefined,
+      sourceCategory: undefined as string | undefined,
       sentiment: undefined as string | undefined,
       category: undefined as string | undefined,
       priority: undefined as string | undefined,
@@ -155,6 +157,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     const sentimentParam = params.get("sentiment");
     const sourceIdParam = params.get("sourceId");
     const sourceTypeParam = params.get("sourceType");
+    const sourceCategoryParam = params.get("sourceCategory");
     const categoryParam = params.get("category");
     const priorityParam = params.get("priority");
     const provinceParam = params.get("province");
@@ -170,6 +173,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     if (sentimentParam) updates.sentiment = sentimentParam;
     if (sourceIdParam) updates.sourceId = sourceIdParam;
     if (sourceTypeParam) updates.sourceType = sourceTypeParam;
+    if (sourceCategoryParam) updates.sourceCategory = sourceCategoryParam;
     if (categoryParam) updates.category = categoryParam;
     if (priorityParam) updates.priority = priorityParam;
     if (provinceParam) updates.province = provinceParam;
@@ -230,6 +234,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     search: filters.search,
     sourceId: filters.sourceId ? parseInt(filters.sourceId) : undefined,
     sourceName: filters.sourceName,
+    sourceCategory: filters.sourceCategory,
     sort: filters.sort,
     sentiment: filters.sentiment,
     category: filters.category,
@@ -294,11 +299,12 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     if (filters.workflowStatus) searchParams.set("workflowStatus", filters.workflowStatus);
     if (filters.manualTag) searchParams.set("manualTag", filters.manualTag);
     if (filters.sourceType) searchParams.set("sourceType", filters.sourceType);
+    if (filters.sourceCategory) searchParams.set("sourceCategory", filters.sourceCategory);
     if (officialSourcesOnly) searchParams.set("officialSources", "true");
     if (dateRange.startDate) searchParams.set("startDate", dateRange.startDate);
     if (dateRange.endDate) searchParams.set("endDate", dateRange.endDate);
     return searchParams.toString();
-  }, [filters.search, filters.sourceId, filters.sourceName, filters.sort, filters.sentiment, filters.category, filters.priority, filters.province, filters.workflowStatus, filters.manualTag, filters.sourceType, officialSourcesOnly, dateRange.startDate, dateRange.endDate]);
+  }, [filters.search, filters.sourceId, filters.sourceName, filters.sourceCategory, filters.sort, filters.sentiment, filters.category, filters.priority, filters.province, filters.workflowStatus, filters.manualTag, filters.sourceType, officialSourcesOnly, dateRange.startDate, dateRange.endDate]);
 
   const { data: liveStatus, dataUpdatedAt: liveStatusUpdatedAt } = useQuery<ArticleLiveStatus>({
     queryKey: ["/api/articles/live-status", liveStatusQueryString],
@@ -492,6 +498,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     if (filters.search) viewFilters.search = filters.search;
     if (filters.sourceId) viewFilters.sourceId = filters.sourceId;
     if (filters.sourceName) viewFilters.sourceName = filters.sourceName;
+    if (filters.sourceCategory) viewFilters.sourceCategory = filters.sourceCategory;
     if (filters.sentiment) viewFilters.sentiment = filters.sentiment;
     if (filters.category) viewFilters.category = filters.category;
     if (filters.priority) viewFilters.priority = filters.priority;
@@ -508,6 +515,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
       search: typeof saved.search === "string" ? saved.search : "",
       sourceId: typeof saved.sourceId === "string" ? saved.sourceId : undefined,
       sourceName: typeof saved.sourceName === "string" ? saved.sourceName : undefined,
+      sourceCategory: typeof saved.sourceCategory === "string" ? saved.sourceCategory : undefined,
       sentiment: typeof saved.sentiment === "string" ? saved.sentiment : undefined,
       category: typeof saved.category === "string" ? saved.category : undefined,
       priority: typeof saved.priority === "string" ? saved.priority : undefined,
@@ -593,6 +601,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     if (filters.workflowStatus) params.set("workflowStatus", filters.workflowStatus);
     if (filters.manualTag) params.set("manualTag", filters.manualTag);
     if (filters.sourceType) params.set("sourceType", filters.sourceType);
+    if (filters.sourceCategory) params.set("sourceCategory", filters.sourceCategory);
     if (officialSourcesOnly) params.set("officialSources", "true");
     if (dateRange.startDate) params.set("startDate", dateRange.startDate);
     if (dateRange.endDate) params.set("endDate", dateRange.endDate);
@@ -612,7 +621,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     resetScroll();
   };
 
-  const updateBrowseFilter = (key: "category" | "sourceName" | "province", value: string | undefined) => {
+  const updateBrowseFilter = (key: "category" | "sourceCategory" | "sourceName" | "province", value: string | undefined) => {
     setActiveSavedViewId(undefined);
     setFilters(prev => ({
       ...prev,
@@ -627,6 +636,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     setFilters(prev => ({
       ...prev,
       category: undefined,
+      sourceCategory: undefined,
       sourceId: undefined,
       sourceName: undefined,
       province: undefined,
@@ -634,10 +644,10 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     resetScroll();
   };
 
-  const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sentiment || filters.category || filters.priority || filters.province || filters.workflowStatus || filters.manualTag || filters.sourceType || filters.startDate || filters.endDate || filters.dateRange !== "all";
+  const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sourceCategory || filters.sentiment || filters.category || filters.priority || filters.province || filters.workflowStatus || filters.manualTag || filters.sourceType || filters.startDate || filters.endDate || filters.dateRange !== "all";
 
   const clearFilters = () => {
-    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sentiment: undefined, category: undefined, priority: undefined, province: undefined, workflowStatus: undefined, manualTag: undefined, sourceType: undefined, startDate: undefined, endDate: undefined, dateRange: "all", sort: DEFAULT_SORT });
+    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sourceCategory: undefined, sentiment: undefined, category: undefined, priority: undefined, province: undefined, workflowStatus: undefined, manualTag: undefined, sourceType: undefined, startDate: undefined, endDate: undefined, dateRange: "all", sort: DEFAULT_SORT });
     setSearchInput("");
     setActiveSavedViewId(undefined);
     resetScroll();
@@ -657,8 +667,11 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
 
   const activeChannelTypes = useMemo(() => {
     if (!sources) return new Set<string>();
-    return new Set(sources.map((s: any) => s.type));
-  }, [sources]);
+    const scopedSources = officialSourcesOnly
+      ? sources.filter((s: any) => OFFICIAL_SOURCE_CATEGORY_CODES.includes(s.category))
+      : sources;
+    return new Set(scopedSources.map((s: any) => s.type));
+  }, [officialSourcesOnly, sources]);
 
   const visibleChannels = CHANNEL_CONFIG.filter(
     ch => ch.key === "all" || activeChannelTypes.has(ch.key)
@@ -666,9 +679,12 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
 
   const uniqueSourceNames = useMemo(() => {
     if (!sources) return [];
-    const names = new Set(sources.map((s: any) => s.name));
+    const scopedSources = officialSourcesOnly
+      ? sources.filter((s: any) => OFFICIAL_SOURCE_CATEGORY_CODES.includes(s.category))
+      : sources;
+    const names = new Set(scopedSources.map((s: any) => s.name));
     return Array.from(names).sort();
-  }, [sources]);
+  }, [officialSourcesOnly, sources]);
 
   const timeRangePills = [
     { key: "today", label: t("feed.today") },
@@ -696,10 +712,11 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
-  const activeBrowseNavigation = Boolean(filters.category || filters.sourceId || filters.sourceName || filters.province);
+  const activeBrowseNavigation = Boolean(filters.category || filters.sourceCategory || filters.sourceId || filters.sourceName || filters.province);
 
   const activeFilterCount = [
     filters.sourceType,
+    filters.sourceCategory,
     filters.sentiment,
     filters.priority,
     filters.workflowStatus,
@@ -767,7 +784,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     </div>
   );
 
-  const primaryCategoryNav = [
+  const primaryArticleCategoryNav = [
     { code: "iraqi_government", label: "Government" },
     { code: "parliament_politics", label: "Politics" },
     { code: "security_stability", label: "Security" },
@@ -776,8 +793,20 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     { code: "regional_international_relations", label: "International" },
     { code: "client_bilateral_relations", label: "Bilateral" },
   ];
+  const primaryOfficialCategoryNav = [
+    { code: "official_government", label: "Government" },
+    { code: "official_ministry", label: "Ministries" },
+    { code: "official_parliament", label: "Parliament" },
+    { code: "official_judiciary", label: "Judiciary" },
+    { code: "official_security", label: "Security" },
+    { code: "official_economy", label: "Economy / CBI" },
+    { code: "official_un_io", label: "UN / IO" },
+  ];
+  const primaryCategoryNav = officialSourcesOnly ? primaryOfficialCategoryNav : primaryArticleCategoryNav;
   const primaryCategoryCodes = new Set(primaryCategoryNav.map((item) => item.code));
-  const secondaryCategoryNav = ARTICLE_CATEGORIES.filter((category) => !primaryCategoryCodes.has(category.code));
+  const secondaryCategoryNav = officialSourcesOnly
+    ? OFFICIAL_SOURCE_CATEGORIES.filter((category) => !primaryCategoryCodes.has(category.code))
+    : ARTICLE_CATEGORIES.filter((category) => !primaryCategoryCodes.has(category.code));
 
   const navLinkClass = (active: boolean) => cn(
     "relative flex h-11 shrink-0 items-center px-3 text-sm font-semibold transition-colors",
@@ -816,8 +845,8 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
           <button
             key={item.code}
             type="button"
-            className={navLinkClass(filters.category === item.code)}
-            onClick={() => updateBrowseFilter("category", item.code)}
+            className={navLinkClass((officialSourcesOnly ? filters.sourceCategory : filters.category) === item.code)}
+            onClick={() => updateBrowseFilter(officialSourcesOnly ? "sourceCategory" : "category", item.code)}
             data-testid={`button-nav-category-${item.code}`}
           >
             {item.label}
@@ -828,7 +857,10 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className={navMenuTriggerClass(Boolean(filters.category && !primaryCategoryCodes.has(filters.category)))}
+              className={navMenuTriggerClass(Boolean(
+                (officialSourcesOnly ? filters.sourceCategory : filters.category) &&
+                !primaryCategoryCodes.has((officialSourcesOnly ? filters.sourceCategory : filters.category)!)
+              ))}
               data-testid="menu-browse-more-sections"
             >
               More
@@ -841,11 +873,13 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
             {secondaryCategoryNav.map(category => (
               <DropdownMenuItem
                 key={category.code}
-                className={navMenuItemClass(filters.category === category.code)}
-                onSelect={() => updateBrowseFilter("category", category.code)}
+                className={navMenuItemClass((officialSourcesOnly ? filters.sourceCategory : filters.category) === category.code)}
+                onSelect={() => updateBrowseFilter(officialSourcesOnly ? "sourceCategory" : "category", category.code)}
                 data-testid={`menu-item-category-${category.code}`}
               >
-                <span className="truncate">{getArticleCategoryLabel(category.code, embassyProfile)}</span>
+                <span className="truncate">
+                  {officialSourcesOnly ? getSourceCategoryLabel(category.code) : getArticleCategoryLabel(category.code, embassyProfile)}
+                </span>
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>

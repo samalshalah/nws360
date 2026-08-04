@@ -2972,6 +2972,7 @@ export interface ArticleQueryParams {
   includeNeedsReview?: boolean;
   includeNotRelevant?: boolean;
   sourceType?: string;
+  sourceCategory?: string;
   officialSources?: boolean;
   country?: string;
   topic?: string;
