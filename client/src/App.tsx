@@ -303,7 +303,11 @@ function App() {
   const { i18n } = useTranslation();
 
   useEffect(() => {
-    const lang = i18n.language?.split("-")[0] || "en";
+    localStorage.setItem("nws360-language", "en");
+    if (i18n.language?.split("-")[0] !== "en") {
+      i18n.changeLanguage("en");
+    }
+    const lang = "en";
     const dir = getDirection(lang);
     document.documentElement.dir = dir;
     document.documentElement.lang = lang;

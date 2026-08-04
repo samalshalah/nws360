@@ -41,10 +41,6 @@ type ClientSettingsPayload = {
   updatedAt: string | null;
 };
 
-const LANGUAGE_OPTIONS = [
-  { value: "en", label: "English" },
-];
-
 function numberValue(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.round(value)));
@@ -402,33 +398,11 @@ export default function ClientSettings() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>{t("settings.defaultLanguage", "Default language")}</Label>
-                <Select
-                  value={form.defaultLanguage}
-                  onValueChange={(value) => updateField("defaultLanguage", value)}
-                  disabled={!canManageSettings}
-                >
-                  <SelectTrigger data-testid="select-default-language"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {LANGUAGE_OPTIONS.map((language) => (
-                      <SelectItem key={language.value} value={language.value}>{language.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Input value="English" disabled data-testid="input-default-language-english-only" />
               </div>
               <div className="space-y-2">
                 <Label>{t("settings.targetLanguage", "Target language")}</Label>
-                <Select
-                  value={form.defaultTargetLanguage}
-                  onValueChange={(value) => updateField("defaultTargetLanguage", value)}
-                  disabled={!canManageSettings}
-                >
-                  <SelectTrigger data-testid="select-default-target-language"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {LANGUAGE_OPTIONS.map((language) => (
-                      <SelectItem key={language.value} value={language.value}>{language.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Input value="English" disabled data-testid="input-target-language-english-only" />
               </div>
             </div>
 
