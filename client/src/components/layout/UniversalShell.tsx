@@ -133,41 +133,7 @@ function ImpersonationBar() {
     onError: () => {},
   });
 
-  if (!isAdmin) return null;
-
-  if (!impersonation?.isImpersonating) {
-    return (
-      <div
-        data-testid="impersonation-bar"
-        className="flex items-center gap-2 px-4 py-1.5 border-b border-border/40 bg-muted/20"
-      >
-        <Shield className="h-3.5 w-3.5 text-muted-foreground/60 flex-shrink-0" />
-        <span className="text-[11px] text-muted-foreground/60 flex-shrink-0">View as:</span>
-        <Select
-          value=""
-          onValueChange={(val) => {
-            if (val) impersonateOrgMutation.mutate(parseInt(val));
-          }}
-        >
-          <SelectTrigger className="h-7 text-xs w-36" data-testid="impersonate-tenant-select">
-            <SelectValue placeholder="Select tenant..." />
-          </SelectTrigger>
-          <SelectContent>
-            {clients?.length === 0 && (
-              <SelectItem value="no-clients" disabled data-testid="impersonate-tenant-empty">
-                No clients have been enrolled yet.
-              </SelectItem>
-            )}
-            {clients?.map((c: any) => (
-              <SelectItem key={c.id} value={c.id.toString()} data-testid={`impersonate-tenant-${c.id}`}>
-                {c.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-    );
-  }
+  if (!isAdmin || !impersonation?.isImpersonating) return null;
 
   return (
     <div

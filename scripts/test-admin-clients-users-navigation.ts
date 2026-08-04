@@ -8,6 +8,7 @@ const read = (file: string) => fs.readFileSync(path.join(root, file), "utf8");
 const app = read("client/src/App.tsx");
 const nav = read("client/src/lib/nav-config.ts");
 const universalShell = read("client/src/components/layout/UniversalShell.tsx");
+const adminShell = read("client/src/components/layout/AdminShell.tsx");
 const adminClients = read("client/src/pages/AdminClients.tsx");
 const userManagement = read("client/src/pages/UserManagement.tsx");
 const routes = read("server/routes.ts");
@@ -43,6 +44,11 @@ assertIncludes(universalShell, 'if (!isAdmin) return buildClientNavTree(t);', "T
 assertIncludes(universalShell, 'const adminNav = buildAdminNavTree(t);', "Platform admins should always build the admin navigation tree");
 assertIncludes(universalShell, 'capabilities?.tenantId ? [...adminNav, ...buildClientNavTree(t)] : adminNav', "Platform admin links should remain visible when a tenant is selected");
 assert.ok(!universalShell.includes('isPlatformContext ? buildAdminNavTree(t) : buildClientNavTree(t)'), "Tenant selection must not hide platform-admin navigation");
+assertIncludes(universalShell, 'if (!isAdmin || !impersonation?.isImpersonating) return null;', "Inactive impersonation selector should not render in UniversalShell");
+assertIncludes(adminShell, 'if (!capabilities?.permissions?.systemAdmin || !impersonation?.isImpersonating) return null;', "Inactive impersonation selector should not render in AdminShell");
+assert.ok(!universalShell.includes('>View as:<'), "UniversalShell should not show a default View as selector");
+assert.ok(!adminShell.includes('>View as:<'), "AdminShell should not show a default View as selector");
+assertIncludes(universalShell, 'data-testid="impersonation-bar-active"', "Active impersonation banner should remain available");
 
 // Clients page builds links from returned IDs, not hard-coded production IDs.
 assertIncludes(adminClients, 'openClient: `/admin/clients/${client.id}/setup`', "Open Client link should be generated from client.id");
