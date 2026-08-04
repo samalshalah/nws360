@@ -2,6 +2,7 @@ import { db } from "./db";
 import { createHash } from "node:crypto";
 import { isGenericAnalyticsTerm, normalizeAnalyticsValue } from "./analytics-noise";
 import { getArticleCategoryFilterCodes, getArticleCategoryLabel, mergeArticleCategoryRows, normalizeArticleCategoryCode } from "@shared/article-taxonomy";
+import { OFFICIAL_SOURCE_CATEGORY_CODES } from "@shared/source-categories";
 import { maybeNormalizeSourceFetchMetrics } from "@shared/source-fetch-metrics";
 import { normalizeSourceHealthRejectedHistory } from "@shared/source-health";
 import { evaluateWorkspaceRelevance, getDefaultRelevanceStatuses, isArticleRelevanceStatus, type ArticleRelevanceStatus } from "@shared/workspace-relevance";
@@ -2645,6 +2646,10 @@ export class DatabaseStorage implements IStorage {
     }
     if (params?.sourceType) {
       conditions.push(eq(sources.type, params.sourceType));
+      needsSourceJoin = true;
+    }
+    if (params?.officialSources) {
+      conditions.push(inArray(sources.category, OFFICIAL_SOURCE_CATEGORY_CODES));
       needsSourceJoin = true;
     }
     if (params?.sourceName) {

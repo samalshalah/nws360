@@ -22,7 +22,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { CAPS } from "@shared/schema";
 import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, ARTICLE_WORKFLOW_STATUSES, IRAQ_PROVINCES, getArticleCategoryLabel, type EmbassyProfile } from "@shared/article-taxonomy";
 import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
-import { useSearch } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 20;
@@ -97,7 +97,9 @@ export default function Feed() {
   const { hasCap, isAdmin } = usePermissions();
   const embassyProfile = useEmbassyProfile();
   const currentLang = i18n.language?.split("-")[0] || "en";
+  const [location] = useLocation();
   const searchString = useSearch();
+  const officialSourcesOnly = location === "/official-sources";
   const searchInputRef = useRef<HTMLInputElement>(null);
   const observerRef = useRef<HTMLDivElement>(null);
 
@@ -236,6 +238,7 @@ export default function Feed() {
     workflowStatus: filters.workflowStatus,
     manualTag: filters.manualTag,
     sourceType: filters.sourceType,
+    officialSources: officialSourcesOnly,
     lang: currentLang,
     startDate: dateRange.startDate,
     endDate: dateRange.endDate,
@@ -291,10 +294,11 @@ export default function Feed() {
     if (filters.workflowStatus) searchParams.set("workflowStatus", filters.workflowStatus);
     if (filters.manualTag) searchParams.set("manualTag", filters.manualTag);
     if (filters.sourceType) searchParams.set("sourceType", filters.sourceType);
+    if (officialSourcesOnly) searchParams.set("officialSources", "true");
     if (dateRange.startDate) searchParams.set("startDate", dateRange.startDate);
     if (dateRange.endDate) searchParams.set("endDate", dateRange.endDate);
     return searchParams.toString();
-  }, [filters.search, filters.sourceId, filters.sourceName, filters.sort, filters.sentiment, filters.category, filters.priority, filters.province, filters.workflowStatus, filters.manualTag, filters.sourceType, dateRange.startDate, dateRange.endDate]);
+  }, [filters.search, filters.sourceId, filters.sourceName, filters.sort, filters.sentiment, filters.category, filters.priority, filters.province, filters.workflowStatus, filters.manualTag, filters.sourceType, officialSourcesOnly, dateRange.startDate, dateRange.endDate]);
 
   const { data: liveStatus, dataUpdatedAt: liveStatusUpdatedAt } = useQuery<ArticleLiveStatus>({
     queryKey: ["/api/articles/live-status", liveStatusQueryString],
@@ -589,6 +593,7 @@ export default function Feed() {
     if (filters.workflowStatus) params.set("workflowStatus", filters.workflowStatus);
     if (filters.manualTag) params.set("manualTag", filters.manualTag);
     if (filters.sourceType) params.set("sourceType", filters.sourceType);
+    if (officialSourcesOnly) params.set("officialSources", "true");
     if (dateRange.startDate) params.set("startDate", dateRange.startDate);
     if (dateRange.endDate) params.set("endDate", dateRange.endDate);
     window.open(`/api/articles/export?${params.toString()}`, "_blank");
