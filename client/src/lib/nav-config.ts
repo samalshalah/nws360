@@ -99,7 +99,7 @@ export function buildTenantNavTree(t: any): NavGroup[] {
     },
     {
       key: "workspace",
-      label: t("nav.workspace", "Workspace"),
+      label: t("nav.clientSystem", "Client System"),
       icon: Settings,
       items: [
         { key: "users", label: t("nav.userManagement", "Team"), href: "/users", icon: Users, caps: [CAPS.USERS_VIEW] },
@@ -109,7 +109,7 @@ export function buildTenantNavTree(t: any): NavGroup[] {
         { key: "knowledge", label: t("nav.knowledge", "Knowledge"), href: "/knowledge", icon: Brain, caps: [CAPS.KNOWLEDGE_VIEW] },
         { key: "integrations", label: t("nav.integrations", "Integrations"), href: "/integrations", icon: Plug, caps: [CAPS.INTEGRATIONS_VIEW] },
         { key: "usageBilling", label: t("nav.usageBilling", "Billing"), href: "/usage-billing", icon: CreditCard, caps: [CAPS.BILLING_VIEW] },
-        { key: "clientSettings", label: t("nav.settings", "Settings"), href: "/settings", icon: Settings, caps: [CAPS.SETTINGS_VIEW] },
+        { key: "clientSettings", label: t("nav.clientSettings", "Client Settings"), href: "/settings", icon: Settings, caps: [CAPS.SETTINGS_VIEW] },
         { key: "helpCenter", label: t("nav.helpCenter", "Help"), href: "/help", icon: HelpCircle },
       ],
       collapsible: true,

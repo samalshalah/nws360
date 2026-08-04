@@ -382,12 +382,12 @@ export default function Dashboard() {
                 <Settings className="h-5 w-5" />
               </div>
               <div className="min-w-0 space-y-2">
-                <h2 className="text-sm font-semibold text-foreground">Workspace setup</h2>
+                <h2 className="text-sm font-semibold text-foreground">Client system setup</h2>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Use settings for feed refresh, retention, default sorting, and report preferences.
+                  Use client settings for feed refresh, retention, default sorting, and report preferences.
                 </p>
                 <Link href="/settings">
-                  <Button size="sm" variant="outline">Open settings</Button>
+                  <Button size="sm" variant="outline">Open client settings</Button>
                 </Link>
               </div>
             </div>

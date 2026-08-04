@@ -154,7 +154,7 @@ export default function ClientSettings() {
           <div className="flex items-center gap-2">
             <Settings className="h-5 w-5 text-primary" />
             <h1 className="text-2xl font-display font-bold text-foreground" data-testid="text-client-settings-title">
-              {t("settings.title", "Client Settings")}
+              {t("settings.title", "Client System Settings")}
             </h1>
           </div>
           <div className="flex items-center gap-2">
@@ -183,7 +183,7 @@ export default function ClientSettings() {
               <Bell className="h-4 w-4 text-primary" />
               {t("settings.feedBehavior", "Feed Behavior")}
             </CardTitle>
-            <CardDescription>{t("settings.feedBehaviorDescription", "Controls live updates and the default feed window.")}</CardDescription>
+            <CardDescription>{t("settings.feedBehaviorDescription", "Client-wide defaults for live updates and the default feed window.")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
             <div className="flex items-center justify-between gap-4">
@@ -392,7 +392,7 @@ export default function ClientSettings() {
               <Globe2 className="h-4 w-4 text-primary" />
               {t("settings.languageTranslation", "Language & Translation")}
             </CardTitle>
-            <CardDescription>{t("settings.languageTranslationDescription", "Default language choices for tenant users and translated reading.")}</CardDescription>
+            <CardDescription>{t("settings.languageTranslationDescription", "Client-wide translation behavior. Workspace relevance rules stay under workspace setup.")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
             <div className="grid gap-3 sm:grid-cols-2">
