@@ -794,13 +794,13 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     { code: "client_bilateral_relations", label: "Bilateral" },
   ];
   const primaryOfficialCategoryNav = [
-    { code: "official_government", label: "Government" },
+    { code: "official_presidency", label: "Presidency" },
+    { code: "official_prime_minister", label: "Prime Minister" },
+    { code: "official_council_ministers", label: "Council" },
     { code: "official_ministry", label: "Ministries" },
     { code: "official_parliament", label: "Parliament" },
-    { code: "official_judiciary", label: "Judiciary" },
     { code: "official_security", label: "Security" },
-    { code: "official_economy", label: "Economy / CBI" },
-    { code: "official_un_io", label: "UN / IO" },
+    { code: "official_economy", label: "Central Bank" },
   ];
   const primaryCategoryNav = officialSourcesOnly ? primaryOfficialCategoryNav : primaryArticleCategoryNav;
   const primaryCategoryCodes = new Set(primaryCategoryNav.map((item) => item.code));
