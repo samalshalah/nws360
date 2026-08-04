@@ -145,10 +145,10 @@ function Router() {
       <Route path="/dashboard">
         <ProtectedPage component={Dashboard} />
       </Route>
-      <Route path="/feed">
-        <ProtectedPage component={Feed} />
-      </Route>
       <Route path="/official-sources">
+        <ProtectedPage component={() => <Feed officialSourcesOnly />} />
+      </Route>
+      <Route path="/feed">
         <ProtectedPage component={Feed} />
       </Route>
       <Route path="/reports/basket">

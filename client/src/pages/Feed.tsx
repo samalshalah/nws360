@@ -91,7 +91,7 @@ function GridDensityIcon({ columns }: { columns: GridColumnCount }) {
   );
 }
 
-export default function Feed() {
+export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = false }: { officialSourcesOnly?: boolean } = {}) {
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const { hasCap, isAdmin } = usePermissions();
@@ -99,7 +99,7 @@ export default function Feed() {
   const currentLang = i18n.language?.split("-")[0] || "en";
   const [location] = useLocation();
   const searchString = useSearch();
-  const officialSourcesOnly = location === "/official-sources";
+  const officialSourcesOnly = officialSourcesOnlyProp || location === "/official-sources";
   const searchInputRef = useRef<HTMLInputElement>(null);
   const observerRef = useRef<HTMLDivElement>(null);
 
