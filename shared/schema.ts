@@ -444,7 +444,7 @@ export const articles = pgTable("articles", {
   engagementComments: integer("engagement_comments"),
   engagementShares: integer("engagement_shares"),
   clientId: integer("client_id").notNull(),
-  crossPosts: jsonb("cross_posts").$type<{ platform: string; url: string; sourceId: number }[]>().default([]),
+  crossPosts: jsonb("cross_posts").$type<{ platform: string; url: string; sourceId: number; sourceName?: string | null }[]>().default([]),
   aiAnalysisStatus: text("ai_analysis_status").default("skipped"),
   aiRetryCount: integer("ai_retry_count").default(0),
   aiLastRetryAt: timestamp("ai_last_retry_at"),

@@ -46,6 +46,13 @@ const platformIcons: Record<string, { icon: typeof Rss; label: string; color: st
   web: { icon: Globe, label: "Web", color: "text-muted-foreground" },
 };
 
+function sourceTypeToPlatform(type: string | null | undefined): string {
+  if (type === "facebook" || type === "twitter" || type === "youtube" || type === "instagram" || type === "telegram" || type === "google_news") {
+    return type;
+  }
+  return "web";
+}
+
 const categoryColors: Record<string, string> = {
   iraqi_government: "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-900/30 dark:text-sky-400 dark:border-sky-800",
   parliament_politics: "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-900/30 dark:text-violet-400 dark:border-violet-800",
@@ -152,7 +159,17 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
   const sourceLogoUrl = article.source?.logoUrl || null;
   const subSourceFavicon = article.subSource ? getSubSourceFaviconUrl(article.subSource) : null;
   const faviconUrl = subSourceFavicon || sourceLogoUrl;
-  const crossPosts = (Array.isArray((article as any).crossPosts) ? (article as any).crossPosts : []) as { platform: string; url: string; sourceId: number }[];
+  const crossPosts = (Array.isArray((article as any).crossPosts) ? (article as any).crossPosts : []) as { platform: string; url: string; sourceId: number; sourceName?: string | null }[];
+  const channelLinks = [
+    {
+      platform: sourceTypeToPlatform(article.source?.type),
+      url: article.url || "",
+      sourceId: article.sourceId || 0,
+      sourceName: article.source?.name || null,
+      primary: true,
+    },
+    ...crossPosts.map((post) => ({ ...post, primary: false })),
+  ].filter((item, index, list) => item.url && list.findIndex((candidate) => candidate.url === item.url) === index);
 
   const sentimentBadge = article.sentimentLabel ? (
     <Tooltip>
@@ -300,11 +317,11 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
     </div>
   );
 
-  const crossPostIcons = crossPosts.length > 0 ? (
+  const crossPostIcons = channelLinks.length > 1 ? (
     <div className="flex items-center gap-0.5" data-testid={`cross-posts-${article.id}`}>
-      <span className="text-[10px] text-muted-foreground/60 mr-0.5">{t("feed.alsoOn", "Also on")}</span>
-      {crossPosts.map((cp, idx) => {
-        const pi = platformIcons[cp.platform];
+      <span className="mr-0.5 text-[10px] text-muted-foreground/60">{t("feed.channels", "Channels")}</span>
+      {channelLinks.map((cp, idx) => {
+        const pi = platformIcons[cp.platform] || platformIcons.web;
         if (!pi) return null;
         const PIcon = pi.icon;
         return (
@@ -313,10 +330,10 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
             href={cp.url}
             target="_blank"
             rel="noopener noreferrer"
-            title={pi.label}
+            title={cp.sourceName ? `${cp.sourceName} (${pi.label})` : pi.label}
             onClick={(e) => e.stopPropagation()}
             className={cn("p-1 rounded-md transition-colors hover-elevate", pi.color)}
-            data-testid={`cross-post-${cp.platform}-${article.id}`}
+            data-testid={`cross-post-${cp.platform}-${article.id}-${idx}`}
           >
             <PIcon className="w-3.5 h-3.5" />
           </a>

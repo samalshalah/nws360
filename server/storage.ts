@@ -199,6 +199,40 @@ import { eq, like, and, or, gte, lte, desc, sql, inArray, asc, isNull, isNotNull
 
 const AUTO_PAUSE_THRESHOLD_DB = 5;
 
+function normalizeCrossChannelTitle(value: string | null | undefined): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/#[\w\u0600-\u06FF_]+/g, " ")
+    .replace(/[@][\w.-]+/g, " ")
+    .replace(/[|•]+/g, " ")
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[^\w\u0600-\u06FF]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeSourceFamilyName(value: string | null | undefined): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/\b(facebook|telegram|instagram|twitter|youtube|website|google news|rss|feed|x)\b/g, " ")
+    .replace(/[^\w\u0600-\u06FF]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function crossChannelTitleSimilarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if ((a.length >= 28 && b.includes(a)) || (b.length >= 28 && a.includes(b))) return 0.94;
+  const aTokens = new Set(a.split(" ").filter((token) => token.length > 2));
+  const bTokens = new Set(b.split(" ").filter((token) => token.length > 2));
+  if (aTokens.size === 0 || bTokens.size === 0) return 0;
+  const overlap = Array.from(aTokens).filter((token) => bTokens.has(token)).length;
+  return overlap / Math.max(aTokens.size, bTokens.size);
+}
+
 export class StorageBoundaryError extends Error {
   status: number;
   code: string;
@@ -1765,6 +1799,13 @@ export interface IStorage {
   getWorkspaceRelevanceHistory(workspaceId: number, articleId: number, clientId?: number): Promise<WorkspaceRelevanceHistory[]>;
   getArticleByUrl(url: string, clientId: number): Promise<Article | undefined>; // For tenant-scoped deduplication
   getArticleByTitle(title: string, clientId?: number | null): Promise<Article | undefined>; // For cross-channel deduplication
+  findCrossChannelArticleMatch(input: {
+    title: string;
+    sourceName: string;
+    sourceType?: string | null;
+    clientId: number;
+    publishedAt?: Date | null;
+  }): Promise<Article | undefined>;
 
   // Saved feed views
   getSavedFeedViews(clientId: number): Promise<SavedFeedView[]>;
@@ -2967,6 +3008,50 @@ export class DatabaseStorage implements IStorage {
     }
     const [article] = await db.select().from(articles).where(and(...conditions)).limit(1);
     return article;
+  }
+
+  async findCrossChannelArticleMatch(input: {
+    title: string;
+    sourceName: string;
+    sourceType?: string | null;
+    clientId: number;
+    publishedAt?: Date | null;
+  }): Promise<Article | undefined> {
+    const targetTitle = normalizeCrossChannelTitle(input.title);
+    const targetFamily = normalizeSourceFamilyName(input.sourceName);
+    if (targetTitle.length < 18 || targetFamily.length < 3) return undefined;
+
+    const conditions = [eq(articles.clientId, input.clientId)];
+    const publishedAt = input.publishedAt instanceof Date && !Number.isNaN(input.publishedAt.getTime())
+      ? input.publishedAt
+      : null;
+    if (publishedAt) {
+      const start = new Date(publishedAt.getTime() - 3 * 24 * 60 * 60 * 1000);
+      const end = new Date(publishedAt.getTime() + 3 * 24 * 60 * 60 * 1000);
+      conditions.push(gte(articles.publishedAt, start));
+      conditions.push(lte(articles.publishedAt, end));
+    }
+
+    const candidates = await db.select({ article: articles, source: sources })
+      .from(articles)
+      .leftJoin(sources, eq(articles.sourceId, sources.id))
+      .where(and(...conditions))
+      .orderBy(desc(articles.publishedAt), desc(articles.id))
+      .limit(400);
+
+    let best: { article: Article; score: number } | null = null;
+    for (const candidate of candidates) {
+      if (!candidate.source) continue;
+      if (candidate.source.type === input.sourceType && normalizeSourceFamilyName(candidate.source.name) === targetFamily) continue;
+      const sourceFamily = normalizeSourceFamilyName(candidate.source.name);
+      if (sourceFamily !== targetFamily) continue;
+      const candidateTitle = normalizeCrossChannelTitle(candidate.article.title);
+      const score = crossChannelTitleSimilarity(targetTitle, candidateTitle);
+      if (score < 0.82) continue;
+      if (!best || score > best.score) best = { article: candidate.article, score };
+    }
+
+    return best?.article;
   }
 
   async getSavedFeedViews(clientId: number): Promise<SavedFeedView[]> {

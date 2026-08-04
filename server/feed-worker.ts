@@ -1225,15 +1225,22 @@ async function processItems(
     const title = item.title || "Untitled";
 
     if (!source.publisherChannelId && title.length >= 10) {
-      const titleDup = await storage.getArticleByTitle(title, source.clientId ?? null);
+      const titleDup = await storage.getArticleByTitle(title, source.clientId ?? null)
+        || (clientId ? await storage.findCrossChannelArticleMatch({
+          title,
+          sourceName: source.name,
+          sourceType: source.type || null,
+          clientId,
+          publishedAt: item.publishedAt,
+        }) : undefined);
       if (titleDup) {
         const platform = detectPlatform(item.url) || "web";
-        const existingCrossPosts = Array.isArray(titleDup.crossPosts) ? titleDup.crossPosts as { platform: string; url: string; sourceId: number }[] : [];
+        const existingCrossPosts = Array.isArray(titleDup.crossPosts) ? titleDup.crossPosts as { platform: string; url: string; sourceId: number; sourceName?: string | null }[] : [];
         const alreadyTracked = existingCrossPosts.some(cp => cp.url === item.url);
         const classification = classifyItem(title, item.content || titleDup.contentClean || titleDup.content || "");
         const updates: Record<string, any> = {};
         if (!alreadyTracked) {
-          updates.crossPosts = [...existingCrossPosts, { platform, url: item.url, sourceId: source.id }];
+          updates.crossPosts = [...existingCrossPosts, { platform, url: item.url, sourceId: source.id, sourceName: source.name }];
           console.log(`[Worker] Cross-post added: "${title.substring(0, 50)}..." on ${platform}`);
         }
         if (classification.category !== "other" && (!titleDup.category || titleDup.category === "general" || titleDup.category === "other")) {
