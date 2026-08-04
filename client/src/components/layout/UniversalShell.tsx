@@ -323,11 +323,13 @@ function UniversalSidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { logout, user } = useAuth();
   const { hasCap, capabilities, isAdmin } = usePermissions();
   const { t } = useTranslation();
-  const isPlatformContext = isAdmin && capabilities?.userScope === "platform" && !capabilities?.tenantId;
-
   const menuStructure = useMemo(
-    () => (isPlatformContext ? buildAdminNavTree(t) : buildClientNavTree(t)),
-    [t, isPlatformContext],
+    () => {
+      if (!isAdmin) return buildClientNavTree(t);
+      const adminNav = buildAdminNavTree(t);
+      return capabilities?.tenantId ? [...adminNav, ...buildClientNavTree(t)] : adminNav;
+    },
+    [t, isAdmin, capabilities?.tenantId],
   );
   const filteredMenu = useMemo(
     () => filterNavByCaps(menuStructure, hasCap, isAdmin),
