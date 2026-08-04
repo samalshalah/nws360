@@ -3,7 +3,6 @@ import { useArticles } from "@/hooks/use-articles";
 import { useSources } from "@/hooks/use-sources";
 import { useAnalytics } from "@/hooks/use-analytics";
 import { ArticleCard } from "@/components/articles/ArticleCard";
-import { FeedMagazine } from "@/components/articles/FeedMagazine";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -105,9 +104,9 @@ export default function Feed() {
   const baselineArticleIdsRef = useRef<Set<number>>(new Set());
   const baselineTotalRef = useRef(0);
   const baselineReadyRef = useRef(false);
-  const [layout, setLayout] = useState<"front" | "grid" | "list">(() => {
+  const [layout, setLayout] = useState<"grid" | "list">(() => {
     const storedLayout = localStorage.getItem("feed-layout-v2");
-    return storedLayout === "grid" || storedLayout === "list" || storedLayout === "front" ? storedLayout : "front";
+    return storedLayout === "list" ? "list" : "grid";
   });
   const [gridColumns, setGridColumns] = useState<GridColumnCount>(() => parseGridColumnCount(localStorage.getItem("feed-grid-columns-v1")));
 
@@ -1132,15 +1131,6 @@ export default function Feed() {
           <div className="hidden shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5 md:flex">
             <Button
               size="icon"
-              variant={layout === "front" ? "default" : "ghost"}
-              onClick={() => { setLayout("front"); localStorage.setItem("feed-layout-v2", "front"); }}
-              data-testid="button-layout-front"
-              title="Front page"
-            >
-              <Newspaper className="w-4 h-4" />
-            </Button>
-            <Button
-              size="icon"
               variant={layout === "grid" ? "default" : "ghost"}
               onClick={() => { setLayout("grid"); localStorage.setItem("feed-layout-v2", "grid"); }}
               data-testid="button-layout-grid"
@@ -1188,7 +1178,6 @@ export default function Feed() {
               >
                 <Search className="w-4 h-4" />
               </Button>
-              {layout !== "front" && (
               <div className="relative">
                 <Button
                   variant={mobileFiltersOpen ? "default" : "ghost"}
@@ -1204,7 +1193,6 @@ export default function Feed() {
                   </span>
                 )}
               </div>
-              )}
             </div>
             {canExportArticles && (
               <Button variant="ghost" size="icon" onClick={handleExport} data-testid="button-export">
@@ -1297,7 +1285,7 @@ export default function Feed() {
         </div>
       )}
 
-      {layout !== "front" && mobileFiltersOpen && (
+      {mobileFiltersOpen && (
         <div className="md:hidden space-y-2" data-testid="mobile-filters-panel">
           {savedViewsControl}
           <div className="grid grid-cols-2 gap-2">
@@ -1306,31 +1294,14 @@ export default function Feed() {
         </div>
       )}
 
-      {layout !== "front" && (
       <div className="hidden md:block">
         <div className="flex w-full flex-wrap items-center gap-2">
           {savedViewsControl}
           {filterDropdowns}
         </div>
       </div>
-      )}
 
-      {layout === "front" ? (
-        <FeedMagazine
-          latestArticles={allArticles}
-          total={articlesData?.total}
-          isLoading={isLoadingArticles && page === 1}
-          startDate={dateRange.startDate}
-          endDate={dateRange.endDate}
-          activeCategory={filters.category}
-          onSelectCategory={(category) => updateFilter("category", category)}
-          onOpenListView={() => {
-            setLayout("list");
-            localStorage.setItem("feed-layout-v2", "list");
-          }}
-        />
-      ) : (
-        <div className="min-w-0">
+      <div className="min-w-0">
             {isLoadingArticles && page === 1 ? (
               <div className={cn(
                 layout === "grid" ? "grid gap-4 md:gap-5" : "flex flex-col gap-4",
@@ -1381,7 +1352,6 @@ export default function Feed() {
               </>
             )}
         </div>
-      )}
 
       {canSelectArticles && selectedArticles.size > 0 && (
         <div
