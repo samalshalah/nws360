@@ -41,6 +41,7 @@ export default {
     workspace: "Client System",
     clientSystem: "Client System",
     clientSettings: "Client Settings",
+    workspaceSettings: "Workspace Settings",
     controlMonitor: "Control & Monitor",
     adminDashboard: "Admin Dashboard",
     opsDashboard: "Operations",

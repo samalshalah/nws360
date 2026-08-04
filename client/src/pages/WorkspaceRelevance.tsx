@@ -319,8 +319,8 @@ export default function WorkspaceRelevance({ adminClientId, adminWorkspaceId, ba
             <SlidersHorizontal className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{adminMode ? "Admin workspace relevance" : "Workspace relevance"}</h1>
-            <p className="text-sm text-muted-foreground">Create a client workspace before configuring relevance rules.</p>
+            <h1 className="text-2xl font-semibold tracking-tight">{adminMode ? "Admin Workspace Settings" : "Workspace Settings"}</h1>
+            <p className="text-sm text-muted-foreground">Create a client workspace before configuring workspace settings.</p>
           </div>
         </div>
         <Card>
@@ -345,7 +345,7 @@ export default function WorkspaceRelevance({ adminClientId, adminWorkspaceId, ba
             <SlidersHorizontal className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{adminMode ? "Admin workspace relevance" : "Workspace relevance"}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{adminMode ? "Admin Workspace Settings" : "Workspace Settings"}</h1>
             <p className="text-sm text-muted-foreground">Control what each monitoring workspace includes, reviews, and excludes.</p>
           </div>
         </div>
@@ -401,8 +401,8 @@ export default function WorkspaceRelevance({ adminClientId, adminWorkspaceId, ba
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
         <Card>
           <CardHeader>
-            <CardTitle>Relevance profile</CardTitle>
-            <CardDescription>Lists are global to this workspace and apply to every assigned source.</CardDescription>
+            <CardTitle>Workspace relevance profile</CardTitle>
+            <CardDescription>These settings are workspace-specific and apply to every source assigned to this workspace.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {loadingProfile ? (
