@@ -32,7 +32,7 @@ import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } fro
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
 import { CAPS, type Source } from "@shared/schema";
-import { SOURCE_CATEGORIES, getSourceCategoryLabel } from "@shared/source-categories";
+import { SOURCE_GROUP_CATEGORIES } from "@shared/source-categories";
 import { GlobalAddSourceDialog } from "@/components/sources/GlobalAddSourceDialog";
 import { EditSourceDialog } from "@/components/sources/EditSourceDialog";
 import { FeedImportDialog } from "@/components/sources/FeedImportDialog";
@@ -954,7 +954,6 @@ function SourcesManager({
     rss: ["RSS", "News"],
   };
   const sourceVariantLabel = (source: any): string => {
-    if (source.category) return getSourceCategoryLabel(source.category);
     const suffixes = socialSuffixes[source.type] || [];
     const suffix = suffixes.find((item) => source.name.endsWith(` - ${item}`) || source.name.endsWith(`-${item}`));
     return suffix || sourceTypeLabels[source.type] || source.type;
@@ -1096,7 +1095,7 @@ function SourcesManager({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All groups</SelectItem>
-                      {SOURCE_CATEGORIES.map((category) => (
+                      {SOURCE_GROUP_CATEGORIES.map((category) => (
                         <SelectItem key={category.code} value={category.code}>{category.label}</SelectItem>
                       ))}
                     </SelectContent>

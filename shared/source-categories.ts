@@ -42,6 +42,12 @@ export const SOURCE_CATEGORIES = [
 
 export type SourceCategoryCode = (typeof SOURCE_CATEGORIES)[number]["code"];
 
+export const SOURCE_GROUP_CATEGORIES = SOURCE_CATEGORIES.filter((category) =>
+  category.code === "general" ||
+  category.code.startsWith("media_") ||
+  category.code.startsWith("official_"),
+);
+
 export const OFFICIAL_SOURCE_CATEGORIES = SOURCE_CATEGORIES.filter((category) =>
   category.code.startsWith("official_"),
 );
