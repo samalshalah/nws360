@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources, useUpdateSource, useBulkSourceMaintenance, useBulkDeleteSources } from "@/hooks/use-sources";
 import { useKeywords, useCreateKeyword, useDeleteKeyword } from "@/hooks/use-keywords";
@@ -912,6 +912,7 @@ function SourcesManager({
   const [bulkFetchAfterCleanup, setBulkFetchAfterCleanup] = useState(false);
   const [isBulkConfirmOpen, setIsBulkConfirmOpen] = useState(false);
   const [sourceGroupFilter, setSourceGroupFilter] = useState("all");
+  const [sourceChannelFilter, setSourceChannelFilter] = useState("all");
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<number>>(new Set());
   const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false);
   const { data: sourceArticles, isLoading: isLoadingArticles } = useQuery<any[]>({
@@ -968,14 +969,16 @@ function SourcesManager({
     return source.name;
   };
 
-  const filteredSources = (sources || []).filter((source) => (
-    sourceGroupFilter === "all" ? true : (source.category || "general") === sourceGroupFilter
-  ));
+  const filteredSources = useMemo(() => (sources || []).filter((source) => {
+    const matchesGroup = sourceGroupFilter === "all" ? true : (source.category || "general") === sourceGroupFilter;
+    const matchesChannel = sourceChannelFilter === "all" ? true : source.type === sourceChannelFilter;
+    return matchesGroup && matchesChannel;
+  }), [sources, sourceGroupFilter, sourceChannelFilter]);
 
   useEffect(() => {
-    const visibleIds = new Set((sources || []).map((source) => source.id));
+    const visibleIds = new Set(filteredSources.map((source) => source.id));
     setSelectedSourceIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
-  }, [sources]);
+  }, [filteredSources]);
 
   const visibleSourceIds = filteredSources.map((source) => source.id);
   const selectedVisibleCount = visibleSourceIds.filter((id) => selectedSourceIds.has(id)).length;
@@ -1082,6 +1085,26 @@ function SourcesManager({
                       {SOURCE_GROUP_CATEGORIES.map((category) => (
                         <SelectItem key={category.code} value={category.code}>{category.label}</SelectItem>
                       ))}
+                    </SelectContent>
+                  </Select>
+                  <Label className="w-24 text-xs font-medium text-muted-foreground sm:ml-3">Channel</Label>
+                  <Select value={sourceChannelFilter} onValueChange={setSourceChannelFilter}>
+                    <SelectTrigger className="h-9 w-full bg-background sm:w-[190px]" data-testid="select-source-channel-filter">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All channels</SelectItem>
+                      {SOURCE_TYPES.map((sourceType) => {
+                        const Icon = sourceType.icon;
+                        return (
+                          <SelectItem key={sourceType.type} value={sourceType.type}>
+                            <span className="flex items-center gap-2">
+                              <Icon className={`h-3.5 w-3.5 ${sourceType.color}`} />
+                              {sourceTypeLabels[sourceType.type] || sourceType.type}
+                            </span>
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                   <span className="text-xs text-muted-foreground">
