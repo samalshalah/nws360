@@ -148,6 +148,41 @@ export function FeedImportDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  return (
+    <Dialog open={open} onOpenChange={(next) => {
+      onOpenChange(next);
+    }}>
+      <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col overflow-hidden p-0">
+        <FeedImportContent
+          closeLabel="Cancel"
+          onClose={() => onOpenChange(false)}
+          onImported={() => onOpenChange(false)}
+          scrollClassName="max-h-[calc(90vh-146px)] overflow-y-auto"
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function FeedImportPage({ onClose }: { onClose?: () => void }) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-card shadow-sm">
+      <FeedImportContent closeLabel="Back to sources" onClose={onClose} />
+    </div>
+  );
+}
+
+function FeedImportContent({
+  closeLabel,
+  onClose,
+  onImported,
+  scrollClassName = "",
+}: {
+  closeLabel: string;
+  onClose?: () => void;
+  onImported?: () => void;
+  scrollClassName?: string;
+}) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [rows, setRows] = useState<ImportPreviewRow[]>([]);
@@ -226,7 +261,7 @@ export function FeedImportDialog({
         description: `${result.created || 0} created, ${result.skipped || 0} skipped, ${result.failed || 0} failed.`,
       });
       reset();
-      onOpenChange(false);
+      onImported?.();
     } catch (error) {
       toast({ variant: "destructive", title: "Import failed", description: error instanceof Error ? error.message : "Unable to import sources." });
     } finally {
@@ -235,17 +270,13 @@ export function FeedImportDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(next) => {
-      onOpenChange(next);
-      if (!next) reset();
-    }}>
-      <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col overflow-hidden p-0">
-        <DialogHeader className="border-b px-6 py-5 text-left">
-          <DialogTitle>Import feeds</DialogTitle>
-          <DialogDescription>Upload a CSV export and review detected websites, RSS feeds, Google News topics, and social sources before import.</DialogDescription>
-        </DialogHeader>
+    <>
+      <DialogHeader className="border-b px-6 py-5 text-left">
+        <DialogTitle>Import feeds</DialogTitle>
+        <DialogDescription>Upload a CSV export and review detected websites, RSS feeds, Google News topics, and social sources before import.</DialogDescription>
+      </DialogHeader>
 
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
+      <div className={`min-h-0 flex-1 space-y-5 px-6 py-5 ${scrollClassName}`}>
           <div className="grid gap-4 md:grid-cols-[1.4fr_1fr]">
             <div className="space-y-2">
               <Label htmlFor="feed-import-file">CSV file</Label>
@@ -402,16 +433,15 @@ export function FeedImportDialog({
               <p className="text-xs">Expected headers: xmlUrl, title, description, sourceUrl.</p>
             </div>
           )}
-        </div>
+      </div>
 
-        <div className="flex flex-col-reverse gap-2 border-t bg-background px-6 py-4 sm:flex-row sm:justify-end">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={importRows} disabled={selectedRows.length === 0 || isImporting} className="gap-2" data-testid="button-confirm-feed-import">
-            {isImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-            Import {selectedRows.length || ""} source{selectedRows.length === 1 ? "" : "s"}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+      <div className="flex flex-col-reverse gap-2 border-t bg-background px-6 py-4 sm:flex-row sm:justify-end">
+        {onClose && <Button variant="outline" onClick={onClose}>{closeLabel}</Button>}
+        <Button onClick={importRows} disabled={selectedRows.length === 0 || isImporting} className="gap-2" data-testid="button-confirm-feed-import">
+          {isImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+          Import {selectedRows.length || ""} source{selectedRows.length === 1 ? "" : "s"}
+        </Button>
+      </div>
+    </>
   );
 }

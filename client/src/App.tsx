@@ -213,7 +213,7 @@ function Router() {
         <ProtectedPage component={() => <Admin tab="manage" initialAddOpen />} />
       </Route>
       <Route path="/sources/import">
-        <ProtectedPage component={() => <Admin tab="manage" initialImportOpen />} />
+        <ProtectedPage component={() => <Admin tab="import" />} />
       </Route>
       <Route path="/sources/manage">
         <ProtectedPage component={() => <Admin tab="manage" />} />

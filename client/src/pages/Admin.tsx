@@ -31,11 +31,12 @@ import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper,
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
+import { useLocation } from "wouter";
 import { CAPS, type Source } from "@shared/schema";
 import { SOURCE_GROUP_CATEGORIES } from "@shared/source-categories";
 import { GlobalAddSourceDialog } from "@/components/sources/GlobalAddSourceDialog";
 import { EditSourceDialog } from "@/components/sources/EditSourceDialog";
-import { FeedImportDialog } from "@/components/sources/FeedImportDialog";
+import { FeedImportDialog, FeedImportPage } from "@/components/sources/FeedImportDialog";
 
 function CardInfo({ description }: { description: string }) {
   return (
@@ -107,15 +108,17 @@ export default function Admin({
   initialAddOpen = false,
   initialImportOpen = false,
 }: {
-  tab?: "add" | "manage" | "keywords";
+  tab?: "add" | "manage" | "import" | "keywords";
   initialAddOpen?: boolean;
   initialImportOpen?: boolean;
 }) {
   const { t } = useTranslation();
+  const [, setLocation] = useLocation();
 
   const titles: Record<string, { title: string; subtitle: string }> = {
     add: { title: t("admin.title"), subtitle: t("admin.subtitle") },
     manage: { title: t("admin.manageSources"), subtitle: t("admin.subtitle") },
+    import: { title: t("nav.importFeeds", "Import Feeds"), subtitle: "Upload and review source feeds before adding them to monitoring." },
     keywords: { title: t("admin.keywords"), subtitle: t("admin.keywordsDescription") },
   };
 
@@ -130,6 +133,7 @@ export default function Admin({
 
       {tab === "add" && <AddSourceView />}
       {tab === "manage" && <SourcesManager initialAddOpen={initialAddOpen} initialImportOpen={initialImportOpen} />}
+      {tab === "import" && <FeedImportPage onClose={() => setLocation("/sources/manage")} />}
       {tab === "keywords" && <KeywordsManager />}
     </div>
   );
