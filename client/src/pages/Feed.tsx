@@ -20,7 +20,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { CAPS } from "@shared/schema";
-import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, ARTICLE_WORKFLOW_STATUSES, IRAQ_PROVINCES, getArticleCategoryLabel, type EmbassyProfile } from "@shared/article-taxonomy";
+import { ARTICLE_CATEGORIES, ARTICLE_PRIORITIES, ARTICLE_WORKFLOW_STATUSES, IRAQ_PROVINCES, getArticleCategoryLabel, type ArticleCategoryCode, type EmbassyProfile } from "@shared/article-taxonomy";
 import { OFFICIAL_SOURCE_CATEGORY_CODES, OFFICIAL_SOURCE_CATEGORIES, getSourceCategoryLabel } from "@shared/source-categories";
 import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
 import { useLocation, useSearch } from "wouter";
@@ -92,7 +92,12 @@ function GridDensityIcon({ columns }: { columns: GridColumnCount }) {
   );
 }
 
-export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = false }: { officialSourcesOnly?: boolean } = {}) {
+type FeedProps = {
+  officialSourcesOnly?: boolean;
+  defaultCategory?: ArticleCategoryCode;
+};
+
+export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = false, defaultCategory }: FeedProps = {}) {
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const { hasCap, isAdmin } = usePermissions();
@@ -135,7 +140,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
       sourceName: params.get("sourceName") || undefined as string | undefined,
       sourceCategory: params.get("sourceCategory") || undefined as string | undefined,
       sentiment: params.get("sentiment") || undefined as string | undefined,
-      category: params.get("category") || undefined as string | undefined,
+      category: params.get("category") || defaultCategory || undefined as string | undefined,
       priority: params.get("priority") || undefined as string | undefined,
       province: params.get("province") || undefined as string | undefined,
       workflowStatus: params.get("workflowStatus") || undefined as string | undefined,
@@ -158,7 +163,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     const sourceIdParam = params.get("sourceId");
     const sourceTypeParam = params.get("sourceType");
     const sourceCategoryParam = params.get("sourceCategory");
-    const categoryParam = params.get("category");
+    const categoryParam = params.get("category") || defaultCategory;
     const priorityParam = params.get("priority");
     const provinceParam = params.get("province");
     const workflowStatusParam = params.get("workflowStatus");
@@ -194,7 +199,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     if (focusParam === "search") {
       setTimeout(() => searchInputRef.current?.focus(), 100);
     }
-  }, [searchString]);
+  }, [searchString, defaultCategory]);
 
   const isResettingRef = useRef(false);
 
@@ -641,7 +646,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
   const hasActiveFilters = filters.search || filters.sourceId || filters.sourceName || filters.sourceCategory || filters.sentiment || filters.category || filters.priority || filters.province || filters.workflowStatus || filters.manualTag || filters.sourceType || filters.startDate || filters.endDate || filters.dateRange !== "all";
 
   const clearFilters = () => {
-    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sourceCategory: undefined, sentiment: undefined, category: undefined, priority: undefined, province: undefined, workflowStatus: undefined, manualTag: undefined, sourceType: undefined, startDate: undefined, endDate: undefined, dateRange: "all", sort: DEFAULT_SORT });
+    setFilters({ search: "", sourceId: undefined, sourceName: undefined, sourceCategory: undefined, sentiment: undefined, category: defaultCategory || undefined, priority: undefined, province: undefined, workflowStatus: undefined, manualTag: undefined, sourceType: undefined, startDate: undefined, endDate: undefined, dateRange: "all", sort: DEFAULT_SORT });
     setSearchInput("");
     setActiveSavedViewId(undefined);
     resetScroll();

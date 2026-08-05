@@ -12,6 +12,7 @@ import { getDirection } from "@/i18n";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { canAccessRoute } from "@/lib/nav-config";
 import { UniversalShell } from "@/components/layout/UniversalShell";
+import { CLIENT_BILATERAL_CATEGORY_CODE } from "@shared/article-taxonomy";
 
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
@@ -147,6 +148,9 @@ function Router() {
       </Route>
       <Route path="/official-sources">
         <ProtectedPage component={() => <Feed officialSourcesOnly />} />
+      </Route>
+      <Route path="/us-iraq-relations">
+        <ProtectedPage component={() => <Feed defaultCategory={CLIENT_BILATERAL_CATEGORY_CODE} />} />
       </Route>
       <Route path="/feed">
         <ProtectedPage component={Feed} />
