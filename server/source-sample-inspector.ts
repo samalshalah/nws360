@@ -561,6 +561,7 @@ function sourceType(source: Source): string {
 
 function sourceFeedUrl(source: Source): string | null {
   const config = normalizeWebsiteCollectorConfig(source.collectorConfig);
+  if (/^https?:\/\/rss\.app\/feeds\//i.test(config.feedUrl || "")) return null;
   return config.feedUrl || null;
 }
 
@@ -571,10 +572,7 @@ function chooseCollector(source: Source, channel?: PublisherChannel | null): { t
   if (MANUAL_CHANNEL_TYPES.has(channelType)) return { type: "manual", url: null, reason: "manual_channel_requires_external_connector" };
   if (type === "google_news") return { type: "google_news", url: googleNewsUrl(source.url || "", source.country) };
   if (SOCIAL_SOURCE_TYPES.has(type) || SOCIAL_SOURCE_TYPES.has(channelType)) {
-    if (!feedUrl && !/^https?:\/\/rss\.app\/feeds\//i.test(source.url || "")) {
-      return { type: "unsupported", url: null, reason: "social_feed_configuration_required" };
-    }
-    return { type: "rss_app", url: feedUrl || source.url };
+    return { type: "unsupported", url: null, reason: "supported_social_connector_required" };
   }
   if (type === "rss" || channelType === "rss") return { type: "rss", url: feedUrl || source.url };
   if (type === "website" || channelType === "website") return { type: "website", url: source.url };

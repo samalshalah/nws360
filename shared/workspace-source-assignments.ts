@@ -287,7 +287,7 @@ export function evaluateChannelProvisionability(input: {
   if (channelIsSocial(channelType)) {
     const hasOperationalFeed = Boolean(input.sourceUrl || input.url || input.normalizedUrl);
     if (!hasOperationalFeed) {
-      return { provisionable: false, manualOnly: false, reason: "social_feed_configuration_required", requiredConfiguration: ["rss_app_feed_or_supported_connector"] };
+      return { provisionable: false, manualOnly: false, reason: "social_feed_configuration_required", requiredConfiguration: ["supported_social_connector"] };
     }
   }
   if (!input.sourceUrl && !input.url && !input.normalizedUrl) {

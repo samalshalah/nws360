@@ -353,7 +353,7 @@ export function FeedImportDialog({
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>
                     {rssAppCount} RSS.app feed link{rssAppCount === 1 ? "" : "s"} detected.
-                    {" "}Rows with original URLs will import the original website or account URL instead.
+                    {" "}Rows with original account URLs will import the account URL only; RSS.app-only rows are disabled.
                   </span>
                 </div>
               )}

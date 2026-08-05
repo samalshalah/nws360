@@ -257,12 +257,12 @@ assert.deepEqual(evaluateChannelProvisionability({
   provisionable: false,
   manualOnly: false,
   reason: "social_feed_configuration_required",
-  requiredConfiguration: ["rss_app_feed_or_supported_connector"],
+  requiredConfiguration: ["supported_social_connector"],
 });
 
 assert.equal(evaluateChannelProvisionability({
   channelType: "facebook",
-  sourceUrl: "https://rss.app/feeds/example.xml",
+  sourceUrl: "https://www.facebook.com/example",
   lifecycleStatus: "active",
 }).provisionable, true);
 

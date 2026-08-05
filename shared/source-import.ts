@@ -122,7 +122,19 @@ export function classifyFeedImportRow(row: FeedImportInputRow, rowIndex: number)
   if (xmlUrl) {
     const normalizedXml = normalizeUrl(xmlUrl);
     if (isRssAppFeed(normalizedXml)) {
-      warnings.push("RSS.app feed has no original source URL; verify access before activating.");
+      warnings.push("RSS.app feed has no original social account URL; this row will not import.");
+      return {
+        rowIndex,
+        name: title || fallbackName(xmlUrl),
+        url: normalizedXml,
+        type: "rss",
+        country: null,
+        description: description || null,
+        originalUrl: null,
+        xmlUrl: normalizedXml,
+        enabled: false,
+        warnings,
+      };
     }
     return {
       rowIndex,

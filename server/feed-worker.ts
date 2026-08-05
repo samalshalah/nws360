@@ -409,7 +409,12 @@ async function fetchWebsiteArticles(source: FeedSource): Promise<FetchResult> {
 
 function getConfiguredSocialFeedUrl(source: FeedSource): string | null {
   const feedUrl = source.collectorConfig?.feedUrl?.trim();
+  if (isRssAppFeedUrl(feedUrl)) return null;
   return feedUrl || null;
+}
+
+function isRssAppFeedUrl(value?: string | null): boolean {
+  return /^https?:\/\/rss\.app\/feeds\//i.test(String(value || "").trim());
 }
 
 async function fetchConfiguredSocialFeed(source: FeedSource, label: string): Promise<FeedItem[] | null> {
@@ -459,7 +464,7 @@ async function fetchYouTubeArticles(source: FeedSource): Promise<FetchResult> {
 
 async function fetchFacebookArticles(source: FeedSource): Promise<FetchResult> {
   console.log(`[Worker] Fetching Facebook: ${source.url} for source: ${source.name}`);
-  const feedUrl = source.collectorConfig?.feedUrl?.trim();
+  const feedUrl = getConfiguredSocialFeedUrl(source);
   const posts = await fetchFacebookFeed(feedUrl || source.url, { originalUrl: source.url, sourceName: source.name });
   posts.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
   console.log(`[Worker] Got ${posts.length} Facebook posts from ${source.name}`);
@@ -1034,7 +1039,7 @@ function appearanceTypeForSource(source: FeedSource): "original" | "rss" | "soci
 
 function collectorTypeForSource(source: FeedSource): "google_news" | "rss_app" | "direct" | "manual" | "other" | null {
   if (source.type === "google_news") return "google_news";
-  if (source.collectorConfig?.feedUrl && ["facebook", "twitter", "instagram", "telegram", "youtube"].includes(String(source.type || ""))) return "rss_app";
+  if (source.collectorConfig?.feedUrl && !isRssAppFeedUrl(source.collectorConfig.feedUrl) && ["facebook", "twitter", "instagram", "telegram", "youtube"].includes(String(source.type || ""))) return "other";
   if (source.type === "website" || source.type === "rss") return "direct";
   return null;
 }
@@ -1791,18 +1796,19 @@ export async function previewSource(
 
   if (["twitter", "youtube", "facebook", "instagram", "telegram"].includes(type)) {
     try {
-      const socialInput = collectorConfig?.feedUrl || (/^https?:\/\//i.test(url) ? normalized : url.trim());
+      const configuredFeedUrl = isRssAppFeedUrl(collectorConfig?.feedUrl) ? null : collectorConfig?.feedUrl;
+      const socialInput = configuredFeedUrl || (/^https?:\/\//i.test(url) ? normalized : url.trim());
       const candidates =
         type === "twitter" ? await fetchTwitterFeed(socialInput) :
         type === "youtube" ? await fetchYouTubeFeed(socialInput) :
-        type === "facebook" ? await fetchFacebookFeed(socialInput, collectorConfig?.feedUrl ? { originalUrl: normalized } : undefined) :
+        type === "facebook" ? await fetchFacebookFeed(socialInput, configuredFeedUrl ? { originalUrl: normalized } : undefined) :
         type === "instagram" ? await fetchInstagramFeed(socialInput) :
         await fetchTelegramFeed(socialInput);
       const articles = filterSourceItems(candidates, filterConfig).slice(0, maxArticles);
       if (articles.length > 0) {
         return {
           success: true,
-          method: collectorConfig?.feedUrl ? "configured_feed" : type,
+          method: configuredFeedUrl ? "configured_feed" : type,
           articles: articles.map((article) => ({ ...article, content: article.content.substring(0, 300) })),
         };
       }

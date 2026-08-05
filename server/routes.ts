@@ -700,14 +700,7 @@ function sourceTypeSupportsCollectorConfig(type: string): boolean {
 }
 
 function buildImportedFeedCollectorConfig(classified: ClassifiedFeedImportRow) {
-  const xmlUrl = classified.xmlUrl?.trim();
-  if (!xmlUrl || !/^https?:\/\/rss\.app\/feeds\//i.test(xmlUrl)) return null;
-  if (!sourceTypeSupportsCollectorConfig(classified.type)) return null;
-  return normalizeWebsiteCollectorConfig({
-    strategy: "rss",
-    feedUrl: xmlUrl,
-    renderJavascript: false,
-  });
+  return null;
 }
 
 const workerMiddleware = (_req: any, _res: any, next: any) => next();
@@ -2505,7 +2498,7 @@ export async function registerRoutes(
               url: existingSource.url,
               status: "skipped",
               sourceId: existingSource.id,
-              reason: "Duplicate source updated with RSS.app feed URL",
+              reason: "Duplicate source updated with configured feed URL",
             });
             continue;
           }

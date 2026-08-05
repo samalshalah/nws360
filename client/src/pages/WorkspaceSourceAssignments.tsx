@@ -199,7 +199,7 @@ export default function WorkspaceSourceAssignments() {
                 </Select>
               </div>
               <div className="space-y-2 md:col-span-2">
-                <Label>Operational source URL or RSS.app feed</Label>
+                <Label>Operational source URL</Label>
                 <Input value={form.sourceUrl} onChange={(event) => setForm((current) => ({ ...current, sourceUrl: event.target.value }))} placeholder="Used only when a compatible source is not already available" />
               </div>
               <SelectField label="Priority" value={form.priority} values={WORKSPACE_SOURCE_ASSIGNMENT_PRIORITIES} onChange={(priority) => setForm((current) => ({ ...current, priority }))} />

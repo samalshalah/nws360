@@ -127,8 +127,7 @@ function isLikelyFeedUrl(input: string): boolean {
     const url = new URL(input);
     const host = url.hostname.replace(/^www\./, "").toLowerCase();
     const path = url.pathname.toLowerCase();
-    return host === "rss.app" ||
-      host === "rsshub.app" ||
+    return host === "rsshub.app" ||
       path.endsWith(".xml") ||
       path.endsWith(".rss") ||
       path.endsWith(".atom") ||
@@ -808,7 +807,6 @@ export async function fetchInstagramFeed(input: string): Promise<ScrapedArticle[
 
   const rssBridges = [
     `https://rsshub.app/instagram/user/${username}`,
-    `https://rss.app/feeds/v1.1/instagram-${username}.xml`,
   ];
 
   for (const bridgeUrl of rssBridges) {
