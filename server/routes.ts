@@ -5772,7 +5772,8 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/status/database", async (_req, res) => {
+  app.get("/api/status/database", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     try {
       const start = Date.now();
       await db.execute(sql`SELECT 1`);
@@ -5791,7 +5792,8 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/status/workers", async (_req, res) => {
+  app.get("/api/status/workers", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     try {
       const health = await storage.getSystemHealth();
       res.json({
@@ -5808,7 +5810,8 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/status/queue", async (_req, res) => {
+  app.get("/api/status/queue", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     try {
       const stats = await getQueueStats();
       const healthy = (stats.failed || 0) < 50;
@@ -7227,7 +7230,7 @@ export async function registerRoutes(
 
   // === PRODUCT INTELLIGENCE: EXPERIMENTS (A/B TESTING) ===
   app.get("/api/experiments", async (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+    if (!requireAdmin(req, res)) return;
     const status = req.query.status as string | undefined;
     res.json(await storage.getExperiments({ status }));
   });

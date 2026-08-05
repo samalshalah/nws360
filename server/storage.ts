@@ -7415,7 +7415,7 @@ export class DatabaseStorage implements IStorage {
 
   async upsertKnowledgeEntry(data: InsertKnowledgeEntry): Promise<KnowledgeEntry> {
     const existing = await db.select().from(knowledgeEntries)
-      .where(eq(knowledgeEntries.questionPattern, data.questionPattern));
+      .where(and(eq(knowledgeEntries.questionPattern, data.questionPattern), eq(knowledgeEntries.clientId, data.clientId)));
     if (existing.length > 0) {
       const [row] = await db.update(knowledgeEntries)
         .set({ answerSummary: data.answerSummary, queryCount: sql`${knowledgeEntries.queryCount} + 1`, lastUsed: new Date() })
