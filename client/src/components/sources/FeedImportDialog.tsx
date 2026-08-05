@@ -157,6 +157,7 @@ export function FeedImportDialog({
           closeLabel="Cancel"
           onClose={() => onOpenChange(false)}
           onImported={() => onOpenChange(false)}
+          renderDialogHeader
           scrollClassName="max-h-[calc(90vh-146px)] overflow-y-auto"
         />
       </DialogContent>
@@ -176,11 +177,13 @@ function FeedImportContent({
   closeLabel,
   onClose,
   onImported,
+  renderDialogHeader = false,
   scrollClassName = "",
 }: {
   closeLabel: string;
   onClose?: () => void;
   onImported?: () => void;
+  renderDialogHeader?: boolean;
   scrollClassName?: string;
 }) {
   const queryClient = useQueryClient();
@@ -271,10 +274,17 @@ function FeedImportContent({
 
   return (
     <>
-      <DialogHeader className="border-b px-6 py-5 text-left">
-        <DialogTitle>Import feeds</DialogTitle>
-        <DialogDescription>Upload a CSV export and review detected websites, RSS feeds, Google News topics, and social sources before import.</DialogDescription>
-      </DialogHeader>
+      {renderDialogHeader ? (
+        <DialogHeader className="border-b px-6 py-5 text-left">
+          <DialogTitle>Import feeds</DialogTitle>
+          <DialogDescription>Upload a CSV export and review detected websites, RSS feeds, Google News topics, and social sources before import.</DialogDescription>
+        </DialogHeader>
+      ) : (
+        <div className="border-b px-6 py-5 text-left">
+          <h2 className="text-lg font-semibold leading-none tracking-tight">Import feeds</h2>
+          <p className="mt-1.5 text-sm text-muted-foreground">Upload a CSV export and review detected websites, RSS feeds, Google News topics, and social sources before import.</p>
+        </div>
+      )}
 
       <div className={`min-h-0 flex-1 space-y-5 px-6 py-5 ${scrollClassName}`}>
           <div className="grid gap-4 md:grid-cols-[1.4fr_1fr]">
