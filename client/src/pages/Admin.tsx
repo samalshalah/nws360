@@ -1045,32 +1045,10 @@ function SourcesManager({
 
   return (
     <Card className="border-border/50 shadow-md">
-      <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap">
+      <CardHeader>
         <div>
           <CardTitle className="flex items-center gap-2">{t("admin.newsSources")}<CardInfo description="Add and manage RSS feeds, websites, and social media accounts to monitor. Configure fetch frequency and auto-discovery for each source." /></CardTitle>
           <CardDescription>{t("admin.sourcesDescription")}</CardDescription>
-        </div>
-        <div className="flex items-center gap-2">
-          {hasCap(CAPS.SOURCES_ADD) && (
-            <Button
-              className="gap-2"
-              onClick={() => setIsAddSourceOpen(true)}
-              data-testid="button-add-source"
-            >
-              <Plus className="w-4 h-4" />
-              {t("admin.addSource")}
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            className="gap-2"
-            onClick={() => fetchAll()}
-            disabled={isFetchingAll}
-            data-testid="button-fetch-all"
-          >
-            <RefreshCw className={`w-4 h-4 ${isFetchingAll ? "animate-spin" : ""}`} />
-            {isFetchingAll ? t("admin.fetching") : t("admin.fetchAll")}
-          </Button>
         </div>
       </CardHeader>
       <CardContent>
@@ -1106,19 +1084,27 @@ function SourcesManager({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={selectedSourceCount > 0 ? "default" : "secondary"} className="h-8 px-2.5">
-                    {selectedSourceCount} selected
-                  </Badge>
+                  {hasCap(CAPS.SOURCES_ADD) && (
+                    <Button
+                      size="sm"
+                      className="h-9 gap-2"
+                      onClick={() => setIsAddSourceOpen(true)}
+                      data-testid="button-add-source"
+                    >
+                      <Plus className="w-4 h-4" />
+                      {t("admin.addSource")}
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
                     className="h-9 gap-2"
-                    onClick={() => toggleSourcesSelection(visibleSourceIds, !allVisibleSelected)}
-                    disabled={visibleSourceIds.length === 0}
-                    data-testid="button-select-all-sources"
+                    onClick={() => fetchAll()}
+                    disabled={isFetchingAll}
+                    data-testid="button-fetch-all"
                   >
-                    <CheckCircle2 className="w-4 h-4" />
-                    {allVisibleSelected ? "Clear visible" : "Select visible"}
+                    <RefreshCw className={`w-4 h-4 ${isFetchingAll ? "animate-spin" : ""}`} />
+                    {isFetchingAll ? t("admin.fetching") : t("admin.fetchAll")}
                   </Button>
                   {hasCap(CAPS.SOURCES_DELETE) && (
                     <Button
