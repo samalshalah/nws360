@@ -1696,7 +1696,7 @@ async function createEnrollmentTransaction(enrollment: NormalizedClientEnrollmen
       contactEmail: enrollment.organization.contactEmail,
       homeCountryCode: legacyHomeCountryCode,
       homeCountryName: legacyHomeCountryCode ? representedCountry?.name || legacyHomeCountryCode : null,
-      bilateralCategoryLabel: legacyHomeCountryCode === "US" ? "U.S.-Iraq Relations" : null,
+      bilateralCategoryLabel: legacyHomeCountryCode === "US" ? "Iraq in US News" : null,
     }).returning();
 
     const [workspace] = await tx.insert(workspaces).values({

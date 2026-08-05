@@ -169,7 +169,7 @@ const labelAssertions = [
   {
     name: "U.S. tenant label",
     actual: getArticleCategoryLabel("client_bilateral_relations", US_EMBASSY_BAGHDAD_PROFILE),
-    expected: "U.S.-Iraq Relations",
+    expected: "Iraq in US News",
   },
   {
     name: "French tenant label",

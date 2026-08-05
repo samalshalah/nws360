@@ -55,7 +55,7 @@ export const US_EMBASSY_BAGHDAD_PROFILE: Required<EmbassyProfile> = {
     "السفارة الأميركية",
   ],
   ambassadorAliases: [],
-  bilateralCategoryLabel: "U.S.-Iraq Relations",
+  bilateralCategoryLabel: "Iraq in US News",
 };
 
 export const ARTICLE_CATEGORIES = [
@@ -289,7 +289,7 @@ export function getBilateralCategoryLabel(profile?: EmbassyProfile | null): stri
   if (!normalized) return "Bilateral Relations";
   if (normalized.bilateralCategoryLabel) return normalized.bilateralCategoryLabel;
   const representedCountryCode = normalized.representedCountryCode || normalized.homeCountryCode;
-  if (representedCountryCode === "US") return "U.S.-Iraq Relations";
+  if (representedCountryCode === "US") return "Iraq in US News";
   if (normalized.homeCountryName) return `${normalized.homeCountryName}-Iraq Relations`;
   return "Bilateral Relations";
 }

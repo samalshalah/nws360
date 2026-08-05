@@ -43,7 +43,7 @@ export function buildTenantNavTree(t: any): NavGroup[] {
         { key: "dashboard", label: t("nav.dashboard", "Home"), href: "/dashboard", icon: Home, caps: [CAPS.FEED_VIEW] },
         { key: "feed", label: t("nav.latestNews", "News Feed"), href: "/feed", icon: Newspaper, caps: [CAPS.FEED_VIEW] },
         { key: "officialSources", label: t("nav.officialSources", "Official Sources"), href: "/official-sources", icon: Landmark, caps: [CAPS.SOURCES_VIEW] },
-        { key: "bilateralRelations", label: t("nav.bilateralRelations", "U.S.-Iraq Relations"), href: "/us-iraq-relations", icon: Handshake, caps: [CAPS.FEED_VIEW] },
+        { key: "bilateralRelations", label: t("nav.bilateralRelations", "Iraq in US News"), href: "/us-iraq-relations", icon: Handshake, caps: [CAPS.FEED_VIEW] },
       ],
       collapsible: false,
     },

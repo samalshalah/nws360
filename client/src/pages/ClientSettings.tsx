@@ -338,7 +338,7 @@ export default function ClientSettings() {
                   id="bilateral-label"
                   value={form.bilateralCategoryLabel || ""}
                   onChange={(event) => updateField("bilateralCategoryLabel", event.target.value)}
-                  placeholder="U.S.-Iraq Relations"
+                  placeholder="Iraq in US News"
                   disabled={!canManageSettings}
                   data-testid="input-bilateral-category-label"
                 />

@@ -137,7 +137,7 @@ export default {
       kurdistan_region: "Kurdistan Region",
       civil_society_humanitarian: "Civil Society, Humanitarian Affairs & Public Opinion",
       united_nations: "United Nations & International Organizations",
-      client_bilateral_relations: "Bilateral Relations",
+      client_bilateral_relations: "Iraq in US News",
       regional_international_relations: "Regional & International Relations",
       media_narratives: "Media Narratives & Social Trends",
       other: "Other",
