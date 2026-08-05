@@ -31,15 +31,19 @@ function CardInfo({ description }: { description: string }) {
 interface SourceHealthData {
   sourceId: number;
   sourceName: string;
+  active: boolean;
   lastStatus: string;
   lastError: string | null;
   successRate: number;
   totalFetches: number;
+  consecutiveFailures: number;
   lastFetchedAt: string | null;
   rejectedItemHistoryAvailable?: boolean;
   rejectedItemCount?: number | null;
   lastMetrics?: SourceFetchMetrics | null;
 }
+
+type HealthFilter = "all" | "failed" | "auto_paused" | "not_pulling" | "never_fetched" | "ok";
 
 function metricValue(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : "n/a";
@@ -137,6 +141,7 @@ function LoadingSkeleton() {
 
 export default function SourceHealth() {
   const { t } = useTranslation();
+  const [filter, setFilter] = useState<HealthFilter>("all");
   const { data, isLoading } = useQuery<SourceHealthData[]>({
     queryKey: ["/api/source-health"],
   });
@@ -144,6 +149,37 @@ export default function SourceHealth() {
   const healthy = data?.filter((s) => s.lastStatus === "success").length ?? 0;
   const errors = data?.filter((s) => s.lastStatus === "error").length ?? 0;
   const unknown = data?.filter((s) => s.lastStatus !== "success" && s.lastStatus !== "error").length ?? 0;
+  const autoPaused = data?.filter((s) => !s.active && s.consecutiveFailures >= 5).length ?? 0;
+  const notPulling = data?.filter((s) => s.active && (s.lastStatus === "error" || s.consecutiveFailures > 0)).length ?? 0;
+  const neverFetched = data?.filter((s) => s.totalFetches === 0 || !s.lastFetchedAt).length ?? 0;
+  const ok = data?.filter((s) => s.active && s.lastStatus === "success").length ?? 0;
+
+  const filteredSources = (data || [])
+    .filter((source) => {
+      if (filter === "failed") return source.lastStatus === "error";
+      if (filter === "auto_paused") return !source.active && source.consecutiveFailures >= 5;
+      if (filter === "not_pulling") return source.active && (source.lastStatus === "error" || source.consecutiveFailures > 0);
+      if (filter === "never_fetched") return source.totalFetches === 0 || !source.lastFetchedAt;
+      if (filter === "ok") return source.active && source.lastStatus === "success";
+      return true;
+    })
+    .sort((a, b) => {
+      const severity = (source: SourceHealthData) =>
+        !source.active && source.consecutiveFailures >= 5 ? 0 :
+        source.lastStatus === "error" ? 1 :
+        source.totalFetches === 0 || !source.lastFetchedAt ? 2 :
+        source.active && source.lastStatus === "success" ? 4 : 3;
+      return severity(a) - severity(b) || b.consecutiveFailures - a.consecutiveFailures || a.sourceName.localeCompare(b.sourceName);
+    });
+
+  const filterOptions: Array<{ value: HealthFilter; label: string; count: number }> = [
+    { value: "all", label: "All", count: data?.length ?? 0 },
+    { value: "failed", label: "Failed", count: errors },
+    { value: "auto_paused", label: "Auto-paused", count: autoPaused },
+    { value: "not_pulling", label: "Not pulling", count: notPulling },
+    { value: "never_fetched", label: "Never fetched", count: neverFetched },
+    { value: "ok", label: "Pulling OK", count: ok },
+  ];
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -174,6 +210,26 @@ export default function SourceHealth() {
               <Clock className="w-3 h-3 mr-1" />
               {unknown} {t("sourceHealth.unknown")}
             </Badge>
+            <Badge variant="secondary" className="bg-amber-500/15 text-amber-700 dark:text-amber-400" data-testid="badge-summary-auto-paused">
+              <AlertTriangle className="w-3 h-3 mr-1" />
+              {autoPaused} auto-paused
+            </Badge>
+          </div>
+
+          <div className="flex flex-wrap gap-2" data-testid="source-health-filters">
+            {filterOptions.map((option) => (
+              <Button
+                key={option.value}
+                variant={filter === option.value ? "default" : "outline"}
+                size="sm"
+                className="gap-2"
+                onClick={() => setFilter(option.value)}
+                data-testid={`button-source-health-filter-${option.value}`}
+              >
+                <span>{option.label}</span>
+                <Badge variant="secondary" className="h-5 px-1.5 text-[11px]">{option.count}</Badge>
+              </Button>
+            ))}
           </div>
 
           {(!data || data.length === 0) ? (
@@ -181,9 +237,14 @@ export default function SourceHealth() {
               <Activity className="w-10 h-10 mx-auto mb-3 opacity-30" />
               <p className="text-sm">{t("sourceHealth.noLogs")}</p>
             </div>
+          ) : filteredSources.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <Activity className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">No sources match this filter.</p>
+            </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {data.map((source) => (
+              {filteredSources.map((source) => (
                 <Card key={source.sourceId} className="overflow-visible" data-testid={`card-source-health-${source.sourceId}`}>
                   <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
                     <div className="flex items-center gap-2 min-w-0">
@@ -208,6 +269,18 @@ export default function SourceHealth() {
                       <span className="font-medium" data-testid={`text-total-fetches-${source.sourceId}`}>
                         {source.totalFetches}
                       </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Status</span>
+                      <div className="flex items-center gap-1.5">
+                        <Badge variant={source.active ? "default" : "secondary"}>{source.active ? "Active" : "Inactive"}</Badge>
+                        {source.consecutiveFailures > 0 && (
+                          <Badge variant="secondary" className="bg-red-500/15 text-red-600 dark:text-red-400">
+                            {source.consecutiveFailures} failed
+                          </Badge>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center justify-between text-sm">

@@ -3345,6 +3345,7 @@ export class DatabaseStorage implements IStorage {
       SELECT
         s.id as "sourceId",
         s.name as "sourceName",
+        COALESCE(s.active, false) as "active",
         s.last_fetched_at as "lastFetchedAt",
         COALESCE(
           (SELECT status FROM source_fetch_logs WHERE source_id = s.id ORDER BY fetched_at DESC LIMIT 1),
@@ -3356,6 +3357,18 @@ export class DatabaseStorage implements IStorage {
           (SELECT COUNT(*)::int FROM source_fetch_logs WHERE source_id = s.id),
           0
         ) as "totalFetches",
+        COALESCE((
+          SELECT COUNT(*)::int
+          FROM (
+            SELECT status,
+                   SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END)
+                     OVER (ORDER BY fetched_at DESC ROWS UNBOUNDED PRECEDING) AS success_seen
+            FROM source_fetch_logs
+            WHERE source_id = s.id
+            ORDER BY fetched_at DESC
+          ) recent_logs
+          WHERE success_seen = 0 AND status = 'error'
+        ), 0) as "consecutiveFailures",
         COALESCE(
           (SELECT (COUNT(*) FILTER (WHERE status = 'success')::float / NULLIF(COUNT(*)::float, 0) * 100)::int
            FROM source_fetch_logs WHERE source_id = s.id),
@@ -3375,11 +3388,13 @@ export class DatabaseStorage implements IStorage {
       return {
         sourceId: Number(r.sourceId),
         sourceName: String(r.sourceName),
+        active: r.active === true || r.active === "true",
         lastStatus: String(r.lastStatus),
         lastError: r.lastError ? String(r.lastError) : null,
         lastMetrics: maybeNormalizeSourceFetchMetrics(r.lastMetrics),
         successRate: Number(r.successRate),
         totalFetches: Number(r.totalFetches),
+        consecutiveFailures: Number(r.consecutiveFailures || 0),
         ...rejectedHistory,
         lastFetchedAt: r.lastFetchedAt ? new Date(r.lastFetchedAt) : null,
       };
