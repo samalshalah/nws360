@@ -789,7 +789,9 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
   ];
   const primaryOfficialCategoryNav = [
     { code: "official_presidency", label: "Presidency" },
+    { code: "official_president_personal", label: "President" },
     { code: "official_prime_minister", label: "Prime Minister" },
+    { code: "official_prime_minister_personal", label: "PM Personal" },
     { code: "official_council_ministers", label: "Council" },
     { code: "official_ministry", label: "Ministries" },
     { code: "official_parliament", label: "Parliament" },

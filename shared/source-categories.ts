@@ -2,7 +2,9 @@ export const SOURCE_CATEGORIES = [
   { code: "general", label: "General" },
   { code: "official_government", label: "Official Government" },
   { code: "official_presidency", label: "Official Presidency" },
+  { code: "official_president_personal", label: "President Personal" },
   { code: "official_prime_minister", label: "Official Prime Minister" },
+  { code: "official_prime_minister_personal", label: "Prime Minister Personal" },
   { code: "official_council_ministers", label: "Official Council of Ministers" },
   { code: "official_ministry", label: "Official Ministry" },
   { code: "official_parliament", label: "Official Parliament" },
@@ -49,7 +51,7 @@ export function isSourceCategoryCode(value: unknown): value is SourceCategoryCod
 }
 
 export function isOfficialSourceCategoryCode(value: unknown): value is SourceCategoryCode {
-  return typeof value === "string" && OFFICIAL_SOURCE_CATEGORY_CODES.includes(value);
+  return typeof value === "string" && OFFICIAL_SOURCE_CATEGORY_CODES.some((code) => code === value);
 }
 
 export function getSourceCategoryLabel(code: string): string {

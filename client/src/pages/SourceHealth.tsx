@@ -13,6 +13,7 @@ import { useState } from "react";
 import type { SourceFetchMetrics } from "@shared/source-fetch-metrics";
 import { sourceHealthZeroInsertMessage } from "@shared/source-health";
 import type { Source } from "@shared/schema";
+import { OFFICIAL_SOURCE_CATEGORIES, getSourceCategoryLabel } from "@shared/source-categories";
 import { EditSourceDialog } from "@/components/sources/EditSourceDialog";
 import { useSources } from "@/hooks/use-sources";
 
@@ -145,6 +146,7 @@ function LoadingSkeleton() {
 export default function SourceHealth() {
   const { t } = useTranslation();
   const [filter, setFilter] = useState<HealthFilter>("all");
+  const [officialCategoryFilter, setOfficialCategoryFilter] = useState<string>("all");
   const [editingSource, setEditingSource] = useState<Source | null>(null);
   const { data, isLoading } = useQuery<SourceHealthData[]>({
     queryKey: ["/api/source-health"],
@@ -160,8 +162,21 @@ export default function SourceHealth() {
   const neverFetched = data?.filter((s) => s.totalFetches === 0 || !s.lastFetchedAt).length ?? 0;
   const ok = data?.filter((s) => s.active && s.lastStatus === "success").length ?? 0;
 
+  const officialCategoryCounts = new Map<string, number>();
+  for (const healthSource of data || []) {
+    const source = sourceById.get(healthSource.sourceId);
+    const category = source?.category || "";
+    if (category.startsWith("official_")) {
+      officialCategoryCounts.set(category, (officialCategoryCounts.get(category) || 0) + 1);
+    }
+  }
+  const officialTotal = Array.from(officialCategoryCounts.values()).reduce((sum, count) => sum + count, 0);
+
   const filteredSources = (data || [])
     .filter((source) => {
+      const sourceCategory = sourceById.get(source.sourceId)?.category || "";
+      if (officialCategoryFilter === "official_all" && !sourceCategory.startsWith("official_")) return false;
+      if (officialCategoryFilter !== "all" && officialCategoryFilter !== "official_all" && sourceCategory !== officialCategoryFilter) return false;
       if (filter === "failed") return source.lastStatus === "error";
       if (filter === "auto_paused") return !source.active && source.consecutiveFailures >= 5;
       if (filter === "not_pulling") return source.active && (source.lastStatus === "error" || source.consecutiveFailures > 0);
@@ -238,6 +253,45 @@ export default function SourceHealth() {
             ))}
           </div>
 
+          <div className="flex flex-wrap gap-2" data-testid="source-health-official-filters">
+            <Button
+              variant={officialCategoryFilter === "all" ? "default" : "outline"}
+              size="sm"
+              className="gap-2"
+              onClick={() => setOfficialCategoryFilter("all")}
+              data-testid="button-source-health-official-filter-all-sources"
+            >
+              <span>All sources</span>
+              <Badge variant="secondary" className="h-5 px-1.5 text-[11px]">{data?.length ?? 0}</Badge>
+            </Button>
+            <Button
+              variant={officialCategoryFilter === "official_all" ? "default" : "outline"}
+              size="sm"
+              className="gap-2"
+              onClick={() => setOfficialCategoryFilter("official_all")}
+              data-testid="button-source-health-official-filter-official-all"
+            >
+              <span>All official</span>
+              <Badge variant="secondary" className="h-5 px-1.5 text-[11px]">{officialTotal}</Badge>
+            </Button>
+            {OFFICIAL_SOURCE_CATEGORIES.map((category) => {
+              const count = officialCategoryCounts.get(category.code) || 0;
+              return (
+                <Button
+                  key={category.code}
+                  variant={officialCategoryFilter === category.code ? "default" : "outline"}
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => setOfficialCategoryFilter(category.code)}
+                  data-testid={`button-source-health-official-filter-${category.code}`}
+                >
+                  <span>{category.label.replace(/^Official /, "")}</span>
+                  <Badge variant="secondary" className="h-5 px-1.5 text-[11px]">{count}</Badge>
+                </Button>
+              );
+            })}
+          </div>
+
           {(!data || data.length === 0) ? (
             <div className="text-center py-12 text-muted-foreground">
               <Activity className="w-10 h-10 mx-auto mb-3 opacity-30" />
@@ -255,7 +309,15 @@ export default function SourceHealth() {
                   <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
                     <div className="flex items-center gap-2 min-w-0">
                       <StatusIcon status={source.lastStatus} />
-                      <CardTitle className="text-base truncate">{source.sourceName}</CardTitle>
+                      <div className="min-w-0">
+                        <CardTitle className="text-base truncate">{source.sourceName}</CardTitle>
+                        {sourceById.get(source.sourceId)?.category && (
+                          <p className="text-xs text-muted-foreground truncate">
+                            {getSourceCategoryLabel(sourceById.get(source.sourceId)?.category || "")}
+                            {sourceById.get(source.sourceId)?.type ? ` · ${sourceById.get(source.sourceId)?.type}` : ""}
+                          </p>
+                        )}
+                      </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <StatusBadge status={source.lastStatus} t={t} />
@@ -305,6 +367,12 @@ export default function SourceHealth() {
                         )}
                       </div>
                     </div>
+
+                    {sourceById.get(source.sourceId)?.url && (
+                      <div className="text-xs text-muted-foreground truncate" title={sourceById.get(source.sourceId)?.url || undefined}>
+                        {sourceById.get(source.sourceId)?.url}
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">Rejected history</span>
