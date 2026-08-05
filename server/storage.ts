@@ -206,6 +206,8 @@ function normalizeCrossChannelTitle(value: string | null | undefined): string {
     .replace(/https?:\/\/\S+/g, " ")
     .replace(/#[\w\u0600-\u06FF_]+/g, " ")
     .replace(/[@][\w.-]+/g, " ")
+    .replace(/\u0640/g, "")
+    .replace(/التفاصيل\s+الكاملة\s+عبر\s+الرابط\s+في\s+التعليق\s+الأول/g, " ")
     .replace(/[|•]+/g, " ")
     .replace(/[\u064B-\u065F\u0670]/g, "")
     .replace(/[^\w\u0600-\u06FF]+/g, " ")
@@ -216,11 +218,32 @@ function normalizeCrossChannelTitle(value: string | null | undefined): string {
 function normalizeSourceFamilyName(value: string | null | undefined): string {
   return String(value || "")
     .toLowerCase()
+    .replace(/https?:\/\/(?:www\.|m\.)?(?:facebook\.com|twitter\.com|x\.com|instagram\.com|t\.me|telegram\.me)\/([a-z0-9_.-]+)/g, " $1 ")
+    .replace(/@([a-z0-9_.-]+)/g, " $1 ")
     .replace(/https?:\/\/\S+/g, " ")
-    .replace(/\b(facebook|telegram|instagram|twitter|youtube|website|google news|rss|feed|x)\b/g, " ")
+    .replace(/\b(official|page|facebook|telegram|instagram|twitter|youtube|website|google news|rss|feed|channel|tv|x)\b/g, " ")
+    .replace(/\balsumariatviraq\b/g, "alsumaria")
+    .replace(/\balsumariatv\b/g, "alsumaria")
+    .replace(/\b([a-z0-9]+)tviraq\b/g, "$1")
+    .replace(/\b([a-z0-9]+)tv\b/g, "$1")
+    .replace(/\b([a-z0-9]+)page\b/g, "$1")
+    .replace(/\b([a-z0-9]+)official\b/g, "$1")
+    .replace(/\b(com|net|org)\b/g, " ")
+    .replace(/(قناة|صفحة|تيليجرام|تليجرام|فيسبوك|انستغرام|تويتر|اكس|الرسمية|رسمي)/g, " ")
     .replace(/[^\w\u0600-\u06FF]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function sourceFamilyRelated(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const aTokens = new Set(a.split(" ").filter((token) => token.length > 2));
+  const bTokens = new Set(b.split(" ").filter((token) => token.length > 2));
+  if (aTokens.size === 0 || bTokens.size === 0) return false;
+  let overlap = 0;
+  for (const token of aTokens) if (bTokens.has(token)) overlap++;
+  return overlap / Math.min(aTokens.size, bTokens.size) >= 0.75;
 }
 
 function crossChannelTitleSimilarity(a: string, b: string): number {
@@ -1803,7 +1826,9 @@ export interface IStorage {
   findCrossChannelArticleMatch(input: {
     title: string;
     sourceName: string;
+    sourceId?: number | null;
     sourceType?: string | null;
+    publisherChannelId?: number | null;
     clientId: number;
     publishedAt?: Date | null;
   }): Promise<Article | undefined>;
@@ -3026,13 +3051,24 @@ export class DatabaseStorage implements IStorage {
   async findCrossChannelArticleMatch(input: {
     title: string;
     sourceName: string;
+    sourceId?: number | null;
     sourceType?: string | null;
+    publisherChannelId?: number | null;
     clientId: number;
     publishedAt?: Date | null;
   }): Promise<Article | undefined> {
     const targetTitle = normalizeCrossChannelTitle(input.title);
     const targetFamily = normalizeSourceFamilyName(input.sourceName);
-    if (targetTitle.length < 18 || targetFamily.length < 3) return undefined;
+    if (targetTitle.length < 18) return undefined;
+    let targetPublisherProfileId: number | null = null;
+    if (input.publisherChannelId) {
+      const [targetChannel] = await db.select({ publisherProfileId: publisherChannels.publisherProfileId })
+        .from(publisherChannels)
+        .where(eq(publisherChannels.id, input.publisherChannelId))
+        .limit(1);
+      targetPublisherProfileId = targetChannel?.publisherProfileId ?? null;
+    }
+    if (!targetPublisherProfileId && targetFamily.length < 3) return undefined;
 
     const conditions = [eq(articles.clientId, input.clientId)];
     const publishedAt = input.publishedAt instanceof Date && !Number.isNaN(input.publishedAt.getTime())
@@ -3045,9 +3081,10 @@ export class DatabaseStorage implements IStorage {
       conditions.push(lte(articles.publishedAt, end));
     }
 
-    const candidates = await db.select({ article: articles, source: sources })
+    const candidates = await db.select({ article: articles, source: sources, channel: publisherChannels })
       .from(articles)
       .leftJoin(sources, eq(articles.sourceId, sources.id))
+      .leftJoin(publisherChannels, eq(sources.publisherChannelId, publisherChannels.id))
       .where(and(...conditions))
       .orderBy(desc(articles.publishedAt), desc(articles.id))
       .limit(400);
@@ -3055,9 +3092,10 @@ export class DatabaseStorage implements IStorage {
     let best: { article: Article; score: number } | null = null;
     for (const candidate of candidates) {
       if (!candidate.source) continue;
-      if (candidate.source.type === input.sourceType && normalizeSourceFamilyName(candidate.source.name) === targetFamily) continue;
+      if (input.sourceId && candidate.source.id === input.sourceId) continue;
       const sourceFamily = normalizeSourceFamilyName(candidate.source.name);
-      if (sourceFamily !== targetFamily) continue;
+      const samePublisher = Boolean(targetPublisherProfileId && candidate.channel?.publisherProfileId === targetPublisherProfileId);
+      if (!samePublisher && !sourceFamilyRelated(sourceFamily, targetFamily)) continue;
       const candidateTitle = normalizeCrossChannelTitle(candidate.article.title);
       const score = crossChannelTitleSimilarity(targetTitle, candidateTitle);
       if (score < 0.82) continue;

@@ -1266,12 +1266,14 @@ async function processItems(
 
     const title = item.title || "Untitled";
 
-    if (!source.publisherChannelId && title.length >= 10) {
+    if (title.length >= 10) {
       const titleDup = await storage.getArticleByTitle(title, source.clientId ?? null)
         || (clientId ? await storage.findCrossChannelArticleMatch({
           title,
           sourceName: source.name,
+          sourceId: source.id,
           sourceType: source.type || null,
+          publisherChannelId: source.publisherChannelId || null,
           clientId,
           publishedAt: item.publishedAt,
         }) : undefined);

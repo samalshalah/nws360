@@ -26,6 +26,7 @@
     "reclassify:iraq-taxonomy": "node scripts/reclassify-iraq-taxonomy.cjs",
     "reset:platform": "node scripts/reset-platform.cjs",
     "cleanup:zero-state-jobs": "node scripts/cleanup-zero-state-jobs.cjs",
+    "cleanup:cross-channel-duplicates": "node scripts/merge-cross-channel-duplicates.cjs",
     "backfill:workspace-relevance": "tsx scripts/backfill-workspace-relevance.ts",
     "preview:workspace-relevance": "tsx scripts/preview-workspace-relevance.ts",
     "test:filters": "tsx scripts/test-source-filters.ts",
