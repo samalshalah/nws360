@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Activity, AlertTriangle, Clock, Info, Pencil } from "lucide-react";
+import { Activity, AlertTriangle, Clock, Info, Pencil, TimerReset } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
 import type { SourceFetchMetrics } from "@shared/source-fetch-metrics";
@@ -47,7 +47,37 @@ interface SourceHealthData {
   lastMetrics?: SourceFetchMetrics | null;
 }
 
-type HealthFilter = "all" | "failed" | "auto_paused" | "not_pulling" | "never_fetched" | "ok";
+type HealthFilter = "all" | "delayed" | "failed" | "auto_paused" | "not_pulling" | "never_fetched" | "ok";
+
+const PRIORITY_FRESHNESS_MINUTES: Record<string, number> = {
+  high: 10,
+  medium: 20,
+  low: 30,
+};
+
+function sourceExpectedFreshnessMinutes(source?: Source): number {
+  const priorityWindow = source?.refreshPriority ? PRIORITY_FRESHNESS_MINUTES[source.refreshPriority] : undefined;
+  const intervalWindow = Number.isFinite(source?.intervalMinutes) && source?.intervalMinutes
+    ? Math.max(15, source.intervalMinutes * 2)
+    : undefined;
+  return Math.max(10, Math.min(priorityWindow || intervalWindow || 30, intervalWindow || priorityWindow || 30));
+}
+
+function sourceFreshness(source: SourceHealthData, sourceConfig?: Source) {
+  if (!source.active) return { status: "inactive", label: "Inactive", minutesBehind: null, thresholdMinutes: sourceExpectedFreshnessMinutes(sourceConfig) };
+  if (source.totalFetches === 0 || !source.lastFetchedAt) {
+    return { status: "never_fetched", label: "Never fetched", minutesBehind: null, thresholdMinutes: sourceExpectedFreshnessMinutes(sourceConfig) };
+  }
+  const thresholdMinutes = sourceExpectedFreshnessMinutes(sourceConfig);
+  const minutesSinceFetch = Math.floor((Date.now() - new Date(source.lastFetchedAt).getTime()) / 60000);
+  if (!Number.isFinite(minutesSinceFetch)) {
+    return { status: "unknown", label: "Unknown freshness", minutesBehind: null, thresholdMinutes };
+  }
+  if (minutesSinceFetch > thresholdMinutes) {
+    return { status: "delayed", label: `${minutesSinceFetch}m since fetch`, minutesBehind: minutesSinceFetch, thresholdMinutes };
+  }
+  return { status: "fresh", label: "Recent", minutesBehind: minutesSinceFetch, thresholdMinutes };
+}
 
 function metricValue(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : "n/a";
@@ -160,7 +190,9 @@ export default function SourceHealth() {
   const autoPaused = data?.filter((s) => !s.active && s.consecutiveFailures >= 5).length ?? 0;
   const notPulling = data?.filter((s) => s.active && (s.lastStatus === "error" || s.consecutiveFailures > 0)).length ?? 0;
   const neverFetched = data?.filter((s) => s.totalFetches === 0 || !s.lastFetchedAt).length ?? 0;
-  const ok = data?.filter((s) => s.active && s.lastStatus === "success").length ?? 0;
+  const delayed = data?.filter((s) => sourceFreshness(s, sourceById.get(s.sourceId)).status === "delayed").length ?? 0;
+  const recent = data?.filter((s) => sourceFreshness(s, sourceById.get(s.sourceId)).status === "fresh").length ?? 0;
+  const ok = data?.filter((s) => s.active && s.lastStatus === "success" && sourceFreshness(s, sourceById.get(s.sourceId)).status === "fresh").length ?? 0;
 
   const officialCategoryCounts = new Map<string, number>();
   for (const healthSource of data || []) {
@@ -177,11 +209,13 @@ export default function SourceHealth() {
       const sourceCategory = sourceById.get(source.sourceId)?.category || "";
       if (officialCategoryFilter === "official_all" && !sourceCategory.startsWith("official_")) return false;
       if (officialCategoryFilter !== "all" && officialCategoryFilter !== "official_all" && sourceCategory !== officialCategoryFilter) return false;
+      const freshness = sourceFreshness(source, sourceById.get(source.sourceId));
+      if (filter === "delayed") return freshness.status === "delayed";
       if (filter === "failed") return source.lastStatus === "error";
       if (filter === "auto_paused") return !source.active && source.consecutiveFailures >= 5;
       if (filter === "not_pulling") return source.active && (source.lastStatus === "error" || source.consecutiveFailures > 0);
       if (filter === "never_fetched") return source.totalFetches === 0 || !source.lastFetchedAt;
-      if (filter === "ok") return source.active && source.lastStatus === "success";
+      if (filter === "ok") return source.active && source.lastStatus === "success" && freshness.status === "fresh";
       return true;
     })
     .sort((a, b) => {
@@ -189,12 +223,14 @@ export default function SourceHealth() {
         !source.active && source.consecutiveFailures >= 5 ? 0 :
         source.lastStatus === "error" ? 1 :
         source.totalFetches === 0 || !source.lastFetchedAt ? 2 :
-        source.active && source.lastStatus === "success" ? 4 : 3;
+        sourceFreshness(source, sourceById.get(source.sourceId)).status === "delayed" ? 3 :
+        source.active && source.lastStatus === "success" ? 5 : 4;
       return severity(a) - severity(b) || b.consecutiveFailures - a.consecutiveFailures || a.sourceName.localeCompare(b.sourceName);
     });
 
   const filterOptions: Array<{ value: HealthFilter; label: string; count: number }> = [
     { value: "all", label: "All", count: data?.length ?? 0 },
+    { value: "delayed", label: "Delayed", count: delayed },
     { value: "failed", label: "Failed", count: errors },
     { value: "auto_paused", label: "Auto-paused", count: autoPaused },
     { value: "not_pulling", label: "Not pulling", count: notPulling },
@@ -209,7 +245,7 @@ export default function SourceHealth() {
           <h1 className="text-3xl font-display font-bold text-foreground" data-testid="text-source-health-title">
             {t("sourceHealth.title")}
           </h1>
-          <CardInfo description="Health monitoring for all configured news sources. Shows fetch success rates, error counts, and last successful update time for each feed." />
+          <CardInfo description="Health monitoring for all configured news sources. Shows whether each source is fetching recently enough to capture the latest published news." />
         </div>
         <p className="text-muted-foreground">{t("sourceHealth.subtitle")}</p>
       </div>
@@ -234,6 +270,14 @@ export default function SourceHealth() {
             <Badge variant="secondary" className="bg-amber-500/15 text-amber-700 dark:text-amber-400" data-testid="badge-summary-auto-paused">
               <AlertTriangle className="w-3 h-3 mr-1" />
               {autoPaused} auto-paused
+            </Badge>
+            <Badge variant="secondary" className="bg-blue-500/15 text-blue-600 dark:text-blue-400" data-testid="badge-summary-recent">
+              <TimerReset className="w-3 h-3 mr-1" />
+              {recent} recent
+            </Badge>
+            <Badge variant="secondary" className="bg-amber-500/15 text-amber-700 dark:text-amber-400" data-testid="badge-summary-delayed">
+              <Clock className="w-3 h-3 mr-1" />
+              {delayed} delayed
             </Badge>
           </div>
 
@@ -304,7 +348,10 @@ export default function SourceHealth() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredSources.map((source) => (
+              {filteredSources.map((source) => {
+                const sourceConfig = sourceById.get(source.sourceId);
+                const freshness = sourceFreshness(source, sourceConfig);
+                return (
                 <Card key={source.sourceId} className="overflow-visible" data-testid={`card-source-health-${source.sourceId}`}>
                   <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
                     <div className="flex items-center gap-2 min-w-0">
@@ -320,6 +367,18 @@ export default function SourceHealth() {
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
+                      {freshness.status === "delayed" && (
+                        <Badge variant="secondary" className="bg-amber-500/15 text-amber-700 dark:text-amber-400" data-testid={`badge-freshness-delayed-${source.sourceId}`}>
+                          <Clock className="w-3 h-3 mr-1" />
+                          Delayed
+                        </Badge>
+                      )}
+                      {freshness.status === "fresh" && (
+                        <Badge variant="secondary" className="bg-blue-500/15 text-blue-600 dark:text-blue-400" data-testid={`badge-freshness-recent-${source.sourceId}`}>
+                          <TimerReset className="w-3 h-3 mr-1" />
+                          Recent
+                        </Badge>
+                      )}
                       <StatusBadge status={source.lastStatus} t={t} />
                       <Button
                         variant="ghost"
@@ -420,6 +479,22 @@ export default function SourceHealth() {
                       </span>
                     </div>
 
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Freshness target</span>
+                      <span className="text-xs text-muted-foreground" data-testid={`text-freshness-target-${source.sourceId}`}>
+                        every {freshness.thresholdMinutes}m
+                      </span>
+                    </div>
+
+                    {source.lastMetrics?.newestParsedPublicationTime && (
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Latest item seen</span>
+                        <span className="text-xs text-muted-foreground" data-testid={`text-latest-item-seen-${source.sourceId}`}>
+                          {formatDistanceToNow(new Date(source.lastMetrics.newestParsedPublicationTime), { addSuffix: true })}
+                        </span>
+                      </div>
+                    )}
+
                     {source.lastError && (
                       <div>
                         <span className="text-xs text-muted-foreground">{t("sourceHealth.lastError")}</span>
@@ -428,7 +503,8 @@ export default function SourceHealth() {
                     )}
                   </CardContent>
                 </Card>
-              ))}
+                );
+              })}
             </div>
           )}
         </>
