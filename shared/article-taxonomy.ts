@@ -239,6 +239,12 @@ function cleanedString(value: unknown): string | null {
   return cleaned || null;
 }
 
+function normalizeBilateralCategoryLabel(value: unknown): string | null {
+  const cleaned = cleanedString(value);
+  if (!cleaned) return null;
+  return cleaned === "U.S.-Iraq Relations" ? "Iraq in US News" : cleaned;
+}
+
 export function normalizeEmbassyProfile(profile?: EmbassyProfile | null): EmbassyProfile | null {
   if (!profile) return null;
   const representedCountryCode =
@@ -252,7 +258,7 @@ export function normalizeEmbassyProfile(profile?: EmbassyProfile | null): Embass
     homeCountryAliases: uniqueTrimmed(profile.homeCountryAliases),
     embassyAliases: uniqueTrimmed(profile.embassyAliases),
     ambassadorAliases: uniqueTrimmed(profile.ambassadorAliases),
-    bilateralCategoryLabel: cleanedString(profile.bilateralCategoryLabel),
+    bilateralCategoryLabel: normalizeBilateralCategoryLabel(profile.bilateralCategoryLabel),
   };
 
   const hasProfileValue = Boolean(

@@ -172,6 +172,14 @@ const labelAssertions = [
     expected: "Iraq in US News",
   },
   {
+    name: "Legacy U.S. tenant label",
+    actual: getArticleCategoryLabel("client_bilateral_relations", {
+      ...US_EMBASSY_BAGHDAD_PROFILE,
+      bilateralCategoryLabel: "U.S.-Iraq Relations",
+    }),
+    expected: "Iraq in US News",
+  },
+  {
     name: "French tenant label",
     actual: getArticleCategoryLabel("client_bilateral_relations", frenchEmbassyProfile),
     expected: "France-Iraq Relations",
