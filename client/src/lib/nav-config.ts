@@ -4,7 +4,7 @@ import {
   FileText, List, Hash, Bookmark, Users,
   Activity, GitCompare, Zap, Brain, CreditCard,
   HelpCircle, Lightbulb, Plug, Monitor, UsersRound, UserCog,
-  Home, Bell, Settings, ClipboardList, CheckSquare, BookOpen, SlidersHorizontal, Building2, Landmark
+  Home, Bell, Settings, ClipboardList, CheckSquare, BookOpen, SlidersHorizontal, Building2, Landmark, Handshake
 } from "lucide-react";
 import { CAPS } from "@shared/schema";
 
@@ -43,6 +43,7 @@ export function buildTenantNavTree(t: any): NavGroup[] {
         { key: "dashboard", label: t("nav.dashboard", "Home"), href: "/dashboard", icon: Home, caps: [CAPS.FEED_VIEW] },
         { key: "feed", label: t("nav.latestNews", "News Feed"), href: "/feed", icon: Newspaper, caps: [CAPS.FEED_VIEW] },
         { key: "officialSources", label: t("nav.officialSources", "Official Sources"), href: "/official-sources", icon: Landmark, caps: [CAPS.SOURCES_VIEW] },
+        { key: "bilateralRelations", label: t("nav.bilateralRelations", "U.S.-Iraq Relations"), href: "/feed?category=client_bilateral_relations", icon: Handshake, caps: [CAPS.FEED_VIEW] },
       ],
       collapsible: false,
     },

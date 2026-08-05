@@ -785,7 +785,6 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
     { code: "economy_oil_finance", label: "Economy" },
     { code: "development_services", label: "Services" },
     { code: "regional_international_relations", label: "International" },
-    { code: "client_bilateral_relations", label: "Bilateral" },
   ];
   const primaryOfficialCategoryNav = [
     { code: "official_presidency", label: "Presidency" },
@@ -802,7 +801,7 @@ export default function Feed({ officialSourcesOnly: officialSourcesOnlyProp = fa
   const primaryCategoryCodes = new Set(primaryCategoryNav.map((item) => item.code));
   const secondaryCategoryNav = officialSourcesOnly
     ? OFFICIAL_SOURCE_CATEGORIES.filter((category) => !primaryCategoryCodes.has(category.code))
-    : ARTICLE_CATEGORIES.filter((category) => !primaryCategoryCodes.has(category.code));
+    : ARTICLE_CATEGORIES.filter((category) => !primaryCategoryCodes.has(category.code) && category.code !== "client_bilateral_relations");
 
   const navLinkClass = (active: boolean) => cn(
     "relative flex h-11 shrink-0 items-center px-3 text-sm font-semibold transition-colors",

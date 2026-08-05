@@ -254,9 +254,14 @@ export function normalizeEmbassyProfile(profile?: EmbassyProfile | null): Embass
 export function getEmbassyProfileTerms(profile?: EmbassyProfile | null): string[] {
   const normalized = normalizeEmbassyProfile(profile);
   if (!normalized) return [];
+  const defaultAliases =
+    normalized.representedCountryCode === "US" || normalized.homeCountryCode === "US"
+      ? ["U.S.", "US", "USA", "United States", "United States of America", "America", "American"]
+      : [];
   return uniqueTrimmed([
     normalized.homeCountryCode,
     normalized.homeCountryName,
+    ...defaultAliases,
     ...(normalized.homeCountryAliases || []),
     ...(normalized.embassyAliases || []),
     ...(normalized.ambassadorAliases || []),

@@ -162,6 +162,7 @@ const BILATERAL_RELATIONSHIP_TERMS = [
   "mou", "visit", "official visit", "meeting", "meets", "met with", "talks", "discuss", "security cooperation",
   "development program", "cultural program", "exchange program", "trade mission", "investment", "visa",
   "consular", "embassy", "ambassador", "foreign minister", "state department", "support", "funded",
+  "troops", "forces", "coalition", "withdrawal", "military presence", "security partnership", "security assistance",
   "company", "companies", "nationals", "citizens", "statement",
   "ثنائي", "العلاقات", "شراكة", "تعاون", "اتفاق", "مذكرة", "زيارة", "اجتماع", "يلتقي", "التقى",
   "مباحثات", "يناقش", "ناقش", "تعاون أمني", "تعاون امني", "برنامج", "ثقافي", "تبادل", "تجارة",
@@ -312,7 +313,7 @@ export function classifyArticleCategory(input: ClassificationInput, embassyProfi
 
   const bilateralScore = clientBilateralScore(input, title, summary, content, embassyProfile);
   if (bilateralScore > 0) {
-    scores.set(CLIENT_BILATERAL_CATEGORY_CODE, bilateralScore);
+    scores.set(CLIENT_BILATERAL_CATEGORY_CODE, bilateralScore + 50);
   }
 
   const ranked = Array.from(scores.entries())
