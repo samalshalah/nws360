@@ -6,7 +6,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,7 +27,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ChevronDown, ChevronRight, ArrowRight, ThumbsUp, MessageCircle, Share2, Info, CheckCircle2, AlertTriangle, ExternalLink, Pencil } from "lucide-react";
+import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ChevronDown, ChevronRight, ArrowRight, ThumbsUp, MessageCircle, Share2, Info, CheckCircle2, AlertTriangle, ExternalLink, Pencil, SlidersHorizontal } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
@@ -1085,8 +1085,8 @@ function SourcesManager({
           </div>
         ) : (
           <>
-            <div className="mb-5 overflow-hidden rounded-md border border-border/70 bg-card/60" data-testid="bulk-source-maintenance">
-              <div className="flex flex-col gap-3 p-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="mb-5 rounded-md border border-border/70 bg-card/60 p-3" data-testid="bulk-source-maintenance">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <Label className="w-24 text-xs font-medium text-muted-foreground">Source group</Label>
                   <Select value={sourceGroupFilter} onValueChange={setSourceGroupFilter}>
@@ -1133,75 +1133,17 @@ function SourcesManager({
                       Delete selected
                     </Button>
                   )}
-                </div>
-              </div>
-
-              <div className="border-t border-border/60 bg-muted/15 p-3">
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                  <div className="flex flex-col gap-1">
-                    <Label className="text-xs font-medium text-muted-foreground">Bulk maintenance</Label>
-                    <span className="text-xs text-muted-foreground">
-                      Retain posts for {bulkRetentionDays} day{bulkRetentionDays === 1 ? "" : "s"}
-                      {bulkActiveOnly ? " on active sources only" : ""}
-                      {bulkFetchAfterCleanup ? `, then pull ${bulkFetchSourceCount} active source${bulkFetchSourceCount === 1 ? "" : "s"}` : ""}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="flex h-9 items-center gap-2 rounded-md border border-border/60 bg-background px-2.5">
-                      <Input
-                        id="bulk-retention-days"
-                        type="number"
-                        min={1}
-                        max={30}
-                        className="h-7 w-10 border-0 bg-transparent p-0 text-center shadow-none focus-visible:ring-0"
-                        value={bulkRetentionDays}
-                        onChange={(event) => {
-                          const next = Math.min(30, Math.max(1, parseInt(event.target.value) || 1));
-                          setBulkRetentionDays(next);
-                        }}
-                        aria-label="Bulk retention days"
-                        data-testid="input-bulk-retention-days"
-                      />
-                      <Label htmlFor="bulk-retention-days" className="text-sm text-muted-foreground">days</Label>
-                    </div>
-                    <div className="flex h-9 items-center gap-2 rounded-md border border-border/60 bg-background px-2.5">
-                      <Switch
-                        id="bulk-active-only"
-                        checked={bulkActiveOnly}
-                        onCheckedChange={setBulkActiveOnly}
-                        data-testid="switch-bulk-active-only"
-                      />
-                      <Label htmlFor="bulk-active-only" className="text-sm whitespace-nowrap">Active only</Label>
-                    </div>
-                    <div className="flex h-9 items-center gap-2 rounded-md border border-border/60 bg-background px-2.5">
-                      <Switch
-                        id="bulk-delete-old"
-                        checked={bulkDeleteOldArticles}
-                        onCheckedChange={setBulkDeleteOldArticles}
-                        data-testid="switch-bulk-delete-old"
-                      />
-                      <Label htmlFor="bulk-delete-old" className="text-sm whitespace-nowrap">Delete old posts</Label>
-                    </div>
-                    <div className="flex h-9 items-center gap-2 rounded-md border border-border/60 bg-background px-2.5">
-                      <Switch
-                        id="bulk-pull-now"
-                        checked={bulkFetchAfterCleanup}
-                        onCheckedChange={setBulkFetchAfterCleanup}
-                        data-testid="switch-bulk-pull-now"
-                      />
-                      <Label htmlFor="bulk-pull-now" className="text-sm whitespace-nowrap">Pull now</Label>
-                    </div>
-                    <Button
-                      size="sm"
-                      className="h-9 gap-2"
-                      onClick={() => setIsBulkConfirmOpen(true)}
-                      disabled={bulkMaintenance.isPending || bulkScopedSourceCount === 0}
-                      data-testid="button-open-bulk-maintenance"
-                    >
-                      <RefreshCw className={`w-4 h-4 ${bulkMaintenance.isPending ? "animate-spin" : ""}`} />
-                      Apply
-                    </Button>
-                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 gap-2"
+                    onClick={() => setIsBulkConfirmOpen(true)}
+                    disabled={bulkMaintenance.isPending || bulkScopedSourceCount === 0}
+                    data-testid="button-open-bulk-maintenance"
+                  >
+                    <SlidersHorizontal className="w-4 h-4" />
+                    Bulk edit
+                  </Button>
                 </div>
               </div>
             </div>
@@ -1678,31 +1620,120 @@ function SourcesManager({
 
       <FeedImportDialog open={isImportOpen} onOpenChange={setIsImportOpen} />
 
-      <AlertDialog open={isBulkConfirmOpen} onOpenChange={setIsBulkConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Run bulk source maintenance?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will set retention to {bulkRetentionDays} day{bulkRetentionDays === 1 ? "" : "s"} for {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"}
-              {bulkDeleteOldArticles ? ` and delete posts older than ${bulkRetentionDays} day${bulkRetentionDays === 1 ? "" : "s"}` : ""}
-              {bulkFetchAfterCleanup ? `, then pull ${bulkFetchSourceCount} active source${bulkFetchSourceCount === 1 ? "" : "s"}` : ""}.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={bulkMaintenance.isPending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault();
-                runBulkMaintenance();
-              }}
+      <Dialog open={isBulkConfirmOpen} onOpenChange={setIsBulkConfirmOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Bulk edit sources</DialogTitle>
+            <DialogDescription>
+              Apply maintenance settings to the sources currently visible in this group.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5 py-1">
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">Scope</p>
+                  <p className="text-xs text-muted-foreground">
+                    {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"} in the current source group
+                  </p>
+                </div>
+                <Badge variant="secondary">
+                  {sourceGroupFilter === "all" ? "All groups" : SOURCE_GROUP_CATEGORIES.find((category) => category.code === sourceGroupFilter)?.label || sourceGroupFilter}
+                </Badge>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-[140px_1fr] sm:items-center">
+              <Label htmlFor="bulk-retention-days" className="text-sm font-medium">Retention</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="bulk-retention-days"
+                  type="number"
+                  min={1}
+                  max={30}
+                  className="h-9 w-20 text-center"
+                  value={bulkRetentionDays}
+                  onChange={(event) => {
+                    const next = Math.min(30, Math.max(1, parseInt(event.target.value) || 1));
+                    setBulkRetentionDays(next);
+                  }}
+                  data-testid="input-bulk-retention-days"
+                />
+                <span className="text-sm text-muted-foreground">days</span>
+              </div>
+
+              <div className="sm:col-start-2 space-y-3">
+                <label className="flex items-center justify-between gap-4 rounded-md border border-border/60 bg-background px-3 py-2">
+                  <span>
+                    <span className="block text-sm font-medium">Active sources only</span>
+                    <span className="block text-xs text-muted-foreground">Skip paused or inactive sources.</span>
+                  </span>
+                  <Switch
+                    id="bulk-active-only"
+                    checked={bulkActiveOnly}
+                    onCheckedChange={setBulkActiveOnly}
+                    data-testid="switch-bulk-active-only"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between gap-4 rounded-md border border-border/60 bg-background px-3 py-2">
+                  <span>
+                    <span className="block text-sm font-medium">Delete old posts</span>
+                    <span className="block text-xs text-muted-foreground">Remove posts older than the retention window.</span>
+                  </span>
+                  <Switch
+                    id="bulk-delete-old"
+                    checked={bulkDeleteOldArticles}
+                    onCheckedChange={setBulkDeleteOldArticles}
+                    data-testid="switch-bulk-delete-old"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between gap-4 rounded-md border border-border/60 bg-background px-3 py-2">
+                  <span>
+                    <span className="block text-sm font-medium">Pull after cleanup</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Fetch from {bulkFetchSourceCount} active source{bulkFetchSourceCount === 1 ? "" : "s"} after cleanup.
+                    </span>
+                  </span>
+                  <Switch
+                    id="bulk-pull-now"
+                    checked={bulkFetchAfterCleanup}
+                    onCheckedChange={setBulkFetchAfterCleanup}
+                    data-testid="switch-bulk-pull-now"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="rounded-md border border-border/60 bg-background p-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Summary</p>
+              <p className="mt-1 text-sm">
+                Set retention to {bulkRetentionDays} day{bulkRetentionDays === 1 ? "" : "s"} for {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"}
+                {bulkActiveOnly ? " that are currently active" : ""}
+                {bulkDeleteOldArticles ? ` and delete posts older than ${bulkRetentionDays} day${bulkRetentionDays === 1 ? "" : "s"}` : ""}
+                {bulkFetchAfterCleanup ? `, then pull ${bulkFetchSourceCount} active source${bulkFetchSourceCount === 1 ? "" : "s"}` : ""}.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsBulkConfirmOpen(false)} disabled={bulkMaintenance.isPending}>
+              Cancel
+            </Button>
+            <Button
+              onClick={runBulkMaintenance}
               disabled={bulkMaintenance.isPending || bulkScopedSourceCount === 0}
               data-testid="button-confirm-bulk-maintenance"
+              className="gap-2"
             >
-              {bulkMaintenance.isPending ? "Running..." : "Run maintenance"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              <RefreshCw className={`w-4 h-4 ${bulkMaintenance.isPending ? "animate-spin" : ""}`} />
+              {bulkMaintenance.isPending ? "Applying..." : "Apply changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={isBulkDeleteConfirmOpen} onOpenChange={setIsBulkDeleteConfirmOpen}>
         <AlertDialogContent>
