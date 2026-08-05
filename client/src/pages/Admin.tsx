@@ -1075,7 +1075,6 @@ function SourcesManager({
             <div className="mb-5 rounded-md border border-border/70 bg-card/60 p-3" data-testid="bulk-source-maintenance">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <Label className="w-24 text-xs font-medium text-muted-foreground">Source group</Label>
                   <Select value={sourceGroupFilter} onValueChange={setSourceGroupFilter}>
                     <SelectTrigger className="h-9 w-full bg-background sm:w-[240px]" data-testid="select-source-group-filter">
                       <SelectValue />
@@ -1087,7 +1086,6 @@ function SourcesManager({
                       ))}
                     </SelectContent>
                   </Select>
-                  <Label className="w-24 text-xs font-medium text-muted-foreground sm:ml-3">Channel</Label>
                   <Select value={sourceChannelFilter} onValueChange={setSourceChannelFilter}>
                     <SelectTrigger className="h-9 w-full bg-background sm:w-[190px]" data-testid="select-source-channel-filter">
                       <SelectValue />
