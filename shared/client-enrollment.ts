@@ -34,6 +34,16 @@ const optionalUrlInput = z
 const profileTermList = (max = 300) => z.array(z.string().trim().min(1).max(160)).max(max).optional().default([]);
 const tokenBudgetInput = z.coerce.number().int().min(0).max(50_000_000);
 
+export const TRANSLATION_LANGUAGE_CODES = ["ar", "en", "ku", "fr", "es", "tr"] as const;
+export type TranslationLanguageCode = (typeof TRANSLATION_LANGUAGE_CODES)[number];
+
+const translationPairSchema = z.object({
+  source: z.enum(TRANSLATION_LANGUAGE_CODES),
+  target: z.enum(TRANSLATION_LANGUAGE_CODES),
+}).refine((pair) => pair.source !== pair.target, { message: "source and target languages must differ" });
+
+export type TranslationPair = z.infer<typeof translationPairSchema>;
+
 export function normalizeSlug(value: string | null | undefined): string {
   return String(value || "")
     .normalize("NFKD")
@@ -118,6 +128,8 @@ export const clientSetupUpdateSchema = z.object({
     translation: tokenBudgetInput.optional().default(0),
     summaries: tokenBudgetInput.optional().default(0),
   }).optional(),
+  translationEnabled: z.boolean().optional(),
+  allowedTranslationPairs: z.array(translationPairSchema).max(30).optional(),
 }).strict();
 
 export type ClientSetupUpdateInput = z.infer<typeof clientSetupUpdateSchema>;
@@ -212,6 +224,8 @@ type ExistingClientSetup = {
       translation?: number;
       summaries?: number;
     } | null;
+    translationEnabled?: boolean | null;
+    allowedTranslationPairs?: Array<{ source: string; target: string }> | null;
     homeCountryCode?: string | null;
     homeCountryName?: string | null;
   } | null;
@@ -322,6 +336,8 @@ export function normalizeClientSetupUpdate(input: unknown, current: ExistingClie
       summaries: data.aiTokenBudgets?.summaries ?? 0,
     };
   }
+  if (has("translationEnabled")) settingsUpdates.translationEnabled = data.translationEnabled === true;
+  if (has("allowedTranslationPairs")) settingsUpdates.allowedTranslationPairs = data.allowedTranslationPairs ?? [];
 
   if (representedInput !== undefined || has("organizationType")) {
     const legacyCountry = isDiplomaticOrganizationType(organizationType) ? representedCountryCode : null;
@@ -348,6 +364,8 @@ export function normalizeClientSetupUpdate(input: unknown, current: ExistingClie
     dailyJobLimit: current.client.dailyJobLimit ?? 0,
     autoTranslationEnabled: current.settings?.autoTranslationEnabled ?? false,
     aiTokenBudgets: current.settings?.aiTokenBudgets ?? null,
+    translationEnabled: current.settings?.translationEnabled ?? false,
+    allowedTranslationPairs: current.settings?.allowedTranslationPairs ?? [],
     homeCountryCode: current.settings?.homeCountryCode || null,
     homeCountryName: current.settings?.homeCountryName || null,
   };

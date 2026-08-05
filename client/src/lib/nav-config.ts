@@ -111,6 +111,7 @@ export function buildTenantNavTree(t: any): NavGroup[] {
         { key: "knowledge", label: t("nav.knowledge", "Knowledge"), href: "/knowledge", icon: Brain, caps: [CAPS.KNOWLEDGE_VIEW] },
         { key: "integrations", label: t("nav.integrations", "Integrations"), href: "/integrations", icon: Plug, caps: [CAPS.INTEGRATIONS_VIEW] },
         { key: "usageBilling", label: t("nav.usageBilling", "Billing"), href: "/usage-billing", icon: CreditCard, caps: [CAPS.BILLING_VIEW] },
+        { key: "aiUsage", label: t("nav.aiUsage", "AI Usage"), href: "/ai-usage", icon: Brain, caps: [CAPS.AI_USAGE_VIEW] },
         { key: "clientSettings", label: t("nav.clientSettings", "Client Settings"), href: "/settings", icon: Settings, caps: [CAPS.SETTINGS_VIEW] },
         { key: "workspaceRelevance", label: t("nav.workspaceSettings", "Workspace Settings"), href: "/workspace/relevance", icon: SlidersHorizontal, caps: [CAPS.SETTINGS_VIEW] },
         { key: "helpCenter", label: t("nav.helpCenter", "Help"), href: "/help", icon: HelpCircle },
@@ -136,6 +137,7 @@ export function buildPlatformAdminNavTree(t: any): NavGroup[] {
         { key: "opsDashboard", label: t("nav.opsDashboard", "Queue & Jobs"), href: "/admin/ops", icon: Activity, caps: [CAPS.ADMIN_OPERATIONS] },
         { key: "integrationMonitor", label: t("nav.integrationMonitor", "Integration Monitor"), href: "/admin/integrations", icon: Plug, caps: [CAPS.INTEGRATION_MONITOR_VIEW] },
         { key: "productIntelligence", label: t("nav.productIntelligence", "Product Analytics"), href: "/admin/product-analytics", icon: Lightbulb, caps: [CAPS.ADMIN_PRODUCT_ANALYTICS] },
+        { key: "tokenOrders", label: t("nav.tokenOrders", "Token Orders"), href: "/admin/token-orders", icon: CreditCard, caps: [CAPS.TOKEN_ORDERS_MANAGE] },
       ],
       collapsible: false,
     },
@@ -204,6 +206,7 @@ export const ROUTE_CAPS: RouteCapConfig[] = [
   { path: "/workspace/relevance", caps: [CAPS.SETTINGS_VIEW] },
   { path: "/knowledge", caps: [CAPS.KNOWLEDGE_VIEW] },
   { path: "/settings", caps: [CAPS.SETTINGS_VIEW] },
+  { path: "/ai-usage", caps: [CAPS.AI_USAGE_VIEW] },
   { path: "/admin/users", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin/clients", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
   { path: "/admin/publishers", caps: [CAPS.ADMIN_SYSTEM_DASHBOARD], adminOnly: true },
@@ -212,6 +215,7 @@ export const ROUTE_CAPS: RouteCapConfig[] = [
   { path: "/admin/ops", caps: [CAPS.ADMIN_OPERATIONS], adminOnly: true },
   { path: "/admin/product-analytics", caps: [CAPS.ADMIN_PRODUCT_ANALYTICS], adminOnly: true },
   { path: "/admin/integrations", caps: [CAPS.INTEGRATION_MONITOR_VIEW], adminOnly: true },
+  { path: "/admin/token-orders", caps: [CAPS.TOKEN_ORDERS_MANAGE], adminOnly: true },
 ];
 
 export function canAccessRoute(
@@ -241,6 +245,7 @@ export const ADMIN_ONLY_ROUTES = [
   "/admin/ops",
   "/admin/product-analytics",
   "/admin/integrations",
+  "/admin/token-orders",
 ];
 
 export function buildClientNavTree(t: any): NavGroup[] {

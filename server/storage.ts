@@ -120,9 +120,10 @@ import {
   type UserPermissionGroup, type InsertUserPermissionGroup,
   type UserPermission, type InsertUserPermission,
   type ImpersonationLog, type InsertImpersonationLog,
-  insightJobs, aiUsageLog,
+  insightJobs, aiUsageLog, tokenOrders,
   type InsightJob, type InsertInsightJob,
   type AiUsageLog, type InsertAiUsageLog,
+  type TokenOrder, type InsertTokenOrder,
 } from "@shared/schema";
 import { normalizeUserScopeClientAssignment } from "@shared/user-scope";
 import {
@@ -306,6 +307,31 @@ export type AtomicLifecycleTransitionResult = {
 export type AtomicWorkspaceUpdateResult = {
   workspace: Workspace;
   auditLog: AdminAuditLog | null;
+};
+
+export type AiUsageHistoryDayRow = {
+  date: string;
+  type: string;
+  totalTokens: number;
+  jobCount: number;
+};
+
+export type AiUsageHistoryTotal = {
+  type: string;
+  totalTokens: number;
+  jobCount: number;
+};
+
+export type AiUsageHistoryResult = {
+  byDay: AiUsageHistoryDayRow[];
+  totalsByType: AiUsageHistoryTotal[];
+  totalTokens: number;
+  totalJobs: number;
+};
+
+export type TokenOrderWithClient = TokenOrder & {
+  clientName: string | null;
+  requestedByUsername: string | null;
 };
 
 export type AtomicWorkspaceCreateResult = {
@@ -2450,6 +2476,11 @@ export interface IStorage {
   getJobCountsByStatus(): Promise<Record<string, number>>;
   createAiUsageLog(data: InsertAiUsageLog): Promise<AiUsageLog>;
   getDailyAiUsage(clientId: number, type?: string): Promise<{ totalTokens: number; jobCount: number }>;
+  getAiUsageHistory(clientId: number, params: { from: Date; to: Date }): Promise<AiUsageHistoryResult>;
+  createTokenOrder(data: InsertTokenOrder): Promise<TokenOrder>;
+  getTokenOrdersByClient(clientId: number): Promise<TokenOrder[]>;
+  getAllTokenOrders(): Promise<TokenOrderWithClient[]>;
+  resolveTokenOrder(id: number, resolution: { status: "approved" | "rejected"; adminNote: string | null; resolvedBy: number }): Promise<TokenOrder | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -8823,6 +8854,111 @@ export class DatabaseStorage implements IStorage {
       totalTokens: Number(result[0]?.totalTokens ?? 0),
       jobCount: Number(result[0]?.jobCount ?? 0),
     };
+  }
+
+  async getAiUsageHistory(clientId: number, params: { from: Date; to: Date }): Promise<AiUsageHistoryResult> {
+    const { from, to } = params;
+    const conditions = [
+      eq(aiUsageLog.clientId, clientId),
+      gte(aiUsageLog.createdAt, from),
+      lte(aiUsageLog.createdAt, to),
+    ];
+
+    const dayRows = await db.select({
+      date: sql<string>`to_char(date_trunc('day', ${aiUsageLog.createdAt}), 'YYYY-MM-DD')`,
+      type: aiUsageLog.type,
+      totalTokens: sql<number>`COALESCE(SUM(${aiUsageLog.totalTokens}), 0)`,
+      jobCount: sql<number>`COUNT(*)`,
+    })
+      .from(aiUsageLog)
+      .where(and(...conditions))
+      .groupBy(sql`date_trunc('day', ${aiUsageLog.createdAt})`, aiUsageLog.type)
+      .orderBy(sql`date_trunc('day', ${aiUsageLog.createdAt})`);
+
+    const totalRows = await db.select({
+      type: aiUsageLog.type,
+      totalTokens: sql<number>`COALESCE(SUM(${aiUsageLog.totalTokens}), 0)`,
+      jobCount: sql<number>`COUNT(*)`,
+    })
+      .from(aiUsageLog)
+      .where(and(...conditions))
+      .groupBy(aiUsageLog.type);
+
+    const byDay: AiUsageHistoryDayRow[] = dayRows.map((row) => ({
+      date: row.date,
+      type: row.type,
+      totalTokens: Number(row.totalTokens ?? 0),
+      jobCount: Number(row.jobCount ?? 0),
+    }));
+
+    const totalsByType: AiUsageHistoryTotal[] = totalRows.map((row) => ({
+      type: row.type,
+      totalTokens: Number(row.totalTokens ?? 0),
+      jobCount: Number(row.jobCount ?? 0),
+    }));
+
+    const totalTokens = totalsByType.reduce((sum, row) => sum + row.totalTokens, 0);
+    const totalJobs = totalsByType.reduce((sum, row) => sum + row.jobCount, 0);
+
+    return { byDay, totalsByType, totalTokens, totalJobs };
+  }
+
+  async createTokenOrder(data: InsertTokenOrder): Promise<TokenOrder> {
+    const [order] = await db.insert(tokenOrders).values(data).returning();
+    return order;
+  }
+
+  async getTokenOrdersByClient(clientId: number): Promise<TokenOrder[]> {
+    return db.select().from(tokenOrders).where(eq(tokenOrders.clientId, clientId)).orderBy(desc(tokenOrders.createdAt));
+  }
+
+  async getAllTokenOrders(): Promise<TokenOrderWithClient[]> {
+    const rows = await db.select({
+      order: tokenOrders,
+      clientName: clients.name,
+      requestedByUsername: users.username,
+    })
+      .from(tokenOrders)
+      .leftJoin(clients, eq(tokenOrders.clientId, clients.id))
+      .leftJoin(users, eq(tokenOrders.requestedBy, users.id))
+      .orderBy(desc(tokenOrders.createdAt));
+
+    return rows.map((row) => ({
+      ...row.order,
+      clientName: row.clientName ?? null,
+      requestedByUsername: row.requestedByUsername ?? null,
+    }));
+  }
+
+  async resolveTokenOrder(id: number, resolution: { status: "approved" | "rejected"; adminNote: string | null; resolvedBy: number }): Promise<TokenOrder | undefined> {
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(tokenOrders).where(eq(tokenOrders.id, id)).limit(1);
+      if (!current) return undefined;
+      if (current.status !== "pending") {
+        throw new StorageBoundaryError(`Token order ${id} has already been ${current.status}`, { status: 409, code: "token_order_already_resolved" });
+      }
+
+      const [updated] = await tx.update(tokenOrders)
+        .set({
+          status: resolution.status,
+          adminNote: resolution.adminNote,
+          resolvedBy: resolution.resolvedBy,
+          resolvedAt: new Date(),
+        })
+        .where(eq(tokenOrders.id, id))
+        .returning();
+
+      if (resolution.status === "approved") {
+        const [client] = await tx.select().from(clients).where(eq(clients.id, current.clientId)).limit(1);
+        if (client) {
+          await tx.update(clients)
+            .set({ dailyTokenBudget: (client.dailyTokenBudget ?? 0) + current.tokensRequested, updatedAt: new Date() } as any)
+            .where(eq(clients.id, current.clientId));
+        }
+      }
+
+      return updated;
+    });
   }
 
 }

@@ -117,6 +117,8 @@ export const clientSettings = pgTable("client_settings", {
   defaultMaxArticlesPerFetch: integer("default_max_articles_per_fetch").default(10),
   autoTranslationEnabled: boolean("auto_translation_enabled").default(false),
   defaultTargetLanguage: text("default_target_language").default("en"),
+  translationEnabled: boolean("translation_enabled").notNull().default(false),
+  allowedTranslationPairs: jsonb("allowed_translation_pairs").$type<Array<{ source: string; target: string }>>().default([]),
   aiTokenBudgets: jsonb("ai_token_budgets").$type<{
     analysis?: number;
     translation?: number;
@@ -2388,6 +2390,7 @@ export const articleTranslations = pgTable("article_translations", {
   id: serial("id").primaryKey(),
   articleId: integer("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
   targetLanguage: text("target_language").notNull(),
+  sourceLanguage: text("source_language"),
   status: text("status").notNull().default("pending"),
   translatedTitle: text("translated_title"),
   translatedContent: text("translated_content"),
@@ -2622,6 +2625,8 @@ export const CAPS = {
   BILLING_VIEW: "billing_view",
   BILLING_MANAGE: "billing_manage",
   AI_USAGE_VIEW: "ai_usage_view",
+  TOKEN_ORDERS_SUBMIT: "token_orders_submit",
+  TOKEN_ORDERS_MANAGE: "admin_token_orders_manage",
 
   KNOWLEDGE_VIEW: "knowledge_view",
   KNOWLEDGE_MANAGE: "knowledge_manage",
@@ -2712,7 +2717,7 @@ const CLIENT_ADMIN_CAPS: Cap[] = [
   CAPS.USERS_VIEW, CAPS.USERS_INVITE, CAPS.USERS_EDIT, CAPS.USERS_DISABLE,
   CAPS.USERS_ASSIGN_ROLES, CAPS.PERMISSIONS_MANAGE,
   CAPS.SETTINGS_VIEW, CAPS.SETTINGS_MANAGE,
-  CAPS.BILLING_VIEW, CAPS.BILLING_MANAGE, CAPS.AI_USAGE_VIEW,
+  CAPS.BILLING_VIEW, CAPS.BILLING_MANAGE, CAPS.AI_USAGE_VIEW, CAPS.TOKEN_ORDERS_SUBMIT,
   CAPS.KNOWLEDGE_VIEW, CAPS.KNOWLEDGE_MANAGE, CAPS.KNOWLEDGE_COMPUTE,
   CAPS.FORECAST_VIEW, CAPS.FORECAST_MANAGE, CAPS.FORECAST_COMPUTE,
   CAPS.EXECUTIVE_HOME,
@@ -2725,7 +2730,7 @@ const GLOBAL_ADMIN_CAPS: Cap[] = [
   CAPS.ADMIN_SYSTEM_DASHBOARD, CAPS.ADMIN_TENANT_SWITCH,
   CAPS.ADMIN_IMPERSONATE, CAPS.ADMIN_AUDIT_LOGS,
   CAPS.ADMIN_OPERATIONS, CAPS.ADMIN_JOB_MONITOR,
-  CAPS.ADMIN_PRODUCT_ANALYTICS,
+  CAPS.ADMIN_PRODUCT_ANALYTICS, CAPS.TOKEN_ORDERS_MANAGE,
 ];
 
 export const DEFAULT_CAPS_BY_USER_TYPE: Record<string, Cap[]> = {
@@ -2779,7 +2784,7 @@ export const PLAN_FEATURES: Record<string, Cap[]> = {
     CAPS.USERS_ASSIGN_ROLES, CAPS.PERMISSIONS_MANAGE,
     CAPS.SETTINGS_VIEW, CAPS.SETTINGS_MANAGE,
     CAPS.BILLING_VIEW, CAPS.BILLING_MANAGE,
-    CAPS.AI_USAGE_VIEW,
+    CAPS.AI_USAGE_VIEW, CAPS.TOKEN_ORDERS_SUBMIT,
     CAPS.KNOWLEDGE_VIEW, CAPS.KNOWLEDGE_MANAGE,
     CAPS.FORECAST_VIEW,
     CAPS.INTEGRATION_MONITOR_VIEW,
@@ -2793,7 +2798,7 @@ export const PLAN_FEATURES: Record<string, Cap[]> = {
 export const AI_GATED_CAPS: Cap[] = [
   CAPS.INTELLIGENCE_VIEW, CAPS.INTELLIGENCE_DAILY_BRIEF,
   CAPS.INTELLIGENCE_PREDICTIONS, CAPS.INTELLIGENCE_QA,
-  CAPS.INTELLIGENCE_RUN, CAPS.AI_USAGE_VIEW,
+  CAPS.INTELLIGENCE_RUN, CAPS.AI_USAGE_VIEW, CAPS.TOKEN_ORDERS_SUBMIT,
   CAPS.KNOWLEDGE_COMPUTE,
   CAPS.FORECAST_COMPUTE,
 ];
@@ -2956,6 +2961,29 @@ export const aiUsageLog = pgTable("ai_usage_log", {
 export const insertAiUsageLogSchema = createInsertSchema(aiUsageLog).omit({ id: true, createdAt: true });
 export type AiUsageLog = typeof aiUsageLog.$inferSelect;
 export type InsertAiUsageLog = z.infer<typeof insertAiUsageLogSchema>;
+
+export const TOKEN_ORDER_STATUSES = ["pending", "approved", "rejected"] as const;
+export type TokenOrderStatus = (typeof TOKEN_ORDER_STATUSES)[number];
+
+export const tokenOrders = pgTable("token_orders", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id),
+  requestedBy: integer("requested_by").notNull().references(() => users.id),
+  tokensRequested: integer("tokens_requested").notNull(),
+  note: text("note"),
+  status: text("status").notNull().default("pending"),
+  adminNote: text("admin_note"),
+  resolvedBy: integer("resolved_by").references(() => users.id),
+  resolvedAt: timestamp("resolved_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_token_orders_client").on(table.clientId),
+  index("idx_token_orders_status").on(table.status),
+]);
+
+export const insertTokenOrderSchema = createInsertSchema(tokenOrders).omit({ id: true, createdAt: true, resolvedAt: true, resolvedBy: true, status: true, adminNote: true });
+export type TokenOrder = typeof tokenOrders.$inferSelect;
+export type InsertTokenOrder = z.infer<typeof insertTokenOrderSchema>;
 
 export interface ArticleQueryParams {
   search?: string;

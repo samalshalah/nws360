@@ -971,6 +971,7 @@ const PLATFORM_ADMIN_CAPS = [
   CAPS.ADMIN_PRODUCT_ANALYTICS,
   CAPS.INTEGRATION_MONITOR_VIEW,
   CAPS.SOURCE_HEALTH_VIEW,
+  CAPS.TOKEN_ORDERS_MANAGE,
 ];
 
 async function resolveUserCaps(user: any): Promise<string[]> {
@@ -1617,6 +1618,10 @@ async function buildClientSetupPayload(clientId: number) {
         translationTokens: translationUsage.totalTokens,
         summariesTokens: summaryUsage.totalTokens + briefUsage.totalTokens,
       },
+    } : null,
+    translationConfig: client ? {
+      translationEnabled: (settings as any)?.translationEnabled ?? false,
+      allowedTranslationPairs: ((settings as any)?.allowedTranslationPairs as Array<{ source: string; target: string }> | null) ?? [],
     } : null,
     workspaces: workspacesWithProfiles,
     readiness,
@@ -3906,10 +3911,25 @@ export async function registerRoutes(
     const clientId = resolveClientId(user, req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid article ID" });
-    const { targetLanguage } = req.body;
+    const { targetLanguage, sourceLanguage } = req.body;
 
     if (!targetLanguage) {
       return res.status(400).json({ message: "targetLanguage is required" });
+    }
+
+    if (clientId) {
+      const requesterSettings = await storage.getClientSettings(clientId);
+      if (!(requesterSettings as any)?.translationEnabled) {
+        return res.status(403).json({ message: "Translation is not enabled for your organization. Contact your administrator." });
+      }
+      const allowedPairs = ((requesterSettings as any)?.allowedTranslationPairs as Array<{ source: string; target: string }> | null) || [];
+      const targetAllowed = allowedPairs.some((pair) => pair.target === targetLanguage);
+      if (!targetAllowed) {
+        return res.status(403).json({
+          message: `Translation to "${targetLanguage}" is not permitted for your organization.`,
+          allowedPairs,
+        });
+      }
     }
 
     const article = await storage.getArticle(id, clientId || undefined);
@@ -3955,6 +3975,7 @@ export async function registerRoutes(
       await storage.createArticleTranslation({
         articleId: id,
         targetLanguage,
+        sourceLanguage: typeof sourceLanguage === "string" && sourceLanguage.trim() ? sourceLanguage.trim().toLowerCase() : null,
         status: "pending",
         translatedTitle: null,
         translatedContent: null,
@@ -3963,7 +3984,7 @@ export async function registerRoutes(
       });
 
       const { enqueueJob } = await import("./processing-queue");
-      await enqueueJob("TRANSLATE_ARTICLE", { articleId: id, targetLanguage }, { maxAttempts: 2 });
+      await enqueueJob("TRANSLATE_ARTICLE", { articleId: id, targetLanguage, sourceLanguage }, { maxAttempts: 2 });
 
       res.json({
         translatedTitle: article.title,
@@ -6839,6 +6860,94 @@ export async function registerRoutes(
     const updated = await storage.updateSubscription(clientId, { status: "suspended" });
     if (!updated) return res.status(404).json({ message: "Subscription not found" });
     res.json(updated);
+  });
+
+  // === AI USAGE (client-facing) ===
+  app.get("/api/ai-usage", requireCapability(CAPS.AI_USAGE_VIEW), async (req, res) => {
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "No client context" });
+
+    const now = new Date();
+    const defaultTo = now;
+    const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const from = req.query.from ? new Date(String(req.query.from)) : defaultFrom;
+    const to = req.query.to ? new Date(String(req.query.to)) : defaultTo;
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      return res.status(400).json({ message: "Invalid from/to date" });
+    }
+
+    const [history, settings] = await Promise.all([
+      storage.getAiUsageHistory(clientId, { from, to }),
+      storage.getClientSettings(clientId),
+    ]);
+
+    res.json({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      ...history,
+      aiTokenBudgets: {
+        analysis: Number((settings?.aiTokenBudgets as any)?.analysis ?? 0),
+        translation: Number((settings?.aiTokenBudgets as any)?.translation ?? 0),
+        summaries: Number((settings?.aiTokenBudgets as any)?.summaries ?? 0),
+      },
+    });
+  });
+
+  // === TOKEN ORDERS (client-facing) ===
+  app.post("/api/token-orders", requireCapability(CAPS.TOKEN_ORDERS_SUBMIT), async (req, res) => {
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.status(400).json({ message: "No client context" });
+
+    const tokensRequested = Number(req.body?.tokensRequested);
+    if (!Number.isInteger(tokensRequested) || tokensRequested <= 0) {
+      return res.status(400).json({ message: "tokensRequested must be a positive integer" });
+    }
+    const note = typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 2000) || null : null;
+
+    const order = await storage.createTokenOrder({
+      clientId,
+      requestedBy: user.id,
+      tokensRequested,
+      note,
+    });
+    res.status(201).json(order);
+  });
+
+  app.get("/api/token-orders", requireCapability(CAPS.TOKEN_ORDERS_SUBMIT), async (req, res) => {
+    const user = req.user as any;
+    const clientId = resolveClientId(user, req);
+    if (!clientId) return res.json([]);
+    const orders = await storage.getTokenOrdersByClient(clientId);
+    res.json(orders);
+  });
+
+  // === TOKEN ORDERS (admin) ===
+  app.get("/api/admin/token-orders", requireCapability(CAPS.TOKEN_ORDERS_MANAGE), async (req, res) => {
+    const orders = await storage.getAllTokenOrders();
+    res.json(orders);
+  });
+
+  app.patch("/api/admin/token-orders/:id", requireCapability(CAPS.TOKEN_ORDERS_MANAGE), async (req, res) => {
+    const user = req.user as any;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid token order ID" });
+    const { status, adminNote } = req.body || {};
+    if (status !== "approved" && status !== "rejected") {
+      return res.status(400).json({ message: "status must be 'approved' or 'rejected'" });
+    }
+    try {
+      const updated = await storage.resolveTokenOrder(id, {
+        status,
+        adminNote: typeof adminNote === "string" ? adminNote.trim().slice(0, 2000) || null : null,
+        resolvedBy: user.id,
+      });
+      if (!updated) return res.status(404).json({ message: "Token order not found" });
+      res.json(updated);
+    } catch (err) {
+      return sendAdminStorageError(res, err, "Failed to resolve token order");
+    }
   });
 
   app.get("/api/onboarding", async (req, res) => {

@@ -81,6 +81,10 @@ type ClientSetupData = {
       summariesTokens: number;
     };
   } | null;
+  translationConfig: {
+    translationEnabled: boolean;
+    allowedTranslationPairs: Array<{ source: string; target: string }>;
+  } | null;
   workspaces: Array<{
     id: number;
     name: string;
@@ -100,6 +104,19 @@ type ClientSetupData = {
   }>;
   readiness: ClientSetupReadiness;
 };
+
+const TRANSLATION_LANGUAGES: Array<{ code: string; label: string }> = [
+  { code: "ar", label: "Arabic" },
+  { code: "en", label: "English" },
+  { code: "ku", label: "Kurdish" },
+  { code: "fr", label: "French" },
+  { code: "es", label: "Spanish" },
+  { code: "tr", label: "Turkish" },
+];
+
+function translationLanguageLabel(code: string): string {
+  return TRANSLATION_LANGUAGES.find((lang) => lang.code === code)?.label || code;
+}
 
 const defaultWorkspaceForm = {
   name: "",
@@ -176,6 +193,15 @@ export default function ClientSetup() {
     translationBudget: "0",
     summariesBudget: "0",
   });
+  const [translationForm, setTranslationForm] = useState<{
+    translationEnabled: boolean;
+    pairs: Array<{ source: string; target: string }>;
+  }>({
+    translationEnabled: false,
+    pairs: [],
+  });
+  const [pendingSourceLang, setPendingSourceLang] = useState(TRANSLATION_LANGUAGES[0].code);
+  const [pendingTargetLang, setPendingTargetLang] = useState(TRANSLATION_LANGUAGES[1].code);
 
   const { data, isLoading } = useQuery<ClientSetupData>({
     queryKey: [`/api/admin/clients/${clientId}/setup`],
@@ -210,6 +236,10 @@ export default function ClientSetup() {
       analysisBudget: String(data.aiConfig?.aiTokenBudgets.analysis ?? 0),
       translationBudget: String(data.aiConfig?.aiTokenBudgets.translation ?? 0),
       summariesBudget: String(data.aiConfig?.aiTokenBudgets.summaries ?? 0),
+    });
+    setTranslationForm({
+      translationEnabled: data.translationConfig?.translationEnabled ?? false,
+      pairs: data.translationConfig?.allowedTranslationPairs ?? [],
     });
   }, [data]);
 
@@ -267,6 +297,40 @@ export default function ClientSetup() {
       toast({ variant: "destructive", title: "AI controls failed", description: error instanceof Error ? error.message : "Please try again." });
     },
   });
+
+  const saveTranslationConfig = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/admin/clients/${clientId}/setup`, {
+        translationEnabled: translationForm.translationEnabled,
+        allowedTranslationPairs: translationForm.pairs,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/admin/clients/${clientId}/setup`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/clients"] });
+      toast({ title: "Translation controls saved" });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Translation controls failed", description: error instanceof Error ? error.message : "Please try again." });
+    },
+  });
+
+  const addTranslationPair = () => {
+    if (pendingSourceLang === pendingTargetLang) {
+      toast({ variant: "destructive", title: "Invalid pair", description: "Source and target languages must differ." });
+      return;
+    }
+    setTranslationForm((current) => {
+      const exists = current.pairs.some((pair) => pair.source === pendingSourceLang && pair.target === pendingTargetLang);
+      if (exists) return current;
+      return { ...current, pairs: [...current.pairs, { source: pendingSourceLang, target: pendingTargetLang }] };
+    });
+  };
+
+  const removeTranslationPair = (index: number) => {
+    setTranslationForm((current) => ({ ...current, pairs: current.pairs.filter((_, i) => i !== index) }));
+  };
 
   const resetWorkspaceForm = () => {
     setWorkspaceForm({ ...defaultWorkspaceForm, relevanceProfile: { ...defaultWorkspaceForm.relevanceProfile } });
@@ -692,6 +756,85 @@ export default function ClientSetup() {
                 <Button onClick={() => saveAiConfig.mutate()} disabled={saveAiConfig.isPending}>
                   {saveAiConfig.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Save AI Controls
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Translation Controls</CardTitle>
+              <CardDescription>Control whether this client can request translations, and which source/target language pairs are permitted.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <ToggleRow
+                icon={<Languages className="h-4 w-4" />}
+                label="Enable translation"
+                description="Allow manual and automatic translation requests for this client."
+                checked={translationForm.translationEnabled}
+                onCheckedChange={(checked) => setTranslationForm((current) => ({ ...current, translationEnabled: checked }))}
+              />
+
+              <div className="space-y-2">
+                <Label>Allowed language pairs</Label>
+                {translationForm.pairs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No pairs configured. Translation requests will be rejected until at least one pair is added.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {translationForm.pairs.map((pair, index) => (
+                      <Badge key={`${pair.source}-${pair.target}-${index}`} variant="secondary" className="flex items-center gap-2 py-1.5 pl-3 pr-1.5">
+                        {translationLanguageLabel(pair.source)} &rarr; {translationLanguageLabel(pair.target)}
+                        <button
+                          type="button"
+                          className="rounded-sm hover:bg-muted p-0.5"
+                          onClick={() => removeTranslationPair(index)}
+                          aria-label={`Remove ${pair.source} to ${pair.target}`}
+                        >
+                          <XCircle className="h-3.5 w-3.5" />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                <div className="space-y-2">
+                  <Label>Source language</Label>
+                  <Select value={pendingSourceLang} onValueChange={setPendingSourceLang}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TRANSLATION_LANGUAGES.map((lang) => (
+                        <SelectItem key={lang.code} value={lang.code}>{lang.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Target language</Label>
+                  <Select value={pendingTargetLang} onValueChange={setPendingTargetLang}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TRANSLATION_LANGUAGES.map((lang) => (
+                        <SelectItem key={lang.code} value={lang.code}>{lang.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button type="button" variant="outline" onClick={addTranslationPair}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add pair
+                </Button>
+              </div>
+
+              <div className="flex justify-end">
+                <Button onClick={() => saveTranslationConfig.mutate()} disabled={saveTranslationConfig.isPending}>
+                  {saveTranslationConfig.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Translation Controls
                 </Button>
               </div>
             </CardContent>

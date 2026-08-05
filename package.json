@@ -23,6 +23,8 @@
     "db:migrate:workspace-source-assignments": "node scripts/migrate-workspace-source-assignments.cjs",
     "db:migrate:ingestion-observability": "node scripts/migrate-ingestion-observability.cjs",
     "db:migrate:ai-token-budgets": "node scripts/migrate-ai-token-budgets.cjs",
+    "db:migrate:translation-controls": "node scripts/migrate-translation-controls.cjs",
+    "db:migrate:token-orders": "node scripts/migrate-token-orders.cjs",
     "reclassify:iraq-taxonomy": "node scripts/reclassify-iraq-taxonomy.cjs",
     "reset:platform": "node scripts/reset-platform.cjs",
     "cleanup:zero-state-jobs": "node scripts/cleanup-zero-state-jobs.cjs",

@@ -730,6 +730,9 @@ async function maybeQueueAutoTranslation(article: { id: number; clientId?: numbe
     storage.getClientSettings(clientId),
   ]);
   if (!client?.aiEnabled || !settings?.autoTranslationEnabled) return false;
+  // Translation must also be explicitly enabled for the client (separate master switch
+  // covering both manual and automatic translation). No-op quietly during unattended ingestion.
+  if (!(settings as any)?.translationEnabled) return false;
 
   const targetLanguage = "en";
   const detectedLanguage = detectLikelyLanguage(`${article.title || ""}\n${article.content || ""}\n${article.summary || ""}`);
@@ -737,11 +740,18 @@ async function maybeQueueAutoTranslation(article: { id: number; clientId?: numbe
   const effectiveLanguage = storedLanguage === "en" && detectedLanguage !== "en" ? detectedLanguage : storedLanguage;
   if (effectiveLanguage === targetLanguage) return false;
 
+  // Auto-translation always targets English; only allow it if the client's configured
+  // pairs explicitly permit translating from the detected language to English.
+  const allowedPairs = ((settings as any)?.allowedTranslationPairs as Array<{ source: string; target: string }> | null) || [];
+  const pairAllowed = allowedPairs.some((pair) => pair.target === targetLanguage);
+  if (!pairAllowed) return false;
+
   const existing = await storage.getArticleTranslation(article.id, targetLanguage, clientId);
   if (!existing) {
     await storage.createArticleTranslation({
       articleId: article.id,
       targetLanguage,
+      sourceLanguage: effectiveLanguage || null,
       status: "pending",
       translatedTitle: null,
       translatedContent: null,
@@ -753,7 +763,7 @@ async function maybeQueueAutoTranslation(article: { id: number; clientId?: numbe
   } else if (existing.status !== "pending") {
     return false;
   }
-  await enqueueJob("TRANSLATE_ARTICLE", { articleId: article.id, targetLanguage }, { maxAttempts: 2 });
+  await enqueueJob("TRANSLATE_ARTICLE", { articleId: article.id, targetLanguage, sourceLanguage: effectiveLanguage || null }, { maxAttempts: 2 });
   return true;
 }
 
@@ -1563,14 +1573,14 @@ async function handleAnalyzeArticle(payload: { articleId: number }): Promise<any
   return { articleId: payload.articleId, status: analysis.aiAnalysisStatus };
 }
 
-async function handleTranslateArticle(payload: { articleId: number; targetLanguage: string }): Promise<any> {
+async function handleTranslateArticle(payload: { articleId: number; targetLanguage: string; sourceLanguage?: string | null }): Promise<any> {
   const article = await storage.getArticle(payload.articleId);
   if (!article) return { skipped: true, reason: "article not found" };
 
   const articleClientId = article.clientId || undefined;
 
   const langNames: Record<string, string> = {
-    en: "English", ar: "Arabic", fr: "French", es: "Spanish", tr: "Turkish"
+    en: "English", ar: "Arabic", fr: "French", es: "Spanish", tr: "Turkish", ku: "Kurdish"
   };
   const targetLangName = langNames[payload.targetLanguage] || payload.targetLanguage;
 

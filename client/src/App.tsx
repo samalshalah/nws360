@@ -37,6 +37,8 @@ import OpsDashboard from "@/pages/OpsDashboard";
 import IntelligencePage from "@/pages/IntelligencePage";
 import OnboardingWizard from "@/pages/OnboardingWizard";
 import UsageBilling from "@/pages/UsageBilling";
+import AiUsage from "@/pages/AiUsage";
+import AdminTokenOrders from "@/pages/AdminTokenOrders";
 import ExecutiveHome from "@/pages/ExecutiveHome";
 import DemoPage from "@/pages/DemoPage";
 import HelpCenter from "@/pages/HelpCenter";
@@ -275,6 +277,12 @@ function Router() {
       </Route>
       <Route path="/usage-billing">
         <ProtectedPage component={UsageBilling} />
+      </Route>
+      <Route path="/ai-usage">
+        <ProtectedPage component={AiUsage} />
+      </Route>
+      <Route path="/admin/token-orders">
+        <ProtectedPage component={AdminTokenOrders} />
       </Route>
       <Route path="/executive">
         <ProtectedPage component={ExecutiveHome} />

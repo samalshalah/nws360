@@ -1,9 +1,17 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { usePermissions } from "@/hooks/use-permissions";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { CAPS } from "@shared/schema";
 import {
   Table,
   TableBody,
@@ -28,6 +36,8 @@ import {
   Shield,
   Sparkles,
   Info,
+  Coins,
+  Loader2,
 } from "lucide-react";
 
 function CardInfo({ description }: { description: string }) {
@@ -54,6 +64,130 @@ interface UsageData {
   analyticsLevel: string;
   aiBriefLevel: string;
   apiAccess: boolean;
+}
+
+interface TokenOrder {
+  id: number;
+  tokensRequested: number;
+  note: string | null;
+  status: "pending" | "approved" | "rejected";
+  adminNote: string | null;
+  createdAt: string;
+}
+
+function tokenOrderStatusBadge(status: string) {
+  switch (status) {
+    case "approved":
+      return <Badge className="bg-green-500/10 text-green-600 dark:text-green-400 no-default-hover-elevate no-default-active-elevate" data-testid={`badge-order-status-${status}`}>Approved</Badge>;
+    case "rejected":
+      return <Badge className="bg-red-500/10 text-red-600 dark:text-red-400 no-default-hover-elevate no-default-active-elevate" data-testid={`badge-order-status-${status}`}>Rejected</Badge>;
+    default:
+      return <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400" data-testid={`badge-order-status-${status}`}>Pending</Badge>;
+  }
+}
+
+function BuyTokensCard() {
+  const { toast } = useToast();
+  const [tokensRequested, setTokensRequested] = useState("");
+  const [note, setNote] = useState("");
+
+  const { data: orders, isLoading } = useQuery<TokenOrder[]>({
+    queryKey: ["/api/token-orders"],
+  });
+
+  const submitOrder = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/token-orders", {
+        tokensRequested: Math.max(1, Math.round(Number(tokensRequested) || 0)),
+        note: note.trim() || undefined,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/token-orders"] });
+      setTokensRequested("");
+      setNote("");
+      toast({ title: "Token request submitted", description: "An administrator will review your request." });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Request failed", description: error instanceof Error ? error.message : "Please try again." });
+    },
+  });
+
+  return (
+    <Card data-testid="card-buy-tokens">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Coins className="w-5 h-5" />
+          Buy Tokens
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="grid grid-cols-1 sm:grid-cols-[200px_1fr_auto] gap-3 items-end">
+          <div className="space-y-1">
+            <Label htmlFor="tokens-requested">Tokens requested</Label>
+            <Input
+              id="tokens-requested"
+              type="number"
+              min={1}
+              value={tokensRequested}
+              onChange={(e) => setTokensRequested(e.target.value)}
+              placeholder="e.g. 50000"
+              data-testid="input-tokens-requested"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="order-note">Note (optional)</Label>
+            <Textarea
+              id="order-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Why do you need more tokens?"
+              className="min-h-9"
+              data-testid="input-order-note"
+            />
+          </div>
+          <Button
+            onClick={() => submitOrder.mutate()}
+            disabled={submitOrder.isPending || !tokensRequested || Number(tokensRequested) <= 0}
+            data-testid="button-submit-token-order"
+          >
+            {submitOrder.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Request
+          </Button>
+        </div>
+
+        {isLoading ? (
+          <Skeleton className="h-24 w-full rounded-md" />
+        ) : !orders || orders.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No token requests yet.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Tokens</TableHead>
+                <TableHead>Note</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Requested</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {orders.map((order) => (
+                <TableRow key={order.id} data-testid={`row-my-token-order-${order.id}`}>
+                  <TableCell>{order.tokensRequested.toLocaleString()}</TableCell>
+                  <TableCell className="max-w-xs truncate text-muted-foreground text-sm">{order.note || "—"}</TableCell>
+                  <TableCell>{tokenOrderStatusBadge(order.status)}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {new Date(order.createdAt).toLocaleDateString()}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 const PLAN_DETAILS = {
@@ -177,6 +311,7 @@ function UsageMeter({
 }
 
 export default function UsageBilling() {
+  const { hasCap } = usePermissions();
   const { data, isLoading } = useQuery<UsageData>({
     queryKey: ["/api/subscription/usage"],
   });
@@ -379,6 +514,8 @@ export default function UsageBilling() {
           </Table>
         </CardContent>
       </Card>
+
+      {hasCap(CAPS.TOKEN_ORDERS_SUBMIT) && <BuyTokensCard />}
 
       <Card data-testid="card-billing-status">
         <CardHeader>
