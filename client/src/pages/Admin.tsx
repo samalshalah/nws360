@@ -905,6 +905,7 @@ function SourcesManager({
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(initialAddOpen);
   const [isImportOpen, setIsImportOpen] = useState(initialImportOpen);
   const [bulkRetentionDays, setBulkRetentionDays] = useState(7);
+  const [bulkIntervalMinutes, setBulkIntervalMinutes] = useState(15);
   const [bulkActiveOnly, setBulkActiveOnly] = useState(false);
   const [bulkActivationMode, setBulkActivationMode] = useState<"unchanged" | "active" | "inactive">("unchanged");
   const [bulkDeleteOldArticles, setBulkDeleteOldArticles] = useState(true);
@@ -1037,6 +1038,7 @@ function SourcesManager({
     bulkMaintenance.mutate({
       sourceIds: visibleSourceIds,
       retentionDays: bulkRetentionDays,
+      intervalMinutes: bulkIntervalMinutes,
       activeOnly: bulkActiveOnly,
       activationMode: bulkActivationMode,
       updateSourceRetention: true,
@@ -1665,6 +1667,24 @@ function SourcesManager({
                 <span className="text-sm text-muted-foreground">days</span>
               </div>
 
+              <Label className="text-sm font-medium">Fetch interval</Label>
+              <Select value={String(bulkIntervalMinutes)} onValueChange={(value) => setBulkIntervalMinutes(parseInt(value, 10))}>
+                <SelectTrigger className="h-9" data-testid="select-bulk-fetch-interval">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="5">5 minutes</SelectItem>
+                  <SelectItem value="10">10 minutes</SelectItem>
+                  <SelectItem value="15">15 minutes</SelectItem>
+                  <SelectItem value="30">30 minutes</SelectItem>
+                  <SelectItem value="60">1 hour</SelectItem>
+                  <SelectItem value="120">2 hours</SelectItem>
+                  <SelectItem value="360">6 hours</SelectItem>
+                  <SelectItem value="720">12 hours</SelectItem>
+                  <SelectItem value="1440">24 hours</SelectItem>
+                </SelectContent>
+              </Select>
+
               <div className="sm:col-start-2 space-y-3">
                 <label className="flex items-center justify-between gap-4 rounded-md border border-border/60 bg-background px-3 py-2">
                   <span>
@@ -1714,7 +1734,7 @@ function SourcesManager({
               <p className="mt-1 text-sm">
                 {bulkActivationMode === "active" ? `Make ${bulkActivationSourceCount} source${bulkActivationSourceCount === 1 ? "" : "s"} active. ` : ""}
                 {bulkActivationMode === "inactive" ? `Make ${bulkActivationSourceCount} source${bulkActivationSourceCount === 1 ? "" : "s"} inactive. ` : ""}
-                Set retention to {bulkRetentionDays} day{bulkRetentionDays === 1 ? "" : "s"} for {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"}
+                Set retention to {bulkRetentionDays} day{bulkRetentionDays === 1 ? "" : "s"} and fetch interval to {bulkIntervalMinutes < 60 ? `${bulkIntervalMinutes} minutes` : `${bulkIntervalMinutes / 60} hour${bulkIntervalMinutes === 60 ? "" : "s"}`} for {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"}
                 {bulkActiveOnly ? " that are currently active" : ""}
                 {bulkDeleteOldArticles ? ` and delete posts older than ${bulkRetentionDays} day${bulkRetentionDays === 1 ? "" : "s"}` : ""}
                 {bulkFetchAfterCleanup ? `, then pull ${bulkFetchSourceCount} active source${bulkFetchSourceCount === 1 ? "" : "s"}` : ""}.

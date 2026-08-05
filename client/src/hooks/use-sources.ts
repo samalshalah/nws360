@@ -157,6 +157,7 @@ export function useFetchAllSources() {
 export type BulkSourceMaintenanceRequest = {
   sourceIds?: number[];
   retentionDays: number;
+  intervalMinutes?: number;
   activeOnly?: boolean;
   activationMode?: "unchanged" | "active" | "inactive";
   updateSourceRetention?: boolean;
@@ -167,6 +168,7 @@ export type BulkSourceMaintenanceRequest = {
 export type BulkSourceMaintenanceResponse = {
   success: boolean;
   retentionDays: number;
+  intervalMinutes?: number;
   sourceScope: "active" | "all";
   cutoff: string;
   sourcesMatched: number;

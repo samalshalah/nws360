@@ -2885,6 +2885,7 @@ export async function registerRoutes(
   const bulkSourceMaintenanceInput = z.object({
     sourceIds: z.array(z.number().int().positive()).max(1000).optional(),
     retentionDays: z.number().int().min(1).max(30).optional().default(DEFAULT_SOURCE_RETENTION_DAYS),
+    intervalMinutes: z.number().int().min(5).max(1440).optional(),
     activeOnly: z.boolean().optional().default(false),
     activationMode: z.enum(["unchanged", "active", "inactive"]).optional().default("unchanged"),
     updateSourceRetention: z.boolean().optional().default(true),
@@ -2913,7 +2914,9 @@ export async function registerRoutes(
       let sourcesUpdated = 0;
       if (input.updateSourceRetention) {
         for (const sourceId of sourceIds) {
-          const updated = await storage.updateSource(sourceId, { retentionDays: input.retentionDays }, clientId);
+          const updates: Record<string, number> = { retentionDays: input.retentionDays };
+          if (input.intervalMinutes !== undefined) updates.intervalMinutes = input.intervalMinutes;
+          const updated = await storage.updateSource(sourceId, updates, clientId);
           if (updated) sourcesUpdated++;
         }
       }
@@ -2979,6 +2982,7 @@ export async function registerRoutes(
       res.json({
         success: true,
         retentionDays: input.retentionDays,
+        intervalMinutes: input.intervalMinutes,
         sourceScope: input.activeOnly ? "active" : "all",
         cutoff: cutoff.toISOString(),
         sourcesMatched: sourceIds.length,
