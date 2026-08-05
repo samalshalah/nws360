@@ -1085,12 +1085,12 @@ function SourcesManager({
           </div>
         ) : (
           <>
-            <div className="mb-4 rounded-md border border-border/60 bg-muted/20 p-3" data-testid="bulk-source-maintenance">
-              <div className="flex items-end gap-3 flex-wrap">
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">Source group</Label>
+            <div className="mb-5 rounded-md border border-border/70 bg-card/60 p-4" data-testid="bulk-source-maintenance">
+              <div className="grid gap-4 xl:grid-cols-[minmax(220px,260px)_minmax(250px,1fr)_auto]">
+                <div className="space-y-2">
+                  <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Source group</Label>
                   <Select value={sourceGroupFilter} onValueChange={setSourceGroupFilter}>
-                    <SelectTrigger className="h-9 w-[190px] bg-background" data-testid="select-source-group-filter">
+                    <SelectTrigger className="h-10 bg-background" data-testid="select-source-group-filter">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1100,99 +1100,106 @@ function SourcesManager({
                       ))}
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"} in view
+                  </p>
                 </div>
 
-                <Button
-                  variant={allVisibleSelected ? "default" : "outline"}
-                  className="h-9 gap-2"
-                  onClick={() => toggleSourcesSelection(visibleSourceIds, !allVisibleSelected)}
-                  disabled={visibleSourceIds.length === 0}
-                  data-testid="button-select-all-sources"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  {allVisibleSelected ? "Clear visible" : "Select all"}
-                </Button>
-
-                {hasCap(CAPS.SOURCES_DELETE) && (
-                  <Button
-                    variant="destructive"
-                    className="h-9 gap-2"
-                    onClick={() => setIsBulkDeleteConfirmOpen(true)}
-                    disabled={selectedSourceCount === 0 || bulkDeleteSources.isPending}
-                    data-testid="button-delete-selected-sources"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    Delete selected
-                  </Button>
-                )}
-
-                <Badge variant={selectedSourceCount > 0 ? "default" : "secondary"} className="h-9 px-3">
-                  {selectedSourceCount} selected
-                </Badge>
-
-                <div className="space-y-1">
-                  <Label htmlFor="bulk-retention-days" className="text-xs text-muted-foreground">Duration</Label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      id="bulk-retention-days"
-                      type="number"
-                      min={1}
-                      max={30}
-                      className="h-9 w-20 text-center"
-                      value={bulkRetentionDays}
-                      onChange={(event) => {
-                        const next = Math.min(30, Math.max(1, parseInt(event.target.value) || 1));
-                        setBulkRetentionDays(next);
-                      }}
-                      data-testid="input-bulk-retention-days"
-                    />
-                    <span className="text-sm text-muted-foreground">days</span>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Selection</Label>
+                    <Badge variant={selectedSourceCount > 0 ? "default" : "secondary"} className="h-6 px-2">
+                      {selectedSourceCount} selected
+                    </Badge>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      className="h-10 gap-2"
+                      onClick={() => toggleSourcesSelection(visibleSourceIds, !allVisibleSelected)}
+                      disabled={visibleSourceIds.length === 0}
+                      data-testid="button-select-all-sources"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      {allVisibleSelected ? "Clear visible" : "Select all visible"}
+                    </Button>
+                    {hasCap(CAPS.SOURCES_DELETE) && (
+                      <Button
+                        variant="outline"
+                        className="h-10 gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        onClick={() => setIsBulkDeleteConfirmOpen(true)}
+                        disabled={selectedSourceCount === 0 || bulkDeleteSources.isPending}
+                        data-testid="button-delete-selected-sources"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Delete selected
+                      </Button>
+                    )}
                   </div>
                 </div>
 
-                <div className="flex h-9 items-center gap-2 rounded-md border border-border/60 bg-background px-3">
-                  <Switch
-                    id="bulk-active-only"
-                    checked={bulkActiveOnly}
-                    onCheckedChange={setBulkActiveOnly}
-                    data-testid="switch-bulk-active-only"
-                  />
-                  <Label htmlFor="bulk-active-only" className="text-sm whitespace-nowrap">Active only</Label>
-                </div>
-
-                <div className="flex h-9 items-center gap-2 rounded-md border border-border/60 bg-background px-3">
-                  <Switch
-                    id="bulk-delete-old"
-                    checked={bulkDeleteOldArticles}
-                    onCheckedChange={setBulkDeleteOldArticles}
-                    data-testid="switch-bulk-delete-old"
-                  />
-                  <Label htmlFor="bulk-delete-old" className="text-sm whitespace-nowrap">Delete old posts</Label>
-                </div>
-
-                <div className="flex h-9 items-center gap-2 rounded-md border border-border/60 bg-background px-3">
-                  <Switch
-                    id="bulk-pull-now"
-                    checked={bulkFetchAfterCleanup}
-                    onCheckedChange={setBulkFetchAfterCleanup}
-                    data-testid="switch-bulk-pull-now"
-                  />
-                  <Label htmlFor="bulk-pull-now" className="text-sm whitespace-nowrap">Pull now</Label>
-                </div>
-
-                <Button
-                  className="gap-2"
-                  onClick={() => setIsBulkConfirmOpen(true)}
-                  disabled={bulkMaintenance.isPending || bulkScopedSourceCount === 0}
-                  data-testid="button-open-bulk-maintenance"
-                >
-                  <RefreshCw className={`w-4 h-4 ${bulkMaintenance.isPending ? "animate-spin" : ""}`} />
-                  Apply bulk
-                </Button>
-
-                <div className="text-xs text-muted-foreground">
-                  {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"}
-                  {bulkFetchAfterCleanup ? `, ${bulkFetchSourceCount} active pull${bulkFetchSourceCount === 1 ? "" : "s"}` : ""}
+                <div className="space-y-2 xl:min-w-[430px]">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Bulk maintenance</Label>
+                    <span className="text-xs text-muted-foreground">
+                      {bulkFetchAfterCleanup ? `${bulkFetchSourceCount} active pull${bulkFetchSourceCount === 1 ? "" : "s"}` : "No pull after cleanup"}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex h-10 items-center gap-2 rounded-md border border-border/60 bg-background px-3">
+                      <Input
+                        id="bulk-retention-days"
+                        type="number"
+                        min={1}
+                        max={30}
+                        className="h-7 w-12 border-0 bg-transparent p-0 text-center shadow-none focus-visible:ring-0"
+                        value={bulkRetentionDays}
+                        onChange={(event) => {
+                          const next = Math.min(30, Math.max(1, parseInt(event.target.value) || 1));
+                          setBulkRetentionDays(next);
+                        }}
+                        aria-label="Bulk retention days"
+                        data-testid="input-bulk-retention-days"
+                      />
+                      <Label htmlFor="bulk-retention-days" className="text-sm text-muted-foreground">days</Label>
+                    </div>
+                    <div className="flex h-10 items-center gap-2 rounded-md border border-border/60 bg-background px-3">
+                      <Switch
+                        id="bulk-active-only"
+                        checked={bulkActiveOnly}
+                        onCheckedChange={setBulkActiveOnly}
+                        data-testid="switch-bulk-active-only"
+                      />
+                      <Label htmlFor="bulk-active-only" className="text-sm whitespace-nowrap">Active only</Label>
+                    </div>
+                    <div className="flex h-10 items-center gap-2 rounded-md border border-border/60 bg-background px-3">
+                      <Switch
+                        id="bulk-delete-old"
+                        checked={bulkDeleteOldArticles}
+                        onCheckedChange={setBulkDeleteOldArticles}
+                        data-testid="switch-bulk-delete-old"
+                      />
+                      <Label htmlFor="bulk-delete-old" className="text-sm whitespace-nowrap">Delete old posts</Label>
+                    </div>
+                    <div className="flex h-10 items-center gap-2 rounded-md border border-border/60 bg-background px-3">
+                      <Switch
+                        id="bulk-pull-now"
+                        checked={bulkFetchAfterCleanup}
+                        onCheckedChange={setBulkFetchAfterCleanup}
+                        data-testid="switch-bulk-pull-now"
+                      />
+                      <Label htmlFor="bulk-pull-now" className="text-sm whitespace-nowrap">Pull now</Label>
+                    </div>
+                    <Button
+                      className="h-10 gap-2"
+                      onClick={() => setIsBulkConfirmOpen(true)}
+                      disabled={bulkMaintenance.isPending || bulkScopedSourceCount === 0}
+                      data-testid="button-open-bulk-maintenance"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${bulkMaintenance.isPending ? "animate-spin" : ""}`} />
+                      Apply
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
