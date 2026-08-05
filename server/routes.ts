@@ -130,6 +130,14 @@ const clientSettingsInputSchema = z.object({
   defaultMaxArticlesPerFetch: z.coerce.number().int().min(1).max(100).optional(),
   autoTranslationEnabled: z.boolean().optional(),
   defaultTargetLanguage: z.string().trim().min(2).max(12).optional().transform(() => "en"),
+  aiEnabled: z.boolean().optional(),
+  dailyTokenBudget: z.coerce.number().int().min(0).max(50_000_000).optional(),
+  dailyJobLimit: z.coerce.number().int().min(0).max(100_000).optional(),
+  aiTokenBudgets: z.object({
+    analysis: z.coerce.number().int().min(0).max(50_000_000).optional().default(0),
+    translation: z.coerce.number().int().min(0).max(50_000_000).optional().default(0),
+    summaries: z.coerce.number().int().min(0).max(50_000_000).optional().default(0),
+  }).optional(),
   reportExportFormat: z.enum(["txt", "csv"]).optional(),
   reportIncludeSummaries: z.boolean().optional(),
   homeCountryCode: z.string().trim().min(1).max(12).nullable().optional(),
@@ -743,8 +751,15 @@ function numberSetting(settings: Record<string, string>, key: string, min: numbe
   return Math.min(max, Math.max(min, Math.round(parsed)));
 }
 
-function buildClientSettingsPayload(client: any, settings: any) {
+async function buildClientSettingsPayload(client: any, settings: any) {
   const embassyProfile = buildClientEmbassyProfile(client, settings);
+  const [todayAiUsage, analysisUsage, translationUsage, summaryUsage, briefUsage] = await Promise.all([
+    storage.getDailyAiUsage(client.id),
+    storage.getDailyAiUsage(client.id, "classification"),
+    storage.getDailyAiUsage(client.id, "translation"),
+    storage.getDailyAiUsage(client.id, "summary"),
+    storage.getDailyAiUsage(client.id, "brief"),
+  ]);
   return {
     clientId: client.id,
     clientName: client.name,
@@ -756,6 +771,21 @@ function buildClientSettingsPayload(client: any, settings: any) {
     defaultArticleRetentionDays: settings?.defaultArticleRetentionDays ?? CLIENT_SETTING_DEFAULTS.defaultArticleRetentionDays,
     defaultSourceIntervalMinutes: settings?.defaultSourceIntervalMinutes ?? CLIENT_SETTING_DEFAULTS.defaultSourceIntervalMinutes,
     defaultMaxArticlesPerFetch: settings?.defaultMaxArticlesPerFetch ?? CLIENT_SETTING_DEFAULTS.defaultMaxArticlesPerFetch,
+    aiEnabled: client.aiEnabled ?? false,
+    dailyTokenBudget: client.dailyTokenBudget ?? 0,
+    dailyJobLimit: client.dailyJobLimit ?? 0,
+    aiTokenBudgets: {
+      analysis: Number((settings?.aiTokenBudgets as any)?.analysis ?? 0),
+      translation: Number((settings?.aiTokenBudgets as any)?.translation ?? 0),
+      summaries: Number((settings?.aiTokenBudgets as any)?.summaries ?? 0),
+    },
+    aiUsageToday: {
+      totalTokens: todayAiUsage.totalTokens,
+      jobCount: todayAiUsage.jobCount,
+      analysisTokens: analysisUsage.totalTokens,
+      translationTokens: translationUsage.totalTokens,
+      summariesTokens: summaryUsage.totalTokens + briefUsage.totalTokens,
+    },
     autoTranslationEnabled: settings?.autoTranslationEnabled ?? CLIENT_SETTING_DEFAULTS.autoTranslationEnabled,
     defaultTargetLanguage: settings?.defaultTargetLanguage || client.defaultLanguage || CLIENT_SETTING_DEFAULTS.defaultTargetLanguage,
     reportExportFormat: settings?.reportExportFormat || CLIENT_SETTING_DEFAULTS.reportExportFormat,
@@ -1792,7 +1822,7 @@ export async function registerRoutes(
         storage.getClientSettings(clientId),
       ]);
       if (!client) return safeNotFound(res);
-      res.json(buildClientSettingsPayload(client, settings));
+      res.json(await buildClientSettingsPayload(client, settings));
     } catch (err) {
       console.error("Client settings fetch failed:", err);
       res.status(500).json({ message: "Error fetching client settings" });
@@ -1807,10 +1837,23 @@ export async function registerRoutes(
 
     try {
       const input = clientSettingsInputSchema.parse(req.body || {});
-      const { defaultLanguage, ...settingsInput } = input;
+      const { defaultLanguage, aiEnabled, dailyTokenBudget, dailyJobLimit, ...settingsInput } = input;
 
+      const clientUpdates: Record<string, any> = {};
       if (defaultLanguage) {
-        await storage.updateClient(clientId, { defaultLanguage });
+        clientUpdates.defaultLanguage = defaultLanguage;
+      }
+      if (typeof aiEnabled === "boolean") {
+        clientUpdates.aiEnabled = aiEnabled;
+      }
+      if (typeof dailyTokenBudget === "number") {
+        clientUpdates.dailyTokenBudget = dailyTokenBudget;
+      }
+      if (typeof dailyJobLimit === "number") {
+        clientUpdates.dailyJobLimit = dailyJobLimit;
+      }
+      if (Object.keys(clientUpdates).length > 0) {
+        await storage.updateClient(clientId, clientUpdates);
       }
       if (settingsInput.representedCountryCode && !settingsInput.homeCountryCode) {
         settingsInput.homeCountryCode = settingsInput.representedCountryCode;
@@ -1829,7 +1872,7 @@ export async function registerRoutes(
         details: `Updated client settings: ${Object.keys(input).join(", ")}`,
       });
 
-      res.json(buildClientSettingsPayload(client, settings));
+      res.json(await buildClientSettingsPayload(client, settings));
     } catch (err) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ message: err.errors[0]?.message || "Invalid client settings" });
@@ -4298,12 +4341,9 @@ export async function registerRoutes(
     res.json(toPublicUser(updated));
   });
 
-  app.patch("/api/users/:id/password", async (req, res) => {
+  app.patch("/api/users/:id/password", requireCapability(CAPS.USERS_EDIT), async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     const currentUser = req.user as any;
-    if (!isSystemAdmin(currentUser)) {
-      return res.status(403).json({ message: "Only system admins can reset passwords" });
-    }
     const id = parseInt(req.params.id);
     if (id === currentUser.id) return res.status(400).json({ message: "Use your account settings to change your own password" });
     const { password } = req.body;

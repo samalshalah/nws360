@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, FileText, Globe2, Landmark, Loader2, RefreshCw, Save, Settings, SlidersHorizontal } from "lucide-react";
+import { Bell, Bot, FileText, Globe2, Landmark, Loader2, RefreshCw, Save, Settings, SlidersHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,21 @@ type ClientSettingsPayload = {
   defaultArticleRetentionDays: number;
   defaultSourceIntervalMinutes: number;
   defaultMaxArticlesPerFetch: number;
+  aiEnabled: boolean;
+  dailyTokenBudget: number;
+  dailyJobLimit: number;
+  aiTokenBudgets: {
+    analysis: number;
+    translation: number;
+    summaries: number;
+  };
+  aiUsageToday: {
+    totalTokens: number;
+    jobCount: number;
+    analysisTokens: number;
+    translationTokens: number;
+    summariesTokens: number;
+  };
   autoTranslationEnabled: boolean;
   defaultTargetLanguage: string;
   reportExportFormat: "txt" | "csv";
@@ -85,13 +100,41 @@ export default function ClientSettings() {
   });
 
   useEffect(() => {
-    if (data) setForm({ ...data, defaultLanguage: "en", defaultTargetLanguage: "en" });
+    if (data) {
+      setForm({
+        ...data,
+        defaultLanguage: "en",
+        defaultTargetLanguage: "en",
+        aiTokenBudgets: {
+          analysis: data.aiTokenBudgets?.analysis ?? 0,
+          translation: data.aiTokenBudgets?.translation ?? 0,
+          summaries: data.aiTokenBudgets?.summaries ?? 0,
+        },
+        aiUsageToday: {
+          totalTokens: data.aiUsageToday?.totalTokens ?? 0,
+          jobCount: data.aiUsageToday?.jobCount ?? 0,
+          analysisTokens: data.aiUsageToday?.analysisTokens ?? 0,
+          translationTokens: data.aiUsageToday?.translationTokens ?? 0,
+          summariesTokens: data.aiUsageToday?.summariesTokens ?? 0,
+        },
+      });
+    }
   }, [data]);
 
   const dirty = useMemo(() => JSON.stringify(data || null) !== JSON.stringify(form || null), [data, form]);
 
   const updateField = <K extends keyof ClientSettingsPayload>(key: K, value: ClientSettingsPayload[K]) => {
     setForm((current) => current ? { ...current, [key]: value } : current);
+  };
+
+  const updateAiBudget = (key: keyof ClientSettingsPayload["aiTokenBudgets"], value: number) => {
+    setForm((current) => current ? {
+      ...current,
+      aiTokenBudgets: {
+        ...current.aiTokenBudgets,
+        [key]: numberValue(value, 0, 50_000_000),
+      },
+    } : current);
   };
 
   const saveMutation = useMutation({
@@ -106,6 +149,14 @@ export default function ClientSettings() {
         defaultArticleRetentionDays: numberValue(form.defaultArticleRetentionDays, 1, 30),
         defaultSourceIntervalMinutes: numberValue(form.defaultSourceIntervalMinutes, 5, 1440),
         defaultMaxArticlesPerFetch: numberValue(form.defaultMaxArticlesPerFetch, 1, 100),
+        aiEnabled: form.aiEnabled,
+        dailyTokenBudget: numberValue(form.dailyTokenBudget, 0, 50_000_000),
+        dailyJobLimit: numberValue(form.dailyJobLimit, 0, 100_000),
+        aiTokenBudgets: {
+          analysis: numberValue(form.aiTokenBudgets.analysis, 0, 50_000_000),
+          translation: numberValue(form.aiTokenBudgets.translation, 0, 50_000_000),
+          summaries: numberValue(form.aiTokenBudgets.summaries, 0, 50_000_000),
+        },
         autoTranslationEnabled: form.autoTranslationEnabled,
         defaultTargetLanguage: "en",
         reportExportFormat: form.reportExportFormat,
@@ -382,6 +433,111 @@ export default function ClientSettings() {
                 disabled={!canManageSettings}
                 data-testid="input-default-retention"
               />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-md lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Bot className="h-4 w-4 text-primary" />
+              {t("settings.aiControls", "AI Controls")}
+            </CardTitle>
+            <CardDescription>{t("settings.aiControlsDescription", "Control AI activation, daily limits, and token budgets for analysis, translation, and summaries.")}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
+                <div>
+                  <Label htmlFor="ai-enabled">{t("settings.activateAi", "Activate AI")}</Label>
+                  <p className="text-xs text-muted-foreground">{t("settings.activateAiHint", "Allow this client to use AI analysis, translation, and summaries.")}</p>
+                </div>
+                <Switch
+                  id="ai-enabled"
+                  checked={form.aiEnabled}
+                  onCheckedChange={(checked) => updateField("aiEnabled", checked)}
+                  disabled={!canManageSettings}
+                  data-testid="switch-ai-enabled"
+                />
+              </div>
+              <div className="rounded-md border border-border p-3 text-sm">
+                <div className="font-medium">{form.aiUsageToday.totalTokens.toLocaleString()} {t("settings.tokensUsedToday", "tokens used today")}</div>
+                <div className="text-xs text-muted-foreground">{form.aiUsageToday.jobCount.toLocaleString()} {t("settings.aiJobsToday", "AI jobs completed today")}</div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="daily-token-budget">{t("settings.dailyTokenBudget", "Daily token budget")}</Label>
+                <Input
+                  id="daily-token-budget"
+                  type="number"
+                  min={0}
+                  max={50000000}
+                  value={form.dailyTokenBudget}
+                  onChange={(event) => updateField("dailyTokenBudget", numberValue(Number(event.target.value), 0, 50_000_000))}
+                  disabled={!canManageSettings}
+                  data-testid="input-daily-token-budget"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="daily-job-limit">{t("settings.dailyJobLimit", "Daily job limit")}</Label>
+                <Input
+                  id="daily-job-limit"
+                  type="number"
+                  min={0}
+                  max={100000}
+                  value={form.dailyJobLimit}
+                  onChange={(event) => updateField("dailyJobLimit", numberValue(Number(event.target.value), 0, 100_000))}
+                  disabled={!canManageSettings}
+                  data-testid="input-daily-job-limit"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="analysis-token-budget">{t("settings.analysisTokenBudget", "Analysis tokens")}</Label>
+                <Input
+                  id="analysis-token-budget"
+                  type="number"
+                  min={0}
+                  max={50000000}
+                  value={form.aiTokenBudgets.analysis}
+                  onChange={(event) => updateAiBudget("analysis", Number(event.target.value))}
+                  disabled={!canManageSettings}
+                  data-testid="input-analysis-token-budget"
+                />
+                <p className="text-xs text-muted-foreground">{form.aiUsageToday.analysisTokens.toLocaleString()} {t("settings.usedToday", "used today")}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="translation-token-budget">{t("settings.translationTokenBudget", "Translation tokens")}</Label>
+                <Input
+                  id="translation-token-budget"
+                  type="number"
+                  min={0}
+                  max={50000000}
+                  value={form.aiTokenBudgets.translation}
+                  onChange={(event) => updateAiBudget("translation", Number(event.target.value))}
+                  disabled={!canManageSettings}
+                  data-testid="input-translation-token-budget"
+                />
+                <p className="text-xs text-muted-foreground">{form.aiUsageToday.translationTokens.toLocaleString()} {t("settings.usedToday", "used today")}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="summaries-token-budget">{t("settings.summariesTokenBudget", "Summary tokens")}</Label>
+                <Input
+                  id="summaries-token-budget"
+                  type="number"
+                  min={0}
+                  max={50000000}
+                  value={form.aiTokenBudgets.summaries}
+                  onChange={(event) => updateAiBudget("summaries", Number(event.target.value))}
+                  disabled={!canManageSettings}
+                  data-testid="input-summaries-token-budget"
+                />
+                <p className="text-xs text-muted-foreground">{form.aiUsageToday.summariesTokens.toLocaleString()} {t("settings.usedToday", "used today")}</p>
+              </div>
             </div>
           </CardContent>
         </Card>

@@ -98,15 +98,6 @@ export function buildTenantNavTree(t: any): NavGroup[] {
       collapsible: true,
     },
     {
-      key: "workspaceSettings",
-      label: t("nav.workspaceSettings", "Workspace Settings"),
-      icon: SlidersHorizontal,
-      items: [
-        { key: "workspaceRelevance", label: t("nav.workspaceSettings", "Workspace Settings"), href: "/workspace/relevance", icon: SlidersHorizontal, caps: [CAPS.SETTINGS_VIEW] },
-      ],
-      collapsible: false,
-    },
-    {
       key: "settings",
       label: t("nav.settings", "Settings"),
       icon: Settings,
@@ -118,6 +109,7 @@ export function buildTenantNavTree(t: any): NavGroup[] {
         { key: "integrations", label: t("nav.integrations", "Integrations"), href: "/integrations", icon: Plug, caps: [CAPS.INTEGRATIONS_VIEW] },
         { key: "usageBilling", label: t("nav.usageBilling", "Billing"), href: "/usage-billing", icon: CreditCard, caps: [CAPS.BILLING_VIEW] },
         { key: "clientSettings", label: t("nav.clientSettings", "Client Settings"), href: "/settings", icon: Settings, caps: [CAPS.SETTINGS_VIEW] },
+        { key: "workspaceRelevance", label: t("nav.workspaceSettings", "Workspace Settings"), href: "/workspace/relevance", icon: SlidersHorizontal, caps: [CAPS.SETTINGS_VIEW] },
         { key: "helpCenter", label: t("nav.helpCenter", "Help"), href: "/help", icon: HelpCircle },
       ],
       collapsible: true,
