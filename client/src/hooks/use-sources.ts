@@ -65,6 +65,7 @@ export function useUpdateSource() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.sources.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/source-health"] });
       toast({ title: "Success", description: "Source updated successfully" });
     },
     onError: (error) => {
@@ -93,6 +94,7 @@ export function useRebuildSource() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: [api.sources.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/source-health"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sources/article-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
       queryClient.invalidateQueries({ queryKey: ["/api/analytics/stats"] });

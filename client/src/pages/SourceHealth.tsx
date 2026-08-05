@@ -7,11 +7,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Activity, AlertTriangle, Clock, Info } from "lucide-react";
+import { Activity, AlertTriangle, Clock, Info, Pencil } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
 import type { SourceFetchMetrics } from "@shared/source-fetch-metrics";
 import { sourceHealthZeroInsertMessage } from "@shared/source-health";
+import type { Source } from "@shared/schema";
+import { EditSourceDialog } from "@/components/sources/EditSourceDialog";
+import { useSources } from "@/hooks/use-sources";
 
 function CardInfo({ description }: { description: string }) {
   return (
@@ -142,9 +145,12 @@ function LoadingSkeleton() {
 export default function SourceHealth() {
   const { t } = useTranslation();
   const [filter, setFilter] = useState<HealthFilter>("all");
+  const [editingSource, setEditingSource] = useState<Source | null>(null);
   const { data, isLoading } = useQuery<SourceHealthData[]>({
     queryKey: ["/api/source-health"],
   });
+  const { data: sources = [] } = useSources();
+  const sourceById = new Map((sources as Source[]).map((source) => [source.id, source]));
 
   const healthy = data?.filter((s) => s.lastStatus === "success").length ?? 0;
   const errors = data?.filter((s) => s.lastStatus === "error").length ?? 0;
@@ -251,7 +257,24 @@ export default function SourceHealth() {
                       <StatusIcon status={source.lastStatus} />
                       <CardTitle className="text-base truncate">{source.sourceName}</CardTitle>
                     </div>
-                    <StatusBadge status={source.lastStatus} t={t} />
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <StatusBadge status={source.lastStatus} t={t} />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        disabled={!sourceById.has(source.sourceId)}
+                        onClick={() => {
+                          const fullSource = sourceById.get(source.sourceId);
+                          if (fullSource) setEditingSource(fullSource);
+                        }}
+                        aria-label={`Edit ${source.sourceName}`}
+                        title="Edit feed"
+                        data-testid={`button-edit-source-health-${source.sourceId}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-3 pt-0">
                     <div className="space-y-1">
@@ -342,6 +365,11 @@ export default function SourceHealth() {
           )}
         </>
       )}
+      <EditSourceDialog
+        source={editingSource}
+        open={!!editingSource}
+        onOpenChange={(open) => !open && setEditingSource(null)}
+      />
     </div>
   );
 }
