@@ -205,7 +205,7 @@ export default function ClientSettings() {
           <div className="flex items-center gap-2">
             <Settings className="h-5 w-5 text-primary" />
             <h1 className="text-2xl font-display font-bold text-foreground" data-testid="text-client-settings-title">
-              {t("settings.title", "Client System Settings")}
+              {t("settings.title", "Settings")}
             </h1>
           </div>
           <div className="flex items-center gap-2">
