@@ -1072,11 +1072,11 @@ function SourcesManager({
           </div>
         ) : (
           <>
-            <div className="mb-5 rounded-md border border-border/70 bg-card/60 p-3" data-testid="bulk-source-maintenance">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="mb-5 rounded-md border border-border/70 bg-card/60 px-3 py-2.5" data-testid="bulk-source-maintenance">
+              <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <Select value={sourceGroupFilter} onValueChange={setSourceGroupFilter}>
-                    <SelectTrigger className="h-9 w-full bg-background sm:w-[240px]" data-testid="select-source-group-filter">
+                    <SelectTrigger className="h-8 w-full bg-background sm:w-[180px]" data-testid="select-source-group-filter">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1087,7 +1087,7 @@ function SourcesManager({
                     </SelectContent>
                   </Select>
                   <Select value={sourceChannelFilter} onValueChange={setSourceChannelFilter}>
-                    <SelectTrigger className="h-9 w-full bg-background sm:w-[190px]" data-testid="select-source-channel-filter">
+                    <SelectTrigger className="h-8 w-full bg-background sm:w-[160px]" data-testid="select-source-channel-filter">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1105,57 +1105,57 @@ function SourcesManager({
                       })}
                     </SelectContent>
                   </Select>
-                  <span className="text-xs text-muted-foreground">
-                    {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"} in view
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">
+                    {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"}
                   </span>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap xl:justify-end">
                   {hasCap(CAPS.SOURCES_ADD) && (
                     <Button
                       size="sm"
-                      className="h-9 gap-2"
+                      className="h-8 gap-1.5 px-3"
                       onClick={() => setIsAddSourceOpen(true)}
                       data-testid="button-add-source"
                     >
                       <Plus className="w-4 h-4" />
-                      {t("admin.addSource")}
+                      Add
                     </Button>
                   )}
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-9 gap-2"
+                    className="h-8 gap-1.5 px-3"
                     onClick={() => fetchAll()}
                     disabled={isFetchingAll}
                     data-testid="button-fetch-all"
                   >
                     <RefreshCw className={`w-4 h-4 ${isFetchingAll ? "animate-spin" : ""}`} />
-                    {isFetchingAll ? t("admin.fetching") : t("admin.fetchAll")}
+                    {isFetchingAll ? t("admin.fetching") : "Fetch"}
                   </Button>
                   {hasCap(CAPS.SOURCES_DELETE) && (
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-9 gap-2 border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive disabled:border-border disabled:text-muted-foreground disabled:opacity-100"
+                      className="h-8 gap-1.5 border-destructive/35 px-3 text-destructive hover:bg-destructive/10 hover:text-destructive disabled:border-border disabled:text-muted-foreground disabled:opacity-100"
                       onClick={() => setIsBulkDeleteConfirmOpen(true)}
                       disabled={selectedSourceCount === 0 || bulkDeleteSources.isPending}
                       data-testid="button-delete-selected-sources"
                     >
                       <Trash2 className="w-4 h-4" />
-                      Delete selected
+                      Delete
                     </Button>
                   )}
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-9 gap-2"
+                    className="h-8 gap-1.5 px-3"
                     onClick={() => setIsBulkConfirmOpen(true)}
                     disabled={bulkMaintenance.isPending || bulkScopedSourceCount === 0}
                     data-testid="button-open-bulk-maintenance"
                   >
                     <SlidersHorizontal className="w-4 h-4" />
-                    Bulk edit
+                    Bulk Edit
                   </Button>
                 </div>
               </div>
