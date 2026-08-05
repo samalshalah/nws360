@@ -95,6 +95,14 @@ const examples: Example[] = [
     profile: US_EMBASSY_BAGHDAD_PROFILE,
   },
   {
+    name: "Arabic U.S.-Iraq bilateral meeting",
+    title: "السفارة الأمريكية تبحث التعاون مع الحكومة العراقية في بغداد",
+    content: "ناقش السفير الأمريكي مع رئيس الوزراء العراقي العلاقات الثنائية والشراكة بين العراق والولايات المتحدة.",
+    category: "client_bilateral_relations",
+    priority: "important",
+    profile: US_EMBASSY_BAGHDAD_PROFILE,
+  },
+  {
     name: "French ambassador bilateral meeting",
     title: "French ambassador meets an Iraqi minister in Baghdad",
     content: "France and Iraq discussed a new cultural cooperation program and bilateral partnership.",

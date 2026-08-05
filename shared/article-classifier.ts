@@ -164,12 +164,14 @@ const BILATERAL_RELATIONSHIP_TERMS = [
   "consular", "embassy", "ambassador", "foreign minister", "state department", "support", "funded",
   "troops", "forces", "coalition", "withdrawal", "military presence", "security partnership", "security assistance",
   "company", "companies", "nationals", "citizens", "statement",
+  "ثنائية", "علاقة", "اتفاقية", "زيارة رسمية", "السفير",
   "ثنائي", "العلاقات", "شراكة", "تعاون", "اتفاق", "مذكرة", "زيارة", "اجتماع", "يلتقي", "التقى",
   "مباحثات", "يناقش", "ناقش", "تعاون أمني", "تعاون امني", "برنامج", "ثقافي", "تبادل", "تجارة",
   "استثمار", "تأشيرة", "تاشيرة", "قنصلي", "السفارة", "سفير", "الخارجية", "دعم", "تمويل", "شركة", "مواطنين", "بيان",
 ];
 
 const IRAQ_CONTEXT_TERMS = [
+  "عراق", "بصرة",
   "iraq", "iraqi", "baghdad", "erbil", "basra", "العراق", "العراقي", "العراقية", "بغداد", "أربيل", "اربيل", "البصرة",
 ];
 
