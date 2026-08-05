@@ -1,5 +1,7 @@
 export const SOURCE_CATEGORIES = [
   { code: "general", label: "General" },
+  { code: "media_arabic", label: "Arabic Media" },
+  { code: "media_kurdish", label: "Kurdish Media" },
   { code: "official_government", label: "Official Government" },
   { code: "official_presidency", label: "Official Presidency" },
   { code: "official_president_personal", label: "President Personal" },
