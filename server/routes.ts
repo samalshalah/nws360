@@ -2883,8 +2883,10 @@ export async function registerRoutes(
   });
 
   const bulkSourceMaintenanceInput = z.object({
+    sourceIds: z.array(z.number().int().positive()).max(1000).optional(),
     retentionDays: z.number().int().min(1).max(30).optional().default(DEFAULT_SOURCE_RETENTION_DAYS),
     activeOnly: z.boolean().optional().default(false),
+    activationMode: z.enum(["unchanged", "active", "inactive"]).optional().default("unchanged"),
     updateSourceRetention: z.boolean().optional().default(true),
     deleteOldArticles: z.boolean().optional().default(true),
     fetchAfterCleanup: z.boolean().optional().default(false),
@@ -2899,8 +2901,13 @@ export async function registerRoutes(
     try {
       const input = bulkSourceMaintenanceInput.parse(req.body || {});
       const tenantSources = await storage.getSources(clientId);
-      const scopedSources = tenantSources.filter((source: any) => !input.activeOnly || source.active !== false);
+      const requestedSourceIds = input.sourceIds ? new Set(input.sourceIds.map(Number)) : null;
+      const visibleSources = requestedSourceIds
+        ? tenantSources.filter((source: any) => requestedSourceIds.has(Number(source.id)))
+        : tenantSources;
+      const scopedSources = visibleSources.filter((source: any) => !input.activeOnly || source.active !== false);
       const sourceIds = scopedSources.map((source: any) => Number(source.id)).filter(Number.isFinite);
+      const activationSourceIds = visibleSources.map((source: any) => Number(source.id)).filter(Number.isFinite);
       const cutoff = new Date(Date.now() - input.retentionDays * 24 * 60 * 60 * 1000);
 
       let sourcesUpdated = 0;
@@ -2908,6 +2915,17 @@ export async function registerRoutes(
         for (const sourceId of sourceIds) {
           const updated = await storage.updateSource(sourceId, { retentionDays: input.retentionDays }, clientId);
           if (updated) sourcesUpdated++;
+        }
+      }
+
+      let activationUpdated = 0;
+      if (input.activationMode !== "unchanged") {
+        const nextActive = input.activationMode === "active";
+        for (const sourceId of activationSourceIds) {
+          const current = visibleSources.find((source: any) => Number(source.id) === sourceId);
+          if (current && current.active === nextActive) continue;
+          const updated = await storage.updateSource(sourceId, { active: nextActive }, clientId);
+          if (updated) activationUpdated++;
         }
       }
 
@@ -2929,7 +2947,11 @@ export async function registerRoutes(
 
       const fetchResults: { sourceId: number; newArticles: number; error?: string }[] = [];
       if (input.fetchAfterCleanup) {
-        const sourcesToFetch = scopedSources.filter((source: any) => source.active !== false);
+        const sourcesToFetch = visibleSources.filter((source: any) => {
+          if (input.activationMode === "inactive") return false;
+          if (input.activationMode === "active") return true;
+          return source.active !== false;
+        });
         let nextIndex = 0;
         const workerCount = Math.min(BULK_SOURCE_FETCH_CONCURRENCY, sourcesToFetch.length);
         await Promise.all(Array.from({ length: workerCount }, async () => {
@@ -2961,6 +2983,8 @@ export async function registerRoutes(
         cutoff: cutoff.toISOString(),
         sourcesMatched: sourceIds.length,
         sourcesUpdated,
+        activationMode: input.activationMode,
+        activationUpdated,
         deletedArticles,
         fetchedSources: fetchResults.length,
         totalNewArticles,

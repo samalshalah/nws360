@@ -906,6 +906,7 @@ function SourcesManager({
   const [isImportOpen, setIsImportOpen] = useState(initialImportOpen);
   const [bulkRetentionDays, setBulkRetentionDays] = useState(7);
   const [bulkActiveOnly, setBulkActiveOnly] = useState(false);
+  const [bulkActivationMode, setBulkActivationMode] = useState<"unchanged" | "active" | "inactive">("unchanged");
   const [bulkDeleteOldArticles, setBulkDeleteOldArticles] = useState(true);
   const [bulkFetchAfterCleanup, setBulkFetchAfterCleanup] = useState(false);
   const [isBulkConfirmOpen, setIsBulkConfirmOpen] = useState(false);
@@ -1030,11 +1031,14 @@ function SourcesManager({
   };
 
   const bulkScopedSourceCount = filteredSources.filter((source) => !bulkActiveOnly || source.active !== false).length;
-  const bulkFetchSourceCount = filteredSources.filter((source) => (!bulkActiveOnly || source.active !== false) && source.active !== false).length;
+  const bulkActivationSourceCount = filteredSources.length;
+  const bulkFetchSourceCount = filteredSources.filter((source) => bulkActivationMode === "inactive" ? false : bulkActivationMode === "active" ? true : source.active !== false).length;
   const runBulkMaintenance = () => {
     bulkMaintenance.mutate({
+      sourceIds: visibleSourceIds,
       retentionDays: bulkRetentionDays,
       activeOnly: bulkActiveOnly,
+      activationMode: bulkActivationMode,
       updateSourceRetention: true,
       deleteOldArticles: bulkDeleteOldArticles,
       fetchAfterCleanup: bulkFetchAfterCleanup,
@@ -1631,6 +1635,18 @@ function SourcesManager({
             </div>
 
             <div className="grid gap-4 sm:grid-cols-[140px_1fr] sm:items-center">
+              <Label className="text-sm font-medium">Activation</Label>
+              <Select value={bulkActivationMode} onValueChange={(value) => setBulkActivationMode(value as "unchanged" | "active" | "inactive")}>
+                <SelectTrigger className="h-9" data-testid="select-bulk-activation-mode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unchanged">No activation change</SelectItem>
+                  <SelectItem value="active">Make all active</SelectItem>
+                  <SelectItem value="inactive">Make all inactive</SelectItem>
+                </SelectContent>
+              </Select>
+
               <Label htmlFor="bulk-retention-days" className="text-sm font-medium">Retention</Label>
               <div className="flex items-center gap-2">
                 <Input
@@ -1696,6 +1712,8 @@ function SourcesManager({
             <div className="rounded-md border border-border/60 bg-background p-3">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Summary</p>
               <p className="mt-1 text-sm">
+                {bulkActivationMode === "active" ? `Make ${bulkActivationSourceCount} source${bulkActivationSourceCount === 1 ? "" : "s"} active. ` : ""}
+                {bulkActivationMode === "inactive" ? `Make ${bulkActivationSourceCount} source${bulkActivationSourceCount === 1 ? "" : "s"} inactive. ` : ""}
                 Set retention to {bulkRetentionDays} day{bulkRetentionDays === 1 ? "" : "s"} for {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"}
                 {bulkActiveOnly ? " that are currently active" : ""}
                 {bulkDeleteOldArticles ? ` and delete posts older than ${bulkRetentionDays} day${bulkRetentionDays === 1 ? "" : "s"}` : ""}

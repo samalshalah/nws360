@@ -155,8 +155,10 @@ export function useFetchAllSources() {
 }
 
 export type BulkSourceMaintenanceRequest = {
+  sourceIds?: number[];
   retentionDays: number;
   activeOnly?: boolean;
+  activationMode?: "unchanged" | "active" | "inactive";
   updateSourceRetention?: boolean;
   deleteOldArticles?: boolean;
   fetchAfterCleanup?: boolean;
@@ -169,6 +171,8 @@ export type BulkSourceMaintenanceResponse = {
   cutoff: string;
   sourcesMatched: number;
   sourcesUpdated: number;
+  activationMode?: "unchanged" | "active" | "inactive";
+  activationUpdated?: number;
   deletedArticles: number;
   fetchedSources: number;
   totalNewArticles: number;
@@ -194,12 +198,13 @@ export function useBulkSourceMaintenance() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: [api.sources.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/source-health"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sources/article-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
       queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] || "").startsWith("/api/analytics") });
       toast({
         title: "Source maintenance complete",
-        description: `${data.sourcesUpdated} source(s) updated. ${data.deletedArticles} old article(s) deleted. ${data.totalNewArticles} new article(s) fetched.`,
+        description: `${data.sourcesUpdated + (data.activationUpdated || 0)} source update(s). ${data.deletedArticles} old article(s) deleted. ${data.totalNewArticles} new article(s) fetched.`,
       });
     },
     onError: (error) => {
