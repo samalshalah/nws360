@@ -1022,50 +1022,6 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
     telegram: "TG",
   };
 
-  const summarizeSourceSetup = (items: any[]) => {
-    const summaries = items
-      .map((source) => source.assignmentSummary)
-      .filter(Boolean);
-    if (summaries.length === 0) return null;
-    const assignedWorkspaces = Array.from(new Set(summaries.flatMap((summary: any) => summary.assignedWorkspaces || [])));
-    const assignmentStatuses = summaries.reduce<Record<string, number>>((acc, summary: any) => {
-      for (const [status, count] of Object.entries(summary.assignmentStatuses || {})) {
-        acc[status] = (acc[status] || 0) + Number(count || 0);
-      }
-      return acc;
-    }, {});
-    return {
-      publisher: summaries.find((summary: any) => summary.publisher)?.publisher || null,
-      channel: summaries.find((summary: any) => summary.channel)?.channel || null,
-      assignedWorkspaces,
-      assignmentStatuses,
-      latestTestStatus: summaries.find((summary: any) => summary.latestTestStatus)?.latestTestStatus || null,
-      inactiveBecauseSetupIncomplete: summaries.some((summary: any) => summary.inactiveBecauseSetupIncomplete),
-    };
-  };
-
-  const renderSourceSetup = (summary: any) => {
-    if (!summary) {
-      return <span className="text-xs text-muted-foreground">Legacy source</span>;
-    }
-    const statuses = Object.entries(summary.assignmentStatuses || {});
-    return (
-      <div className="flex flex-wrap items-center gap-1">
-        {summary.publisher && <Badge variant="outline">{summary.publisher.name}</Badge>}
-        {summary.channel && <Badge variant="outline">{sourceTypeLabels[summary.channel.channelType] || summary.channel.channelType}</Badge>}
-        {statuses.length === 0 ? (
-          <Badge variant="secondary">not assigned</Badge>
-        ) : statuses.map(([status, count]) => (
-          <Badge key={status} variant={status === "active" ? "default" : "secondary"}>{status}: {String(count)}</Badge>
-        ))}
-        {summary.latestTestStatus && <Badge variant="outline">test: {summary.latestTestStatus}</Badge>}
-        {summary.assignedWorkspaces?.slice(0, 2).map((name: string) => <Badge key={name} variant="outline">{name}</Badge>)}
-        {summary.assignedWorkspaces?.length > 2 && <Badge variant="outline">+{summary.assignedWorkspaces.length - 2}</Badge>}
-        {summary.inactiveBecauseSetupIncomplete && <Badge variant="secondary">setup incomplete</Badge>}
-      </div>
-    );
-  };
-
   const bulkScopedSourceCount = filteredSources.filter((source) => !bulkActiveOnly || source.active !== false).length;
   const bulkFetchSourceCount = filteredSources.filter((source) => (!bulkActiveOnly || source.active !== false) && source.active !== false).length;
   const runBulkMaintenance = () => {
@@ -1268,7 +1224,6 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                     </TableHead>
                     <TableHead>{t("admin.sourceName")}</TableHead>
                     <TableHead>Channels</TableHead>
-                    <TableHead>Setup</TableHead>
                     <TableHead>Articles</TableHead>
                     <TableHead>{t("admin.status")}</TableHead>
                     <TableHead>{t("admin.lastFetched")}</TableHead>
@@ -1286,7 +1241,6 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                       .filter(s => s.lastFetchedAt)
                       .sort((a, b) => new Date(b.lastFetchedAt!).getTime() - new Date(a.lastFetchedAt!).getTime())[0];
                     const isSingle = groupSources.length === 1;
-                    const setupSummary = summarizeSourceSetup(groupSources as any[]);
 
                     return (
                       <React.Fragment key={groupName}>
@@ -1333,7 +1287,6 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                             })}
                           </div>
                         </TableCell>
-                        <TableCell>{renderSourceSetup(setupSummary)}</TableCell>
                         <TableCell>
                           <button
                             className="tabular-nums font-medium text-primary underline-offset-4 hover:underline cursor-pointer"
@@ -1465,7 +1418,6 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                                 </div>
                               </div>
                             </TableCell>
-                            <TableCell>{renderSourceSetup((source as any).assignmentSummary)}</TableCell>
                             <TableCell>
                               <button
                                 className="tabular-nums text-sm text-primary underline-offset-4 hover:underline cursor-pointer"
@@ -1540,7 +1492,6 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                 const totalArticles = groupSources.reduce((sum, s) => sum + (articleCounts?.[s.id] ?? 0), 0);
                 const allActive = groupSources.every(s => s.active);
                 const isSingle = groupSources.length === 1;
-                const setupSummary = summarizeSourceSetup(groupSources as any[]);
                 const groupIds = groupSources.map((source) => source.id);
                 const selectedInGroup = groupIds.filter((id) => selectedSourceIds.has(id)).length;
 
@@ -1585,7 +1536,6 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                         );
                       })}
                     </div>
-                    <div>{renderSourceSetup(setupSummary)}</div>
                     <div className="text-xs text-muted-foreground">
                       <button
                         className="text-primary underline-offset-4 hover:underline cursor-pointer"
@@ -1638,7 +1588,6 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                                 </div>
                               </div>
                               <div className="flex items-center gap-4 flex-wrap">
-                                <div>{renderSourceSetup((source as any).assignmentSummary)}</div>
                                 <div className="flex items-center gap-1">
                                   <span className="text-xs text-muted-foreground">{t("admin.postsPerFetch")}:</span>
                                   <Input
