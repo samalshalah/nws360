@@ -27,7 +27,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ChevronDown, ChevronRight, ArrowRight, ThumbsUp, MessageCircle, Share2, Info, CheckCircle2, AlertTriangle, ExternalLink, Pencil, Upload, Activity } from "lucide-react";
+import { Plus, Minus, Trash2, Globe, Rss, Loader2, RefreshCw, Search, Newspaper, Hash, ChevronLeft, ChevronDown, ChevronRight, ArrowRight, ThumbsUp, MessageCircle, Share2, Info, CheckCircle2, AlertTriangle, ExternalLink, Pencil } from "lucide-react";
 import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } from "react-icons/si";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
@@ -105,9 +105,11 @@ const TOPIC_CATEGORIES = [
 export default function Admin({
   tab = "manage",
   initialAddOpen = false,
+  initialImportOpen = false,
 }: {
   tab?: "add" | "manage" | "keywords";
   initialAddOpen?: boolean;
+  initialImportOpen?: boolean;
 }) {
   const { t } = useTranslation();
 
@@ -127,7 +129,7 @@ export default function Admin({
       </div>
 
       {tab === "add" && <AddSourceView />}
-      {tab === "manage" && <SourcesManager initialAddOpen={initialAddOpen} />}
+      {tab === "manage" && <SourcesManager initialAddOpen={initialAddOpen} initialImportOpen={initialImportOpen} />}
       {tab === "keywords" && <KeywordsManager />}
     </div>
   );
@@ -873,7 +875,13 @@ function AddSourceDialog({
   return <GlobalAddSourceDialog open={open} onOpenChange={onOpenChange} />;
 }
 
-function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }) {
+function SourcesManager({
+  initialAddOpen = false,
+  initialImportOpen = false,
+}: {
+  initialAddOpen?: boolean;
+  initialImportOpen?: boolean;
+}) {
   const { t } = useTranslation();
   const { hasCap } = usePermissions();
   const { data: sources, isLoading } = useSources();
@@ -895,7 +903,7 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
   const [viewingSource, setViewingSource] = useState<{ id: number; name: string } | null>(null);
   const [editingSource, setEditingSource] = useState<Source | null>(null);
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(initialAddOpen);
-  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(initialImportOpen);
   const [bulkRetentionDays, setBulkRetentionDays] = useState(7);
   const [bulkActiveOnly, setBulkActiveOnly] = useState(false);
   const [bulkDeleteOldArticles, setBulkDeleteOldArticles] = useState(true);
@@ -1044,35 +1052,15 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
           <CardDescription>{t("admin.sourcesDescription")}</CardDescription>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            className="gap-2"
-            onClick={() => window.location.assign("/sources/health")}
-            data-testid="button-source-health"
-          >
-            <Activity className="w-4 h-4" />
-            Source Health
-          </Button>
           {hasCap(CAPS.SOURCES_ADD) && (
-            <>
-              <Button
-                variant="outline"
-                className="gap-2"
-                onClick={() => setIsImportOpen(true)}
-                data-testid="button-import-feeds"
-              >
-                <Upload className="w-4 h-4" />
-                Import Feeds
-              </Button>
-              <Button
-                className="gap-2"
-                onClick={() => setIsAddSourceOpen(true)}
-                data-testid="button-add-source"
-              >
-                <Plus className="w-4 h-4" />
-                {t("admin.addSource")}
-              </Button>
-            </>
+            <Button
+              className="gap-2"
+              onClick={() => setIsAddSourceOpen(true)}
+              data-testid="button-add-source"
+            >
+              <Plus className="w-4 h-4" />
+              {t("admin.addSource")}
+            </Button>
           )}
           <Button
             variant="outline"

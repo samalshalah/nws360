@@ -208,6 +208,9 @@ function Router() {
       <Route path="/sources/add">
         <ProtectedPage component={() => <Admin tab="manage" initialAddOpen />} />
       </Route>
+      <Route path="/sources/import">
+        <ProtectedPage component={() => <Admin tab="manage" initialImportOpen />} />
+      </Route>
       <Route path="/sources/manage">
         <ProtectedPage component={() => <Admin tab="manage" />} />
       </Route>

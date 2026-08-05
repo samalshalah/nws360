@@ -4,7 +4,7 @@ import {
   FileText, List, Hash, Bookmark, Users,
   Activity, GitCompare, Zap, Brain, CreditCard,
   HelpCircle, Lightbulb, Plug, Monitor, UsersRound, UserCog,
-  Home, Bell, Settings, ClipboardList, CheckSquare, BookOpen, SlidersHorizontal, Building2, Landmark, Handshake
+  Home, Bell, Settings, ClipboardList, CheckSquare, BookOpen, SlidersHorizontal, Building2, Landmark, Handshake, Upload
 } from "lucide-react";
 import { CAPS } from "@shared/schema";
 
@@ -53,6 +53,8 @@ export function buildTenantNavTree(t: any): NavGroup[] {
       icon: Bell,
       items: [
         { key: "manageSources", label: t("nav.manageSources", "Manage Sources"), href: "/sources/manage", icon: List, caps: [CAPS.SOURCES_VIEW] },
+        { key: "importFeeds", label: t("nav.importFeeds", "Import Feeds"), href: "/sources/import", icon: Upload, caps: [CAPS.SOURCES_ADD] },
+        { key: "sourceHealth", label: t("nav.sourceHealth", "Source Health"), href: "/sources/health", icon: Monitor, caps: [CAPS.SOURCE_HEALTH_VIEW] },
         { key: "keywords", label: t("nav.keywords", "Watchlists"), href: "/sources/keywords", icon: Hash, caps: [CAPS.KEYWORDS_VIEW] },
         { key: "alerts", label: t("nav.alerts", "Alerts"), href: "/alerts", icon: Bell, caps: [CAPS.ALERTS_VIEW] },
       ],
@@ -131,7 +133,6 @@ export function buildPlatformAdminNavTree(t: any): NavGroup[] {
         { key: "adminUsers", label: t("nav.usersAccess", "Users & Access"), href: "/admin/users", icon: UserCog, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
         { key: "clientEnrollment", label: t("nav.clientEnrollment", "Enroll Client"), href: "/admin/clients/new", icon: Users, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
         { key: "publisherCatalog", label: t("nav.publisherCatalog", "Publisher Catalog"), href: "/admin/publishers", icon: Building2, caps: [CAPS.ADMIN_SYSTEM_DASHBOARD] },
-        { key: "sourceHealth", label: t("nav.sourceHealth", "Source Health"), href: "/sources/health", icon: Monitor, caps: [CAPS.SOURCE_HEALTH_VIEW] },
         { key: "opsDashboard", label: t("nav.opsDashboard", "Queue & Jobs"), href: "/admin/ops", icon: Activity, caps: [CAPS.ADMIN_OPERATIONS] },
         { key: "integrationMonitor", label: t("nav.integrationMonitor", "Integration Monitor"), href: "/admin/integrations", icon: Plug, caps: [CAPS.INTEGRATION_MONITOR_VIEW] },
         { key: "productIntelligence", label: t("nav.productIntelligence", "Product Analytics"), href: "/admin/product-analytics", icon: Lightbulb, caps: [CAPS.ADMIN_PRODUCT_ANALYTICS] },
@@ -190,6 +191,7 @@ export const ROUTE_CAPS: RouteCapConfig[] = [
   { path: "/forecasting", caps: [CAPS.INTELLIGENCE_PREDICTIONS] },
   { path: "/executive", caps: [CAPS.EXECUTIVE_HOME] },
   { path: "/sources/add", caps: [CAPS.SOURCES_ADD] },
+  { path: "/sources/import", caps: [CAPS.SOURCES_ADD] },
   { path: "/sources/manage", caps: [CAPS.SOURCES_VIEW] },
   { path: "/sources/keywords", caps: [CAPS.KEYWORDS_VIEW] },
   { path: "/sources/health", caps: [CAPS.SOURCE_HEALTH_VIEW] },
@@ -238,7 +240,6 @@ export const ADMIN_ONLY_ROUTES = [
   "/admin/ops",
   "/admin/product-analytics",
   "/admin/integrations",
-  "/sources/health",
 ];
 
 export function buildClientNavTree(t: any): NavGroup[] {

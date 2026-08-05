@@ -5,7 +5,7 @@ import {
   FileBarChart, TrendingUp, Search, MessageSquare, Shield,
   FileText, Network, List, Hash, Menu, Bookmark, Users,
   Activity, GitCompare, Zap, Tag, Brain, Eye, CreditCard,
-  HelpCircle, Lightbulb, Plug, Monitor, UsersRound, ExternalLink
+  HelpCircle, Lightbulb, Plug, Monitor, UsersRound, ExternalLink, Upload
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -61,6 +61,8 @@ function buildMenuStructure(t: (key: string, fallback?: string) => string): Menu
       items: [
         { key: "feed", label: t("nav.latestNews", "Latest News"), href: "/feed", icon: Newspaper },
         { key: "manageSources", label: t("nav.manageSources", "Manage Sources"), href: "/sources/manage", icon: List, capability: "sources" },
+        { key: "importFeeds", label: t("nav.importFeeds", "Import Feeds"), href: "/sources/import", icon: Upload, capability: "sources" },
+        { key: "sourceHealth", label: t("nav.sourceHealth", "Source Health"), href: "/sources/health", icon: Monitor, capability: "sources" },
         { key: "keywords", label: t("nav.keywords", "Keywords"), href: "/sources/keywords", icon: Hash, capability: "sources" },
       ],
       collapsible: true,
@@ -145,7 +147,6 @@ function buildMenuStructure(t: (key: string, fallback?: string) => string): Menu
       items: [
         { key: "adminDashboard", label: t("nav.adminDashboard", "Admin Dashboard"), href: "/admin/dashboard", icon: LayoutDashboard },
         { key: "opsDashboard", label: t("nav.opsDashboard", "Operations"), href: "/admin/ops", icon: Activity },
-        { key: "sourceHealth", label: t("nav.sourceHealth", "Source Health"), href: "/sources/health", icon: Monitor },
         { key: "productIntelligence", label: t("nav.productIntelligence", "Product Intelligence"), href: "/admin/product-analytics", icon: Lightbulb },
         { key: "integrationMonitor", label: t("nav.integrationMonitor", "Integration Monitor"), href: "/admin/integrations", icon: Plug },
       ],
