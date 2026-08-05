@@ -6603,8 +6603,8 @@ export async function registerRoutes(
   // === SEED & START WORKERS ===
   await seed();
   const isCloudflareWorker = process.env.CF_WORKER === "1";
+  registerArticleAnalysisHandler();
   if (!isCloudflareWorker) {
-    // registerArticleAnalysisHandler(); // AI disabled
     startFeedWorker();
     // await startScheduler(); // AI disabled
   }
