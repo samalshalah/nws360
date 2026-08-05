@@ -99,7 +99,12 @@ function getSubSourceFaviconUrl(subSource: string): string | null {
 }
 
 function displayChannelName(value: string | null | undefined): string | null {
-  const cleaned = String(value || "").replace(/\s+/g, " ").trim();
+  const cleaned = String(value || "")
+    .replace(/\s*\/\s*(Twitter|X|Facebook|Instagram|Telegram)\s*$/i, "")
+    .replace(/\s*\(@[^)]*\)\s*/g, " ")
+    .replace(/\b(Page|Feed|Official)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!cleaned) return null;
   const parts = cleaned.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean);
   return parts.length > 1 ? parts[parts.length - 1] : cleaned;
