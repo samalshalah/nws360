@@ -3032,7 +3032,13 @@ export class DatabaseStorage implements IStorage {
 
   async getArticleByUrl(url: string, clientId: number): Promise<Article | undefined> {
     const [article] = await db.select().from(articles).where(
-      and(eq(articles.url, url), eq(articles.clientId, clientId)),
+      and(
+        eq(articles.clientId, clientId),
+        or(
+          eq(articles.url, url),
+          sql`${articles.crossPosts} @> ${JSON.stringify([{ url }])}::jsonb`,
+        ),
+      ),
     );
     return article;
   }
