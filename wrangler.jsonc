@@ -10,7 +10,7 @@
     "not_found_handling": "single-page-application"
   },
   "vars": {
-    "AI_DRY_RUN": "0",
+    "AI_DRY_RUN": "1",
     "CF_WORKER": "1"
   }
 }
