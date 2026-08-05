@@ -247,3 +247,31 @@ export function useDeleteSource() {
     },
   });
 }
+
+export function useBulkDeleteSources() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (ids: number[]) => {
+      for (const id of ids) {
+        const url = buildUrl(api.sources.delete.path, { id });
+        const res = await fetch(url, { method: api.sources.delete.method });
+        if (!res.ok) {
+          const error = await res.json().catch(() => null);
+          throw new Error(error?.message || `Failed to delete source ${id}`);
+        }
+      }
+      return { deleted: ids.length };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: [api.sources.list.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/source-health"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sources/article-counts"] });
+      toast({ title: "Sources deleted", description: `${data.deleted} source(s) deleted successfully` });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Bulk delete failed", description: error.message });
+    },
+  });
+}

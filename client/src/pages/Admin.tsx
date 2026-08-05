@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources, useUpdateSource, useBulkSourceMaintenance } from "@/hooks/use-sources";
+import { useSources, useCreateSource, useDeleteSource, useFetchSource, useFetchAllSources, useUpdateSource, useBulkSourceMaintenance, useBulkDeleteSources } from "@/hooks/use-sources";
 import { useKeywords, useCreateKeyword, useDeleteKeyword } from "@/hooks/use-keywords";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 
 
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -31,7 +32,7 @@ import { SiX, SiYoutube, SiFacebook, SiInstagram, SiTelegram, SiGooglenews } fro
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
 import { CAPS, type Source } from "@shared/schema";
-import { getSourceCategoryLabel } from "@shared/source-categories";
+import { SOURCE_CATEGORIES, getSourceCategoryLabel } from "@shared/source-categories";
 import { GlobalAddSourceDialog } from "@/components/sources/GlobalAddSourceDialog";
 import { EditSourceDialog } from "@/components/sources/EditSourceDialog";
 import { FeedImportDialog } from "@/components/sources/FeedImportDialog";
@@ -877,6 +878,7 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
   const { hasCap } = usePermissions();
   const { data: sources, isLoading } = useSources();
   const { mutate: deleteSource, isPending: isDeleting } = useDeleteSource();
+  const bulkDeleteSources = useBulkDeleteSources();
   const { mutate: fetchSource, isPending: isFetchingOne, variables: fetchingSourceId } = useFetchSource();
   const { mutate: fetchAll, isPending: isFetchingAll } = useFetchAllSources();
   const bulkMaintenance = useBulkSourceMaintenance();
@@ -899,6 +901,9 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
   const [bulkDeleteOldArticles, setBulkDeleteOldArticles] = useState(true);
   const [bulkFetchAfterCleanup, setBulkFetchAfterCleanup] = useState(false);
   const [isBulkConfirmOpen, setIsBulkConfirmOpen] = useState(false);
+  const [sourceGroupFilter, setSourceGroupFilter] = useState("all");
+  const [selectedSourceIds, setSelectedSourceIds] = useState<Set<number>>(new Set());
+  const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false);
   const { data: sourceArticles, isLoading: isLoadingArticles } = useQuery<any[]>({
     queryKey: ["/api/articles", { sourceId: viewingSource?.id }],
     queryFn: async () => {
@@ -954,7 +959,43 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
     return source.name;
   };
 
-  const sourceGroups = (sources || []).reduce((acc, source) => {
+  const filteredSources = (sources || []).filter((source) => (
+    sourceGroupFilter === "all" ? true : (source.category || "general") === sourceGroupFilter
+  ));
+
+  useEffect(() => {
+    const visibleIds = new Set((sources || []).map((source) => source.id));
+    setSelectedSourceIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
+  }, [sources]);
+
+  const visibleSourceIds = filteredSources.map((source) => source.id);
+  const selectedVisibleCount = visibleSourceIds.filter((id) => selectedSourceIds.has(id)).length;
+  const allVisibleSelected = visibleSourceIds.length > 0 && selectedVisibleCount === visibleSourceIds.length;
+
+  const toggleSourceSelection = (sourceId: number, selected: boolean) => {
+    setSelectedSourceIds((current) => {
+      const next = new Set(current);
+      if (selected) next.add(sourceId);
+      else next.delete(sourceId);
+      return next;
+    });
+  };
+
+  const toggleSourcesSelection = (sourceIds: number[], selected: boolean) => {
+    setSelectedSourceIds((current) => {
+      const next = new Set(current);
+      for (const id of sourceIds) {
+        if (selected) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  const selectedSourceCount = selectedSourceIds.size;
+  const selectedSourceIdList = Array.from(selectedSourceIds);
+
+  const sourceGroups = filteredSources.reduce((acc, source) => {
     const key = getGroupName(source);
     if (!acc[key]) acc[key] = [];
     acc[key].push(source);
@@ -1025,8 +1066,8 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
     );
   };
 
-  const bulkScopedSourceCount = (sources || []).filter((source) => !bulkActiveOnly || source.active !== false).length;
-  const bulkFetchSourceCount = (sources || []).filter((source) => (!bulkActiveOnly || source.active !== false) && source.active !== false).length;
+  const bulkScopedSourceCount = filteredSources.filter((source) => !bulkActiveOnly || source.active !== false).length;
+  const bulkFetchSourceCount = filteredSources.filter((source) => (!bulkActiveOnly || source.active !== false) && source.active !== false).length;
   const runBulkMaintenance = () => {
     bulkMaintenance.mutate({
       retentionDays: bulkRetentionDays,
@@ -1104,6 +1145,49 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
             <div className="mb-4 rounded-md border border-border/60 bg-muted/20 p-3" data-testid="bulk-source-maintenance">
               <div className="flex items-end gap-3 flex-wrap">
                 <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Source group</Label>
+                  <Select value={sourceGroupFilter} onValueChange={setSourceGroupFilter}>
+                    <SelectTrigger className="h-9 w-[190px] bg-background" data-testid="select-source-group-filter">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All groups</SelectItem>
+                      {SOURCE_CATEGORIES.map((category) => (
+                        <SelectItem key={category.code} value={category.code}>{category.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Button
+                  variant={allVisibleSelected ? "default" : "outline"}
+                  className="h-9 gap-2"
+                  onClick={() => toggleSourcesSelection(visibleSourceIds, !allVisibleSelected)}
+                  disabled={visibleSourceIds.length === 0}
+                  data-testid="button-select-all-sources"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  {allVisibleSelected ? "Clear visible" : "Select all"}
+                </Button>
+
+                {hasCap(CAPS.SOURCES_DELETE) && (
+                  <Button
+                    variant="destructive"
+                    className="h-9 gap-2"
+                    onClick={() => setIsBulkDeleteConfirmOpen(true)}
+                    disabled={selectedSourceCount === 0 || bulkDeleteSources.isPending}
+                    data-testid="button-delete-selected-sources"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete selected
+                  </Button>
+                )}
+
+                <Badge variant={selectedSourceCount > 0 ? "default" : "secondary"} className="h-9 px-3">
+                  {selectedSourceCount} selected
+                </Badge>
+
+                <div className="space-y-1">
                   <Label htmlFor="bulk-retention-days" className="text-xs text-muted-foreground">Duration</Label>
                   <div className="flex items-center gap-2">
                     <Input
@@ -1174,7 +1258,14 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-8"></TableHead>
+                    <TableHead className="w-16">
+                      <Checkbox
+                        checked={allVisibleSelected ? true : selectedVisibleCount > 0 ? "indeterminate" : false}
+                        onCheckedChange={(checked) => toggleSourcesSelection(visibleSourceIds, checked === true)}
+                        aria-label="Select all visible sources"
+                        data-testid="checkbox-select-all-sources"
+                      />
+                    </TableHead>
                     <TableHead>{t("admin.sourceName")}</TableHead>
                     <TableHead>Channels</TableHead>
                     <TableHead>Setup</TableHead>
@@ -1189,6 +1280,8 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                     const isExpanded = expandedGroups.has(groupName);
                     const totalArticles = groupSources.reduce((sum, s) => sum + (articleCounts?.[s.id] ?? 0), 0);
                     const allActive = groupSources.every(s => s.active);
+                    const groupIds = groupSources.map((source) => source.id);
+                    const selectedInGroup = groupIds.filter((id) => selectedSourceIds.has(id)).length;
                     const latestFetch = groupSources
                       .filter(s => s.lastFetchedAt)
                       .sort((a, b) => new Date(b.lastFetchedAt!).getTime() - new Date(a.lastFetchedAt!).getTime())[0];
@@ -1201,16 +1294,24 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                         className={isExpanded ? "border-b-0" : ""}
                         data-testid={`source-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
                       >
-                        <TableCell className="w-8 px-2">
-                          {!isSingle && (
-                            <button
-                              onClick={() => toggleGroup(groupName)}
-                              className="p-1 rounded-md hover-elevate cursor-pointer"
-                              data-testid={`button-expand-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
-                            >
-                              {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                            </button>
-                          )}
+                        <TableCell className="w-16 px-2">
+                          <div className="flex items-center gap-1">
+                            <Checkbox
+                              checked={selectedInGroup === groupIds.length ? true : selectedInGroup > 0 ? "indeterminate" : false}
+                              onCheckedChange={(checked) => toggleSourcesSelection(groupIds, checked === true)}
+                              aria-label={`Select ${groupName}`}
+                              data-testid={`checkbox-select-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
+                            />
+                            {!isSingle && (
+                              <button
+                                onClick={() => toggleGroup(groupName)}
+                                className="p-1 rounded-md hover-elevate cursor-pointer"
+                                data-testid={`button-expand-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
+                              >
+                                {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                              </button>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="font-medium">{groupName}</TableCell>
                         <TableCell>
@@ -1307,7 +1408,14 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                         const Icon = getSourceIcon(source.type);
                         return (
                           <TableRow key={`detail-${source.id}`} className="bg-muted/20" data-testid={`source-channel-row-${source.id}`}>
-                            <TableCell></TableCell>
+                            <TableCell>
+                              <Checkbox
+                                checked={selectedSourceIds.has(source.id)}
+                                onCheckedChange={(checked) => toggleSourceSelection(source.id, checked === true)}
+                                aria-label={`Select ${source.name}`}
+                                data-testid={`checkbox-select-source-${source.id}`}
+                              />
+                            </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2 text-sm pl-2">
                                 <Icon className={`w-3.5 h-3.5 ${getSourceColor(source.type)}`} />
@@ -1433,11 +1541,19 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                 const allActive = groupSources.every(s => s.active);
                 const isSingle = groupSources.length === 1;
                 const setupSummary = summarizeSourceSetup(groupSources as any[]);
+                const groupIds = groupSources.map((source) => source.id);
+                const selectedInGroup = groupIds.filter((id) => selectedSourceIds.has(id)).length;
 
                 return (
                   <div key={groupName} className="border border-border rounded-md p-4 space-y-3" data-testid={`mobile-source-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}>
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
+                        <Checkbox
+                          checked={selectedInGroup === groupIds.length ? true : selectedInGroup > 0 ? "indeterminate" : false}
+                          onCheckedChange={(checked) => toggleSourcesSelection(groupIds, checked === true)}
+                          aria-label={`Select ${groupName}`}
+                          data-testid={`checkbox-select-group-mobile-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
+                        />
                         {!isSingle && (
                           <button onClick={() => toggleGroup(groupName)} className="p-0.5 cursor-pointer" data-testid={`button-expand-group-mobile-${groupName.replace(/\s+/g, '-').toLowerCase()}`}>
                             {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
@@ -1490,6 +1606,12 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                             <div key={source.id} className="bg-muted/20 rounded-md p-3 space-y-2" data-testid={`mobile-channel-detail-${source.id}`}>
                               <div className="flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-2">
+                                  <Checkbox
+                                    checked={selectedSourceIds.has(source.id)}
+                                    onCheckedChange={(checked) => toggleSourceSelection(source.id, checked === true)}
+                                    aria-label={`Select ${source.name}`}
+                                    data-testid={`checkbox-select-source-mobile-${source.id}`}
+                                  />
                                   <Icon className={`w-3.5 h-3.5 ${getSourceColor(source.type)}`} />
                                   <span className="text-sm">{sourceVariantLabel(source)}</span>
                                   <span className="text-xs text-muted-foreground">({(articleCounts?.[source.id] ?? 0)} articles)</span>
@@ -1593,6 +1715,12 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
                 );
               })}
             </div>
+            {Object.keys(sourceGroups).length === 0 && (
+              <div className="text-center py-12 text-muted-foreground" data-testid="empty-filtered-sources">
+                <Globe className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                <p className="text-sm">No sources match this group.</p>
+              </div>
+            )}
           </>
         )}
       </CardContent>
@@ -1626,6 +1754,35 @@ function SourcesManager({ initialAddOpen = false }: { initialAddOpen?: boolean }
               data-testid="button-confirm-bulk-maintenance"
             >
               {bulkMaintenance.isPending ? "Running..." : "Run maintenance"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={isBulkDeleteConfirmOpen} onOpenChange={setIsBulkDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete selected sources?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will delete {selectedSourceCount} selected source{selectedSourceCount === 1 ? "" : "s"}. Existing articles remain available unless separately removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkDeleteSources.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                bulkDeleteSources.mutate(selectedSourceIdList, {
+                  onSuccess: () => {
+                    setSelectedSourceIds(new Set());
+                    setIsBulkDeleteConfirmOpen(false);
+                  },
+                });
+              }}
+              disabled={bulkDeleteSources.isPending || selectedSourceCount === 0}
+              data-testid="button-confirm-delete-selected-sources"
+            >
+              {bulkDeleteSources.isPending ? "Deleting..." : "Delete sources"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
