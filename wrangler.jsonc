@@ -10,8 +10,7 @@
     "not_found_handling": "single-page-application"
   },
   "vars": {
-    "AI_DRY_RUN": "1",
-    "CF_WORKER": "1",
-    "OPENAI_API_KEY": "cloudflare-preview-placeholder"
+    "AI_DRY_RUN": "0",
+    "CF_WORKER": "1"
   }
 }
