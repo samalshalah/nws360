@@ -1110,7 +1110,7 @@ function SourcesManager({
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-9 gap-2 border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      className="h-9 gap-2 border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive disabled:border-border disabled:text-muted-foreground disabled:opacity-100"
                       onClick={() => setIsBulkDeleteConfirmOpen(true)}
                       disabled={selectedSourceCount === 0 || bulkDeleteSources.isPending}
                       data-testid="button-delete-selected-sources"
@@ -1138,7 +1138,7 @@ function SourcesManager({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-16">
+                    <TableHead className="w-14 px-2">
                       <Checkbox
                         checked={allVisibleSelected ? true : selectedVisibleCount > 0 ? "indeterminate" : false}
                         onCheckedChange={(checked) => toggleSourcesSelection(visibleSourceIds, checked === true)}
@@ -1172,7 +1172,7 @@ function SourcesManager({
                         className={isExpanded ? "border-b-0" : ""}
                         data-testid={`source-group-${groupName.replace(/\s+/g, '-').toLowerCase()}`}
                       >
-                        <TableCell className="w-16 px-2">
+                        <TableCell className="w-14 px-2">
                           <div className="flex items-center gap-1">
                             <Checkbox
                               checked={selectedInGroup === groupIds.length ? true : selectedInGroup > 0 ? "indeterminate" : false}
@@ -1285,7 +1285,7 @@ function SourcesManager({
                         const Icon = getSourceIcon(source.type);
                         return (
                           <TableRow key={`detail-${source.id}`} className="bg-muted/20" data-testid={`source-channel-row-${source.id}`}>
-                            <TableCell>
+                            <TableCell className="w-14 px-2">
                               <Checkbox
                                 checked={selectedSourceIds.has(source.id)}
                                 onCheckedChange={(checked) => toggleSourceSelection(source.id, checked === true)}
