@@ -17,7 +17,7 @@ import { getArticleCategoryLabel, getArticlePriorityLabel, getArticleWorkflowSta
 import { useEmbassyProfile } from "@/hooks/use-embassy-profile";
 
 interface ArticleCardProps {
-  article: Article & { source: Source | null };
+  article: Article & { source: Source | null; sourceChannelName?: string | null };
   selected?: boolean;
   onToggleSelect?: (id: number) => void;
   layout?: "grid" | "list" | "headline" | "compact";
@@ -98,6 +98,13 @@ function getSubSourceFaviconUrl(subSource: string): string | null {
   return `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
 }
 
+function displayChannelName(value: string | null | undefined): string | null {
+  const cleaned = String(value || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return null;
+  const parts = cleaned.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean);
+  return parts.length > 1 ? parts[parts.length - 1] : cleaned;
+}
+
 export function ArticleCard({ article, selected, onToggleSelect, layout = "grid" }: ArticleCardProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -149,7 +156,6 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
   }[article.sentimentLabel || "neutral"];
 
   const SourceIcon = sourceTypeIcons[article.source?.type || "rss"] || Newspaper;
-  const displayContent = article.summary || article.content.substring(0, 150) + "...";
   const articleCategory = (article as any).category || "other";
   const articlePriority = (article as any).priority || "routine";
   const articleWorkflowStatus = (article as any).workflowStatus || "new";
@@ -157,6 +163,8 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
   const manualTags = (Array.isArray((article as any).manualTags) ? (article as any).manualTags : []) as string[];
   const hasImage = article.imageUrl && article.imageUrl !== "none" && !imgError;
   const sourceLogoUrl = article.source?.logoUrl || null;
+  const channelName = displayChannelName(article.sourceChannelName || article.source?.name);
+  const publisherFeedName = article.source?.name || null;
   const subSourceFavicon = article.subSource ? getSubSourceFaviconUrl(article.subSource) : null;
   const faviconUrl = subSourceFavicon || sourceLogoUrl;
   const crossPosts = (Array.isArray((article as any).crossPosts) ? (article as any).crossPosts : []) as { platform: string; url: string; sourceId: number; sourceName?: string | null }[];
@@ -165,7 +173,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
       platform: sourceTypeToPlatform(article.source?.type),
       url: article.url || "",
       sourceId: article.sourceId || 0,
-      sourceName: article.source?.name || null,
+      sourceName: channelName,
       primary: true,
     },
     ...crossPosts.map((post) => ({ ...post, primary: false })),
@@ -261,14 +269,16 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
             className="hover:text-primary hover:underline transition-colors cursor-pointer"
             onClick={(e) => { e.stopPropagation(); if (article.sourceId) setLocation(`/feed?sourceId=${article.sourceId}`); }}
             data-testid={`text-source-${article.id}`}
-          >{article.source?.name || t("common.noResults")}</button>
+            title={publisherFeedName || undefined}
+          >{channelName || t("common.noResults")}</button>
         </>
       ) : (
         <button
           className="hover:text-primary hover:underline transition-colors cursor-pointer"
           onClick={(e) => { e.stopPropagation(); if (article.sourceId) setLocation(`/feed?sourceId=${article.sourceId}`); }}
           data-testid={`text-source-${article.id}`}
-        >{article.source?.name || t("common.noResults")}</button>
+          title={publisherFeedName || undefined}
+        >{channelName || t("common.noResults")}</button>
       )}
       <span className="text-muted-foreground/60">
         {article.source?.type ? t(`feed.sourceTypes.${article.source.type}`) : ""}
@@ -324,13 +334,14 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
         const pi = platformIcons[cp.platform] || platformIcons.web;
         if (!pi) return null;
         const PIcon = pi.icon;
+        const cpLabel = displayChannelName(cp.sourceName);
         return (
           <a
             key={idx}
             href={cp.url}
             target="_blank"
             rel="noopener noreferrer"
-            title={cp.sourceName ? `${cp.sourceName} (${pi.label})` : pi.label}
+            title={cpLabel ? `${cpLabel} (${pi.label})` : pi.label}
             onClick={(e) => e.stopPropagation()}
             className={cn("p-1 rounded-md transition-colors hover-elevate", pi.color)}
             data-testid={`cross-post-${cp.platform}-${article.id}-${idx}`}
@@ -418,9 +429,6 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
             <h2 className="font-display text-2xl font-bold leading-tight text-foreground transition-colors group-hover:text-primary md:text-3xl">
               {article.title}
             </h2>
-            <p className="line-clamp-4 text-sm leading-relaxed text-muted-foreground">
-              {displayContent}
-            </p>
             <div className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-border/50 pt-4">
               <div className="flex flex-wrap items-center gap-3">
                 {timeInfo}
@@ -556,9 +564,6 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
           <h3 className="text-sm font-bold font-display text-foreground leading-snug group-hover:text-primary transition-colors">
             {article.title}
           </h3>
-          <p className="text-muted-foreground text-sm leading-relaxed line-clamp-2 flex-1">
-            {displayContent}
-          </p>
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-3">
               {timeInfo}
@@ -618,7 +623,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
           ) : (
             <SourceIcon className="w-10 h-10 text-muted-foreground/30" />
           )}
-          <span className="text-sm font-semibold text-muted-foreground/50">{article.subSource || article.source?.name}</span>
+          <span className="text-sm font-semibold text-muted-foreground/50">{article.subSource || channelName}</span>
         </div>
       )}
 
@@ -639,11 +644,7 @@ export function ArticleCard({ article, selected, onToggleSelect, layout = "grid"
           {article.title}
         </h3>
 
-        <p className="text-muted-foreground text-sm leading-relaxed line-clamp-3 mb-6 flex-1">
-          {displayContent}
-        </p>
-
-        <div className="flex items-center justify-between gap-2 pt-4 border-t border-border/50 flex-wrap">
+        <div className="mt-auto flex items-center justify-between gap-2 pt-4 border-t border-border/50 flex-wrap">
           <div className="flex items-center gap-3">
             {timeInfo}
             {crossPostIcons}

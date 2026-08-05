@@ -1787,9 +1787,9 @@ export interface IStorage {
   deleteSource(id: number, clientId?: number): Promise<void>;
 
   // Articles
-  getArticles(params?: ArticleQueryParams): Promise<{ items: (Article & { source: Source | null })[], total: number }>;
+  getArticles(params?: ArticleQueryParams): Promise<{ items: (Article & { source: Source | null; sourceChannelName?: string | null })[], total: number }>;
   getArticle(id: number, clientId?: number): Promise<Article | undefined>;
-  getArticlesByIds(ids: number[], clientId?: number): Promise<(Article & { source: Source | null })[]>;
+  getArticlesByIds(ids: number[], clientId?: number): Promise<(Article & { source: Source | null; sourceChannelName?: string | null })[]>;
   createArticle(article: InsertArticle): Promise<Article>;
   getWorkspaceRelevanceProfile(workspaceId: number, clientId?: number): Promise<WorkspaceRelevanceProfile | undefined>;
   upsertWorkspaceRelevanceProfile(data: InsertWorkspaceRelevanceProfile, clientId?: number): Promise<WorkspaceRelevanceProfile>;
@@ -2576,7 +2576,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Articles
-  async getArticles(params?: ArticleQueryParams): Promise<{ items: (Article & { source: Source | null })[], total: number }> {
+  async getArticles(params?: ArticleQueryParams): Promise<{ items: (Article & { source: Source | null; sourceChannelName?: string | null })[], total: number }> {
     const conditions = [];
     let needsSourceJoin = false;
 
@@ -2729,10 +2729,12 @@ export class DatabaseStorage implements IStorage {
       aiRetryCount: articles.aiRetryCount,
       aiLastRetryAt: articles.aiLastRetryAt,
       createdAt: articles.createdAt,
+      sourceChannelName: publisherChannels.name,
       source: sources
     })
     .from(articles)
     .leftJoin(sources, eq(articles.sourceId, sources.id))
+    .leftJoin(publisherChannels, eq(sources.publisherChannelId, publisherChannels.id))
     .where(whereClause)
     .orderBy(...orderBy)
     .limit(limit)
@@ -2748,7 +2750,7 @@ export class DatabaseStorage implements IStorage {
     return article;
   }
 
-  async getArticlesByIds(ids: number[], clientId?: number): Promise<(Article & { source: Source | null })[]> {
+  async getArticlesByIds(ids: number[], clientId?: number): Promise<(Article & { source: Source | null; sourceChannelName?: string | null })[]> {
     if (ids.length === 0) return [];
     const conditions = [inArray(articles.id, ids)];
     if (clientId) conditions.push(eq(articles.clientId, clientId));
@@ -2784,10 +2786,12 @@ export class DatabaseStorage implements IStorage {
       aiRetryCount: articles.aiRetryCount,
       aiLastRetryAt: articles.aiLastRetryAt,
       createdAt: articles.createdAt,
+      sourceChannelName: publisherChannels.name,
       source: sources,
     })
       .from(articles)
       .leftJoin(sources, eq(articles.sourceId, sources.id))
+      .leftJoin(publisherChannels, eq(sources.publisherChannelId, publisherChannels.id))
       .where(and(...conditions))
       .orderBy(desc(articles.publishedAt));
     return items as any;
