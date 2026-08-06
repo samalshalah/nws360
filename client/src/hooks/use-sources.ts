@@ -162,6 +162,7 @@ export type BulkSourceMaintenanceRequest = {
   activationMode?: "unchanged" | "active" | "inactive";
   updateSourceRetention?: boolean;
   deleteOldArticles?: boolean;
+  deleteAllArticles?: boolean;
   fetchAfterCleanup?: boolean;
 };
 
@@ -176,6 +177,7 @@ export type BulkSourceMaintenanceResponse = {
   activationMode?: "unchanged" | "active" | "inactive";
   activationUpdated?: number;
   deletedArticles: number;
+  deleteAllArticles?: boolean;
   fetchedSources: number;
   totalNewArticles: number;
   fetchErrors: number;
@@ -206,7 +208,7 @@ export function useBulkSourceMaintenance() {
       queryClient.invalidateQueries({ predicate: (query) => String(query.queryKey[0] || "").startsWith("/api/analytics") });
       toast({
         title: "Source maintenance complete",
-        description: `${data.sourcesUpdated + (data.activationUpdated || 0)} source update(s). ${data.deletedArticles} old article(s) deleted. ${data.totalNewArticles} new article(s) fetched.`,
+        description: `${data.sourcesUpdated + (data.activationUpdated || 0)} source update(s). ${data.deletedArticles} ${data.deleteAllArticles ? "" : "old "}article(s) deleted. ${data.totalNewArticles} new article(s) fetched.`,
       });
     },
     onError: (error) => {

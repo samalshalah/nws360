@@ -1005,6 +1005,12 @@ async function canAccessRelevanceReview(user: any, req: Request): Promise<boolea
   return userCaps.includes(CAPS.ARTICLE_EDIT);
 }
 
+async function canDeleteAllSourceArticles(user: any): Promise<boolean> {
+  if (isSystemAdmin(user)) return true;
+  const userCaps = await resolveUserCaps(user);
+  return userCaps.includes(CAPS.SOURCES_DELETE);
+}
+
 function requireCapability(...caps: string[]) {
   return async (req: any, res: any, next: any) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
@@ -2890,6 +2896,7 @@ export async function registerRoutes(
     activationMode: z.enum(["unchanged", "active", "inactive"]).optional().default("unchanged"),
     updateSourceRetention: z.boolean().optional().default(true),
     deleteOldArticles: z.boolean().optional().default(true),
+    deleteAllArticles: z.boolean().optional().default(false),
     fetchAfterCleanup: z.boolean().optional().default(false),
   }).strict();
 
@@ -2901,6 +2908,9 @@ export async function registerRoutes(
 
     try {
       const input = bulkSourceMaintenanceInput.parse(req.body || {});
+      if (input.deleteAllArticles && !(await canDeleteAllSourceArticles(user))) {
+        return res.status(403).json({ success: false, message: "Deleting all articles requires source-delete permission" });
+      }
       const tenantSources = await storage.getSources(clientId);
       const requestedSourceIds = input.sourceIds ? new Set(input.sourceIds.map(Number)) : null;
       const visibleSources = requestedSourceIds
@@ -2933,16 +2943,19 @@ export async function registerRoutes(
       }
 
       let deletedArticles = 0;
-      if (input.deleteOldArticles && sourceIds.length > 0) {
-        const oldArticleRows = await db
+      if ((input.deleteAllArticles || input.deleteOldArticles) && sourceIds.length > 0) {
+        const articleWhere = input.deleteAllArticles
+          ? and(eq(articles.clientId, clientId), inArray(articles.sourceId, sourceIds))
+          : and(
+              eq(articles.clientId, clientId),
+              inArray(articles.sourceId, sourceIds),
+              sql`COALESCE(${articles.publishedAt}, ${articles.ingestedAt}) < ${cutoff}`,
+            );
+        const targetArticleRows = await db
           .select({ id: articles.id })
           .from(articles)
-          .where(and(
-            eq(articles.clientId, clientId),
-            inArray(articles.sourceId, sourceIds),
-            sql`COALESCE(${articles.publishedAt}, ${articles.ingestedAt}) < ${cutoff}`,
-          ));
-        const articleIds = oldArticleRows.map((row) => row.id);
+          .where(articleWhere);
+        const articleIds = targetArticleRows.map((row) => row.id);
         for (let i = 0; i < articleIds.length; i += 500) {
           deletedArticles += await storage.deleteArticles(articleIds.slice(i, i + 500), clientId);
         }
@@ -2972,6 +2985,17 @@ export async function registerRoutes(
         }));
       }
 
+      if (input.deleteAllArticles && deletedArticles > 0) {
+        await storage.createAuditLog({
+          userId: user.id,
+          action: "bulk_delete_all_articles",
+          entity: "source",
+          entityId: sourceIds.length === 1 ? sourceIds[0] : null,
+          details: `Deleted ${deletedArticles} article(s) (all, unfiltered by age) across ${sourceIds.length} source(s): ${sourceIds.join(", ")}`,
+          clientId,
+        });
+      }
+
       if (deletedArticles > 0 || fetchResults.length > 0) {
         await db.delete(analyticsCache).where(eq(analyticsCache.clientId, clientId));
         runAnalyticsComputation().catch(e => console.error("[Analytics] Post-bulk-maintenance recomputation error:", e));
@@ -2990,6 +3014,7 @@ export async function registerRoutes(
         activationMode: input.activationMode,
         activationUpdated,
         deletedArticles,
+        deleteAllArticles: input.deleteAllArticles,
         fetchedSources: fetchResults.length,
         totalNewArticles,
         fetchErrors: fetchErrors.length,
