@@ -913,6 +913,8 @@ function SourcesManager({
   const [bulkActiveOnly, setBulkActiveOnly] = useState(false);
   const [bulkActivationMode, setBulkActivationMode] = useState<"unchanged" | "active" | "inactive">("unchanged");
   const [bulkDeleteOldArticles, setBulkDeleteOldArticles] = useState(true);
+  const [bulkDeleteAllArticles, setBulkDeleteAllArticles] = useState(false);
+  const [bulkDeleteAllConfirmText, setBulkDeleteAllConfirmText] = useState("");
   const [bulkFetchAfterCleanup, setBulkFetchAfterCleanup] = useState(false);
   const [isBulkConfirmOpen, setIsBulkConfirmOpen] = useState(false);
   const [sourceGroupFilter, setSourceGroupFilter] = useState("all");
@@ -1041,7 +1043,9 @@ function SourcesManager({
   const bulkScopedSourceCount = filteredSources.filter((source) => !bulkActiveOnly || source.active !== false).length;
   const bulkActivationSourceCount = filteredSources.length;
   const bulkFetchSourceCount = filteredSources.filter((source) => bulkActivationMode === "inactive" ? false : bulkActivationMode === "active" ? true : source.active !== false).length;
+  const bulkDeleteAllConfirmMatch = bulkDeleteAllConfirmText.trim().toUpperCase() === "DELETE ALL";
   const runBulkMaintenance = () => {
+    if (bulkDeleteAllArticles && !bulkDeleteAllConfirmMatch) return;
     bulkMaintenance.mutate({
       sourceIds: visibleSourceIds,
       retentionDays: bulkRetentionDays,
@@ -1050,9 +1054,14 @@ function SourcesManager({
       activationMode: bulkActivationMode,
       updateSourceRetention: true,
       deleteOldArticles: bulkDeleteOldArticles,
+      deleteAllArticles: bulkDeleteAllArticles,
       fetchAfterCleanup: bulkFetchAfterCleanup,
     }, {
-      onSuccess: () => setIsBulkConfirmOpen(false),
+      onSuccess: () => {
+        setIsBulkConfirmOpen(false);
+        setBulkDeleteAllArticles(false);
+        setBulkDeleteAllConfirmText("");
+      },
     });
   };
 
@@ -1637,7 +1646,13 @@ function SourcesManager({
 
       <FeedImportDialog open={isImportOpen} onOpenChange={setIsImportOpen} />
 
-      <Dialog open={isBulkConfirmOpen} onOpenChange={setIsBulkConfirmOpen}>
+      <Dialog open={isBulkConfirmOpen} onOpenChange={(open) => {
+        setIsBulkConfirmOpen(open);
+        if (!open) {
+          setBulkDeleteAllArticles(false);
+          setBulkDeleteAllConfirmText("");
+        }
+      }}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>Bulk edit sources</DialogTitle>
@@ -1732,10 +1747,44 @@ function SourcesManager({
                   <Switch
                     id="bulk-delete-old"
                     checked={bulkDeleteOldArticles}
+                    disabled={bulkDeleteAllArticles}
                     onCheckedChange={setBulkDeleteOldArticles}
                     data-testid="switch-bulk-delete-old"
                   />
                 </label>
+
+                <label className="flex items-center justify-between gap-4 rounded-md border border-destructive/50 bg-destructive/5 px-3 py-2">
+                  <span>
+                    <span className="block text-sm font-medium text-destructive">Delete ALL articles</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Permanently remove every article for {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"} in scope, regardless of age. Cannot be undone.
+                    </span>
+                  </span>
+                  <Switch
+                    id="bulk-delete-all"
+                    checked={bulkDeleteAllArticles}
+                    onCheckedChange={(checked) => {
+                      setBulkDeleteAllArticles(checked);
+                      if (!checked) setBulkDeleteAllConfirmText("");
+                    }}
+                    data-testid="switch-bulk-delete-all"
+                  />
+                </label>
+
+                {bulkDeleteAllArticles && (
+                  <div className="rounded-md border border-destructive/50 bg-destructive/5 p-3 space-y-2">
+                    <p className="text-xs text-destructive font-medium">
+                      This deletes every article (and its translations, bookmarks, AI analysis, etc.) for the {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"} in scope. Type DELETE ALL to confirm.
+                    </p>
+                    <Input
+                      value={bulkDeleteAllConfirmText}
+                      onChange={(event) => setBulkDeleteAllConfirmText(event.target.value)}
+                      placeholder="DELETE ALL"
+                      className="h-9 border-destructive/50"
+                      data-testid="input-bulk-delete-all-confirm"
+                    />
+                  </div>
+                )}
 
                 <label className="flex items-center justify-between gap-4 rounded-md border border-border/60 bg-background px-3 py-2">
                   <span>
@@ -1761,24 +1810,32 @@ function SourcesManager({
                 {bulkActivationMode === "inactive" ? `Make ${bulkActivationSourceCount} source${bulkActivationSourceCount === 1 ? "" : "s"} inactive. ` : ""}
                 Set retention to {bulkRetentionDays} day{bulkRetentionDays === 1 ? "" : "s"} and fetch interval to {bulkIntervalMinutes < 60 ? `${bulkIntervalMinutes} minutes` : `${bulkIntervalMinutes / 60} hour${bulkIntervalMinutes === 60 ? "" : "s"}`} for {bulkScopedSourceCount} source{bulkScopedSourceCount === 1 ? "" : "s"}
                 {bulkActiveOnly ? " that are currently active" : ""}
-                {bulkDeleteOldArticles ? ` and delete posts older than ${bulkRetentionDays} day${bulkRetentionDays === 1 ? "" : "s"}` : ""}
+                {bulkDeleteAllArticles ? " and delete ALL articles (regardless of age)" : bulkDeleteOldArticles ? ` and delete posts older than ${bulkRetentionDays} day${bulkRetentionDays === 1 ? "" : "s"}` : ""}
                 {bulkFetchAfterCleanup ? `, then pull ${bulkFetchSourceCount} active source${bulkFetchSourceCount === 1 ? "" : "s"}` : ""}.
               </p>
+              {bulkDeleteAllArticles && (
+                <p className="mt-1 text-xs font-medium text-destructive">This permanently deletes all articles for the sources in scope. This cannot be undone.</p>
+              )}
             </div>
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsBulkConfirmOpen(false)} disabled={bulkMaintenance.isPending}>
+            <Button variant="outline" onClick={() => {
+              setIsBulkConfirmOpen(false);
+              setBulkDeleteAllArticles(false);
+              setBulkDeleteAllConfirmText("");
+            }} disabled={bulkMaintenance.isPending}>
               Cancel
             </Button>
             <Button
               onClick={runBulkMaintenance}
-              disabled={bulkMaintenance.isPending || bulkScopedSourceCount === 0}
+              disabled={bulkMaintenance.isPending || bulkScopedSourceCount === 0 || (bulkDeleteAllArticles && !bulkDeleteAllConfirmMatch)}
+              variant={bulkDeleteAllArticles ? "destructive" : "default"}
               data-testid="button-confirm-bulk-maintenance"
               className="gap-2"
             >
               <RefreshCw className={`w-4 h-4 ${bulkMaintenance.isPending ? "animate-spin" : ""}`} />
-              {bulkMaintenance.isPending ? "Applying..." : "Apply changes"}
+              {bulkMaintenance.isPending ? "Applying..." : bulkDeleteAllArticles ? "Delete all & apply changes" : "Apply changes"}
             </Button>
           </DialogFooter>
         </DialogContent>
